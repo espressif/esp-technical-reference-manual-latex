@@ -1,0 +1,391 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./10-BOOTCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{bootctrl}{}
+\chapter{Chip Boot Control}
+\label{mod:bootctrl}
+
+
+\section{Overview}
+
+The chip allows for configuring the following boot parameters through strapping pins and eFuse parameters at power-up or a hardware reset, without microcontroller interaction.
+
+\begin{itemize}
+    \item \textbf{Chip boot mode}
+    \begin{itemize}
+        \item Strapping pins: GPIO26, GPIO27, and GPIO28
+    \end{itemize}
+    \item \textbf{SDIO sampling and driving clock edge}
+    \begin{itemize}
+        \item Strapping pins: GPIO25 and MTDI
+    \end{itemize}
+    \item \textbf{ROM messages printing}
+    \begin{itemize}
+        \item Strapping pin: GPIO27
+        \item eFuse parameters: \hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL} and \hyperref[fielddesc:EFUSEDISUSBSERIALJTAGROMPRINT]{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT}
+    \end{itemize}
+    \item \textbf{JTAG signal source}
+    \begin{itemize}
+        \item Strapping pin: GPIO7
+        \item eFuse parameters: \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}, \hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG}, and \hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\_SEL\_ENABLE}
+    \end{itemize}
+\end{itemize}
+
+The default values of all the above eFuse parameters are 0, which means that they are not burnt. Given that eFuse is one-time programmable, once an eFuse bit is programmed to 1, it can never be reverted to 0. For how to program eFuse bits, please refer to Chapter \ref{mod:efuse} \textit{\nameref{mod:efuse}}.
+
+During Chip Reset (see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}), hardware captures samples and stores the voltage level of strapping pins as strapping bit of ``0" or ``1" in latches, and holds these bits until the chip is powered down or next chip reset. Software can read the latch status (strapping value) from \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}.
+
+\section{Functional Description}
+
+This section introduces chip reset functions and the patterns of the strapping pins and eFuse values to invoke each function.
+
+\begin{importantlisting}
+Only documented patterns should be used. If an undocumented pattern is used, it may trigger unexpected behaviors.
+\end{importantlisting}
+
+\subsection{Default Configuration}
+
+The default values of the strapping pins, namely the logic levels, are determined by pins' internal weak pull-up/pull-down resistors at reset if the pins are not connected to any circuit, or connected to an external high-impedance circuit.
+
+\begin{table}[H]
+    \centering
+    \caption{Default Configuration of Strapping Pins}
+    \label{tab:bootctrl-default-config-strapping-pins}
+    \begin{tabular}{ | l | c | c | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{Strapping Pin} & \textbf{Default Configuration} & \textbf{Bit Value} \\\hline
+        \textbf{GPIO25}  & Floating & -- \\ \hline
+        \textbf{GPIO26}  & Floating & -- \\ \hline
+        \textbf{GPIO27}  & Pull-up & 1 \\ \hline
+        \textbf{GPIO28} & Pull-up & 1 \\ \hline
+        \textbf{GPIO7}  & Floating & -- \\ \hline
+        \textbf{MTMS}   & Floating & -- \\ \hline
+        \textbf{MTDI}   & Floating & -- \\ \hline
+    \end{tabular}
+\end{table}
+
+To change the strapping bit values, users can apply external pull-down/pull-up resistors, or use host MCU GPIOs to control the voltage level of these pins when powering up \chipname{}. After the reset is released, the strapping pins work as normal-function pins.
+
+\subsection{Chip Boot Mode Control}
+\label{sec:bootModeControl}
+
+GPIO26, GPIO27 and GPIO28 control the boot mode after the reset is released. See Table \ref{tab:bootctrl-boot-mode-control} \textit{\nameref{tab:bootctrl-boot-mode-control}}.
+
+\begin{table}[H]
+    \centering
+    \caption{Boot Mode Control}
+    \label{tab:bootctrl-boot-mode-control}
+
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c | c | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{Boot Mode} & \textbf{GPIO26} & \textbf{GPIO27} & \textbf{GPIO28} \\\hline
+        \textbf{SPI Boot}\tnote{1} & Any value & Any value & \textbf{1}\tnote{1} \\\hline
+        Joint Download Boot 0\tnote{2} & Any value & 1 & 0 \\\hline
+        Joint Download Boot 1\tnote{3} & 0 & 0 & 0 \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] \textbf{Bold} marks the default value and configuration.
+            \item[2] Joint Download Boot 0 mode supports the following download methods:
+                \begin{itemize}
+                    \item USB-Serial-JTAG Download Boot
+                    \item UART Download Boot
+                \end{itemize}
+            \item[3] Joint Download Boot 1 mode supports the following download methods:
+                \begin{itemize}
+                    \item UART Download Boot
+                    \item SDIO Download Boot
+                \end{itemize}
+        \end{tablenotes}
+     \end{threeparttable}
+\end{table}
+
+In SPI Boot mode, the ROM bootloader loads and executes the program from SPI flash to boot the system.
+
+In Joint Download Boot 0 mode, users can download binary files into flash using UART0, USB, or SPI Slave interfaces. It is also possible to download binary files into SRAM and execute it from SRAM.
+
+In Joint Download Boot 1 mode, users can download binary files into flash using UART0 or SDIO interfaces. It is also possible to download binary files into SRAM and execute it from SRAM.
+
+Figure \ref{fig:boot_flow} \textit{\nameref{fig:boot_flow}} shows the detailed boot flow of the chip.
+
+\begin{figure}[H]
+    \centering
+    {\includegraphics[width=1.2\textwidth]{\modulefiles/figures/boot_flow.eps}}\\
+    \caption{Chip Boot Flow}
+    \label{fig:boot_flow}
+\end{figure}
+
+The following eFuse parameters control boot mode behaviors:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDISFORCEDOWNLOAD]{\textbf{EFUSE\_DIS\_FORCE\_DOWNLOAD}}
+    \begin{itemize}
+    \item If this eFuse is 0 (default), software can force switch the chip from SPI Boot mode to Joint Download Boot mode by setting register \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT} and triggering a CPU reset. In this case, hardware overwrites \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}[4:3] from "1x" to "01".
+
+    \item If this eFuse is 1, \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT} is disabled, and \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} can not be overwritten.
+    \end{itemize}
+
+    \item \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{\textbf{EFUSE\_DIS\_DOWNLOAD\_MODE}}
+
+    If this eFuse is 1, Joint Download Boot mode is disabled, and \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} will not be overwritten by \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT}.
+
+    \item \hyperref[fielddesc:EFUSEENABLESECURITYDOWNLOAD]{\textbf{EFUSE\_ENABLE\_SECURITY\_DOWNLOAD}}
+
+    If this eFuse is 1, Joint Download Boot mode only allows reading, writing, and erasing plaintext flash and does not support any SRAM or register operations. Ignore this eFuse if Joint Download Boot mode is disabled.
+
+    \item \hyperref[fielddesc:EFUSEDISDIRECTBOOT]{\textbf{EFUSE\_DIS\_DIRECT\_BOOT}}
+
+    If this eFuse is 1, Direct Boot mode is disabled.
+\end{itemize}
+
+USB Serial/JTAG Controller can also force switch the chip to Joint Download Boot mode from SPI Boot mode, and vice versa. For detailed information, please refer to Chapter \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}}.
+
+\subsection{SDIO Sampling and Driving Clock Edge Control}
+
+The strapping pins GPIO25 and MTDI can be used to decide on which clock edge to sample signals and drive output lines. See Table \ref{tab:bootctrl-sdio-strapping} \textit{\nameref{tab:bootctrl-sdio-strapping}}.
+
+\begin{table}[H]
+    \centering
+    \caption{SDIO Input Sampling Edge/Output Driving Edge Control}
+   \label{tab:bootctrl-sdio-strapping}
+
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{Edge behavior} & \textbf{GPIO25} & \textbf{MTDI} \\\hline
+
+        Falling edge sampling, falling edge output & 0 & 0 \\\hline
+        Falling edge sampling, rising edge output & 0 & 1 \\\hline
+        Rising edge sampling, falling edge output & 1 & 0 \\\hline
+        Rising edge sampling, rising edge output & 1 & 1 \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] GPIO25 and MTDI are floating by default, so above are not default configurations.
+        \end{tablenotes}
+
+     \end{threeparttable}
+\end{table}
+
+\subsection{ROM Messages Printing Control}
+
+During the boot process, the messages by the ROM code can be printed to:
+
+\begin{itemize}
+    \item \textbf{(Default) UART0 and USB Serial/JTAG controller}
+    \item UART0
+    \item USB Serial/JTAG controller
+    \end{itemize}
+
+To print ROM messages to \textbf{UART0} or \textbf{USB Serial/JTAG controller}, see the description below.
+
+\hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL} and GPIO27 control printing ROM messages to \textbf{UART0} as shown in Table \ref{tab:bootctrl-rom-code-printing-control} \textit{\nameref{tab:bootctrl-rom-code-printing-control}}.
+
+\begin{table}[H]
+    \centering
+    \caption{UART0 ROM Message Printing Control}
+    \label{tab:bootctrl-rom-code-printing-control}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c | c |}
+    \hline
+        \rowcolor{lightgray}
+    \textbf{UART0 ROM Message Printing} & \textbf{Register\tnote{2}} &   \textbf{eFuse\tnote{3}} &   \textbf{GPIO27} \\\hline
+    \textbf{ROM messages are always printed to UART0 during boot} & \multirow{6}*{\textbf{0}}   & \textbf{0 (0b00)} &  x\tnote{4}  \\\cline{1-1}\cline{3-4}
+    Print is enabled during boot & & \multirow{2}*{1 (0b01)}   & 0    \\\cline{1-1}\cline{4-4}
+    Print is disabled during boot &   & & 1 \\\cline{1-1}\cline{3-4}
+    Print is disabled during boot&  & \multirow{2}*{2 (0b10)}   & 0  \\\cline{1-1}\cline{4-4}
+    Print is enabled during boot &   & & 1 \\\cline{1-1}\cline{3-4}
+    Print is disabled during boot &   & 3 (0b11) &  x \\\hline
+    Print is disabled during boot &  1 & x & x \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] \textbf{Bold} marks the default value and configuration.
+            \item[2] Register: \hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE4\_REG}[0]
+            \item[3] eFuse: \hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL}
+            \item[4] x: x indicates that the value has no effect on the result and can be ignored.
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+
+\hyperref[fielddesc:EFUSEDISUSBSERIALJTAGROMPRINT]{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT} controls the printing to \textbf{USB Serial/JTAG controller} as shown in Table \ref{tab:bootctrl-usb-rom-msg-printing-control} \textit{\nameref{tab:bootctrl-usb-rom-msg-printing-control}}.
+
+\begin{table}[H]
+    \centering
+    \caption{USB Serial/JTAG ROM Message Printing Control}
+    \label{tab:bootctrl-usb-rom-msg-printing-control}
+
+    \begin{threeparttable}
+
+    \begin{tabular}{ | L{3cm} | c |}
+    \hline
+
+    \rowcolor{lightgray}
+    \textbf{USB Serial/JTAG ROM Message Printing} & \hyperref[fielddesc:EFUSEDISUSBSERIALJTAGROMPRINT]{\textbf{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT}} \\\hline
+
+    \textbf{Enabled} & \textbf{0} \\\hline
+    \multirow{2}*{Disabled} & 1 \\\cline{2-2}
+     & Ignored \\\hline
+
+    \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] \textbf{Bold} marks the default value and configuration.
+        \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+\subsection{JTAG Signal Source Control}
+
+The strapping pin GPIO7 can be used to control the JTAG signal source during the early boot process. This pin does not have internal pull-up or pull-down resistors, so its strapping value must be controlled by an external circuit that must not be in a high-impedance state.
+
+GPIO7 controls the source of JTAG signals together with \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}, \hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG} and \hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\_SEL\_ENABLE}. See Table \ref{tab:bootctrl-jtag-signal-src-control} \textit{\nameref{tab:bootctrl-jtag-signal-src-control}}.
+
+\begin{table}[H]
+    \centering
+    \caption{JTAG Signal Source Control}
+    \label{tab:bootctrl-jtag-signal-src-control}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c | c | c | }
+    \hline
+
+    \rowcolor{lightgray}
+    \textbf{JTAG Signal Source} & \textbf{eFuse 1\tnote{2}} &  \textbf{eFuse 2\tnote{3}} & \textbf{eFuse 3\tnote{4}} & \textbf{GPIO7} \\\hline
+
+    \multirow{2}*{\textbf{USB Serial/JTAG Controller}}\tnote{6} & \multirow{5}*{\textbf{0}} & \multirow{3}*{\textbf{0}} & \textbf{0} &  x\tnote{5} \\\cline{4-5}
+     &   &   & \multirow{2}*{1}   & 1 \\\cline{1-1}\cline{5-5}
+    \multirow{3}*{JTAG pins MTDI, MTCK, MTMS, and MTDO} &   &   & & 0 \\\cline{3-5}
+     &  & x & \multirow{5}*{x} & \multirow{5}*{x} \\\cline{3-3}
+     &  & 1 &                   &  \\\cline{1-3}
+    USB Serial/JTAG Controller\tnote{6} & \multirow{3}*{1} & 0 &  &  \\\cline{1-1}\cline{3-3}
+    \multirow{2}*{JTAG is disabled} &  & x &  &  \\\cline{3-3}
+     &  & 1 &  &  \\\hline
+    \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] \textbf{Bold} marks the default value and configuration.
+            \item[2] eFuse 1: \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}
+            \item[3] eFuse 2: \hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG}
+            \item[4] eFuse 3: \hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\_SEL\_ENABLE}
+            \item[5] x: x indicates that the value has no effect on the result and can be ignored.
+            \item[6] In Joint Download Boot 1 mode, the USB Serial/JTAG controller is forcibly disabled, and the JTAG signal only comes from JTAG pins. If PAD\_JTAG is also disabled, then JTAG is disabled.
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\end{document}

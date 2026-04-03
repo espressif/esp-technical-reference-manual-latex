@@ -1,0 +1,392 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./36-PCNT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{pcnt}{}
+\chapter{Pulse Count Controller (PCNT)}
+\label{mod:pcnt}
+
+
+The pulse count controller (PCNT) is designed to count input pulses. It can increment or decrement a pulse counter value by keeping track of rising (positive) or falling (negative) edges of the input pulse signal. The PCNT has four independent pulse counters called units, which have their groups of registers. There is only one clock in PCNT, which is APB\_CLK. In this chapter, \regindex{n} denotes the number of a unit from 0 \verb+~+ 3.
+
+Each unit includes two channels (ch0 and ch1) which can independently increment or decrement its pulse counter value. The remainder of the chapter will mostly focus on channel 0 (ch0) as the functionality of the two channels is identical.
+
+As shown in Figure \ref{fig:pcnt-block-diagram}, each channel has two input signals:
+\begin{enumerate}
+    \item One input pulse signal (e.g. sig\_ch0\_u\regindex{n}, the input pulse signal for ch0 of unit \regindex{n} ch0)
+    \item One control signal (e.g. ctrl\_ch0\_u\regindex{n}, the control signal for ch0 of unit \regindex{n} ch0)
+\end{enumerate}
+
+\begin{figure}[H]
+\includegraphics[width=0.4\textwidth]{\modulefiles/figures/pcnt-block-diagram-rst.eps}
+\centering
+\caption{PCNT Block Diagram}
+\label{fig:pcnt-block-diagram}
+\end{figure}
+
+\section{Features}
+A PCNT has the following features:
+\begin{itemize}
+    \item Four independent pulse counters (units) that count from 1 to 65535
+    \item Each unit consists of two independent channels sharing one pulse counter
+    \item All channels have input pulse signals (e.g. sig\_ch0\_u\regindex{n}) with their corresponding control signals (e.g. ctrl\_ch0\_u\regindex{n})
+    \item Independently filter glitches of input pulse signals (sig\_ch0\_u\regindex{n} and sig\_ch1\_u\regindex{n}) and control signals (ctrl\_ch0\_u\regindex{n} and ctrl\_ch1\_u\regindex{n}) on each unit
+    \item Each channel has the following parameters:
+        \begin{enumerate}
+            \item Selection between counting on positive or negative edges of the input pulse signal
+            \item Configuration to Increment, Decrement, or Disable counter mode for control signal's high and low states
+            \item Step count alert triggered by setting the upcount/downcount step threshold
+            \item Clearing of the pulse count controller value by setting the clear register or sending a clear signal through GPIO input
+            \item Generation and recording of a corresponding event signal for each counter mode, with the ability to report it to the interrupt task.
+        \end{enumerate}
+    \item Maximum frequency of input pulses: $\frac{f_{APB\_CLK}}{2}$
+\end{itemize}
+
+\section{Functional Description}\label{sub:pcnt-func-descr}
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/pcnt_arch_updated_20250609}
+\centering
+\caption{PCNT Unit Architecture}
+\label{fig:pcnt-arch}
+\end{figure}
+
+Figure \ref{fig:pcnt-arch} shows PCNT's architecture. As stated above, ctrl\_ch0\_u\regindex{n} is the control signal for ch0 of unit \regindex{n}. Its high and low states can be assigned with different counter modes to count the channel's input pulse signal sig\_ch0\_u\regindex{n} on negative or positive edges. The available counter modes are as follows:
+
+\begin{itemize}
+\item Increment mode: When a channel detects an active edge of sig\_ch0\_u\regindex{n} (the active edge can be configured by software), the counter value pulse\_cnt increases by 1. Upon reaching \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}, pulse\_cnt is cleared. If the channel's counter mode is changed or if \hyperref[fielddesc:PCNTCNTPAUSEUN]{PCNT\_CNT\_PAUSE\_U\regindex{n}} is set to 1 before pulse\_cnt reaches \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}, then pulse\_cnt freezes and its counter mode changes.
+
+\item Decrement mode: When a channel detects an active edge of sig\_ch0\_u\regindex{n} (the active edge can be configured by software), the counter value pulse\_cnt decreases by 1. Upon reaching \hyperref[fielddesc:PCNTCNTLLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}}, pulse\_cnt is cleared. If the channel's counter mode is changed or if \hyperref[fielddesc:PCNTCNTPAUSEUN]{PCNT\_CNT\_PAUSE\_U\regindex{n}} is set to 1 before pulse\_cnt reaches \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}}, then pulse\_cnt freezes and its counter mode changes.
+
+\item Disable mode: Counting is disabled, and the counter value pulse\_cnt freezes.
+\end{itemize}
+
+
+Table \ref{tab:pcnt-positive-low} to Table  \ref{tab:pcnt-negative-high} provide information on how to configure the counter mode for channel 0.
+
+\begin{table}[H]
+\centering
+\caption{Counter Mode. Positive Edge of Input Pulse Signal. Control Signal in Low State}
+\label{tab:pcnt-positive-low}
+\begin{tabular}{|l|l|l|}
+\hline
+\rowcolor{lightgray}
+\hyperref[fielddesc:PCNTCH0POSMODEUN]{PCNT\_CH0\_POS\_MODE\_U\regindex{n}} & \hyperref[fielddesc:PCNTCH0LCTRLMODEUN]{PCNT\_CH0\_LCTRL\_MODE\_U\regindex{n}} & Counter Mode \\ \hline
+\multirow{3}{*}{1}             & 0                                     & Increment    \\ \cline{2-3}
+                               & 1                                     & Decrement    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+\multirow{3}{*}{2}             & 0                                     & Decrement    \\ \cline{2-3}
+                               & 1                                     & Increment    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+Others                         & N/A                                   & Disable      \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Counter Mode. Positive Edge of Input Pulse Signal. Control Signal in High State}
+\label{tab:pcnt-positive-high}
+\begin{tabular}{|l|l|l|}
+\hline
+\rowcolor{lightgray}
+\hyperref[fielddesc:PCNTCH0POSMODEUN]{PCNT\_CH0\_POS\_MODE\_U\regindex{n}} & \hyperref[fielddesc:PCNTCH0HCTRLMODEUN]{PCNT\_CH0\_HCTRL\_MODE\_U\regindex{n}} & Counter Mode \\ \hline
+\multirow{3}{*}{1}             & 0                                     & Increment    \\ \cline{2-3}
+                               & 1                                     & Decrement    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+\multirow{3}{*}{2}             & 0                                     & Decrement    \\ \cline{2-3}
+                               & 1                                     & Increment    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+Others                         & N/A                                   & Disable      \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Counter Mode. Negative Edge of Input Pulse Signal. Control Signal in Low State}
+\label{tab:pcnt-negative-low}
+\begin{tabular}{|l|l|l|}
+\hline
+\rowcolor{lightgray}
+\hyperref[fielddesc:PCNTCH0NEGMODEUN]{PCNT\_CH0\_NEG\_MODE\_U\regindex{n}} & \hyperref[fielddesc:PCNTCH0LCTRLMODEUN]{PCNT\_CH0\_LCTRL\_MODE\_U\regindex{n}} & Counter Mode \\ \hline
+\multirow{3}{*}{1}             & 0                                     & Increment    \\ \cline{2-3}
+                               & 1                                     & Decrement    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+\multirow{3}{*}{2}             & 0                                     & Decrement    \\ \cline{2-3}
+                               & 1                                     & Increment    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+Others                         & N/A                                   & Disable      \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Counter Mode. Negative Edge of Input Pulse Signal. Control Signal in High State}
+\label{tab:pcnt-negative-high}
+\begin{tabular}{|l|l|l|}
+\hline
+\rowcolor{lightgray}
+\hyperref[fielddesc:PCNTCH0NEGMODEUN]{PCNT\_CH0\_NEG\_MODE\_U\regindex{n}} & \hyperref[fielddesc:PCNTCH0HCTRLMODEUN]{PCNT\_CH0\_HCTRL\_MODE\_U\regindex{n}} & Counter Mode \\ \hline
+\multirow{3}{*}{1}             & 0                                     & Increment    \\ \cline{2-3}
+                               & 1                                     & Decrement    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+\multirow{3}{*}{2}             & 0                                     & Decrement    \\ \cline{2-3}
+                               & 1                                     & Increment    \\ \cline{2-3}
+                               & Others                                & Disable      \\ \hline
+Others                         & N/A                                   & Disable      \\ \hline
+\end{tabular}
+\end{table}
+
+Each unit has one filter for all its control and input pulse signals. The filter can be enabled with the bit \hyperref[fielddesc:PCNTFILTERENUN]{PCNT\_FILTER\_EN\_U\regindex{n}}. It monitors the signals and ignores all the noise, i.e. the glitches with pulse widths shorter than \hyperref[fielddesc:PCNTFILTERTHRESUN]{PCNT\_FILTER\_THRES\_U\regindex{n}} APB clock cycles in length.
+
+
+As shown on Figure \ref{fig:pcnt-arch}, each unit has two channels which process different input pulse signals and increase or decrease values via their respective inc\_dec modules, then the two channels send these values to the adder module which has a 16-bit wide signed register. This adder can be suspended by setting \hyperref[fielddesc:PCNTCNTPAUSEUN]{PCNT\_CNT\_PAUSE\_U\regindex{n}}, and cleared by setting \hyperref[fielddesc:PCNTPULSECNTRSTUN]{PCNT\_PULSE\_CNT\_RST\_U\regindex{n}}.
+
+The PCNT has seven count event watchpoints that share one interrupt. The interrupt can be enabled or disabled by interrupt enable signals of each individual count event watchpoint.
+Here are the trigger methods for the count events that can be configured and reported by the PCNT, along with their corresponding interrupt events:
+
+
+\begin{itemize}
+    \item Maximum count value: When pulse\_cnt reaches \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}, a high limit interrupt is triggered and \hyperref[fielddesc:PCNTCNTTHRHLIMLATUN]{PCNT\_CNT\_THR\_H\_LIM\_LAT\_U\regindex{n}} is high.
+    \item Minimum count value: When pulse\_cnt reaches \hyperref[fielddesc:PCNTCNTLLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}}, a low limit interrupt is triggered and \hyperref[fielddesc:PCNTCNTTHRLLIMLATUN]{PCNT\_CNT\_THR\_L\_LIM\_LAT\_U\regindex{n}} is high.
+    \item Two threshold values: When pulse\_cnt equals either \hyperref[fielddesc:PCNTCNTTHRES0UN]{PCNT\_CNT\_THRES0\_U\regindex{n}} or \hyperref[fielddesc:PCNTCNTTHRES1UN]{PCNT\_CNT\_THRES1\_U\regindex{n}}, an interrupt is triggered and either \hyperref[fielddesc:PCNTCNTTHRTHRES0LATUN]{PCNT\_CNT\_THR\_THRES0\_LAT\_U\regindex{n}} or \hyperref[fielddesc:PCNTCNTTHRTHRES1LATUN]{PCNT\_CNT\_THR\_THRES1\_LAT\_U\regindex{n}} is high respectively.
+    \item Zero: When pulse\_cnt is 0, an interrupt is triggered and \hyperref[fielddesc:PCNTCNTTHRZEROLATUN]{PCNT\_CNT\_THR\_ZERO\_LAT\_U\regindex{n}} is valid.
+    \item Upcount Step Threshold: If \hyperref[fielddesc:PCNTDALTACHANGEENUN]{PCNT\_DALTA\_CHANGE\_EN\_U\regindex{n}} is set to high, when pulse\_cnt exceeds \hyperref[fielddesc:PCNTCNTHSTEPUN]{PCNT\_CNT\_H\_STEP\_U\regindex{n}} during incrementing, an overflow interrupt is generated, and \hyperref[fielddesc:PCNTCNTTHRHSTEPLATUN]{PCNT\_CNT\_THR\_H\_STEP\_LAT\_U\regindex{n}} is set to high.
+
+   For example, if \hyperref[fielddesc:PCNTCNTHSTEPUN]{PCNT\_CNT\_H\_STEP\_U\regindex{n}} is set to 100, an interrupt will be triggered each time the pulse\_cnt reaches integer multiples such as 100, 200, 300, and so on. This type of interrupt can be used to periodically monitor whether the number of input pulses has reached a specified multiple, facilitating functions such as quantitative sampling, data statistics, or regular event handling.
+    \item Downcount Step Threshold: If \hyperref[fielddesc:PCNTDALTACHANGEENUN]{PCNT\_DALTA\_CHANGE\_EN\_U\regindex{n}} is set to high, when pulse\_cnt falls below \hyperref[fielddesc:PCNTCNTLSTEPUN]{PCNT\_CNT\_L\_STEP\_U\regindex{n}} during decrementing, an overflow interrupt is generated, and \hyperref[fielddesc:PCNTCNTTHRLSTEPLATUN]{PCNT\_CNT\_THR\_L\_STEP\_LAT\_U\regindex{n}} is set to high.
+
+    For example, if \hyperref[fielddesc:PCNTDALTACHANGEENUN]{PCNT\_DALTA\_CHANGE\_EN\_U\regindex{n}} is set to 100, an interrupt will be triggered each time the pulse\_cnt decreases to integer multiples such as 100, 200, 300, and so on. This type of interrupt is suitable for periodically monitoring whether the count has decreased by a specified multiple, facilitating quantitative sampling, data statistics, or regular event handling.
+\end{itemize}
+
+If \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}} and/or \hyperref[fielddesc:PCNTCNTLLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}} are reconfigured by software when PCNT is working, the new configuration will take effect after pulse\_cnt counts to any of the above seven watchpoints; if \hyperref[fielddesc:PCNTCNTTHRES0UN]{PCNT\_CNT\_THRES0\_U\regindex{n}},  \hyperref[fielddesc:PCNTCNTTHRES1UN]{PCNT\_CNT\_THRES1\_U\regindex{n}}, \hyperref[fielddesc:PCNTCNTHSTEPUN]{PCNT\_CNT\_H\_STEP\_U\regindex{n}} and/or \hyperref[fielddesc:PCNTCNTLSTEPUN]{PCNT\_CNT\_L\_STEP\_U\regindex{n}} are reconfigured by software, the new configuration will take effect immediately.
+
+\section{Applications}
+
+In each unit, channel 0 and channel 1 can be configured to work independently or together. The three subsections below provide details of channel 0 incrementing independently, channel 0 decrementing independently, and channel 0 and channel 1 incrementing together. For other working modes not elaborated in this section (e.g. channel 1 incrementing/decremeting independently, or one channel incrementing while the other decrementing), reference can be made to these three subsections.
+
+\subsection{Channel 0 Incrementing Independently} \label{sec:pcnt-func-descr-one-channel-inc}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/pulse_inc}}
+\centering
+\caption{Channel 0 Up Counting Diagram}
+\label{fig:pcnt-inc}
+\end{figure}
+
+Figure \ref{fig:pcnt-inc} illustrates how channel 0 is configured to increment independently on the positive edge of sig\_ch0\_u\regindex{n} while channel 1 is disabled (see subsection \ref{sub:pcnt-func-descr} for how to disable channel 1). The configuration of channel 0 is shown below.
+
+\begin{itemize}
+    \item \hyperref[fielddesc:PCNTCH0LCTRLMODEUN]{PCNT\_CH0\_LCTRL\_MODE\_U\regindex{n}}=0: When ctrl\_ch0\_u\regindex{n} is low, the counter mode specified for the low state turns on, in this case it is Increment mode.
+    \item \hyperref[fielddesc:PCNTCH0HCTRLMODEUN]{PCNT\_CH0\_HCTRL\_MODE\_U\regindex{n}}=2: When ctrl\_ch0\_u\regindex{n} is high, the counter mode specified for the low state turns on, in this case it is Disable mode.
+    \item \hyperref[fielddesc:PCNTCH0POSMODEUN]{PCNT\_CH0\_POS\_MODE\_U\regindex{n}}=1: The counter increments on the positive edge of sig\_ch0\_u\regindex{n}.
+    \item \hyperref[fielddesc:PCNTCH0NEGMODEUN]{PCNT\_CH0\_NEG\_MODE\_U\regindex{n}}=0: The counter idles on the negative edge of sig\_ch0\_u\regindex{n}.
+    \item \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}=5: When pulse\_cnt counts up to \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}, it is cleared.
+\end{itemize}
+
+
+\subsection{Channel 0 Decrementing Independently} \label{sec:pcnt-one-channel-dec}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/pulse_dec}}
+\centering
+\caption{Channel 0 Down Counting Diagram}
+\label{fig:pcnt-dec}
+\end{figure}
+
+Figure \ref{fig:pcnt-dec} illustrates how channel 0 is configured to decrement independently on the positive edge of sig\_ch0\_u\regindex{n} while channel 1 is disabled. The configuration of channel 0 in this case differs from that in Figure \ref{fig:pcnt-inc} in the following aspects:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:PCNTCH0POSMODEUN]{PCNT\_CH0\_POS\_MODE\_U\regindex{n}}=2: the counter decrements on the positive edge of sig\_ch0\_u\regindex{n}.
+    \item \hyperref[fielddesc:PCNTCNTLLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}}=-5: when pulse\_cnt counts down to \hyperref[fielddesc:PCNTCNTLLIMUN]{PCNT\_CNT\_L\_LIM\_U\regindex{n}}, it is cleared.
+\end{itemize}
+
+\subsection{Channel 0 and Channel 1 Incrementing Together}\label{sec:pcnt-two-channels-inc}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/pulse_add_2}}
+\centering
+\caption{Two Channels Up Counting Diagram}
+\label{fig:pcnt-two-inc}
+\end{figure}
+
+
+Figure \ref{fig:pcnt-two-inc} illustrates how channel 0 and channel 1 are configured to increment on the positive edge of sig\_ch0\_u\regindex{n} and sig\_ch1\_u\regindex{n} respectively at the same time. It can be seen in Figure \ref{fig:pcnt-two-inc} that control signal ctrl\_ch0\_u\regindex{n} and ctrl\_ch1\_u\regindex{n} have the same waveform, so as input pulse signal sig\_ch0\_u\regindex{n} and sig\_ch1\_u\regindex{n}. The configuration procedure is shown below.
+
+\begin{itemize}
+    \item For channel 0:
+    \begin{itemize}
+        \item \hyperref[fielddesc:PCNTCH0LCTRLMODEUN]{PCNT\_CH0\_LCTRL\_MODE\_U\regindex{n}}=0: When ctrl\_ch0\_u\regindex{n} is low, the counter mode specified for the low state turns on, in this case it is Increment mode.
+
+        \item \hyperref[fielddesc:PCNTCH0HCTRLMODEUN]{PCNT\_CH0\_HCTRL\_MODE\_U\regindex{n}}=2: When ctrl\_ch0\_u\regindex{n} is high, the counter mode specified for the low state turns on, in this case it is Disable mode.
+
+        \item \hyperref[fielddesc:PCNTCH0POSMODEUN]{PCNT\_CH0\_POS\_MODE\_U\regindex{n}}=1: The counter increments on the positive edge of sig\_ch0\_u\regindex{n}.
+
+        \item \hyperref[fielddesc:PCNTCH0NEGMODEUN]{PCNT\_CH0\_NEG\_MODE\_U\regindex{n}}=0: The counter idles on the negative edge of sig\_ch0\_u\regindex{n}.
+
+    \end{itemize}
+
+    \item For channel 1:
+    \begin{itemize}
+        \item \hyperref[fielddesc:PCNTCH1LCTRLMODEUN]{PCNT\_CH1\_LCTRL\_MODE\_U\regindex{n}}=0: When ctrl\_ch1\_u\regindex{n} is low, the counter mode specified for the low state turns on, in this case it is Increment mode.
+
+        \item \hyperref[fielddesc:PCNTCH1HCTRLMODEUN]{PCNT\_CH1\_HCTRL\_MODE\_U\regindex{n}}=2: When ctrl\_ch1\_u\regindex{n} is high, the counter mode specified for the low state turns on, in this case it is Disable mode.
+
+        \item \hyperref[fielddesc:PCNTCH1POSMODEUN]{PCNT\_CH1\_POS\_MODE\_U\regindex{n}}=1: The counter increments on the positive edge of sig\_ch1\_u\regindex{n}.
+
+        \item \hyperref[fielddesc:PCNTCH1NEGMODEUN]{PCNT\_CH1\_NEG\_MODE\_U\regindex{n}}=0: The counter idles on the negative edge of sig\_ch1\_u\regindex{n}.
+
+    \end{itemize}
+
+    \item \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}=10: When pulse\_cnt counts up to \hyperref[fielddesc:PCNTCNTHLIMUN]{PCNT\_CNT\_H\_LIM\_U\regindex{n}}, it is cleared.
+
+\end{itemize}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{pcnt-reg-summ}{}
+\section{Register Summary}
+\label{sec:pcnt-reg-summ}
+
+The addresses in this section are relative to \textcolor{red}{Pulse Count Controller} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/36-PCNT-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to \textcolor{red}{Pulse Count Controller} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/36-PCNT-reg__EN}
+
+
+\end{document}

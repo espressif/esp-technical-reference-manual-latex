@@ -1,0 +1,387 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./24-HMAC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{hmac}{}
+\chapter{HMAC Accelerator (HMAC)}
+\label{mod:hmac}
+
+\section{Overview}
+
+The Hash-based Message Authentication Code (HMAC) module computes Message Authentication Codes (MACs) using hash algorithm SHA-256 and keys as described in RFC 2104. The 256-bit HMAC key is stored in an eFuse key block and can be set as read-protected, i.\,e., the key is not accessible from outside the HMAC accelerator.
+
+\section{Feature List}
+
+\begin{itemize}
+    \item Standard HMAC-SHA-256 algorithm
+    \item HMAC-SHA-256 calculation based on key in eFuse,
+    \begin{itemize}
+    \item whose result cannot be accessed by software in downstream mode for high security
+    \item whose result can be accessed by software in upstream mode
+    \end{itemize}
+    \item Generates required keys for the RSA Digital Signature Peripheral (RSA\_DS) in downstream mode
+    \item Re-enables soft-disabled JTAG in downstream mode
+\end{itemize}
+
+\section{Functional Description}
+
+The HMAC module operates in two modes: upstream mode and downstream mode. In upstream mode, users provide the HMAC message and read back the calculation result. In downstream mode, the HMAC module provides input to two possible other internal hardware modules: On the one hand, an HMAC can be used to enable JTAG after JTAG has been temporarily disabled before. On the other hand, an HMAC can be used as the decryption key for Digital Signature parameters stored in the memory for the RSA\_DS peripheral. Furthermore, the calculations happen internally and automatically in downstream mode, so that confidentiality of any key and derived key material is ensured, given correct configuration.
+
+\begin{tiplisting}
+After the reset signal being released, the HMAC module will check whether the RSA\_DS\_KEY exists in the eFuse. If the key exists, the HMAC module will enter downstream RSA\_DS\_KEY derivation mode and finish the key calculation automatically. This process is automatically completed by hardware and does not require software participation. When the downstream operation after reset is completed, the HMAC will automatically return to the idle state.
+\end{tiplisting}
+
+\subsection{Upstream Mode}
+
+To calculate the HMAC value in upstream mode, users should perform the following steps:
+
+\begin{enumerate}
+    \item Initialize the HMAC module and enter upstream mode.
+    \item Write the correctly padded message to the HMAC, one block at a time.
+    \item Read back the result from HMAC.
+\end{enumerate}
+
+For details of this process, please see Section \ref{sec:hmac-process-detailed}.
+
+\begin{tiplisting}
+Common use cases for the upstream mode are challenge-response protocols supporting HMAC-SHA-256. Assume the two entities in the challenge-response protocol are A and B respectively, and the data message they expect to exchange is M. The general authentication process of this protocol is as follows:
+
+\begin{itemize}
+    \item A calculates a unique random number $M$.
+    \item A sends M to B.
+    \item B calculates the HMAC (through M and KEY) and sends the result to A.
+    \item A calculates the HMAC (through M and KEY) internally.
+    \item A compares the two results. If the results are the same, then the identity of B is authenticated.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Downstream Mode - JTAG Enable Feature}
+
+JTAG debugging can be disabled by eFuse in a way which allows later re-enabling using the HMAC module. (For more details, please see Chapter \ref{mod:efuse} \textit{\nameref{mod:efuse}}.) The HMAC module will expect the user to supply the HMAC result for one of the eFuse keys. The HMAC module will check whether the supplied HMAC matches the one calculated from the chosen key. If both HMACs are the same, JTAG will be enabled until the user calls the HMAC module to clear the results and consequently disable JTAG again.
+
+To re-enable JTAG, users should perform the following steps:
+
+\begin{enumerate}
+\item Enable the HMAC module by initializing clock and reset signals of HMAC, and enter downstream JTAG enable mode by configuring \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG}. Then, wait for the calculation to complete. Please see Section \ref{sec:hmac-process-detailed} for more details.
+\item Write 1 to the \hyperref[regdesc:HMACSOFTJTAGCTRLREG]{HMAC\_SOFT\_JTAG\_CTRL\_REG} register to enter JTAG re-enable mode.
+\item Write the 256-bit HMAC value to register \hyperref[regdesc:HMACWRJTAGREG]{HMAC\_WR\_JTAG\_REG}. This value is obtained by performing a local HMAC calculation from the 32-byte 0x00 using SHA-256 and the key that has been written to the eFuse. It needs to be written 8 times and 32-bit each time in big-endian word order.
+\item If the HMAC result calculated from the key in the eFuse matches the value that users wrote in step 3, then JTAG is re-enabled. Otherwise, JTAG remains disabled.
+\item After writing 1 to \hyperref[regdesc:HMACSETINVALIDATEJTAGREG]{HMAC\_SET\_INVALIDATE\_JTAG\_REG} or resetting the chip, JTAG will be disabled. If users want to re-enable JTAG again, they need to repeat the above steps again.
+\end{enumerate}
+
+\subsection{Downstream Mode - RSA Digital Signature Peripheral and Key Derivation Feature}
+
+The RSA Digital Signature Peripheral (RSA\_DS) module encrypts its parameters using the AES-CBC algorithm. The HMAC module is used as a Key Derivation Function (KDF) to derive the AES key to decrypt these parameters (parameter decryption key).
+
+Before starting the RSA\_DS module, users need to obtain the parameter decryption key for the RSA\_DS module through HMAC calculation. For more information, please see Chapter \ref{mod:digsig} \textit{\nameref{mod:digsig}}. After the chip is powered on, the HMAC module will check whether the key required to calculate the parameter decryption key has been burned in the eFuse block. If the key has been burned, HMAC module will automatically enter the downstream digital signature algorithm mode and complete the HMAC calculation based on the chosen key.
+
+\section{HMAC eFuse Configuration}
+\label{sec:hmac-config-function}
+
+Each HMAC key burned into an eFuse block has a key purpose, specifying for which functionality the key can be used. The HMAC module will not accept a key with a non-matching purpose for any functionality. The HMAC module provides three different functionalities: re-enabling JTAG, RSA\_DS KDF in downstream mode, and pure HMAC calculation in upstream mode. For each functionality, there exists a corresponding key purpose, listed in Table \ref{tab:hmac-key-purpose}. Additionally, another purpose specifies a key which may be used for re-enabling JTAG as well as for serving as RSA\_DS KDF.
+
+Before enabling HMAC to do calculations, user should make sure the key to be used has been burned in eFuse by reading the registers EFUSE\_KEY\_PURPOSE\_x (We have a total of 6 keys in eFuse, so the value of x is 0 \verb+~+ 5. Among which, \hyperref[fielddesc:EFUSEKEYPURPOSE0]{EFUSE\_KEY\_PURPOSE\_0} \verb+~+ \hyperref[fielddesc:EFUSEKEYPURPOSE1]{EFUSE\_KEY\_PURPOSE\_1} belong to the register \hyperref[regdesc:EFUSERDREPEATDATA1REG]{EFUSE\_RD\_REPEAT\_DATA1\_REG}, and \hyperref[fielddesc:EFUSEKEYPURPOSE2]{EFUSE\_KEY\_PURPOSE\_2} \verb+~+ \hyperref[fielddesc:EFUSEKEYPURPOSE5]{EFUSE\_KEY\_PURPOSE\_5} belong to the register \hyperref[regdesc:EFUSERDREPEATDATA2REG]{EFUSE\_RD\_REPEAT\_DATA2\_REG}) from \ref{mod:efuse} \textit{\nameref{mod:efuse}}. Take upstream mode as an example, if there is no EFUSE\_KEY\_PURPOSE\_HMAC\_UP in EFUSE\_KEY\_PURPOSE\_0 \verb+~+ 5, it means there is no key in eFuse that can be used for the HMAC upstream mode. Users can burn a key to eFuse as follows:
+
+\begin{enumerate}
+    \item Prepare a secret 256-bit HMAC key and burn the key to an empty eFuse block $y$. As there are 6 blocks for storing a key in eFuse and the numbers of those blocks range from 4 to 9, the value of $y$ is 4 \verb+~+ 9. Hence, when talking about key0, it means eFuse block4. Then, program the purpose to EFUSE\_KEY\_PURPOSE\_$(y-4)$. Take upstream mode as an example: after programming the key, the user should program EFUSE\_KEY\_PURPOSE\_HMAC\_UP (corresponding value is 8) to EFUSE\_KEY\_PURPOSE\_$(y-4)$. Please see Chapter \ref{mod:efuse} \textit{\nameref{mod:efuse}} on how to program eFuse keys.
+    \item If needed, configure this eFuse key block to be read protected, so that users cannot read its value. A copy of this key should be kept by any party who needs to verify this device.
+\end{enumerate}
+
+Please note that the key whose purpose is EFUSE\_KEY\_PURPOSE\_HMAC\_DOWN\_ALL can be used for both re-enabling JTAG or RSA\_DS.
+
+\input{\modulefiles/tables/HMAC-key-purpose__EN}
+
+\textbf{Select eFuse Key Blocks and HMAC Purposes}
+\label{sec:hmac-config-purposes}
+
+The eFuse controller provides six key blocks, i.e., KEY0 \verb+~+ 5. To select a particular KEY\textcolor{red}{n} for an HMAC calculation, write the key number \textcolor{red}{n} to register \hyperref[regdesc:HMACSETPARAKEYREG]{HMAC\_SET\_PARA\_KEY\_REG}.
+
+Write a correct purpose to register \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG} (see Section \ref{sec:hmac-process-detailed}). Note that the purpose of the key has also been programmed to eFuse memory. Only when the configured HMAC purpose matches the defined purpose of KEY\textcolor{red}{n}, the HMAC module will execute the configured calculation. Otherwise, it will return a matching error and stop the current calculation.
+
+For example, suppose a user selects KEY3 for HMAC calculation, and the value programmed to \hyperref[fielddesc:EFUSEKEYPURPOSE3]{EFUSE\_KEY\_PURPOSE\_3} is 6 (EFUSE\_KEY\_PURPOSE\_HMAC\_DOWN\_JTAG). Based on Table \ref{tab:hmac-key-purpose}, KEY3 can be used to re-enable JTAG. If the value written to register \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG} is also 6, then the HMAC module will start the process to re-enable JTAG.
+
+\textbf{Select the Key from the Key Manager\\}
+\label{sec:hmac-config-km-key}
+
+Users can deploy the HMAC key in the key manager. To select this key from the key manager, write the key number \textcolor{red}{7} to register \hyperref[regdesc:HMACSETPARAKEYREG]{HMAC\_SET\_PARA\_KEY\_REG}. When users choose the HMAC key from the key manager, the HMAC purpose will automatically be "HMAC Calculation", and any configuration to register \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG} takes no effect.
+
+\section{HMAC Process (Detailed)}
+\label{sec:hmac-process-detailed}
+
+The process for users to call HMAC in \chipname{} is as follows:
+
+\subsection{Enable HMAC module}
+\label{sec:hmac-enable-module}
+
+    \begin{enumerate}
+        \item Set the peripheral clock bits for HMAC and SHA peripherals in register \hyperref[fielddesc:PCRHMACCLKEN]{PCR\_HMAC\_CLK\_EN}, and clear the corresponding peripheral reset bits in register \hyperref[fielddesc:PCRHMACRSTEN]{PCR\_HMAC\_RST\_EN}. For information on those registers, please see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+        \item Write 1 to register \hyperref[regdesc:HMACSETSTARTREG]{HMAC\_SET\_START\_REG}.
+    \end{enumerate}
+
+\subsection{Configure HMAC keys and key purposes}
+
+    \begin{enumerate}
+        \item Write the key purpose \begin{math}m\end{math} to register \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG}. The possible key purpose values are shown in Table \ref{tab:hmac-key-purpose}. For more information, please refer to Section \ref{sec:hmac-config-purposes}.
+        \item Select KEY\textcolor{red}{n} in eFuse memory as the key by writing \textcolor{red}{n} (ranges from 0 to 5, and 7) to register\\ \hyperref[regdesc:HMACSETPARAKEYREG]{HMAC\_SET\_PARA\_KEY\_REG}. For more information, please refer to Section \ref{sec:hmac-config-purposes}.
+        \item Write 1 to register \hyperref[regdesc:HMACSETPARAFINISHREG]{HMAC\_SET\_PARA\_FINISH\_REG} to complete the configuration.
+        \item Read register \hyperref[regdesc:HMACQUERYERRORREG]{HMAC\_QUERY\_ERROR\_REG}. If its value is 1, it means the purpose of the selected block does not match the configured key purpose and the calculation will not proceed. If its value is 0, it means the purpose of the selected block matches the configured key purpose, and then the calculation can proceed.
+        \item When the value of \hyperref[regdesc:HMACSETPARAPURPOSEREG]{HMAC\_SET\_PARA\_PURPOSE\_REG} is not 8, it means the HMAC module is in downstream mode, proceed with \ref{sec:hmac-downstream-process}. When the value is 8, it means the HMAC module is in upstream mode, proceed with \ref{sec:hmac-upstream-process}.
+    \end{enumerate}
+
+\subsection{Downstream mode process}
+\label{sec:hmac-downstream-process}
+
+    \begin{enumerate}
+        \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+        \item To clear the result and make further usage of the dependent hardware (JTAG or RSA\_DS) impossible, write 1 to either register \hyperref[regdesc:HMACSETINVALIDATEJTAGREG]{HMAC\_SET\_INVALIDATE\_JTAG\_REG} to clear the result generated by the JTAG key; or to register \hyperref[regdesc:HMACSETINVALIDATEDSREG]{HMAC\_SET\_INVALIDATE\_DS\_REG} to clear the result generated by RSA\_DS\_KEY. Afterwards, the HMAC process needs to be restarted to re-enable any of the dependent peripherals.
+    \end{enumerate}
+
+\subsection{Upstream mode process}
+\label{sec:hmac-upstream-process}
+
+\begin{enumerate}
+    \item Write message in upstream mode:
+    \begin{enumerate}
+        \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+        \item Apply SHA padding to message as described in Section \ref{sec:hmac-padding}, and get message block: Block\_\textcolor{red}{n} ($\textcolor{red}{n}>=0$)
+        \item Perform one of the following operations according to the block number \textcolor{red}{n}:
+        \begin{itemize}
+            \item If there is only one message block in total which has included all padding bits:
+            \begin{enumerate}
+                \item Write the 512-bit Block\_\textcolor{red}{n} to register \hyperref[regdesc:HMACWRMESSAGENREG]
+                {HMAC\_WR\_MESSAGE\_\regindex{n}\_REG (\regindex{n}: 0-15)}. Write 1 to register \hyperref[regdesc:HMACSETMESSAGEONEREG]{HMAC\_SET\_MESSAGE\_ONE\_REG}, to trigger the processing of this message block.
+                \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+                \item Write 1 to register \hyperref[regdesc:HMACONEBLOCKREG]{HMAC\_ONE\_BLOCK\_REG}, and finish message transmission.
+            \end{enumerate}
+            \item If Block\_\textcolor{red}{n} is the last padded block:
+            \begin{enumerate}
+                \item Write the 512-bit Block\_\textcolor{red}{0} to register \hyperref[regdesc:HMACWRMESSAGENREG]
+                {HMAC\_WR\_MESSAGE\_\regindex{n}\_REG (\regindex{n}: 0-15)}. Write 1 to register \hyperref[regdesc:HMACSETMESSAGEONEREG]{HMAC\_SET\_MESSAGE\_ONE\_REG}, to trigger the processing of this message block.
+                \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+                \item Message transmission finished automatically.
+            \end{enumerate}
+            \item If Block\_\textcolor{red}{n} is the second last padded block:
+            \begin{enumerate}
+                \item Write the 512-bit Block\_\textcolor{red}{n} to register \hyperref[regdesc:HMACWRMESSAGENREG]
+                {HMAC\_WR\_MESSAGE\_\regindex{n}\_REG (\regindex{n}: 0-15)}. Write 1 to register \hyperref[regdesc:HMACSETMESSAGEONEREG]{HMAC\_SET\_MESSAGE\_ONE\_REG}, to trigger the processing of this message block.
+                \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+                \item Write 1 to register \hyperref[regdesc:HMACSETMESSAGEPADREG]{HMAC\_SET\_MESSAGE\_PAD\_REG}, and continue message transmission (jump back to step(c)).
+            \end{enumerate}
+
+            \item If Block\_\textcolor{red}{n} is neither the last nor the second last message block:
+            \begin{enumerate}
+                \item Write the 512-bit Block\_\textcolor{red}{n} to register \hyperref[regdesc:HMACWRMESSAGENREG]
+                {HMAC\_WR\_MESSAGE\_\regindex{n}\_REG (\regindex{n}: 0-15)}. Write 1 to register \hyperref[regdesc:HMACSETMESSAGEONEREG]{HMAC\_SET\_MESSAGE\_ONE\_REG}, to trigger the processing of this message block.
+                \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+                \item Write 1 to register \hyperref[regdesc:HMACSETMESSAGEINGREG]{HMAC\_SET\_MESSAGE\_ING\_REG}, and continue message transmission (jump back to step(c)).
+            \end{enumerate}
+        \end{itemize}
+    \end{enumerate}
+
+    \item Read hash result in upstream mode:
+    \begin{enumerate}
+        \item Poll Status register \hyperref[regdesc:HMACQUERYBUSYREG]{HMAC\_QUERY\_BUSY\_REG} until it reads 0.
+        \item Read hash result from register \hyperref[regdesc:HMACRDRESULTNREG]{HMAC\_RD\_RESULT\_\regindex{n}\_REG (\regindex{n}: 0-7)}.
+        \item Write 1 to register \hyperref[regdesc:HMACSETRESULTFINISHREG]{HMAC\_SET\_RESULT\_FINISH\_REG} to finish calculation. The result will be cleared at the same time.
+        \item Upstream mode operation is completed.
+    \end{enumerate}
+\end{enumerate}
+
+\begin{tiplisting}
+  \label{hmac_tips_2}
+    The SHA accelerator can be called directly, or used internally by the RSA\_DS module and the HMAC module. However, they can not share the hardware resources simultaneously. Therefore, the SHA module must not be called neither by the CPU nor by the RSA\_DS module when the HMAC module is in use.
+\end{tiplisting}
+
+\section{HMAC Algorithm Details}
+
+\subsection{Padding Bits}
+\label{sec:hmac-padding}
+
+The HMAC module uses SHA-256 as hash algorithm. If the input message is not a multiple of 512 bits, the user must apply a SHA-256 padding algorithm in software. The SHA-256 padding algorithm is the same as described in Section \textit{Padding the Message} of \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf}{FIPS PUB 180-4}. In downstream mode, users do not need to input any message or apply padding. The HMAC module uses a default 32-byte pattern of 0x00 for re-enabling JTAG and a 32-byte pattern of 0xff for deriving the AES key for the RSA\_DS module.
+
+For the convenience of reading, here we will briefly describe the process of message padding. As shown in Figure \ref{fig:hmac-padding}, suppose the length of the unpadded message is \begin{math}m\end{math} bits. Padding steps are as follows:
+
+\begin{enumerate}
+    \item Append one bit of value “1” to the end of the unpadded message.
+    \item Append $k$ bits of value “0”, where \begin{math}k\end{math} is the smallest non-negative number which satisfies $m + 1 + k {\equiv} 448 (mod 512)$.
+    \item Append a 64-bit integer value as a binary block. This block consists of the length of the unpadded message as a big-endian binary integer value \begin{math}m\end{math}.
+\end{enumerate}
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{\modulefiles/figures/HMAC-padding__EN}}
+    \caption{HMAC SHA-256 Padding Diagram}
+    \label{fig:hmac-padding}
+\end{figure}
+
+In upstream mode, if the length of the unpadded message is a multiple of 512 bits, users can configure hardware to apply SHA padding by writing 1 to \hyperref[regdesc:HMACSETMESSAGEENDREG]{HMAC\_SET\_MESSAGE\_END\_REG} or do padding work themselves by writing 1 to \hyperref[regdesc:HMACSETMESSAGEPADREG]{HMAC\_SET\_MESSAGE\_PAD\_REG}. If the length is not a multiple of 512 bits, SHA padding must be manually applied by the user. After the user prepared the padding data, they should complete the subsequent configuration according to the Section \ref{sec:hmac-process-detailed}.
+
+\subsection{HMAC Algorithm Structure}
+
+The structure of the implemented algorithm in the HMAC module is shown in Figure \ref{fig:hmac-structure}. This is the standard HMAC algorithm as described in RFC 2104.
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/HMAC-structure__EN}}
+    \caption{HMAC Structure Schematic Diagram}
+    \label{fig:hmac-structure}
+\end{figure}
+
+In Figure \ref{fig:hmac-structure}:
+\begin{enumerate}
+    \item ipad is a 512-bit message block composed of 64 bytes of 0x36.
+    \item opad is a 512-bit message block composed of 64 bytes of 0x5c.
+\end{enumerate}
+
+The HMAC module appends a 256-bit 0 sequence after the bit sequence of the 256-bit key K in order to get a 512-bit K$_0$. Then, the HMAC module XORs K$_0$ with ipad to get the 512-bit S1. Afterwards, the HMAC module appends the input message (multiple of 512 bits) after the 512-bit S1, and exercises the SHA-256 algorithm to get the 256-bit H1.
+
+ The HMAC module appends the 256-bit SHA-256 hash result H1 to the 512-bit S2 value, which is calculated using the XOR operation of K$_0$ and opad. A 768-bit sequence will be generated. Then, the HMAC module uses the SHA padding algorithm described in Section \ref{sec:hmac-padding} to pad the 768-bit sequence to a 1024-bit sequence, and applies the SHA-256 algorithm to get the final hash result (256-bit).
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{hmac-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:hmac-reg-summ}
+
+The addresses in this section are relative to HMAC Accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/24-HMAC-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\subsection{Registers}
+
+The addresses in this section are relative to HMAC Accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/24-HMAC-reg__EN}
+
+\end{document}

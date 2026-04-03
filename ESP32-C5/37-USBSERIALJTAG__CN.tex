@@ -1,0 +1,480 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/37-USBSERIALJTAG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{usbserialjtag}{}
+\chapter{USB 串口/JTAG 控制器}
+\label{mod:usbserialjtag}
+
+
+\chipname{} 中包含一个 USB 串口/JTAG 控制器，可用于烧录芯片的外部 flash、读取程序输出的数据以及将调试器连接到正在运行的程序中。任何带有 USB 主机（下文将简称为“主机”）的计算机都可以实现上述功能，无需其他外部组件辅助。
+
+\section{概述}
+
+使用串口通信和 JTAG 调试端口通信来编程和调试 \chipname{} 项目都是可行的，但也有其限制。首先，串口通信和 JTAG 调试端口通信都占用 IO 管脚，减少了软件中可用于控制外部信号的管脚数量。此外，串口通信和 JTAG 调试端口通信都需借助外部芯片或适配器与主机连接，因此，如果需要整合这两个功能，则需额外使用外部芯片或调试适配器。
+
+为解决上述问题，\chipname{} 提供了一个 USB 串口/JTAG 控制器，同时集成 USB-串口转换器和 USB-JTAG 适配器功能。由于该模块仅使用 USB 2.0 所需的两条数据线直接连接外部 USB 主机，因此 \chipname{} 仅需占用两个管脚用于调试。
+
+\section{主要特性}
+\label{sec:usbserialjtag-features}
+
+USB 串口/JTAG 控制器具有如下特性：
+
+\begin{itemize}
+\item 支持 USB 全速标准；集成 CDC-ACM （通信设备类抽象控制模型）和 JTAG 适配器固定功能
+\item CDC-ACM：
+\begin{itemize}
+\item 配置虚拟串行功能，在大多数现代操作系统上可实现即插即用
+\item 支持主机控制芯片复位和进入下载模式
+\end{itemize}
+\item JTAG 适配器：
+\begin{itemize}
+\item 支持使用紧凑的 JTAG 指令实现与 CPU 调试内核的快速通信
+\end{itemize}
+\item 共配置一个控制端点、一个虚拟中断端点、两个批量输入端点和两个批量输出端点，可实现最大 64 字节的数据载荷
+\item 集成内部 PHY：基本无需其他外部组件连接主机计算机
+\end{itemize}
+
+\untagged{ESP32-H4}{
+\begin{tiplisting}
+SDIO 从机控制器在单线模式下可以与 USB 串口/JTAG 控制器同时使用，但在四线模式下不能与 USB 串口/JTAG 控制器同时使用。
+\end{tiplisting}
+}
+
+\begin{figure}[H]
+\centering
+\includegraphics[scale=0.8,width=\textwidth]{\modulefiles/figures/USBSERIALJTAG-hl-block}
+\caption{USB 串口/JTAG 控制器高层框图}\label{fig:usbserialjtag-high-level-block}
+\end{figure}
+
+如图 \ref{fig:usbserialjtag-high-level-block} 所示，USB 串口/JTAG 控制器包含 USB PHY、USB 设备接口、JTAG 命令处理器、响应捕捉单元以及若干个 CDC-ACM 寄存器。PHY 和设备接口使用主 PLL (BBPLL) 时钟产生的 48 MHz 时钟作为时钟源，CDC-ACM 块中软件可访问的部分则使用 APB\_CLK 作为时钟源。JTAG 命令处理器与 \chipname{} 主处理器中的 JTAG 调试单元相连；CDC-ACM 寄存器则连接至 APB 总线，主 CPU 上运行的软件可对其进行读写访问。
+
+请注意，USB 串口/JTAG 控制器仅支持 USB 2.0 全速标准 (12 Mbps)，不支持 USB 2.0 标准的其他模式（如 480 Mbps 的高速模式）。
+
+图 \ref{fig:usbserialjtag-block} 展示了 USB 串口/JTAG 控制器中 USB 部分的内部详细结构。USB 串口/JTAG 控制器由一个 USB 2.0 全速设备组成，包含一个控制端点、一个虚拟中断端点、两个批量输入端点和两个批量输出端点。这些端点共同组成该复合型 USB 设备，具体可分为 CDC-ACM USB 设备和实现 JTAG 接口功能的供应商特定设备。JTAG 接口直接与芯片的 RISC-V CPU 的调试接口相连，可对运行在该 CPU 上的程序进行调试。同时，CDC-ACM 中包含一组寄存器，CPU 上运行的程序可对其进行读写操作。此外，芯片上的 ROM 启动代码可允许用户通过使用该接口重新烧录 flash。
+
+\begin{tiplisting}
+如需确定某个功能使用的具体端点，请解析设备返回的相关 USB 描述符。这样可以保证与功能相同但实现方式不同的设备兼容。
+\end{tiplisting}
+
+\begin{figure}[H]
+\centering
+\includegraphics[scale=1.0,width=\textwidth]{\modulefiles/figures/USBSERIALJTAG-block}
+\caption{USB 串口/JTAG 控制器框图}\label{fig:usbserialjtag-block}
+\end{figure}
+
+\section{功能描述}
+\label{sec:usbserialjtag-func-descr}
+
+USB 串口/JTAG 控制器一边与 USB 主机处理器连接，另一边与 CPU 调试硬件以及通过 CDC-ACM 端口通信的软件连接。
+
+\subsection{CDC-ACM USB 接口描述}
+
+CDC-ACM 接口遵循标准 USB CDC-ACM 类别进行虚拟串口通信，包含一个虚拟中断端点（不会发送任何事件，无使用需求）以及一个批量输入端点 (Bulk IN) 和一个批量输出端点 (Bulk OUT) 进行数据接收和发送。这些端点一次可以处理最高 64 字节的数据包，实现高吞吐量。CDC-ACM 为标准的 USB 设备类型，主机一般无需任何特殊安装程序就能正常工作，也就是说，当 USB 调试设备正确连接至主机时，操作系统应能在片刻后显示新的串口信息。
+
+CDC-ACM 接口可以接收以下标准 CDC-ACM 控制请求：
+
+\begin{table}[H]
+\centering
+\caption{标准 CDC-ACM 控制请求}
+\label{tab:usbserialjtag-standard-cdc-acm-requests}
+
+\begin{tabular}{ | l | l | }\hline
+\rowcolor{lightgray}
+\textbf{命令} & \textbf{操作} \\\hline
+
+SEND\_BREAK & 接收但忽略（虚拟命令）\\\hline
+SET\_LINE\_CODING & 接收，发送值在软件中可读 \\\hline
+GET\_LINE\_CODING & 默认返回 9600 baud，无奇偶校验，8 个数据位，1 个停止位（可通过软件更改） \\\hline
+SET\_CONTROL\_LINE\_STATE & 设置 RTC/DTR 线的状态，如表 \ref{tab:usbserialjtag-cdc-acm-settings-with-rts-and-dtr} 所示 \\\hline
+\end{tabular}
+\end{table}
+
+除了通用的通信之外，CDC-ACM 接口还可以复位 \chipname{} 并选择使其进入下载模式，从而烧录新的固件。这一功能可通过设置虚拟串口的 RTS 和 DTR 线来实现。
+
+\begin{table}[H]
+\centering
+\caption{CDC-ACM 中 RTS 和 DTR 的设置}
+\label{tab:usbserialjtag-cdc-acm-settings-with-rts-and-dtr}
+
+\begin{tabular}{ | c | c | p{5cm} | }\hline
+\rowcolor{lightgray}
+\textbf{RTS} & \textbf{DTR} & \textbf{操作}\\\hline
+
+0 & 0 & 清除下载模式标志 \\\hline
+0 & 1 & 置位下载模式标志  \\\hline
+1 & 0 & 复位 \chipname{}  \\\hline
+1 & 1 & 无操作 \\\hline
+\end{tabular}
+\end{table}
+
+请注意，当 \chipname{} 复位时，如果下载模式标志已置位，则 \chipname{} 重启时将直接进入下载模式；如果下载模式标志已清除，则 \chipname{} 将从 flash 启动。具体操作流程，请参见章节 \ref{sec:usbserialjtag-recommended-operation}。除此之外，也可以通过烧写相应 eFuse 来禁用上述功能，详细信息请参见章节 \ref{mod:efuse} \textit{\nameref{mod:efuse}}。
+
+\subsection{CDC-ACM 固件接口描述}
+
+由于 USB 串口/JTAG 控制器与 \chipname{} 的内部 APB 总线相连，因此 CPU 可直接与该模块交互，主要用于对连接主机上的虚拟串口进行读写操作。
+
+CPU 向主机发送并从主机接收 0 \verb+~+ 64 字节大小的 USB CDC-ACM 串口数据包。主机已积累足够多的 CDC-ACM 数据时，将向 CDC-ACM 的接收端点发送一个数据包。如果 USB 串行/JTAG 控制器中有空闲缓冲区，该缓冲区将接收这一数据包。反之，主机会定期检查 USB 串口/JTAG 控制器内是否有待向主机发送的数据包，如果有，主机将接收这个数据包。
+
+固件可通过以下两种方式之一获知是否有来自主机的新数据：第一，只要缓冲区中还有来自主机的未读数据，\hyperref[fielddesc:USBSERIALJTAGSERIALOUTEPDATAAVAIL]{USB\_SERIAL\_JTAG\_SERIAL\_OUT\_EP\_DATA\_AVAIL} 位将保持为 1；第二，如果有新的未读数据，\\\hyperref[fielddesc:USBSERIALJTAGSERIALOUTRECVPKTINTRAW]{USB\_SERIAL\_JTAG\_SERIAL\_OUT\_RECV\_PKT\_INT} 中断将被触发。 当新数据可用时，固件可通过重复从 \hyperref[fielddesc:USBSERIALJTAGRDWRBYTE]{USB\_SERIAL\_JTAG\_EP1\_REG} 读取字节来获取该数据。读取每个字节后，可通过检查 \hyperref[fielddesc:USBSERIALJTAGSERIALOUTEPDATAAVAIL]{USB\_SERIAL\_JTAG\_SERIAL\_OUT\_EP\_DATA\_AVAIL} 位来看是否还有其他可读取的数据，从而确定需要读取的总字节数。读取完所有数据后，USB 设备会自动做好准备，以接收来自主机的新数据包。
+
+一般来说，发送数据后，连接的主机会阻塞，直到固件通过上述方法之一读取数据。然而，也可能存在某些固件根本不读取数据的情况。通常来说，用于与独立 USB 串口转换器通信的主机程序不会出现这种情况，例如，程序会停止执行直到数据被读取。\chipname{} 的 USB 串口/JTAG 转换器可以模拟独立 USB 串口/JTAG 转换器的行为：通过向 \hyperref[fielddesc:USBSERIALJTAGSERIALTIMEOUTMAX]{USB\_SERIAL\_JTAG\_SERIAL\_TIMEOUT\_MAX} 写入超时时间并向 \hyperref[fielddesc:USBSERIALJTAGSERIALTIMEOUTEN]{USB\_SERIAL\_JTAG\_SERIAL\_TIMEOUT\_EN} 写入 1，任何未读取的数据将在设定的超时时间后自动刷新。
+
+当固件需要发送数据时，可将待发送数据置于发送缓冲区并触发刷写，从而使主机以 USB 数据包的形式接收该数据。在此之前，需确保发送缓冲区有可用空间以存储待发送数据。固件可通过读取 \hyperref[fielddesc:USBSERIALJTAGSERIALINEPDATAFREE]{USB\_REG\_SERIAL\_IN\_EP\_DATA\_FREE} 位检查发送缓冲区是否有可用空间；当该值为 1 时，发送缓冲区有可用空间。此时，固件可通过向 \hyperref[fielddesc:USBSERIALJTAGRDWRBYTE]{USB\_SERIAL\_JTAG\_EP1\_REG} 寄存器中写入字节，从而向缓冲区中写入数据。但是，数据写入后并不会立即触发向主机发送数据，需首先对缓冲区执行刷写操作。刷写操作后，整个缓冲区将准备好被 USB 主机立即接收。可通过两种方式触发刷写：1) 将第 64 个字节写入缓冲区后，USB 硬件会自动将缓冲区刷写到主机；2) 固件可通过向 \hyperref[fielddesc:USBSERIALJTAGWRDONE]{USB\_REG\_SERIAL\_WR\_DONE} 写入 1 来触发刷写。
+
+不论以何种方式触发刷写操作，在此期间固件都无法向缓冲区写入数据，直到缓冲区中的所有数据都已被主机读取完成。主机读取完成后，将触发 \hyperref[fielddesc:USBSERIALJTAGSERIALINEMPTYINTRAW]{USB\_SERIAL\_JTAG\_SERIAL\_IN\_EMPTY\_INT} 中断，此时可向缓冲区内写入新的 64 字节数据。
+
+在软件中可以处理一些带外串行请求，例如主机设置 DTR 和 RTS，以及改变线路状态。如果 CDC-ACM 接口收到 SET\_LINE\_CODING 请求，可将外设配置为触发 \hyperref[int:USBSERIALJTAGSETLINECODEINT]{USB\_SERIAL\_JTAG\_SET\_LINE\_CODE\_INT} 中断，此时可以从 \hyperref[regdesc:USBSERIALJTAGSETLINECODEW0REG]{USB\_SERIAL\_JTAG\_SET\_LINE\_CODE\_W0\_REG} 寄存器读取线路编码。类似的，如果 SET\_CONTROL\_LINE\_STATE 请求导致线路状态改变，将触发 \hyperref[int:USBSERIALJTAGRTSCHGINT]{USB\_SERIAL\_JTAG\_RTS\_CHG\_INT} 和 \hyperref[int:USBSERIALJTAGDTRCHGINT]{USB\_SERIAL\_JTAG\_DTR\_CHG\_INT} 中断。此后，软件可以通过 \hyperref[fielddesc:USBSERIALJTAGRTS]{USB\_SERIAL\_JTAG\_RTS} 和 \hyperref[fielddesc:USBSERIALJTAGDTR]{USB\_SERIAL\_JTAG\_DTR} 位来读取具体状态。注意，如前所述，某些 RTS/DTR 序列会导致 \chipname{} 硬件复位。软件可以通过置位 \hyperref[fielddesc:USBSERIALJTAGUSBUARTCHIPRSTDIS]{USB\_SERIAL\_JTAG\_USB\_UART\_CHIP\_RST\_DIS} 位来禁止硬件识别这些 DTR/RTS 序列，从而允许软件自由解读信号。
+
+最后，主机可以通过 GET\_LINE\_CODING 读取当前线路状态。此事件将回送 \hyperref[regdesc:USBSERIALJTAGGETLINECODEW0REG]{USB\_SERIAL\_JTAG\_GET\_LINE\_CODE\_W0\_REG} 寄存器中的数据，并触发 \hyperref[int:USBSERIALJTAGGETLINECODEINT]{USB\_SERIAL\_JTAG\_GET\_LINE\_CODE\_INT} 中断。
+
+\subsection{USB-JTAG 接口：JTAG 命令处理器}
+
+USB-JTAG 接口使用一种供应商特定接口类型实现命令解析的功能。它由两个端点组成：一个用于接收命令，一个用于发送响应。此外，一些对时效性要求不高的命令也可以作为控制请求发出。
+
+JTAG 命令处理器负责解析从主机到 JTAG 接口的命令。JTAG 命令处理器内部包含一个全四线 JTAG 总线，包括发送信号到 RISC-V CPU 的 TCK、TMS 和 TDI 输出线，以及从 CPU 返回信号至 JTAG 响应捕捉单元的 TDO 线。这些信号都符合 IEEE 1149.1 JTAG 标准。此外，还有一条 SRST 线用于复位 \chipname{}。
+
+另外，软件也可以置位 \hyperref[fielddesc:USBSERIALJTAGUSBJTAGBRIDGEEN]{USB\_SERIAL\_JTAG\_USB\_JTAG\_BRIDGE\_EN}，将这些信号通过 GPIO 交换矩阵连接至 \chipname{} 的 IO 焊盘上，此操作也将允许通过 USB 串口/JTAG 控制器对外部设备进行调试。
+
+JTAG 命令处理器会将每个接收到的半字节（4 位）解析为一条命令。由于 USB 以 8 位为一个字节接收数据，这就意味着每个字节中都包含两条命令。USB 命令处理器将先解析高 4 位字节，然后再解析低 4 位字节。这些命令用于控制内部 JTAG 总线的 TCK、TMS、TDI、SRST 线，以及向 JTAG 响应捕捉单元发出信号，说明需要捕捉 TDO 线（由 CPU 调试逻辑驱动）的状态。
+
+JTAG 总线中，TCK、TMS、TDI 和 TDO 线直接与 RISC-V CPU 的 JTAG 调试逻辑相连。上文提到的 SRST 线则与 \chipname{} 数字电路中的复位逻辑相连，该线电平拉高，芯片将进行芯片复位。请注意，SRST 线并不会对 USB 串口/JTAG 控制器模块产生影响。
+
+1 个半字节中可包含以下命令：
+
+\begin{table}[H]
+\centering
+\caption{半字节中的命令}
+\label{tab:usbserialjtag-commands-of-a-nibble}
+
+\begin{tabular}{|c|c c c c|}\hline
+\rowcolor{lightgray}
+\textbf{位} & \textbf{3} & \textbf{2} & \textbf{1} & \textbf{0}\\\hline
+
+CMD\_CLK & 0 &  cap & tms & tdi \\\hline
+CMD\_RST & 1 & 0 & 0 & srst \\\hline
+CMD\_FLUSH & 1 & 0 & 1 & 0 \\\hline
+CMD\_RSV & 1 & 0 & 1 & 1 \\\hline
+CMD\_REP & 1 & 1 & R1 & R0 \\\hline
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+\item CMD\_CLK：将 TDI 和 TMS 设置为指示值，并在 TCK 上发出一个时钟脉冲。如果 CAP 位为 1，将指示 JTAG 响应捕捉单元捕捉 TDO 线的状态。该指令构成了 JTAG 通信的基础。
+\item CMD\_RST：将 SRST 线的状态设置为指示值。该命令可用于复位 \chipname{}。
+\item CMD\_FLUSH：指示 JTAG 响应捕捉单元对接收到的所有位的缓冲区进行刷写操作，以便主机读取这些位。请注意在某些情况下，一次 JTAG 通信会结束于第奇数个命令，即结束于第奇数个半字节。此时，可重复执行该命令直到获得偶数个半字节，使其组成整数个字节。
+\item CMD\_RSV：该版本中保留。\chipname{} 在接收到该命令时会自动忽略。
+\item CMD\_REP：将上一条指令（非 CMD\_REP）重复一定次数，以压缩多次重复 CMD\_CLK 的命令流。因此，CMD\_CLK 命令后可能跟随着多个 CMD\_REP。一次 CMD\_REP 命令产生的重复次数可表示为 \begin{math}repetition\_count = (R1 \times 2 + R0) \times (4^{cmd\_rep\_count})\end{math}，其中 cmd\_rep\_count 表示该命令之前的 CMD\_REP 数量。请注意，CMD\_REP 仅用于重复 CMD\_CLK 命令。也就是说，如果在 CMD\_FLUSH 后使用该命令，USB 设备将无法响应，需进行 USB 复位后才可恢复正常。
+\end{itemize}
+
+\subsection{USB-JTAG 接口：CMD\_REP 使用示例}
+
+下列命令用于演示如何使用 CMD\_REP 命令。请注意，该示例中每个命令为半字节，命令流的每个字节为 0x0D 0x5E 0xCF。
+
+\begin{enumerate}
+\item 0x0 (CMD\_CLK: cap=0, tdi=0, tms=0)
+\item 0xD (CMD\_REP: R1=0, R0=1)
+\item 0x5 (CMD\_CLK: cap=1, tdi=0, tms=1)
+\item 0xE (CMD\_REP: R1=1, R0=0)
+\item 0xC (CMD\_REP: R1=0, R0=0)
+\item 0xF (CMD\_REP: R1=1, R0=1)
+\end{enumerate}
+
+每一步骤的具体操作为：
+
+\begin{enumerate}
+\item TCK 上发出一个时钟脉冲，TDI 和 TMS 设置为 0。未捕捉到任何数据。
+\item TCK 上再次发出 \((0\times2+1)\times(4{^0})=1\) 个时钟脉冲，其他设置与步骤 1 相同。
+\item TCK 上发出一个时钟脉冲，TDI 设置为 0，TMS 设置为 1。捕捉到 TDO 线上的数据。
+\item TCK 上再次发出 \((1\times2+0)\times(4{^0})=2\) 个时钟脉冲，其他设置与步骤 3 相同。
+\item 未发生任何动作：\((0\times2+0)\times(4{^1})=0\)。请注意，该操作将增加下一步骤中的 cmd\_rep\_count 数值。
+\item TCK 上再次发出 \((1\times2+1)\times(4{^2})=48\) 个时钟脉冲，其他设置与步骤 3 相同。
+\end{enumerate}
+
+换言之，该命令流示例的操作结果等同于执行两次命令 1，然后执行 51 次命令 3 的效果。
+
+\subsection{USB-JTAG 接口：响应捕捉单元}
+
+响应捕捉单元首先读取内部 JTAG 总线的 TDO 线，并在命令处理器执行 CMD\_CLK (cap=1) 命令时捕捉 TDO 线的值，然后将这个值放入内部移位寄存器中，且在接收到 8 位时向 USB 缓冲区写入 1 个字节。这 8 位中的最低有效位即为最先从 TDO 线读取的值。
+
+一旦接收到 64 字节 (512 位) 数据或执行 CMD\_FLUSH 命令后，响应捕捉单元将使缓冲区可被主机接收。请注意，USB 逻辑的接口为双缓冲。因此，只要 USB 的吞吐量充足，响应捕捉单元就可以随时接收更多数据，即当一个缓冲区等待发送给主机时，另一个缓冲区可以继续接收数据。当主机从缓冲区成功接收数据且响应捕捉单元对缓冲区执行刷写操作后，这两个缓冲区便可以交换位置。
+
+同时，这也意味着一个命令流可导致最多 128 字节（若该命令流中有刷写命令，则该数字会减小）的捕捉数据生成，而无需主机主动接收这些数据。如果还是生成了超过该阈值数量的捕捉数据，则命令流将暂停，且设备在这些数据被读取之前不会接收其他命令。
+
+另需注意，一般情况下，响应捕捉单元会尽量不发送 0 字节响应。例如，当发送一系列 CMD\_FLUSH 命令后，并不会产生一系列 0 字节 USB 响应。但在当前版本中，一些特殊情况下也可能产生 0 字节响应。建议直接忽略这些响应信息。
+
+\subsection{USB-JTAG 接口：控制传输请求}
+
+除命令处理器和响应捕捉单元之外，USB-JTAG 接口也可接收一些控制请求，具体如下表所示：
+
+\begin{table}[H]
+\centering
+\caption{USB-JTAG 控制请求}
+\label{tab:usbserialjtag-control-requests}
+
+\begin{tabular}{|c|c|c|c|c|c|}\hline
+\rowcolor{lightgray}
+\textbf{bmRequestType} & \textbf{bRequest} & \textbf{wValue} & \textbf{wIndex} & \textbf{wLength} & \textbf{Data} \\\hline
+
+01000000b &  0 (VEND\_JTAG\_SETDIV) & [divider] & 接口 & 0 &  None \\\hline
+01000000b &  1 (VEND\_JTAG\_SETIO) &  [iobits] &  接口 & 0 &   None \\\hline
+11000000b &  2 (VEND\_JTAG\_GETTDO) & 0 & 接口 & 1 & [iostate] \\\hline
+10000000b &  6 (GET\_DESCRIPTOR) &   0x2000 &  0 &  256 & [jtag cap desc] \\\hline
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+\item VEND\_JTAG\_SETDIV：设置使用的分频器。该命令直接影响 TCK 时钟脉冲的持续时间。TCK 时钟脉冲来自于由内部分频器向下分频得到的 48 MHz 基准时钟。该控制请求允许主机设置此内部分频器。请注意，该分频器在启动时的初始值为 2，即 TCK 时钟速率一般为 24 MHz。
+\item VEND\_JTAG\_SETIO：跳过 JTAG 命令处理器，直接将内部 TDI、TDO、TMS 和 SRST 线设置为指定值。这些指定值在 wValue 字段中以 {11'b0, srst, trst, tck, tms, tdi} 的格式编码。
+\item VEND\_JTAG\_GETTDO：跳过 JTAG 响应捕捉单元，直接读取内部 TDO 信号。该请求返回 1 个字节，其中的最低有效位代表 TDO 线的状态。
+\item GET\_DESCRIPTOR：为标准 USB 请求，该请求也可使用供应商专用的 0x2000 wValue 获取 JTAG 功能描述符。该请求返回一定字节，具体字节数所代表的 USB-JTAG 适配器功能如表 \ref{tab:usbserialjtag-capabilities-descriptor} 所示。这一固定结构允许主机软件自动支持未来的硬件新版本，无需再次更新。
+\end{itemize}
+
+\chipname{} 包含的 JTAG 功能描述符如下表所示。请注意，所有 16 位值都为小端序存储。
+
+\begin{table}[H]
+\centering
+\caption{JTAG 功能描述符}
+\label{tab:usbserialjtag-capabilities-descriptor}
+
+\begin{tabular}{ |c|c|l| } \hline
+\rowcolor{lightgray}
+\textbf{字节} & \textbf{数值} & \textbf{描述} \\\hline
+
+0 & 1 & JTAG 协议功能结构的版本 \\\hline
+1 & 10 & JTAG 协议功能长度 \\\hline
+2 & 1 & 结构类型：1 代表高速功能结构类型 \\\hline
+3 & 8 & 该高速功能结构长度 \\\hline
+4 \verb+~+ 5 & 4800 & 以 10 kHz 为增量的 JTAG 基准时钟速度，其最大速度为该值的一半\\\hline
+6 \verb+~+ 7 & 1 & 最小分频系数，可通过 VEND\_JTAG\_SETDIV 设置 \\\hline
+8 \verb+~+ 9 & 255 & 最大分频系数，可通过 VEND\_JTAG\_SETDIV 设置 \\\hline
+\end{tabular}
+\end{table}
+
+\section{中断}
+
+\chipname{} 的 USB 串口/JTAG 控制器的下列内部中断源可生成中断信号 USB\_SERIAL\_JTAG\_INTR，并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+\begin{itemize}
+\item \label{int:USBSERIALJTAGJTAGINFLUSHINT}USB\_SERIAL\_JTAG\_JTAG\_IN\_FLUSH\_INT：JTAG 批量输出端点接收到刷写命令时触发。
+\item \label{int:USBSERIALJTAGSOFINT}USB\_SERIAL\_JTAG\_SOF\_INT：接收到 SOF 帧时触发。
+\item \label{int:USBSERIALJTAGSERIALOUTRECVPKTINT}USB\_SERIAL\_JTAG\_SERIAL\_OUT\_RECV\_PKT\_INT：串口输出端点接收到 1 个数据包时触发。
+\item \label{int:USBSERIALJTAGSERIALINEMPTYINT}USB\_SERIAL\_JTAG\_SERIAL\_IN\_EMPTY\_INT：串口输入端点为空时触发。
+\item \label{int:USBSERIALJTAGPIDERRINT}USB\_SERIAL\_JTAG\_PID\_ERR\_INT：检测到 PID 错误时触发。
+\item \label{int:USBSERIALJTAGCRC5ERRINT}USB\_SERIAL\_JTAG\_CRC5\_ERR\_INT：检测到 CRC5 错误时触发。
+\item \label{int:USBSERIALJTAGCRC16ERRINT}USB\_SERIAL\_JTAG\_CRC16\_ERR\_INT：检测到 CRC16 错误时触发。
+\item \label{int:USBSERIALJTAGSTUFFERRINT}USB\_SERIAL\_JTAG\_STUFF\_ERR\_INT：检测到位填充错误时触发。
+\item \label{int:USBSERIALJTAGINTOKENRECINEP1INT}USB\_SERIAL\_JTAG\_IN\_TOKEN\_REC\_IN\_EP1\_INT：输入端点 1 接收到一个 IN 令牌时触发。
+\item \label{int:USBSERIALJTAGUSBBUSRESETINT}USB\_SERIAL\_JTAG\_USB\_BUS\_RESET\_INT：检测到 USB 总线复位时触发。
+\item \label{int:USBSERIALJTAGOUTEP1ZEROPAYLOADINT}USB\_SERIAL\_JTAG\_OUT\_EP1\_ZERO\_PAYLOAD\_INT：输出端点 1 接收到有效载荷为 0 的数据包时触发。
+\item \label{int:USBSERIALJTAGOUTEP2ZEROPAYLOADINT}USB\_SERIAL\_JTAG\_OUT\_EP2\_ZERO\_PAYLOAD\_INT：输出端点 2 接收到有效载荷为 0 的数据包时触发。
+\item \label{int:USBSERIALJTAGRTSCHGINT}USB\_SERIAL\_JTAG\_RTS\_CHG\_INT：USB 串行通道的 RTS 电平改变时触发。
+\item \label{int:USBSERIALJTAGDTRCHGINT}USB\_SERIAL\_JTAG\_DTR\_CHG\_INT：USB 串行通道的 DTR 电平改变时触发。
+\item \label{int:USBSERIALJTAGGETLINECODEINT}USB\_SERIAL\_JTAG\_GET\_LINE\_CODE\_INT：收到 GET\_LINE\_CODING 请求的电平时触发。
+\item \label{int:USBSERIALJTAGSETLINECODEINT}USB\_SERIAL\_JTAG\_SET\_LINE\_CODE\_INT：收到 SET\_LINE\_CODING 请求的电平时触发。
+\end{itemize}
+
+\section{配置流程}
+\label{sec:usbserialjtag-recommended-operation}
+
+使用 USB 串口/JTAG 控制器之前，几乎不需要多余的配置。除了主机操作系统已经完成的标准 USB 初始化之外，USB-JTAG 硬件本身不需要进行任何配置。此外，CDC-ACM 虚拟串口在主机端也支持即插即用。
+
+固件方面也几乎不需要初始化。USB 硬件是自初始化的，在其启动后，如果固件连接了一台主机并在 CDC-ACM 接口上监听，除非固件设置了中断处理程序，否则无需任何特定设置就可以实现前文所述的数据交换。
+
+需要注意的是，可能会出现主机未连接或 CDC-ACM 虚拟串口未打开的情况。在这种情况下，发送至主机的数据包永远无法被接收，发送缓冲区也永远不会为空。因而，必须对这种情况进行检测并执行超时操作，以便清楚地检测主机侧的端口是否关闭。
+
+其次，需要注意 USB 设备依赖于产生 48 MHz USB PHY 时钟的 BBPLL。如果此 PLL 被禁用，USB 通信将停止。
+
+上述情况可能发生在 Deep-sleep 期间。在 Deep-sleep 模式下，USB 串口/JTAG 控制器（及其连接的 RISC-V CPU）将完全断电。如果有设备需要在这两种模式下进行调试，最好使用外部 JTAG 调试器和串行接口。
+
+CDC-ACM 接口还可用于复位芯片，使其进入或退出下载模式。产生正确的握手信号序列则有些复杂，因为大多数操作系统仅支持分别设置或重置 DTR 和 RTS，无法同时进行。此外，一些驱动程序（如 Windows 系统上的标准 CDC-ACM 驱动程序）须先设置 RTS 后才可设置 DTR，此时用户必须先明确设置 RTS，才能传播 DTR 的值。推荐遵循以下步骤进行设置。
+
+复位芯片使其进入下载模式：
+
+\begin{table}[H]
+\centering
+\caption{复位芯片进入下载模式}
+\label{tab:usbserialjtag-reset-soc-into-download-mode}
+
+\begin{tabular} {|c|c|l|}\hline
+\rowcolor{lightgray}
+\textbf{操作} & \textbf{内部状态} & \textbf{备注} \\\hline
+
+清除 DTR & RTS=?, DTR=0 & 初始化以获取数值 \\\hline
+清除 RTS & RTS=0, DTR=0 & - \\\hline
+设置 DTR & RTS=0, DTR=1 & 设置下载模式标志 \\\hline
+清除 RTS & RTS=0, DTR=1 & 传播 DTR \\\hline
+设置 RTS & RTS=1, DTR=1 & - \\\hline
+清除 DTR & RTS=1, DTR=0 & 复位芯片 \\\hline
+设置 RTS & RTS=1, DTR=0 & 传播 DTR \\\hline
+清除 RTS & RTS=0, DTR=0 & 清除下载标志\\\hline
+\end{tabular}
+\end{table}
+
+复位 SoC 使其从 flash 启动：
+
+\begin{table}[H]
+\centering
+\caption{复位 SoC 从 flash 启动}
+\label{tab:usbserialjtag-reset-soc-into-booting}
+
+\begin{tabular} {|c|c|l|}\hline
+\rowcolor{lightgray}
+\textbf{操作} & \textbf{内部状态} & \textbf{备注} \\\hline
+
+清除 DTR & RTS=?, DTR=0 & - \\\hline
+清除 RTS & RTS=0, DTR=0 &  清除下载标志 \\\hline
+设置 RTS & RTS=1, DTR=0 &  复位 SoC \\\hline
+清除 RTS & RTS=0, DTR=0 & 退出复位 \\\hline
+\end{tabular}
+\end{table}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{usbserialjtag-reg-summ}{}
+\section{寄存器列表}
+\label{sec:usbserialjtag-reg-summ}
+
+本小节的所有地址均为相对于 USB 串口/JTAG 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/37-USBSERIALJTAG-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 USB 串口/JTAG 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/37-USBSERIALJTAG-reg__CN}
+
+\end{document}

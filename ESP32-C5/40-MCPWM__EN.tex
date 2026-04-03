@@ -1,0 +1,880 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/40-MCPWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{mcpwm}{}
+\chapter{Motor Control PWM (MCPWM)}
+\label{mod:mcpwm}
+
+\section{Overview}
+
+The \textbf{M}otor \textbf{C}ontrol \textbf{P}ulse \textbf{W}idth \textbf{M}odulator (MCPWM) peripheral is intended for motor and power control. It provides six PWM outputs that can be set up to operate in several topologies. One common topology uses a pair of PWM outputs driving an H-bridge to control motor rotation speed and rotation direction.
+
+The MCPWM can be divided into five main modules: PWM timers, PWM operators, Capture module, Event Task Matrix (ETM) module, and Fault Detection module. Each PWM timer provides timing references that can either run freely or be synced to other timers or external sources. Each PWM operator has all the necessary control resources to generate waveform pairs for one PWM channel. The Capture module is used for systems that need to accurately time external events. The ETM module responds to tasks received by the MCPWM, generating corresponding events depending on the state of motion. The Fault Detection module is used to capture external faults, allowing the system to respond by choice.
+
+\chipname{} has one MCPWM peripheral, which is MCPWM0.
+
+\section{Features}
+An MCPWM peripheral has one clock divider (prescaler), three PWM timers, three PWM operators, a Capture module, an ETM module, and a Fault Detection module. MCPWM's core clock can be selected from three clock sources: PLL\_F160M\_CLK, XTAL\_CLK, and RC\_FAST\_CLK (configured by the PCR\_PWM\_CLKM\_SEL field of the \hyperref[regdesc:PCRPWMCLKCONFREG]{PCR\_PWM\_CLK\_CONF\_REG} register). Figure \ref{fig:mcpwm-overview} shows the submodules inside MCPWM and the signals on the interface. PWM timers are used for generating timing references. The PWM operators generate the desired waveform based on the timing references. Any PWM operator can be configured to use the timing references of any PWM timers. Different PWM operators can use the same PWM timer's timing reference to generate PWM signals, or different PWM timers' values to generate separate PWM signals. Different PWM timers can also be synchronized together.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-overview.eps}
+    \caption{MCPWM Module Overview}
+    \label{fig:mcpwm-overview}
+\end{figure}
+
+
+Below is an overview of the submodules' functionality in Figure \ref{fig:mcpwm-overview}:
+
+\begin{itemize}
+    \item PWM Timers 0, 1, and 2:
+        \begin{itemize}
+            \item Every PWM timer has a dedicated 8-bit clock prescaler.
+            \item The 16-bit counter in the PWM timer can work in Count-Up Mode, Count-Down Mode, or Count-Up-Down Mode.
+            \item A hardware sync or software sync can trigger a reload on the PWM timer with a phase register. It will also trigger the prescaler's restart, so that the timer's clock can also be synced. The source of the hard sync can come from any GPIO or any other PWM timer's sync\_out. The source of the soft sync comes from writing toggle value to the \hyperref[fielddesc:MCPWMTIMERNSYNCSW]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_SYNC\_SW} bit.
+        \end{itemize}
+    \item PWM Operators 0, 1, and 2:
+        \begin{itemize}
+            \item Every PWM operator has two PWM outputs: PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B. They can work independently, in symmetric or asymmetric configurations.
+            \item The control of the PWM signal can be updated asynchronously.
+            \item Configurable dead time on rising and falling edges; each set up independently.
+            \item All events can trigger CPU interrupts.
+            \item Modulating of PWM output by high-frequency carrier signals, useful when gate drivers are insulated with a transformer.
+            \item Period, time-stamp, and important control registers have shadow registers with flexible updating methods.
+        \end{itemize}
+    \item Fault Detection Module:
+        \begin{itemize}
+            \item Programmable fault handling in both cycle-by-cycle mode and one-shot mode.
+            \item A fault condition can force the PWM output to either high or low logic levels.
+        \end{itemize}
+    \item Capture Module:
+        \begin{itemize}
+            \item Clock of the capture module is the same as MCPWM's core clock.
+            \item Speed measurement of rotating machinery.
+            \item Measurement of elapsed time between position sensor pulses
+            \item Period and duty cycle measurement of pulse train signals
+            \item Decoding current or voltage amplitude derived from duty-cycle-encoded signals of current/voltage sensors
+            \item Three individual capture channels, each of which with a time-stamp register (32-bit)
+            \item Selection of edge polarity and prescaling of input capture signals
+            \item The capture timer can sync with a PWM timer or external signals.
+            \item Interrupt on each of the three capture channels
+        \end{itemize}
+    \item ETM Module:
+        \begin{itemize}
+            \item Generation of different events depending on the different running states of each timer and operator.
+            \item Each timer and operator responds to its corresponding task and automatically performs the corresponding operation.
+            \item Each event and task can be enabled independently. When an event is not enabled, the corresponding event will not be generated. When a task is not enabled, the corresponding task will not be responded to.
+        \end{itemize}
+\end{itemize}
+\newpage
+
+\section{Modules}
+\subsection{Overview}
+
+The key modules in each MCPWM are timer module, operator module, fault detection module, capture module, and ETM module. See their functions in the following sections.
+
+
+
+
+\subsubsection{Timer Module}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-subm-timer.eps}
+    \caption{Timer Module}
+    \label{fig:mcpwm-subm-timer}
+\end{figure}
+
+This module contains a timer, which can count at a specified period. It can work in Count-Up Mode, Count-Down Mode, or Count-Up-Down Mode. It supports different synchronization input sources (a total of seven optional input sources) for reloading the count value and direction, allowing synchronization among multiple timers. Furthermore, it provides synchronization output options (a total of four optional output sources) for use by other timers.
+
+The timer\regindex{x} status in the figure represents the timer status output by the timer module, such as the counting mode, and count value equal to zero or period.
+
+\subsubsection{Operator Module}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-subm-operator.eps}
+    \caption{Operator Module}
+    \label{fig:mcpwm-subm-operator}
+\end{figure}
+
+A PWM operator contains a PWM generator, a dead time generator, and a PWM carrier module. Their functions are shown in Table \ref{tab:mcpwm-param-operator}.
+
+\input{\modulefiles/tables/40-MCPWM-para-operator__EN}
+
+
+
+\subsubsection{Capture Module}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.45\textwidth]{\modulefiles/figures/40-MCPWM-subm-capture.eps}
+    \caption{Capture Module}
+    \label{fig:mcpwm-fault-capture}
+\end{figure}
+
+The module contains a timer that can be synchronized. When the input capture signal is valid, the count value of the timer is captured.
+
+\subsubsection{ETM Module}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/40-MCPWM-subm-etm.eps}
+    \caption{ETM Module}
+    \label{fig:mcpwm-subm-etm}
+\end{figure}
+
+The module responds to received tasks, or generate and output events. Each event and task can be enabled independently.
+
+\subsection{PWM Timer Module}
+\label{sec:mcpwm-timer-sub}
+
+MCPWM has three PWM timer modules. Any of them can determine the necessary event timing for any of the three PWM operator modules. By using the synchronization signals from the GPIO matrix, built-in synchronization logic allows multiple PWM timer modules in one or more MCPWM peripherals to work together as a system.
+
+\subsubsection{Configurations of the PWM Timer Module}
+
+Users can configure the following functions of the PWM timer module:
+
+\begin{itemize}
+    \item Control how often events occur by specifying the PWM timer frequency or period.
+    \item Configure a particular PWM timer to synchronize phases with other PWM timers or modules.
+    \item Configure the following timer counting modes: count-up, count-down, count-up-down.
+    \item Change the rate of the PWM timer clock (PT\_CLK) with a prescaler. Each timer has its own prescaler configured with \hyperref[fielddesc:MCPWMTIMERNPRESCALE]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PRESCALE} of the register \hyperref[regdesc:MCPWMTIMERNCFG0REG]{MCPWM\_TIMER0\_CFG0\_REG}. The PWM timer increments or decrements at a slower pace, depending on the setting of this field. The new \hyperref[fielddesc:MCPWMTIMERNPRESCALE]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PRESCALE} configuration value will take effect when the timer stops and starts counting again.
+\end{itemize}
+
+\subsubsection{PWM Timer's Working Modes and Timing Event Generation}
+\label{sec:mcpwm-modes-and-event-generation}
+
+The PWM timer has three working modes, selected by the PWM\textcolor{red}{\it{x}} timer mode field:
+\begin{itemize}
+    \item Count-Up Mode: \\
+    The PWM timer increments from zero until reaching the value configured in the period field. Once done, the PWM timer returns to zero and starts increasing again. PWM period = the value of the period field + 1.\\
+    Note: The period field is \hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD} (\textcolor{red}{\it{x}} = 0, 1, 2), i.e., \hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER0\_PERIOD},\\ \hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER1\_PERIOD}, \hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER2\_PERIOD}.
+    \item Count-Down Mode: \\
+    The PWM timer decrements to zero, starting from the value configured in the period field. Once done, the PWM timer returns to the period value and starts decrementing again. In this case, the PWM period = the value of period field + 1.
+    \item Count-Up-Down Mode: \\
+    This is a combination of the two modes mentioned above. The PWM timer starts increasing from zero until the period value is reached. Then, the timer decreases back to zero. The PWM timer cycles incrementally and decrementally in this mode. The PWM period = the value of the period field × 2.
+\end{itemize}
+
+Figures \ref{fig:mcpwm-up-wf} to \ref{fig:mcpwm-ud-su-wf} show PWM timer waveforms in different modes, including timer behavior during synchronization events. In Count-Up mode, the counting direction after synchronization is always counting up. In Count-Down mode, the counting direction after synchronization is always counting down. In Count-Up-Down Mode, the counting direction after synchronization can be chosen by setting the \hyperref[fielddesc:MCPWMTIMERNPHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/40-MCPWM-up-wf.eps}
+    \caption{Count-Up Mode Waveform}
+    \label{fig:mcpwm-up-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/40-MCPWM-down-wf.eps}
+    \caption{Count-Down Mode Waveforms}
+    \label{fig:mcpwm-d-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/40-MCPWM-ud-sd-wf.eps}
+    \caption{Count-Up-Down Mode Waveforms, Count-Down at  Synchronization Event}
+    \label{fig:mcpwm-ud-sd-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/40-MCPWM-ud-su-wf.eps}
+    \caption{Count-Up-Down Mode Waveforms, Count-Up at Synchronization Event}
+    \label{fig:mcpwm-ud-su-wf}
+\end{figure}
+
+When the PWM timer is running, it generates the following timing events periodically and automatically:
+\begin{itemize}
+    \item UTEP: The timing event generated when the PWM timer's value is equal to the value of the period field\\(\hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD}) and when the PWM timer is increasing.
+    \item UTEZ: The timing event generated when the PWM timer's value equals zero and when the PWM timer is increasing.
+    \item DTEP: The timing event generated when the PWM timer's value equals the value of the period field\\(\hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD}) and when the PWM timer is decreasing.
+    \item DTEZ: The timing event generated when the PWM timer's value equals zero and when the PWM timer is decreasing.
+\end{itemize}
+
+Figures \ref{fig:mcpwm-te-u} to \ref{fig:mcpwm-te-ud} show the timing waveforms of U/DTEP and U/DTEZ.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-tep-tez-up.eps}
+    \caption{UTEP and UTEZ Generation in Count-Up Mode}
+    \label{fig:mcpwm-te-u}
+\end{figure}
+
+\clearpage
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-tep-tez-down.eps}
+    \caption{DTEP and DTEZ Generation in Count-Down Mode}
+    \label{fig:mcpwm-te-d}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-tep-tez-ud.eps}
+    \caption{DTEP and UTEZ Generation in Count-Up-Down Mode}
+    \label{fig:mcpwm-te-ud}
+\end{figure}
+
+Please note that in the Count-Up-Down Mode, when the counting direction is increasing, the timer range is [0, period value - 1], and when the counting direction is decreasing, the timer range is [period value, 1]. That is, in this mode, when synchronizing the timer to 0, decreasing counting direction will be illegal, namely, \hyperref[fielddesc:MCPWMTIMERNPHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} cannot be set to 1. Similarly, when synchronizing the timer to period value, increasing counting direction will be illegal, namely, \hyperref[fielddesc:MCPWMTIMERNPHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} cannot be set to 0. Therefore, when the timer is synchronized to 0, the counting direction can only be increasing, and \hyperref[fielddesc:MCPWMTIMERNPHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} will be 0. When the timer is synchronized to the period value, the counting direction can only be decreasing, and \hyperref[fielddesc:MCPWMTIMERNPHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} will be 1.
+
+\newpage
+\subsubsection{Shadow Register of PWM Timer}
+\label{sec:mcpwm-shdw_reg}
+
+The PWM timer's period register and the PWM timer's clock prescaler register have shadow registers. The shadow registers can back up the values that are about to be written to the valid registers. It also supports writing the values saved into the active register at a specific moment of hardware synchronization. The functionality of both register types is as follows:
+\begin{itemize}
+    \item Active Register: Directly responsible for controlling all actions performed by hardware.
+    \item Shadow Register: Acts as a temporary buffer for a value to be written to the active register. At a specific, user-configured point in time, the value saved in the shadow register is copied to the active register. Before this happens, the content of the shadow register has no direct effect on the controlled hardware. This helps to prevent erroneous operation of the hardware, which may happen when a register is asynchronously modified by software. Both the shadow register and the active register have the same memory address. The software always writes into, or reads from the shadow register.
+
+    The moment of updating the clock prescaler's active register is at the time when the timer starts operating. When \hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} is set to 1, the moment of updating the period active register can be selected by the following ways:
+
+    \begin{itemize}
+    \item By configuring the update method register \hyperref[fielddesc:MCPWMTIMERNPERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD\_UPMETHOD} to 0, the update will start immediately.
+    \item By configuring the update method register \hyperref[fielddesc:MCPWMTIMERNPERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD\_UPMETHOD} to 1, the update can start when the PWM timer is equal to zero.
+    \item By configuring the update method register \hyperref[fielddesc:MCPWMTIMERNPERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD\_UPMETHOD} to 2, the update can start when the PWM timer is synchronized.
+    \item By configuring the update method register \hyperref[fielddesc:MCPWMTIMERNPERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD\_UPMETHOD} to 3, the update can start when the PWM timer is equal to zero or is synchronized.
+    \item Software can also trigger a globally forced update bit\\ \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP} which will prompt all registers in the module to be updated according to shadow registers.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{PWM Timer Synchronization and Phase Locking}
+The PWM modules adopt a flexible synchronization method. Each PWM timer has a synchronization input and a synchronization output. The synchronization input can be selected from three synchronization outputs of the three PWM timers and three synchronization signals from the GPIO matrix. The synchronization output can be generated when the PWM timer's value equals to period or zero, the synchronization input signal is active, or software synchronizes. Thus, each PWM timer can flexibly select the synchronization input for different phase synchronization methods. During synchronization, the PWM timer clock prescaler will reset its counter and restart dividing the clock in order to ensure the correctness of the timer.
+
+\subsection{PWM Operator Module}
+The PWM Operator module has the following functions:
+\begin{itemize}
+    \item Generates a PWM signal pair, based on timing references obtained from the corresponding PWM timer.
+    \item Each signal out of the PWM signal pair includes a specific pattern of dead time (i.e., adding delays to the rising and falling edges of the PWM signal).
+    \item Superimposes a carrier on the PWM signal, if configured to do so.
+    \item Handles response under fault conditions.
+\end{itemize}
+
+Figure \ref{fig:mcpwm-operator} shows the block diagram of a PWM operator.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/40-MCPWM-operator}
+    \caption{Block Diagram of A PWM Operator}
+    \label{fig:mcpwm-operator}
+\end{figure}
+
+
+\subsubsection{PWM Generator Module}
+\label{sec:mcpwm-gen-submodule}
+
+\subparagraph{Purpose of the PWM Generator Module}
+In this module, important timing events are generated or imported. The events are then converted into specific actions to generate the desired waveforms at the PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B outputs.
+
+The PWM generator module performs the following actions:
+\begin{itemize}
+    \item Generation of timing events based on time stamps configured using the A and B registers. Events happen when the following conditions are met (for the configuration of registers A and B, see section \ref{subpara:mcpwm-op-shadow}):
+    \begin{itemize}
+        \item UTEA: the PWM timer is counting up and its value is equal to register A.
+        \item UTEB: the PWM timer is counting up and its value is equal to register B.
+        \item DTEA: the PWM timer is counting down and its value is equal to register A.
+        \item DTEB: the PWM timer is counting down and its value is equal to register B.
+    \end{itemize}
+    \item Generation of U/DT0, U/DT1 timing events based on fault or synchronization events.
+    \begin{itemize}
+        \item UT0: the PWM timer is counting up and FAULT0 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 0) or FAULT1 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 1) or FAULT2 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 2) or synchronized (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 3).
+        \item UT1: the PWM timer is counting up and FAULT0 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 0) or FAULT1 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 1) or FAULT2 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 2) or synchronized (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 3).
+        \item DT0: the PWM timer is counting down and FAULT0 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 0) or FAULT1 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 1) or FAULT2 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 2) or synchronized (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T0\_SEL} is set to 3).
+        \item DT1: the PWM timer is counting down and FAULT0 detected(field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 0) or FAULT1 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 1) or FAULT2 detected (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 2) or synchronized (field \hyperref[fielddesc:MCPWMGENNT0SEL]{MCPWM\_GEN\textcolor{red}{\it{n}}\_T1\_SEL} is set to 3).
+    \end{itemize}
+    \item Management of priority when these timing events occur concurrently.
+    \item Generation of set, clear, and toggle actions, based on the timing events.
+    \item Controlling of the PWM duty cycle, depending on the configuration of the PWM generator module.
+    \item Handling of new time stamp values, using shadow registers to prevent glitches in the PWM cycle.
+\end{itemize}
+
+\subparagraph{Shadow Register of PWM Generator}
+\label{subpara:mcpwm-op-shadow}
+The time stamp registers A and B used by the hardware have shadow registers, which are registers  \hyperref[regdesc:MCPWMGENNAREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_A\_REG} and\\ \hyperref[regdesc:MCPWMGENNBREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_B\_REG}. Shadowing provides a way of updating registers in sync with the hardware.
+
+When \hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} is set to 1, the shadow registers can be written to the active register at a specified time. The update method field for \hyperref[regdesc:MCPWMGENNAREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_A\_REG} and \hyperref[regdesc:MCPWMGENNBREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_B\_REG} is \hyperref[fielddesc:MCPWMGENNCFGUPMETHOD]{MCPWM\_GEN\textcolor{red}{\it{n}}\_CFG\_UPMETHOD}. Software can also trigger a globally forced update bit \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP} which will prompt all registers in the module to be updated according to shadow registers. For a description of the shadow registers, please see Section \ref{sec:mcpwm-shdw_reg}.
+
+\subparagraph{Timing Events}
+\label{subpara:mcpwm-op-evt}
+For convenience, all timing signals and events are summarized in Table \ref{tab:mcpwm-gen-in}.
+\input{\modulefiles/tables/40-MCPWM-gen-in-evt__EN}
+
+The purpose of a software-force event is to impose non-continuous or continuous changes on the PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B outputs. The change is done asynchronously. Software-force control is handled by the\\ \hyperref[regdesc:MCPWMGENNFORCEREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_FORCE\_REG} registers.
+
+The selection and configuration of T0/T1 in the PWM generator module is independent of the configuration of fault events in the fault handler module. A particular trip event may or may not be configured to cause trip action in the fault handler submodule, but the same event can be used by the PWM generator to trigger T0/T1 for controlling PWM waveforms.
+
+It is important to know that when the PWM timer is in Count-Up-Down Mode. It will always decrement after a TEP event, and increment after a TEZ event. So, when the PWM timer is in Count-Up-Down Mode, DTEP and UTEZ events will occur, while UTEP and DTEZ events never occurs.
+
+The PWM generator can handle multiple events at the same time. Events are prioritized by the hardware and relevant details are provided in Table \ref{tab:mcpwm-evt-prio-u} and Table \ref{tab:mcpwm-evt-prio-d}. Priority levels range from 1 (the highest) to 7 (the lowest). Please note that the priority of TEP and TEZ events depends on the PWM timer's counting mode.
+
+If the value of A or B is set to be greater than the period, then U/DTEA and U/DTEB will never occur.
+
+\input{\modulefiles/tables/40-MCPWM-evt-prio-u__EN}
+\input{\modulefiles/tables/40-MCPWM-evt-prio-d__EN}
+
+Notes:
+\begin{enumerate}
+   \item UTEP and UTEZ do not happen simultaneously. When the PWM timer is in Count-Up Mode, UTEP will always happen one cycle earlier than UTEZ, as demonstrated in Figure \ref{fig:mcpwm-te-u}, so their action on PWM signals will not interrupt each other. When the PWM timer is in Count-Up-Down Mode, UTEP will not occur.
+    \item DTEP and DTEZ do not happen simultaneously. When the PWM timer is in Count-Down Mode, DTEZ will always happen one cycle earlier than DTEP, as demonstrated in Figure \ref{fig:mcpwm-te-d}, so their action on PWM signals will not interrupt each other. When the PWM timer is in Count-Up-Down Mode, DTEZ will not occur.
+\end{enumerate}
+
+\subparagraph{PWM Signal Generation}
+\label{subpara:mcpwm-op-gen}
+The PWM generator module controls the behavior of outputting PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B when a particular timing event occurs. The timing events are further qualified by the PWM timer's counting mode (increment or decrement). Knowing the counting mode, the module may then perform an independent action at each stage of the PWM timer counting up or down.
+
+The following actions may be configured on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B outputs:
+\begin{itemize}
+    \item Set High: Set the output of PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B to a high level.
+    \item Clear Low: Clear the output of PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B by setting it to a low level.
+    \item Toggle: Change the current output level of PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B to the opposite value. If it is currently pulled up, then pull it down, or vice versa.
+    \item Do Nothing: Keep both outputs PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B unchanged. In this state, interrupts can still be triggered.
+\end{itemize}
+
+Actions on outputs is configured by using registers \hyperref[regdesc:MCPWMGENNAREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_A\_REG} and \\\hyperref[regdesc:MCPWMGENNBREG]{MCPWM\_GEN\textcolor{red}{\it{n}}\_B\_REG}. So, the action to be taken on each output is set independently. Also, there is great flexibility in selecting actions to be taken on a given output based on events. More specifically, any event listed in Table \ref{tab:mcpwm-gen-in} can operate on either output of PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B. To check out registers for particular generator 0, 1, or 2, please refer to the register description in Section \ref{sec:mcpwm-reg-summ}.
+
+\subparagraph{Waveforms for Common Configurations}
+In the configuration of various waveforms below, period refers to the configuration value stored in the period register of the PWM timer selected by the PWM operator (i.e. \hyperref[fielddesc:MCPWMTIMERNPERIOD]{MCPWM\_TIMER\textcolor{red}{\it{n}} \_PERIOD} (\textcolor{red}{\it{x}} = 0, 1, 2)). For configuration methods, please refer to the section \ref{sec:mcpwm-timer-sub}. A and B denote the time stamp registers A and B used by the hardware. For register configuration, please refer to the section \ref{subpara:mcpwm-op-shadow}. UTEA/B, UTEZ/P, DTEA/B, DTEZ/P, DT0/1, and UT0/1 represent different timing events of the PWM generator. For event definition, please refer to the section \ref{subpara:mcpwm-op-evt}. The upward arrow, downward arrow, and T mark signify setting the PWM waveform high, setting it low, toggling it when the timing event occurs. See section \ref{subpara:mcpwm-op-gen} for configuration. PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B are the output signals of PWM generator\textcolor{red}{\it{x}}.
+
+Figure \ref{fig:mcpwm-ud-gen-dt} presents the symmetric PWM waveform generated when the PWM timer is in Count-Up-Down mode. DC 0\%–100\% modulation can be calculated via the formula below:
+
+\begin{center}
+$Duty =  (Period - A) \div Period$
+\end{center}
+
+If A matches the PWM timer value and the PWM timer is incrementing, then the PWM output is pulled up. If A matches the PWM timer value while the PWM timer is decrementing, then the PWM output is pulled low.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-ud-gen-dt.eps}
+    \caption{Symmetrical Waveform in Count-Up-Down Mode}
+    \label{fig:mcpwm-ud-gen-dt}
+\end{figure}
+
+The PWM waveforms in Figures \ref{fig:mcpwm-u-gen-0} to \ref{fig:mcpwm-ud-gen-1} show some common PWM generator configurations. 
+\clearpage
+\newpage
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-up0.eps}
+    \caption{Count-Up, Single Edge Asymmetric Waveform, with Independent Modulation on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B — Active High}
+    \label{fig:mcpwm-u-gen-0}
+\end{figure}
+
+The duty modulation for PWM\textcolor{red}{\it{x}}A is set by B, active high and proportional to B. \\
+The duty modulation for PWM\textcolor{red}{\it{x}}B is set by A, active high and proportional to A.
+\begin{center}
+    $Period = (MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD + 1 ) \times T_{PT\_clk}$\\
+\end{center}
+
+\newpage
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/40-MCPWM-gen-up1.eps}
+    \caption{Count-Up, Pulse Placement Asymmetric Waveform with Independent Modulation on PWM\textcolor{red}{\it{x}}A}
+    \label{fig:mcpwm-u-gen-1}
+\end{figure}
+
+Pulses may be generated anywhere within the PWM cycle (zero to period). \\
+PWM\textcolor{red}{\it{x}}A's high time duty is proportional to (B – \@A).
+
+\begin{center}
+    $Period = (MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD + 1 ) \times T_{PT\_clk}$\\
+\end{center}
+\newpage
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-ud0.eps}
+    \caption{Count-Up-Down, Dual Edge Symmetric Waveform, with Independent Modulation on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B — Active High}
+    \label{fig:mcpwm-ud-gen-0}
+\end{figure}
+
+The duty modulation for PWM\textcolor{red}{\it{x}}A is set by A, active high and proportional to A. \\
+The duty modulation for PWM\textcolor{red}{\it{x}}B is set by B, active high and proportional to B. \\
+Outputting PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B can drive separate switches.
+
+\begin{center}
+    $Period = (2 \times MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD ) \times T_{PT\_clk}$\\
+\end{center}
+
+\newpage
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-ud1.eps}
+    \caption{Count-Up-Down, Dual Edge Symmetric Waveform, with Independent Modulation on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B — Complementary}
+    \label{fig:mcpwm-ud-gen-1}
+\end{figure}
+
+The duty modulation of PWM\textcolor{red}{\it{x}}A is set by A, is active high and proportional to A. \\
+The duty modulation of PWM\textcolor{red}{\it{x}}B is set by B, is active low and proportional to B. \\
+Outputs PWM\textcolor{red}{\it{x}} can drive upper/lower (complementary) switches. \\
+Dead time = B – \@A. Edge placement is configurable by software. Dead time generator module supports configuring edge delay methods when required.
+
+\begin{center}
+    $Period = (2 \times MCPWM\_TIMER\textcolor{red}{\it{n}}\_PERIOD ) \times T_{PT\_clk}$\\
+\end{center}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-utdt.eps}
+    \caption{Count-Up-Down, Fault or Synchronization Events, with Same Modulation on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B}
+    \label{fig:mcpwm-utdt-gen}
+\end{figure}
+
+Figure \ref{fig:mcpwm-utdt-gen} shows a waveform when UT0/1 and DT0/1 events  are generated. In this example, T0 selects FAULT0 and T1 selects FAULT1. The events selected by T0 and T1 can be configured independently, these events can be FAULT0, FAULT1, FAULT2 or synchronous. For detailed configuration, see section \ref{sec:mcpwm-gen-submodule}.
+
+
+\subparagraph{Software-Force Events}
+There are two types of software-force events inside the PWM generator:
+\begin{itemize}
+    \item Non-continuous-immediate (NCI) software-force events: Such types of events are immediately effective on PWM outputs when triggered by software. The forcing is non-continuous, which means the next active timing events will be able to alter the PWM outputs.
+    \item Continuous (CNTU) software-force events: Such types of events are continuous. The forced PWM outputs will continue until they are released by software. The events' triggers are configurable. They can be configured to be timing events or immediate events.
+\end{itemize}
+
+For NCI software-force events, set register \hyperref[fielddesc:MCPWMGENNANCIFORCE]{MCPWM\_GEN\regindex{n}\_A\_NCIFORCE} or \hyperref[fielddesc:MCPWMGENNBNCIFORCE]{MCPWM\_GEN\regindex{n}\_B\_NCIFORCE } to 1 and then to 0 to trigger the NCI software-forced events of PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B. Configure register \hyperref[fielddesc:MCPWMGENNANCIFORCEMODE]{MCPWM\_GEN\regindex{n}\_A\_NCIFORCE\_MODE} or \hyperref[fielddesc:MCPWMGENNBNCIFORCEMODE]{MCPWM\_GEN\regindex{n}\_B\_NCIFORCE\_MODE} to specify the operation on the PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B waveform when the NCI software-force event occurs. Configuring the registers to 0 or 3 means no operation, 1 means low level, and 2 means high level.
+
+For CNTU software-force events, set register \hyperref[fielddesc:MCPWMGENNCNTUFORCEUPMETHOD]{MCPWM\_GEN\regindex{n}\_CNTUFORCE\_UPMETHOD} to specify the trigger method of CNTU software-force events. Setting all bits to 0 means trigger CNTU software-force events immediately, setting bit 0 to 1 means the TEZ event triggers CNTU software-force events, setting bit 1 to 1 means the TEP event triggers CNTU software-force events, setting bit 2 to 1 means the TEA event triggers CNTU software-force events, setting bit 3 to 1 means the TEB event triggers CNTU software-force events, setting bit 4 to 1 means CNTU software-force events triggered when the PWM timer selected by the PWM generator is synchronized, and setting bit 5 to 1 means the CNTU software-forced events will not be triggered. Configure register \hyperref[fielddesc:MCPWMGENNACNTUFORCEMODE]{MCPWM\_GEN\regindex{n}\_A\_CNTUFORCE\_MODE} or \hyperref[fielddesc:MCPWMGENNBCNTUFORCEMODE]{MCPWM\_GEN\regindex{n}\_B\_CNTUFORCE\_MODE} to specify the operation on the PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B waveform when the CNTU software-force events occur. Configuring the registers to 0 or 3 means no operation, 1 means low level, and 2 means high level.
+
+Figure \ref{fig:mcpwm-force-nci} shows a waveform of NCI software-force events. NCI events are used to force PWM\textcolor{red}{\it{x}}A output low. Forcing on PWM\textcolor{red}{\it{x}}B is disabled in this case.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-force-nci.eps}
+    \caption{Example of an NCI Software-Force Event on PWM\textcolor{red}{\it{x}}A}
+    \label{fig:mcpwm-force-nci}
+\end{figure}
+
+\newpage
+
+Figure \ref{fig:mcpwm-force-cn} shows a waveform of CNTU software-force events. TEZ events are selected as triggers for CNTU software-force events. CNTU is used to force the PWM\textcolor{red}{\it{x}}B output low. Forcing on PWM\textcolor{red}{\it{x}}A is disabled.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-gen-force-cn.eps}
+    \caption{Example of a CNTU Software-Force Event on PWM\textcolor{red}{\it{x}}B}
+    \label{fig:mcpwm-force-cn}
+\end{figure}
+\newpage
+
+\subsubsection{Dead Time Generator Module}
+\label{sec:mcpwm-dead-time-gen}
+\subparagraph{Purpose of the Dead Time Generator Module}
+Section \ref{sec:mcpwm-gen-submodule} introduced several options to generate signals on PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B outputs, with a specific placement of signal edges. The required dead time is obtained by altering the edge placement between signals and by setting the signal's duty cycle. Another option to control the dead time is to use a specialized module – Dead Time Generator.
+
+The key functions of the Dead Time Generator module are as follows:
+\begin{itemize}
+    \item Generating output signal pairs (PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B) with a dead time from a common source, which can be either the input signal PWM\textcolor{red}{\it{x}}A or PWM\textcolor{red}{\it{x}}B.
+    \item Creating a dead time by adding delay to signal edges:
+    \begin{itemize}
+        \item Rising edge delay (RED)
+        \item Falling edge delay (FED)
+    \end{itemize}
+    \item Can generate PWM signal in various format. The typical dead time configurations are:
+    \begin{itemize}
+        \item Active high complementary (AHC)
+        \item Active low complementary (ALC)
+        \item Active high (AH)
+        \item Active low (AL)
+    \end{itemize}
+    \item This module may also be bypassed, if the dead time is configured directly in the generator module.
+\end{itemize}
+
+\subparagraph{Shadow Register of Dead Time Generator}
+Delay registers RED and FED are shadowed with registers \hyperref[regdesc:MCPWMDTNREDCFGREG]{MCPWM\_DT\textcolor{red}{\it{n}}\_RED\_CFG\_REG} and \\\hyperref[regdesc:MCPWMDTNFEDCFGREG]{MCPWM\_DT\textcolor{red}{\it{n}}\_FED\_CFG\_REG}. When \hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} is set to 1, the values saved in the shadow registers can be written to the active register at the specified time. The update method register for \hyperref[regdesc:MCPWMDTNREDCFGREG]{MCPWM\_DT\textcolor{red}{\it{n}}\_RED\_CFG\_REG} is \hyperref[fielddesc:MCPWMDBNREDUPMETHOD]{MCPWM\_DB\textcolor{red}{\it{n}}\_RED\_UPMETHOD}. The update method register for \hyperref[regdesc:MCPWMDTNFEDCFGREG]{MCPWM\_DT\textcolor{red}{\it{n}}\_FED\_CFG\_REG} is \hyperref[fielddesc:MCPWMDBNFEDUPMETHOD]{MCPWM\_DB\textcolor{red}{\it{n}}\_FED\_UPMETHOD}. The Software can also trigger a globally forced update bit \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP} which will prompt all registers in the module to be updated according to shadow registers. For the description of shadow registers, please see section \ref{sec:mcpwm-shdw_reg}.
+
+\newpage
+\subparagraph{Highlights for Operation of the Dead Time Generator}
+Options for setting up the dead time module are shown in Figure \ref{fig:mcpwm-conf-dt}.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/40-MCPWM-dt.eps}
+    \caption{Options for Setting up the Dead Time Generator Module}
+    \label{fig:mcpwm-conf-dt}
+\end{figure}
+
+
+S0-S8 in the figure above are switches controlled by fields in register \hyperref[regdesc:MCPWMDTNCFGREG]{MCPWM\_DT\textcolor{red}{\it{n}}\_CFG\_REG} shown in Table \ref{tab:mcpwm-s-dt}.
+
+\input{\modulefiles/tables/40-MCPWM-s-dt__EN}
+
+
+All switch combinations are supported, but not all of them represent the typical modes of use. Table \ref{tab:mcpwm-mod-dt} documents some typical dead time configurations. In these configurations, the position of S4 and S5 sets PWM\textcolor{red}{\it{x}}A as the common source of both falling edge delay (FED) and rising edge delay (RED). The modes presented in table \ref{tab:mcpwm-mod-dt} may be categorized as follows:
+
+\begin{itemize}
+    \item {\bfseries Mode 1: Bypass delays on both FED and RED}\\
+    In this mode, the dead time module is disabled. Signals of PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B pass through without any modifications.
+    \item {\bfseries Mode 2-5: Classical Dead Time Polarity Settings}\\
+    These four modes represent typical configurations of polarity and should cover the active-high/low modes in available industry power switch gate drivers. The typical waveforms are shown in Figures \ref{fig:mcpwm-wf-dt-ahc} to \ref{fig:mcpwm-wf-dt-al}.
+    \item {\bfseries Modes 6 and 7: Bypass delay on the falling edge (FED) or rising edge (RED)}\\
+    In these two modes, either RED or FED is bypassed. As a result, the corresponding delay is not applied.
+\end{itemize}
+
+\input{\modulefiles/tables/40-MCPWM-mod-dt__EN}
+
+\begin{tiplisting}
+For all the modes above, the position of the binary switches S4 to S8 is set to 0.
+\end{tiplisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/40-MCPWM-dt-ahc.eps}
+    \caption{Active High Complementary (AHC) Dead Time Waveforms}
+    \label{fig:mcpwm-wf-dt-ahc}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/40-MCPWM-dt-alc.eps}
+    \caption{Active Low Complementary (ALC) Dead Time Waveforms}
+    \label{fig:mcpwm-wf-dt-alc}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/40-MCPWM-dt-ah.eps}
+    \caption{Active High (AH) Dead Time Waveforms}
+    \label{fig:mcpwm-wf-dt-ah}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/40-MCPWM-dt-al.eps}
+    \caption{Active Low (AL) Dead Time Waveforms}
+    \label{fig:mcpwm-wf-dt-al}
+\end{figure}
+
+RED and FED delays may be set up independently. The delay value is programmed using the 16-bit field \hyperref[fielddesc:MCPWMDBNRED]{MCPWM\_DB\textcolor{red}{\it{n}}\_RED} and \hyperref[fielddesc:MCPWMDBNFED]{MCPWM\_DB\textcolor{red}{\it{n}}\_FED}. The register value represents the number of clock (DT\_clk) periods by which a signal edge is delayed. DT\_clk can be selected from PWM\_clk or PT\_clk through register \hyperref[fielddesc:MCPWMDBNCLKSEL]{MCPWM\_DB\textcolor{red}{\it{n}}\_CLK\_SEL}.
+
+To calculate the delay on the falling edge (FED) and rising edge (RED), use the following formulas:
+\begin{center}
+    \item $FED = MCPWM\_DT\textcolor{red}{\it{n}}\_FED \times T_{DT\_clk}$
+    \item $RED = MCPWM\_DT\textcolor{red}{\it{n}}\_RED \times T_{DT\_clk}$
+\end{center}
+
+\newpage
+
+\subsubsection{PWM Carrier Module}
+The coupling of PWM output to a motor driver may need isolation with a transformer. Transformers deliver only AC signals, while the duty cycle of a PWM signal may range anywhere from 0\% to 100\%. The PWM carrier module passes such a PWM signal through a transformer by using a high frequency carrier to modulate the signal.
+
+\subparagraph{Function Overview}
+The following key characteristics of this module are configurable:
+\begin{itemize}
+    \item Carrier frequency
+    \item Pulse width of the first pulse
+    \item Duty cycle of the second and the subsequent pulses
+    \item Enabling/disabling the carrier function
+\end{itemize}
+
+\subparagraph{Operational Highlights}
+The PWM carrier clock (PC\_clk) is derived from PWM\_CLK. The frequency and duty cycle are configured by the \hyperref[fielddesc:MCPWMCHOPPERNPRESCALE]{MCPWM\_CHOPPER\textcolor{red}{\it{n}}\_PRESCALE} and \hyperref[fielddesc:MCPWMCHOPPERNDUTY]{MCPWM\_CHOPPER\textcolor{red}{\it{n}}\_DUTY} bits in the \hyperref[regdesc:MCPWMCARRIERNCFGREG]{MCPWM\_CARRIER\textcolor{red}{\it{n}}\_CFG\_REG} register. The purpose of one-shot pulses is to provide the high-energy impulse to reliably turn on the power switch. Subsequent pulses sustain the power-on status. The width of a one-shot pulse is configurable with the\\ \hyperref[fielddesc:MCPWMCHOPPERNOSHTWTH]{MCPWM\_CHOPPER\textcolor{red}{\it{n}}\_OSHTWTH} field. Enabling/disabling of the carrier module is done with the\\ \hyperref[fielddesc:MCPWMCHOPPERNEN]{MCPWM\_CHOPPER\textcolor{red}{\it{n}}\_EN} bit.
+
+\subparagraph{Waveform Examples}
+Figure \ref{fig:mcpwm-carrier-0} shows an example of waveforms, where a carrier is superimposed on original PWM pulses. This figure does not show the first one-shot pulse and the duty-cycle control. Related details are covered in the following two sections.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/40-MCPWM-carrier-0.eps}
+    \caption{Example of Waveforms Showing PWM Carrier Action}
+    \label{fig:mcpwm-carrier-0}
+\end{figure}
+
+\subparagraph{One-Shot Pulse}
+The width of the first pulse can be configured to 16 different values, which can be calculated by the following equation:
+
+\begin{center}
+$T_{1stpulse} = T_{PWM\_clk} \times 8 \times (MCPWM\_CARRIER\textcolor{red}{\it{n}}\_PRESCALE+1) \times (MCPWM\_CARRIER\textcolor{red}{\it{n}}\_OSHTWTH+1)$ \\
+\end{center}
+
+Where:
+\begin{itemize}
+    \item $T_{PMW\_clk}$ is the period of the PWM clock (PWM\_clk).
+    \item $(MCPWM\_CARRIER\textcolor{red}{\it{n}}\_OSHTWTH+1)$ is the width of the first pulse (whose value ranges from 1 to 16).
+    \item $(MCPWM\_CARRIER\textcolor{red}{\it{n}}\_PRESCALE+1)$ is the PWM carrier clock's (PC\_clk) prescaler value.
+\end{itemize}
+
+The first one-shot pulse and subsequent sustaining pulses are shown in Figure \ref{fig:mcpwm-carrier-1}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-carrier-1.eps}
+    \caption{Example of the First Pulse and the Subsequent Sustaining Pulses of the PWM Carrier Submodule}
+    \label{fig:mcpwm-carrier-1}
+\end{figure}
+
+\subparagraph{Duty Cycle Control}
+After issuing the first one-shot pulse, the remaining PWM signal is modulated according to the carrier frequency. Users can configure the duty cycle of this signal. Tuning of duty may be required, so that the signal passes through the isolating transformer and can still operate (turn on/off) the motor drive, changing rotation speed and direction.
+
+The duty cycle may be set to one of seven values, using \hyperref[fielddesc:MCPWMCHOPPERNDUTY]{MCPWM\_CHOPPER\textcolor{red}{\it{n}}\_DUTY}, or bits [7:5] of register \hyperref[regdesc:MCPWMCARRIERNCFGREG]{MCPWM\_CARRIER\textcolor{red}{\it{n}}\_CFG\_REG}.
+
+Below is the formula for calculating the duty cycle:
+
+\begin{center}
+$Duty =  MCPWM\_CARRIER\textcolor{red}{\it{n}}\_DUTY \div 8$
+\end{center}
+
+All seven settings of the duty cycle are shown in Figure \ref{fig:mcpwm-carrier-2}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/40-MCPWM-carrier-2.eps}
+    \caption{Possible Duty Cycle Settings for Sustaining Pulses in the PWM Carrier Submodule}
+    \label{fig:mcpwm-carrier-2}
+\end{figure}
+
+\subsubsection{Fault Detection Module}
+Each MCPWM peripheral is connected to three fault signals (FAULT0, FAULT1, and FAULT2) which are sourced from the GPIO matrix. These signals are intended to indicate external fault conditions, and may be preprocessed by the Fault Detection module to generate fault events. Fault events can then execute the user code to control MCPWM outputs in response to specific faults.
+
+\subparagraph{Function of Fault Detection Module}
+The key actions performed by the fault detection module are:
+\begin{itemize}
+    \item Forcing outputs PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B, upon detected fault, to one of the following states:
+    \begin{itemize}
+        \item High
+        \item Low
+        \item Toggle
+        \item No action taken
+    \end{itemize}
+    \item Execution of one-shot trip (OST) upon detection of over-current conditions/short circuits.
+    \item Cycle-by-cycle trip (CBC) to provide current-limiting operation.
+    \item Allocation of either one-shot or cycle-by-cycle operation for each fault signal.
+    \item Generation of interrupts for each fault input.
+    \item Support for software-force tripping.
+    \item Enabling or disabling of module function as required.
+\end{itemize}
+
+\subparagraph{Operation and Configuration Tips}
+This section provides the operational tips and set-up options for the Fault Detection module.
+
+Fault signals coming from pins are sampled and synced in the GPIO matrix. In order to guarantee the successful sampling of fault pulses, each pulse duration must be at least two APB clock cycles. The Fault Detection module will then sample fault signals by using PWM\_clk. So, the duration of fault pulses coming from GPIO matrix must be at least one PWM\_clk cycle. Differently put, regardless of the period relation between APB clock and PWM\_clk, the width of fault signal pulses on pins must be at least equal to the sum of two APB clock cycles and one PWM\_clk cycle.
+
+Each level of fault signals, FAULT0 to FAULT2, can be used by the Fault Detection module to generate fault events (fault\_event0 to fault\_event2). Every fault event can be configured individually to provide CBC action, OST action, or none.
+
+\begin{itemize}
+    \item {\bfseries Cycle-by-Cycle (CBC) action:}\\
+    When CBC action is triggered, the state of PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B will be changed immediately according to the configuration of fields \hyperref[fielddesc:MCPWMTZNACBCU]{MCPWM\_TZ\textcolor{red}{\it{n}}\_A\_CBC\_U/D} and \hyperref[fielddesc:MCPWMTZNBCBCU]{MCPWM\_TZ\textcolor{red}{\it{n}}\_B\_CBC\_U/D}. Different actions can be indicated when the PWM timer is incrementing or decrementing. Different CBC action interrupts can be triggered for different fault events. Status field \hyperref[fielddesc:MCPWMTZNCBCON]{MCPWM\_TZ\textcolor{red}{\it{n}}\_CBC\_ON} indicates whether a CBC action is on or off.
+   When the fault event is no longer present, CBC actions on PWM\textcolor{red}{\it{x}}A/B will be cleared at a specified point, which is either a D/UTEP or D/UTEZ event. Field \hyperref[fielddesc:MCPWMTZNCBCPULSE]{MCPWM\_TZ\textcolor{red}{\it{n}}\_CBCPULSE} determines at which event PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B will be able to resume normal actions. Therefore, in this mode, the CBC action is cleared or refreshed upon every PWM cycle.
+    \item {\bfseries One-Shot (OST) action:}\\
+	When OST action is triggered, the state of PWM\textcolor{red}{\it{x}}A and PWM\textcolor{red}{\it{x}}B will be changed immediately, depending on the setting of fields \hyperref[fielddesc:MCPWMTZNAOSTU]{MCPWM\_TZ\textcolor{red}{\it{n}}\_A\_OST\_U/D} and \hyperref[fielddesc:MCPWMTZNBOSTU]{MCPWM\_TZ\textcolor{red}{\it{n}}\_B\_OST\_U/D}. Different actions can be configured when PWM timer is incrementing or decrementing. Different OST action interrupts can be triggered from different fault events. Status field \hyperref[fielddesc:MCPWMTZNOSTON]{MCPWM\_TZ\textcolor{red}{\it{n}}\_OST\_ON} indicates whether an OST action is on or off.
+    The OST actions on PWM\textcolor{red}{\it{x}}A/B are not automatically cleared when the fault event is no longer present. One-shot actions must be cleared manually by setting the \hyperref[fielddesc:MCPWMTZNCLROST]{MCPWM\_TZ\textcolor{red}{\it{n}}\_CLR\_OST} bit.
+\end{itemize}
+
+\subsection{Capture Module}
+\subsubsection{Introduction}
+The capture module contains three complete capture channels. Channel inputs CAP0, CAP1, and CAP2 are sourced from the GPIO matrix. Thanks to the flexibility of the GPIO matrix, CAP0, CAP1, and CAP2 can be configured from any pin input. Multiple capture channels can be sourced from the same pin input, while prescaling for each channel can be set differently. Also, capture channels are sourced from different pins. This provides several options for handling capture signals by hardware in the background, instead of having them processed directly by the CPU.
+A capture module has the following independent key resources:
+\begin{itemize}
+    \item One 32-bit timer (counter) which can be synchronized with the PWM timer, another module, or software.
+    \item Three capture channels, each equipped with a 32-bit time-stamp and a capture prescaler.
+    \item Independent edge polarity (rising/falling edge) selection for any capture channel.
+    \item Input capture signal prescaling (from 1 to 256).
+    \item Interrupt capabilities on any of the three capture events.
+\end{itemize}
+
+\subsubsection{Capture Timer}
+The capture timer is a 32-bit counter incrementing continuously. It is enabled by setting \hyperref[fielddesc:MCPWMCAPTIMEREN]{MCPWM\_CAP\_TIMER\_EN} to 1. Its operating clock source is MCPWM core clock. When \hyperref[fielddesc:MCPWMCAPSYNCIEN]{MCPWM\_CAP\_SYNCI\_EN} is configured, the counter will be loaded with phase stored in register\\\hyperref[regdesc:MCPWMCAPTIMERPHASEREG]{MCPWM\_CAP\_TIMER\_PHASE\_REG} at the time of a sync event. Sync events can select from PWM timers sync-out, or PWM module sync-in by configuring \hyperref[fielddesc:MCPWMCAPSYNCISEL]{MCPWM\_CAP\_SYNCI\_SEL}. Sync events can also be generated by setting \hyperref[fielddesc:MCPWMCAPSYNCSW]{MCPWM\_CAP\_SYNC\_SW}. The capture timer provides timing references for all three capture channels.
+
+\subsubsection{Capture Channel}
+The capture signal coming to a capture channel will be inverted first, if needed, and then prescaled. Each capture channel has a prescaler register of \hyperref[fielddesc:MCPWMCAPNPRESCALE]{MCPWM\_CAP\textcolor{red}{\it{n}}\_PRESCALE}. Finally, specified edges of preprocessed capture signal will trigger capture events. Setting \hyperref[fielddesc:MCPWMCAPNEN]{MCPWM\_CAP\textcolor{red}{\it{n}}\_EN} to enable a capture channel. The capture event occurs at the time selected by the \hyperref[fielddesc:MCPWMCAPNMODE]{MCPWM\_CAP\textcolor{red}{\it{n}}\_MODE}. When a capture event occurs, the capture timer's value is stored in time-stamp register \hyperref[regdesc:MCPWMCAPCHNREG]{MCPWM\_CAP\_CH\textcolor{red}{\it{n}}\_REG}. Different interrupts can be generated for different capture channels at capture events. The edge that triggers a capture event is recorded in register \hyperref[fielddesc:MCPWMCAPNEDGE]{MCPWM\_CAP\textcolor{red}{\it{n}}\_EDGE}. The capture event can be also forced by software setting \hyperref[fielddesc:MCPWMCAPNSW]{MCPWM\_CAP\textcolor{red}{\it{n}}\_SW}.
+
+\subsection{ETM Module}
+
+\subsubsection{Overview}
+The MCPWM peripheral on \chipname{} supports the Event Task Matrix (ETM) function, which allows MCPWM's ETM tasks to be triggered by any peripherals' ETM events, or MCPWM's ETM events to trigger any peripherals' ETM tasks. The capture module, the fault detection module, three timers, and three operators can generate events and respond to tasks independently. This section introduces the ETM tasks and events related to MCPWM. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+\subsubsection{MCPWM-Related ETM Events}
+
+When setting enable field to 1, after the generation condition is met, the corresponding event would be generated. For details, please refer to Table \ref{tab:mcpwm-etm-event} below:
+
+
+\input{\modulefiles/tables/40-MCPWM-etm-event__EN}
+
+\subsubsection{MCPWM-Related ETM Tasks}
+When setting the enable field to 1, after inputting valid tasks, the corresponding response operation would be generated. For details, please refer to Table \ref{tab:mcpwm-etm-task} below:
+
+
+\input{\modulefiles/tables/40-MCPWM-etm-task__EN}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:mcpwm-interrupts}
+
+\chipname{}'s MCPWM0 can generate the PWM0\_INTR interrupt signal. The PWM0\_INTR will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+Interrupt signal PWM0\_INTR can be generated by the following internal interrupt sources:
+\begin{itemize}
+\item \label{int:mcpwm-timer-stop}MCPWM\_TIMER\regindex{x}\_STOP\_INT: Triggered when timer\regindex{x} stops.
+\item \label{int:mcpwm-timer-TEZ}MCPWM\_TIMER\regindex{x}\_TEZ\_INT: Triggered by the TEZ event of PWM timer\regindex{x}.
+\item \label{int:mcpwm-timer-tep}MCPWM\_TIMER\regindex{x}\_TEP\_INT: Triggered by the TEP event of PWM timer\regindex{x}.
+\item \label{int:mcpwm-fault}MCPWM\_FAULT\regindex{x}\_INT: Triggered when fault\_event\regindex{x} starts.
+\item \label{int:mcpwm-fault-clr}MCPWM\_FAULT\regindex{x}\_CLR\_INT: Triggered after fault\_event\regindex{x} ends.
+\item \label{int:mcpwm-cmpr-tea}MCPWM\_CMPR\regindex{x}\_TEA\_INT: Triggered by the TEA event of PWM operator\regindex{x}.
+\item \label{int:mcpwm-cmpr-teb}MCPWM\_CMPR\regindex{x}\_TEB\_INT: Triggered by the TEB event of PWM operator\regindex{x}.
+\item \label{int:mcpwm-tz-cbc}MCPWM\_TZ\regindex{x}\_CBC\_INT: Triggered by the CBC action of PWM\regindex{x}.
+\item \label{int:mcpwm-tz-ost}MCPWM\_TZ\regindex{x}\_OST\_INT: Triggered by the OST action of PWM\regindex{x}.
+\item \label{int:mcpwm-cap}MCPWM\_CAP\regindex{x}\_INT: Triggered by the capture event on channel\regindex{x}.
+\end{itemize}
+
+The above interrupt sources can only be triggered when the interrupt enable register \regindex{interrupt\_source\_name}\_ENA is set to 1. Write 1 to \regindex{interrupt\_source\_name}\_CLR will clear the interrupt.
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:mcpwm-reg-summ} \textit{\nameref{sec:mcpwm-reg-summ}}.
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{mcpwm-reg-summ}{}
+\section{Register Summary}
+\label{sec:mcpwm-reg-summ}
+
+The addresses in this section are relative to Motor Control PWM base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/40-MCPWM-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to Motor Control PWM base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/40-MCPWM-reg__EN}
+
+
+\end{document}

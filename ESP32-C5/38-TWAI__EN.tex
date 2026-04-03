@@ -1,0 +1,937 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./38-TWAI}
+\newcommand{\modulename}{CAN FD}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{canfd}{}
+\chapter{Controller Area Network Flexible Data-Rate (CAN FD)}
+\label{mod:twai}
+
+The \modulename{} is a multi-master multi-cast communication protocol with error detection and signaling and built-in message priorities and arbitration. It implements the CAN protocol as specified by ISO11898-1. The CAN protocol is suitable for automotive and industrial applications.
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+\chipname{} contains two \modulename{} controllers that can be connected to a CAN FD bus via an external transceiver. The \modulename{} contains numerous advanced features and can be utilized in a wide range of use cases such as automotive products, industrial automation controls, building automation, etc.
+
+This chapter provides functional description of \modulename{}, programmer models and parameters of \modulename{}. It is intended to be used as a reference for software driver developers.
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:twai-features}
+
+The \modulename{} of \chipname{} has the following features:
+
+\begin{itemize}
+    \item Compliant with ISO11898-1:2015
+    \item RX FIFO with 128 words (6 CAN FD frames with 64 byte of payload)
+    \item 4 TX buffers (1 CAN FD frame in each TX buffer)
+    \item 32-bit APB interface
+    \item Support of ISO and non-ISO CAN FD protocols
+    \item Timestamping and time triggered transmission
+    \item Interrupt-driven operation
+    \item Three single-bit filters and one  range filter
+    \item Loopback, bus monitoring, ACK forbidden, self test, and restricted operation modes
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:twai-func-descr}
+
+\subsection{Clock}
+
+\label{sec:twai-func-clk}
+
+\modulename{} operates with a single clock, which is TWAI\_CLK. All timing parameters are derived from the clock.
+
+\begin{figure}[H]
+    \includegraphics[width=0.9\linewidth]{\modulefiles/figures/twai-clk.png}
+    \centering
+    \caption{TWAI\_CLK Diagram}
+    \label{fig:twai-clk}
+\end{figure}
+
+
+\subsection{Reset}
+
+After power-up, \modulename{} should be reset either by hardware (HW reset) or by software (soft reset). The soft reset is executed by writing 1 to \hyperref[fielddesc:TWAIFDRST]{TWAIFD\_RST}. If an HW reset is issued to \modulename{}, it cannot be accessed for two system clock periods. For example, if \modulename{} system clock is 100 MHz, software should wait 20 ns after HW reset is released. If soft reset is issued, no waiting is required. Both HW reset and soft reset have the same effect. By applying any reset, \modulename{} is put in the following state:
+
+\begin{itemize}
+    \item \modulename{} is disabled, it does not communicate on the CAN bus (bus-off state).
+    \item All memory registers within \modulename{} are at the reset value.
+    \item Memories in \modulename{} (TX buffer and RX buffer) are not reset.
+\end{itemize}
+
+
+\subsection{Time Base}
+\label{sec:twai-func-time-base}
+
+\modulename{} integrates an independent 32-bit timer that can generate timestamps, to provide a time base for time triggered transmission or reception of frames. The time base timer can be enabled by configuring \hyperref[fielddesc:TWAIFDTIMERCE]{TWAIFD\_TIMER\_CE}, and its current value can then be read from \hyperref[fielddesc:TWAIFDTIMESTAMPHIGH]{TWAIFD\_TIMESTAMP\_HIGH} and \hyperref[fielddesc:TWAIFDTIMESTAMPLOW]{TWAIFD\_TIMESTAMP\_LOW}.
+
+The time base is an unsigned timer that counts upward. \hyperref[fielddesc:TWAIFDTIMERSTEP]{TWAIFD\_TIMER\_STEP} configures the timing step, \hyperref[fielddesc:TWAIFDTIMERLDVALL]{TWAIFD\_TIMER\_LD\_VAL\_L} configures the timer pre-load value, and \hyperref[regdesc:TWAIFDTIMERCTVALLREG]{TWAIFD\_TIMER\_CT\_VAL\_L} configures the timer count-to value. The valid bit width of the timer can be read from or configured via \hyperref[fielddesc:TWAIFDTSBITS]{TWAIFD\_TS\_BITS}, with a range from 1 to 32.
+
+
+\subsection{Operating Modes}
+\label{sec:twai-func-oper-mode}
+
+After reset, \modulename{} is disabled, it does not take part in communication on the CAN bus (no transmission, reception, monitoring). Before \modulename{} is enabled, it must be configured as explained in Section \ref{sec:twai-func-bus-config} \textit{\nameref{sec:twai-func-bus-config}}. Once configured, it can be enabled by writing 1 to \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA}. When \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 1, \modulename{} starts bus integration and joins the CAN bus communication after receiving 11 consecutive recessive bits. When \modulename{} joins CAN bus communication, it becomes error-active (during integration it is bus-off). At this moment \modulename{} starts communicating on the CAN bus. The moment when \modulename{} joins CAN bus communication can be determined by FCS interrupt and subsequent probing of \hyperref[regdesc:TWAIFDEWLERPFAULTSTATEREG]{TWAIFD\_EWL\_ERP\_FAULT\_STATE\_REG} (see Section \ref{sec:twai-interrupt} \textit{\nameref{sec:twai-interrupt}}). Basic operating modes of \modulename{} are shown in Figure \ref{fig:twai-oper-mode}.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics{\modulefiles/figures/FSM_main_modes}
+\par\end{centering}
+\caption{Operating modes}
+\label{fig:twai-oper-mode}
+\end{figure}
+
+When \modulename{} is error-active, it takes part in CAN bus communication. If \modulename{} becomes error-passive and later bus-off, it stops communicating on the CAN bus and waits before starting reintegration until it receives the error counter reset command (writing 1 to \hyperref[fielddesc:TWAIFDERCRST]{TWAIFD\_ERCRST}). Upon this command, \modulename{} starts reintegration. Reintegration lasts until \modulename{} detects 129 sequences of 11 consecutive recessive bits (an implementation choice, exceeding the CAN specification minimum of 128 sequences). After 129 such sequences, \modulename{} becomes error-active again.
+
+\modulename{} can be disabled at any time by writing logic 0 to \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} register. In such case:
+
+\begin{itemize}
+    \item \modulename{} immediately stops communication on the CAN bus, and transmits only recessive bits.
+    \item TX/RX error counters (TEC/REC) are reset to 0, \modulename{} becomes bus-off.
+    \item All TX buffers move to ``empty'' state (see Figure \ref{fig:twai-tx-buffer-state}), content of TX buffer RAM remains valid (memories are not reset).
+    \item The RX buffer is flushed (see Section \ref{sec:twai-func-flush} \textit{\nameref{sec:twai-func-flush}}).
+\end{itemize}
+
+It is recommended for \modulename{} not to transmit any frame when it is disabled by clearing \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA}, as this would result in transmission of error frames by other nodes on the CAN bus. Therefore, software driver operating on \modulename{} should ensure that none of TX buffers within \modulename{} is in ``ready'', ``TX in progress'' or ``abort in progress'' states (see Section \ref{sec:twai-can-frame-trans} \textit{\nameref{sec:twai-can-frame-trans}}).
+
+\hyperref[fielddesc:TWAIFDERCRST]{TWAIFD\_ERCRST} is ``sticky''. This means that if \modulename{} is not yet bus-off, and this command is issued, \modulename{} will remember the command and automatically start reintegration upon nearest transition to bus-off. This way, the command can be issued in advance during communication, and \modulename{} will re-integrate as quickly as possible after becoming bus-off, without software additional delay caused by interaction with software driver.
+
+
+\subsection{Initialization Sequence}
+
+Initialization sequence consists of the following steps:
+
+\begin{enumerate}
+    \item Reset (either HW reset or soft reset)
+    \item Configuration of \modulename{}:
+    \begin{enumerate}
+        \item Configure interrupts as in Section \ref{sec:twai-interrupt} \textit{\nameref{sec:twai-interrupt}}
+        \item Configure bit rate as in Section \ref{sec:twai-func-bit-rate} \textit{\nameref{sec:twai-func-bit-rate}}
+        \item Configure other features (filters, special modes, etc.)
+    \end{enumerate}
+    \item Enable \modulename{} by writing 1 to \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA}.
+    \item Poll on \hyperref[regdesc:TWAIFDEWLERPFAULTSTATEREG]{TWAIFD\_EWL\_ERP\_FAULT\_STATE\_REG} register, or wait for fault confinement state to trigger the interrupt \hyperref[fielddesc:TWAIFDFCSIINTST]{TWAIFD\_FCSIINTST}. Integration is finished when \hyperref[fielddesc:TWAIFDERA]{TWAIFD\_ERA}=1 (\modulename{} becomes error-active).
+    \item Initialization is finished, software driver can send and receive frames.
+\end{enumerate}
+
+
+\subsection{De-initialization Sequence}
+
+De-initialization sequence consists of the following steps:
+
+\begin{enumerate}
+    \item Ensure that no TX buffer is in ``ready'', ``TX in progress'' or ``abort in progress'' states. This can be done by issuing ``set abort'' command (see Section \ref{sec:twai-can-frame-trans} \textit{\nameref{sec:twai-can-frame-trans}}) to TX buffers, and not inserting next frames for transmission into TX buffers.
+    \item Clear \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA}.
+\end{enumerate}
+
+\subsection{CAN Bus Configuration\label{sec:twai-func-bus-config}}
+
+\subsubsection{Bit Rate}
+\label{sec:twai-func-bit-rate}
+
+Bit rate on the CAN bus is derived from the system clock (see Section \ref{sec:twai-func-clk} \textit{\nameref{sec:twai-func-clk}}). Basic unit of time on the CAN bus is time quanta. Time quanta is derived from system clock by dividing its frequency by bit rate prescaler. \modulename{} has a separate prescaler for nominal bit rate (\hyperref[fielddesc:TWAIFDBRP]{TWAIFD\_BRP}) and data bit rate (\hyperref[fielddesc:TWAIFDBRPFD]{TWAIFD\_BRP\_FD}). Bit rate on \modulename{} is configured by specifying Prop\_Seg, Phase\_Seg1 and Phase\_Seg2 durations, as shown in Figure \ref{fig:twai-bit-rate}. These are specified in \hyperref[regdesc:TWAIFDBTRREG]{TWAIFD\_BTR\_REG} (nominal bit rate) and \hyperref[regdesc:TWAIFDBTRFDREG]{TWAIFD\_BTR\_FD\_REG} (data bit rate) registers.
+
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.75]{\modulefiles/figures/Bit_time}
+\par\end{centering}
+\caption{Bit time}
+\label{fig:twai-bit-rate}
+\end{figure}
+
+Please refer to Section \ref{sec:twai-prog-500-2-example} \textit{\nameref{sec:twai-prog-500-2-example}} for programming proceduress.
+
+
+\subsubsection{Transmitter Delay}
+
+Transmitter delay is the propagation delay of signals transmitted by \modulename{} on CAN\_TX output back to CAN\_RX input, as is visualized in Figure \ref{fig:twai-trans-delay}. This delay involves propagation of signals to physical layer transceiver, delay of transceiver itself, and delay from transceiver to CAN\_RX input. \modulename{} measures its own transmitter delay when transmitting CAN FD frames, regardless of whether the bit rate is switched in the frame. The measurement is taken on the recessive-to-dominant edge between the FDF (EDL) and R0 bits, as shown in Figure \ref{fig:twai-trans-delay-measure}. Transmitter delay is readable after its measurement from \hyperref[fielddesc:TWAIFDTRVDELAYVALUE]{TWAIFD\_TRV\_DELAY\_VALUE}. Transmitter delay is measured in system clock periods.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[scale=0.9]{\modulefiles/figures/Transmitter_delay}
+    \caption{Transmitter delay}
+    \label{fig:twai-trans-delay}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[scale=0.9]{\modulefiles/figures/Transmitter_delay_measurement}
+    \caption{Transmitter delay measurement}
+    \label{fig:twai-trans-delay-measure}
+\end{figure}
+
+Measured transmitter delay includes input delay of \modulename{}, which is 2 system clock periods. Therefore, measured transmitter delay will always be higher by two than the actual delay from CAN\_TX to CAN\_RX. For example, if signal propagation from CAN\_TX to CAN\_RX takes 110 ns (11 system clock periods at 100 MHz), measured transmitter delay will be 13.
+
+Transmitter delay measurement is saturated to 127 system clock periods. If the delay between CAN\_TX and CAN\_RX is longer, only 127 will be measured. When system clock frequency is 100 MHz, this gives a maximum measurable transmitter delay of 1.27 $\mu s$, which is more than most CAN transceivers need.
+
+
+\subsubsection{Secondary Sampling Point}
+
+Secondary sampling point can be used by \modulename{} during data bit rate to detect bit errors. Its position is configured as delay from start of bit time (Sync\_Seg) in multiple system clock periods (not time quanta). Secondary sampling point position can be fixed (\hyperref[fielddesc:TWAIFDSSPOFFSET]{TWAIFD\_SSP\_OFFSET} only), derived from transmitter delay (\hyperref[fielddesc:TWAIFDSSPOFFSET]{TWAIFD\_SSP\_OFFSET} and \hyperref[fielddesc:TWAIFDTRVDELAYVALUE]{TWAIFD\_TRV\_DELAY\_VALUE}), or it can be disabled (no SSP) as is shown in Figure \ref{fig:twai-second-sampling-point}. When the secondary sampling point is disabled, the regular sampling point as configured by \hyperref[regdesc:TWAIFDBTRREG]{TWAIFD\_BTR\_REG}  is used by \modulename{} when transmitting in data bit rate.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.9]{\modulefiles/figures/SSP_logic}
+\par\end{centering}
+\caption{Secondary sampling point}
+\label{fig:twai-second-sampling-point}
+\end{figure}
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.9]{\modulefiles/figures/SSP_timing}
+\par\end{centering}
+\caption{Secondary sampling point 2}
+\label{fig:twai-second-sampling-point-2}
+\end{figure}
+
+Secondary sampling point offset (\hyperref[fielddesc:TWAIFDSSPOFFSET]{TWAIFD\_SSP\_OFFSET}) is configurable between 0 - 255. Internal range of secondary sampling point position is also 0 - 255. If due to some reason, the secondary sampling point position is more than 255 clock periods from start of bit (e.g. due to large measured transmitter delay), it will be saturated to 255.
+
+Since \modulename{} input delay is 2 system clock periods (minimum time quanta), position of secondary sampling point should be configured to at least 2 to compensate its own input delay. If \hyperref[fielddesc:TWAIFDSSPOFFSET]{TWAIFD\_SSP\_OFFSET} < 3 and \hyperref[fielddesc:TWAIFDSSPSRC]{TWAIFD\_SSP\_SRC} = SSP\_SRC\_OFFSET, it is impossible to transmitt CAN FD frames without detecting bit errors on \modulename{}'s own transmitted frames.
+
+\modulename{} can handle at most 4 bits on flight between CAN\_TX and CAN\_RX pins when using the secondary sampling point. For instance, if system clock = 100 MHz and data bit rate = 5 Mbit/s, then one data bit time = 20 system clock periods. Then, the latest possible position of secondary sampling point is 20 × 4 = 80 system clock periods. This limitation applies to the final position of secondary sampling point (with \hyperref[fielddesc:TWAIFDSSPOFFSET]{TWAIFD\_SSP\_OFFSET}/\hyperref[fielddesc:TWAIFDTRVDELAYVALUE]{TWAIFD\_TRV\_DELAY\_VALUE} included). Users should not configure the secondary sample point position later than 4 data bit times.
+
+
+\subsubsection{CAN FD Support}
+
+\modulename{} supports both ISO and non-ISO versions of CAN FD protocols. Selection between these two versions is done via \hyperref[fielddesc:TWAIFDNISOFD]{TWAIFD\_NISOFD} register. When the ISO protocol version is chosen, \modulename{} is conformant to ISO11898-1:2015. When the non-ISO version is chosen, \modulename{} conforms to CAN FD specification 1.0. \hyperref[fielddesc:TWAIFDNISOFD]{TWAIFD\_NISOFD} can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+\subsubsection{Protocol Exception Handling}
+
+\modulename{} supports protocol exception detection. This feature is enabled by setting \hyperref[fielddesc:TWAIFDPEX]{TWAIFD\_PEX} = 1, which is only permitted when the controller is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+The behavior during a protocol exception depends on the CAN implementation type (see Table \ref{tab:twai-func-can-implt-type}). When exception detection is enabled (\hyperref[fielddesc:TWAIFDPEX]{TWAIFD\_PEX} = 1) and an exception is detected, the controller enters a bus integration state and waits to monitor 11 consecutive recessive bits on the CAN\_RX signal.
+
+Under these conditions, the REC and TEC counters are not incremented, and the fault confinement state remains unchanged. The protocol exception status flag, \hyperref[fielddesc:TWAIFDPEXS]{TWAIFD\_PEXS}, is set upon detection and can be cleared by writing 1 to \hyperref[fielddesc:TWAIFDCPEXS]{TWAIFD\_CPEXS}.
+
+If protocol exception detection is disabled (\hyperref[fielddesc:TWAIFDPEX]{TWAIFD\_PEX} = 0) and conditions for a protocol exception occur, \modulename{} transmits error frames instead.
+
+\subsubsection{Implementation Type}
+
+ISO11898-1:2015 defines three implementation types of CAN protocol: classical CAN, CAN FD tolerant, and CAN FD enabled. \modulename{} supports all three implementation types; compliance to each implementation type can be changed via \hyperref[fielddesc:TWAIFDFDE]{TWAIFD\_FDE} and \hyperref[fielddesc:TWAIFDPEX]{TWAIFD\_PEX} bits. Both of these bits should be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+\begin{table}[H]
+    \centering
+    \caption{CAN implementation type}
+    \label{tab:twai-func-can-implt-type}
+    \begin{tabular}{ |m{2.5cm}|m{1.5cm}|m{1.5cm}|m{9.2cm}| }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Implementation type} & \textbf{\hyperref[fielddesc:TWAIFDFDE]{TWAIFD\newline \_FDE}} & \textbf{\hyperref[fielddesc:TWAIFDPEX]{TWAIFD\newline \_PEX}} &   \textbf{Behavior} \\\hline
+
+    Classical CAN & 0 & 0 & When \modulename{} detects the recessive FDF bit (bit after IDE in the base frame, bit after RTR/R1 in the extended frame), it responds with error frames.\\\hline
+    CAN FD tolerant & 0 & 1 & When \modulename{} detects the recessive FDF bit, it detects protocol exception and enters bus integration state.\\\hline
+    CAN FD enabled & 1 & 0 & \modulename{} is able to receive/transmit CAN FD frames. When \modulename{} detects the recessive value on position of ``res'' bit (one bit after FDF bit), it responds with error frame.\\\hline
+    CAN FD enabled - with protocol exception & 1 & 1 & \modulename{} is able to receive/transmit CAN FD frames. When \modulename{} detects the recessive value on position of ``res'' bit (one bit after FDF bit), it detects protocol exception and enters bus integration state. This configuration complies with future extensions of CAN FD protocols (e.g. CAN XL).\\\hline
+    \end{tabular}
+\end{table}
+
+When \modulename{} is configured as the classical CAN/CAN FD tolerant node (\hyperref[fielddesc:TWAIFDFDE]{TWAIFD\_FDE} = 0), and users try to send CAN FD frames (FRAME\_FORMAT\_W[FDF\_BIT] = 1 in TX buffer), the frame type in TX buffer will be ignored and CAN 2.0 frame will be sent.
+
+When \modulename{} is configured as the classical CAN/CAN FD tolerant node, \hyperref[fielddesc:TWAIFDNISOFD]{TWAIFD\_NISOFD} register has no effect.
+
+According to 10.9.10 of ISO11898-1:2015, CAN FD enabled implementation should not be set to a mode where it behaves as CAN FD tolerant implementation. It is therefore users' responsibility to use this option only for evaluation/debugging purposes!
+
+According original CAN 2.0 specifications, R0 and R1 bits of any value must be accepted by receivers. However, ISO119898-1 2015 states that error frames should be sent by classical CAN implementation upon such event. This inconsistency in CAN specifications is resolved to meet ISO11898-1:2015.
+
+
+\subsubsection{Minimum Bit Time/Maximal Bit Rate}
+
+The system clock period is equal to the minimal time quanta, so it affects the minimum bit rate achievable on the CAN bus. \modulename{} has the following limitations:
+
+\begin{itemize}
+    \item Phase\_Seg2 >= 2 minimal time quanta. This is valid for both nominal and data bit rates.
+    \item Sync\_Seg + Prop\_Seg + Phase\_Seg1 > 2 minimal time quanta. This is valid for both nominal and data bit rates.
+\end{itemize}
+
+With these conditions, it is possible to reach the bit length of 5 time quanta. Note that for nominal bit rate this is possible, however, at least 8 time quanta per bit time are recommended.
+For data bit rate, 5 time quanta per bit time can be used.
+
+As an example, when nominal bit rate is 250 Kbit/s, data bit rate is 1 Mbit/s, minimum possible system clock frequency is 5 MHz. Note that this is the absolute maximum and gives very little margin in the sample point position. Therefore, it is recommended to use at least 10 MHz system clock for these bit rates.
+
+
+\subsection{CAN Frame Transmission}
+\label{sec:twai-can-frame-trans}
+
+
+CAN frames are transmitted by \modulename{} from TX buffers. \modulename{} contains 4 TX buffers. Number of present TX buffers can be read from \hyperref[regdesc:TWAIFDTXCOMMANDTXTBINFOREG]{TWAIFD\_TX\_COMMAND\_TXTB\_INFO\_REG}. If ``N'' buffers are present, then its always buffers with indices 1 - ``N''. Each TX buffer can be in one of states as described in Figure \ref{fig:twai-tx-buffer-state}. State of each TX buffer can be read from \hyperref[regdesc:TWAIFDTXSTATUSREG]{TWAIFD\_TX\_STATUS\_REG}. Software can control TX buffer state via \hyperref[regdesc:TWAIFDTXCOMMANDTXTBINFOREG]{TWAIFD\_TX\_COMMAND\_TXTB\_INFO\_REG}, and issue three types of commands:
+
+\begin{description}
+    \item [Set ready] requests TX buffers to move to ``ready'' state.
+    \item [Set abort] requests TX buffers to move to ``aborted'' or ``abort in progress'' state.
+    \item [Set empty] requests TX buffers to move to ``empty'' state.
+\end{description}
+
+Each TX buffer stores a single CAN frame. The whole 64-byte CAN FD frame can fit within a single TX buffer. The TX buffer is write only (CAN frames can't be read back), and is accessible only when a TX buffer is in ``empty'', ``TX OK'', ``TX failed'' or ``aborted'' states. The CAN frame is stored to TX buffers via TX buffer 1 - TX buffer 8 memory regions described in the following table.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.5000}}
+  >{\raggedright\arraybackslash}p{(\linewidth - 2\tabcolsep) * \real{0.5000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+\bf{Memory region}
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\bf{Address offset}
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Control registers & 0x000 \\
+TX buffer 1 & 0x100 \\
+TX buffer 2 & 0x200 \\
+TX buffer 3 & 0x300 \\
+TX buffer 4 & 0x400 \\
+\end{longtable}
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics{\modulefiles/figures/FSM_TXT_Buffer_user}
+\par\end{centering}
+\caption{TX buffer states}
+\label{fig:twai-tx-buffer-state}
+\end{figure}
+
+After software driver stores CAN frames to a TX buffer, it issues ``set ready'' command to this TX buffer to request transmission of stored CAN frames. TX buffer moves to ``ready'' state, and \modulename{} can transmit frames from this TX buffer. When \modulename{} starts transmission from this TX buffer, it moves to ``TX in progress'' state. \modulename{} starts transmission from TX buffer which is in ``ready'' state if it samples dominant bits during the third bit of intermission (SOF bit is skipped in this case), or as soon as the bus is idle. Note that in time triggered transmission mode, the behavior differs (see Section \ref{sec:twai-func-time-trigger-trans}).
+
+When \modulename{} is error-passive and it is the transmitter of the previous frame, it suspends consecutive transmission for 8 bit times. When \modulename{} transmits CAN frames successfully (no arbitration lost, no error frame), the TX buffer moves to ``TX OK'' state. If an error frame occurs or arbitration is lost, the TX buffer moves to ``ready'' state and transmission will start again in the nearest intermission or bus idle.
+
+When \modulename{} operates in bus monitoring mode (\hyperref[fielddesc:TWAIFDBMM]{TWAIFD\_BMM} = 1) or restricted operation mode (\hyperref[fielddesc:TWAIFDROM]{TWAIFD\_ROM} = 1) it always ends up in ``TX failed'' state when ``set ready'' command is issued, without any attempt to transmit the frame.
+
+
+\subsubsection{TX Buffer Selection}
+
+If there are multiple TX buffers in ``ready'' state, \modulename{} selects the highest priority TX buffer in ``ready'' state and transmits CAN frames from this TX buffer. Priority of TX buffers is configured in \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}. If two TX buffers have equal priority, TX buffer with the lower index has precedence. The overall flow of transmission is shown in Figure \ref{fig:twai-tx-buffer-select}.
+
+
+Higher value of \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX{*}P{]} means TX buffer {*} has the higher priority. For example, if \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX1P{]} = 2 and \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX2P{]} = 5, then TX buffer 2 has priority 5, a higher priority than TX buffer 1. Consequently, when both TX buffers are in ``ready'' state, \modulename{} will pick TX buffer 2 before TX buffer 1.
+
+The priority of ``backup'' TX buffers when \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1 is not configurable by the corresponding \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX{*}P{]}, but it is configured by a bit corresponding to the ``original'' TX buffer. See Section \ref{sec:twai-func-tx-buffer-backup}.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.8]{\modulefiles/figures/TXT_Buffer_validation}
+\par\end{centering}
+\caption{TX buffer selection}
+\label{fig:twai-tx-buffer-select}
+\end{figure}
+
+
+\subsubsection{Time Triggered Transmission Mode}
+\label{sec:twai-func-time-trigger-trans}
+
+\modulename{} supports time triggered transmission mode. This mode is enabled when \hyperref[fielddesc:TWAIFDTTTM]{TWAIFD\_TTTM} = 1. In this mode, \modulename{} tries to transmit frames from the highest priority TX buffer only when the value of time base (see Section \ref{sec:twai-func-time-base}) reaches timestamp stored in TIMESTAMP\_L\_W and TIMESTAMP\_U\_W words of this TX buffer. It is assumed that the time base is an unsigned timer that counts upward. When time base reaches the value stored in TIMESTAMP\_L\_W, TIMESTAMP\_U\_W, the frame stored in TX buffer is allowed for transmission (assuming that it is in the highest priority TX buffer in ``ready'' state), as is visualized in Figure \ref{fig:twai-time-trigger-trans}. Note that this does not mean that \modulename{} will transmit the frame immediately; it will still wait until the bus is idle. If the TX buffer is in ``ready'' state, and the time base counter does not reach the moment of transmission yet, \modulename{} waits until this condition is satisfied. If during this time, another node on the CAN bus starts transmitting a frame, \modulename{} becomes the receiver of such a frame.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics{\modulefiles/figures/TX_Time}
+\par\end{centering}
+\caption{Time triggered transmission}
+\label{fig:twai-time-trigger-trans}
+\end{figure}
+
+When CAN frames should be transmitted as soon as possible (no time triggered transmission), software driver writes 0x00000000 to TIMESTAMP\_L\_W and TIMESTAMP\_U\_W words. Note that time triggered transmission is always considered only from the highest priority TX buffer in ``ready'' state. TX buffer priority is always considered first before time triggered transmission. The behavior of the TX buffer priority and time triggered transmission is as follows:
+
+\begin{itemize}
+    \item If TX buffer A has higher priority than TX buffer B, \modulename{} will pick the frame from TX buffer A even if its time of transmission is higher (transmission should start later) than the one from TX buffer B.
+    \item If priority of TX buffers changes (and highest priority TX buffer in ``ready'' state changes), then \modulename{} picks the frame from new highest priority TX buffer in ``ready'' state. This is valid as long as frame from previously selected TX buffer is waiting for time base to reach its time of transmission. When frame transmission already starts, TX buffer priority is not considered anymore (no frame swapping).
+\end{itemize}
+
+\subsubsection{Type of Transmitted CAN Frame}
+
+Type of transmitted CAN frames by \modulename{} is determined by content of FRAME\_FORMAT\_W in TX buffer, and settings of \modulename{} as show in Figure \ref{fig:twai-tx-frame-type}.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.8]{\modulefiles/figures/TX_frame_flow}
+\par\end{centering}
+\caption{TX frame type}
+\label{fig:twai-tx-frame-type}
+\end{figure}
+
+When FRAME\_FORMAT\_W[FDF] = FD\_CAN and \hyperref[fielddesc:TWAIFDFDE]{TWAIFD\_FDE} = 0, \modulename{} transmits CAN 2.0 frame. If in such case TX buffer contains CAN FD frame with more than 8 bytes of data payload, bytes 8 above 8-th bit will not be sent.
+
+When FRAME\_FORMAT\_W[RTR] = RTR\_FRAME and FRAME\_FORMAT\_W[FDF] = FD\_CAN, RTR flag is ignored and \modulename{} transmits CAN FD data frame (there are no remote frames in CAN FD protocol).
+
+
+\subsubsection{Retransmission Limitation}
+
+\modulename{} can limit number of retransmission from a single TX buffer. Retransmission limitation is enabled when \hyperref[fielddesc:TWAIFDRTRLE]{TWAIFD\_RTRLE} = 1. Number of retransmissions is configured in \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH}. First attempt to transmit CAN frame does not count as retransmission. Possible configuration options are shown in Table \ref{tab:twai-retrans-counter-config}.
+
+\begin{table}[H]
+    \centering
+    \caption{Retransmission limitation configuration}
+    \label{tab:twai-retrans-counter-config}
+    \begin{tabular}{ |l|l|m{9.2cm}| }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH}} & \textbf{\hyperref[fielddesc:TWAIFDRTRLE]{TWAIFD\_RTRLE}} & \textbf{Behavior}\\\hline
+    - & 0 & Frame transmission is attempted without any limitation (until it is successful or unit turns bus-off).\\\hline
+    0 & 1 & Frame transmission is attempted only once, there are no retransmission attempts after first failed transmission (so-called one shot mode).\\\hline
+    1 - 15 & 1 & Frame transmission is attempted \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} + 1 times (initial transmission + \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} retransmissions).\\\hline
+    \end{tabular}
+\end{table}
+
+If \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} consecutive retransmissions are not successful (error frame or arbitration lost) from a single TX buffer, this TX buffer moves to ``TX failed'' state. If the TX buffer used for transmission changes between two transmissions (e.g., it is picked due to higher priority), the internal counter of retransmissions is erased and new frames (from new TX buffer) has again \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} + 1 transmission attempts. If \modulename{} returns to transmit from original TX buffer, it does not remember the previous number of transmission attempts and again attempts to transmit CAN frames \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} + 1 times. If TX buffer which is currently used for transmission moves to ``aborted'' state, the internal counter of retransmissions is also erased. If such TX buffer moves to ``ready'' state again, \modulename{} attempts to transmit it \hyperref[fielddesc:TWAIFDRTRTH]{TWAIFD\_RTRTH} + 1 times. The current number of transmission attempts of a single frame is held in an internal counter, which is readable via \hyperref[fielddesc:TWAIFDRETRCTRVAL]{TWAIFD\_RETR\_CTR\_VAL}.
+
+
+\subsubsection{Abort}
+
+If the software driver previously requested transmission of CAN frames by ``set ready'' command, it can request to abort the transmission by ``set abort'' command. If the TX buffer is still in ``ready'' state when it receives ``set abort'' command (transmission did not start yet), it moves to ``aborted'' state immediately. If the TX buffer is in ``TX in progress'' state (transmission has already started), it moves to ``abort in progress'' state. In such case, it will move to ``aborted'' state upon the nearest error frame or arbitration lost. Note that when the TX buffer is in ``abort in progress'' state, it can move to TX OK state if the current transmission succeeds, or to ``TX failed state'' if retransmission limit is reached.
+
+\subsubsection{TX Buffer Bus-off Behavior}
+
+When \modulename{} becomes bus-off due to TEC > 255, TX buffers can react to this event in two ways:
+
+\begin{enumerate}
+    \item All TX buffers which are in ``ready'', ``TX in progress'' or ``abort in progress'' immediately go to ``TX failed'' state. This option is enabled by setting \hyperref[fielddesc:TWAIFDTBFBO]{TWAIFD\_TBFBO} to 1, and it is the default configuration of TX buffers.
+    \item TX buffer used for transmission at time when \modulename{} becomes bus-off will behave as if any other error frame was transmitted. This option is enabled by setting \hyperref[fielddesc:TWAIFDTBFBO]{TWAIFD\_TBFBO} to 0. If no ``set abort'' command is issued to this buffer, nor retransmission limit is reached, the buffer will become ``ready''. When \modulename{} finishes reintegration (see Section \ref{sec:twai-func-oper-mode}), transmission from this TX buffer will begin as per regular TX buffer selection by priority. This option allows going bus-off and re-integrating without the need of software interaction with TX buffers.
+\end{enumerate}
+
+Please refer to Section \ref{sec:twai-prog-can-frame-trans} \textit{\nameref{sec:twai-prog-can-frame-trans}} for programming procedures.
+
+
+\subsection{CAN Frame Reception}
+
+\modulename{} contains a single RX buffer where received CAN frames are stored. RX buffer size is a multiple of 32-bit words, and it can be read from RX\_MEM\_INFO register. RX buffer is organized like FIFO. The CAN frame is stored to RX buffer when it is received successfully on the CAN bus (no error frames occurred). The CAN frame is read by software from RX buffer by consecutive reads from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA}. A single read from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} reads one word from the RX buffer. The RX buffer operates in one of two modes:
+\begin{itemize}
+    \item Automatic mode - When \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} is read, the read pointer of RX FIFO is automatically incremented. This mode should be used only when \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} is read by 32-bit access. Writes to \hyperref[fielddesc:TWAIFDRXRPMV]{TWAIFD\_RXRPMV} = 1 have no effect in this mode.
+    \item Manual mode - When \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} is read, the read pointer of RX FIFO is NOT incremented. To increment the read pointer, software should write 1 to \hyperref[fielddesc:TWAIFDRXRPMV]{TWAIFD\_RXRPMV}. This mode can be used when the RX buffer is read via 8/16/32-bit access, since it allows reading a single RX buffer memory word via 4 x 8 bit or 2 x 16 bit access.
+\end{itemize}
+
+
+RX buffer mode is configured by \hyperref[fielddesc:TWAIFDRXBAM]{TWAIFD\_RXBAM} bit. CAN frame format within the RX buffer is visualized in Figure \ref{fig:twai-rx-buffer-frame}, which illustrates the alternative CAN frame formats (mutually exclusive) that may be stored in the RX buffer. The CAN frame within the RX buffer spans from 4 to 20 memory words. Its size is given as:
+
+\begin{center}
+Size of RX frame in words = 4 + ceil(Data field length/4)
+\par\end{center}
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.9]{\modulefiles/figures/RX_Buffer_layout}
+\par\end{centering}
+\caption{RX buffer}
+\label{fig:twai-rx-buffer-frame}
+\end{figure}
+
+
+\subsubsection{Frame Count}
+
+The RX buffer contains a counter of CAN frames. This counter can be read from \hyperref[fielddesc:TWAIFDRXFRC]{TWAIFD\_RXFRC} register. Counter value increments when a frame is stored to the RX buffer and decremented when the last word of a CAN frame is read from the RX buffer.
+
+
+\subsubsection{RX Buffer Memory}
+
+RX buffer memory provides the following status information:
+
+\begin{itemize}
+    \item Number of free memory words, readable from \hyperref[fielddesc:TWAIFDRXFREE]{TWAIFD\_RX\_FREE}.
+    \item Write pointer position, readable from \hyperref[fielddesc:TWAIFDRXWPP]{TWAIFD\_RX\_WPP}.
+    \item Read pointer position, readable from \hyperref[fielddesc:TWAIFDRXRPP]{TWAIFD\_RX\_RPP}.
+\end{itemize}
+
+\subsubsection{RX Buffer Status}
+
+RX buffer with no stored CAN frame is empty. In such state \hyperref[fielddesc:TWAIFDRXE]{TWAIFD\_RXE}=1. RX buffer which has all its memory words occupied by CAN frames is full. In such state, \hyperref[fielddesc:TWAIFDRXF]{TWAIFD\_RXF} = 1. Note that if the RX buffer has e.g. 2 free memory words, it is not full, however even the smallest CAN frame would not fit into the buffer.
+
+\subsubsection{Overrun}
+
+If during reception of CAN frames there is not enough free space in the RX buffer to store the currently received CAN frame, overrun occurs and this frame is dropped (RX FIFO has overflown). In this situation, the overrun flag is set. Overrun flag is sticky (it remains set until it is cleared) and can be read from \hyperref[fielddesc:TWAIFDDOR]{TWAIFD\_DOR}. Overrun flag is cleared by writing 1 to \hyperref[fielddesc:TWAIFDCDO]{TWAIFD\_CDO}.
+
+\subsubsection{Flush}
+\label{sec:twai-func-flush}
+
+RX buffer can be flushed by writing 1 to \hyperref[fielddesc:TWAIFDRRB]{TWAIFD\_RRB}. When the RX buffer is flushed, the content is kept (memory is not erased), but read and write pointers are set to 0 and the frame counter is set to 0. The RX buffer acts as if no frame is received yet. If this command is issued during CAN frame reception, the currently received frame will also be dropped.
+
+\subsubsection{Inconsistency Protection}
+
+Reading CAN frames from the RX buffer involves multiple reads of \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA}. Each read increments read pointer inside the RX buffer (read operation with side effect). If an error occurs (e.g. bus error, ECC error) during read from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA}, then read data may be lost (RX buffer increments the read pointer, and software driver can't read the word again). As a consequence, the software driver and RX buffer can become inconsistent. Software driver can use \hyperref[fielddesc:TWAIFDRXMOF]{TWAIFD\_RXMOF} to recover from such state. When next read from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} is about to return other word than FRAME\_FORMAT\_W (RX buffer read pointer points to middle of frame), then \hyperref[fielddesc:TWAIFDRXMOF]{TWAIFD\_RXMOF} = 1. If software driver gets into the inconsistent state during readout of frames, it can repetitively read from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} until \hyperref[fielddesc:TWAIFDRXMOF]{TWAIFD\_RX\_MOF} = 0. When such condition is detected, \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} points to FRAME\_FORMAT\_W word of a new frame, or the RX buffer is empty (if the error occurred during readout of only frame in RX buffer).
+
+\subsubsection{Timestamping}
+
+When \modulename{} receives CAN frames, it stores its timestamp (it samples value of external time base) in TIMESTAMP\_L\_W, TIMESTAMP\_U\_W words within the RX buffer. Timestamp of the received frame can be sampled in sample point of start of frame bit, or in 6th bit of end of frame (moment when the received CAN frame is considered valid according to ISO11898-1:2015). The position where timestamp is sampled is configured by \hyperref[fielddesc:TWAIFDRTSOP]{TWAIFD\_RTSOP}.
+
+\subsubsection{Frame Filtering}
+
+Received CAN frames are filtered by hardware filters. There are two types of filters in \modulename{}: Mask filter and range filter. There are three instances for the mask filter (A,B,C) and one instance for the range filter. The received CAN frame is stored to the RX buffer if it passes at least one
+ enabled filter (logical OR between filter results). Frame filters are applied on the received frame identifier only if acceptance filter mode is enabled (\hyperref[fielddesc:TWAIFDAFM]{TWAIFD\_AFM} = 1). \hyperref[fielddesc:TWAIFDAFM]{TWAIFD\_AFM} can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0). When acceptance filter mode is disabled, filtering is not applied, and each received CAN frame is stored to the RX buffer.
+
+Each filter can be selectively configured to accept only certain types of CAN frame types (CAN 2.0 frame/CAN FD frame) and identifier types (frame with base identifier only, frame with base + extended identifier). Such configuration is available in \hyperref[regdesc:TWAIFDFILTERCONTROLFILTERSTATUSREG]{TWAIFD\_FILTER\_CONTROL}. Each filter is disabled by setting all bits in \hyperref[regdesc:TWAIFDFILTERCONTROLFILTERSTATUSREG]{TWAIFD\_FILTER\_CONTROL} register belonging to this filter to 0. The internal operation of a single acceptance filter instance is illustrated in Figure \ref{fig:twai-frame-filter-operation}.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.7]{\modulefiles/figures/Frame_filters_flow}
+\par\end{centering}
+\caption{Frame filters operation ({*} stands for A/B/C/R based on filter type)}
+\label{fig:twai-frame-filter-operation}
+\end{figure}
+
+
+\subsubsection{Mask Filter}
+
+The mask filter checks if the received CAN frame identifier equals to the predefined identifier in \hyperref[regdesc:TWAIFDFILTERAVALREG]{TWAIFD\_FILTER\_X\_VAL\_REG} (X=A, B, C based on filter instance). Only bits given by filter mask in \hyperref[regdesc:TWAIFDFILTERAMASKREG]{TWAIFD\_FILTER\_X\_MASK\_REG} are compared.
+
+When using mask filters to filter frames with base identifiers only, set \hyperref[regdesc:TWAIFDFILTERAMASKREG]{TWAIFD\_FILTER\_X\_MASK\_REG{[}17:0{]}} to 0b000000000000000000.
+
+
+\subsubsection{Range Filter}
+
+The range filter determines if the received CAN frame identifier falls within a certain decimal range. The lower threshold of this decimal range is determined by \hyperref[regdesc:TWAIFDFILTERRANLOWREG]{TWAIFD\_FILTER\_RAN\_LOW\_REG} and the upper threshold is determined by \hyperref[regdesc:TWAIFDFILTERRANHIGHREG]{TWAIFD\_FILTER\_RAN\_HIGH\_REG}.
+
+When using range filters to filter frames with base identifiers only, set \hyperref[regdesc:TWAIFDFILTERRANLOWREG]{TWAIFD\_FILTER\_RAN\_LOW\_REG{[}17:0{]}} to 0b000000000000000000 and \hyperref[regdesc:TWAIFDFILTERRANHIGHREG]{TWAIFD\_FILTER\_RAN\_HIGH\_REG{[}17:0{]}} to 0b111111111111111111.
+
+Please refer to Section \ref{sec:twai-prog-can-frame-recep} \textit{\nameref{sec:twai-prog-can-frame-recep}} for programming procedures.
+
+
+\subsection{Fault Confinement}
+
+Fault confinement state of \modulename{} is readable from \hyperref[regdesc:TWAIFDEWLERPFAULTSTATEREG]{TWAIFD\_EWL\_ERP\_FAULT\_STATE\_REG} register. Fault confinement state transition is displayed in Figure \ref{fig:twai-fault-confine}. Fault confinement counters are readable from REC and TEC registers. These counters correspond to the TX error counter and RX error counter as defined in ISO11898-1. \modulename{} additionally contains counters distinguishing between errors detected in nominal bit rate and data bit rate. The nominal bit rate error counter (ERR\_NORM) is readable from \hyperref[fielddesc:TWAIFDERRNORMVAL]{TWAIFD\_ERR\_NORM\_VAL} and it increments by 1 for each error detected at the nominal bit rate. The data bit rate error counter (ERR\_FD) is readable from \hyperref[fielddesc:TWAIFDERRFDVAL]{TWAIFD\_ERR\_FD\_VAL} and it increments by 1 due to each error detected at the data bit rate.
+
+All four counters (REC, TEC, ERR\_NORM, ERR\_FD) can be manipulated by software. As this feature directly affects compliance of \modulename{} to ISO11898-1, this is only allowed when \hyperref[fielddesc:TWAIFDTSTM]{TWAIFD\_TSTM} = 1 (in test mode). All counters can be set from software via \hyperref[regdesc:TWAIFDCTRPRESREG]{TWAIFD\_CTR\_PRES\_REG}. Error warning limit (EWL) and error passive limit (ERP) are configured by \hyperref[fielddesc:TWAIFDEWL]{TWAIFD\_EWL} and \hyperref[fielddesc:TWAIFDERPLIMIT]{TWAIFD\_ERP\_LIMIT}. By default, EWL and ERP comply with ISO11898-1. In the test mode, EWL and ERP fields are writable.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics{\modulefiles/figures/FSM_fault_confinement}
+\par\end{centering}
+\caption{Fault confinement}
+\label{fig:twai-fault-confine}
+\end{figure}
+
+
+
+\subsection{Fault Tolerance}
+
+\modulename{} implements following fault tolerance mechanisms:
+
+\begin{itemize}
+    \item Parity protection on RX buffer RAM
+    \item Parity protection on TX buffer RAM
+    \item TX buffer backup mode (\hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM})
+\end{itemize}
+
+The following conditions must be met for these mechanisms to operate:
+
+\begin{itemize}
+    \item Software drivers sets \hyperref[fielddesc:TWAIFDPCHKE]{TWAIFD\_PCHKE} = 1. This field enables parity error detection. Software can modify \hyperref[fielddesc:TWAIFDPCHKE]{TWAIFD\_PCHKE} only when \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0.
+\end{itemize}
+
+\subsubsection{Parity Protection on RX Buffer RAM}
+
+When \modulename{} receives a CAN frame and stores it to RX buffer RAM, it adds single parity bit to each word of RX buffer RAM. When software driver reads the frame from RX buffer RAM, it checks if a parity error occurs in the frame by reading \hyperref[fielddesc:TWAIFDRXPE]{TWAIFD\_RXPE} bit. \modulename{} sets \hyperref[fielddesc:TWAIFDRXPE]{TWAIFD\_RXPE} upon each read from \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA}, if the parity bit in the word being read from RX buffer RAM does not match the calculated parity bit.
+
+Since a spurious single-event upset (SEU) in RX buffer RAM can potentially modify FRAME\_FORMAT\_W[DLC] word of the received frame in RX buffer RAM, it may hamper the length of the RX frame as seen by software driver, and therefore get the RX buffer into inconsistent state where software driver has read only part of a received frame. In such situation, all further frames read from the RX buffer will be corrupted.
+
+
+\subsubsection{Parity Protection on TX buffer RAM}
+\label{sec:twai-parity-protect-tx-buffer}
+
+When software stores a CAN frame to TX buffer, \modulename{} appends a parity bit to each word in the TX buffer RAM. When \modulename{} attempts to transmit a frame from TX buffer and detects a parity error in TX buffer RAM, it behaves as follows:
+
+\begin{enumerate}
+    \item If \modulename{} detects a parity error in FRAME\_FORMAT\_W, IDENTIFIER\_W, TIMESTAMP\_U\_W or TIMESTAMP\_L\_W, it does not attempt to transmit the CAN frame.
+    \item If \modulename{} does not detect parity errors in any of TX buffer words mentioned in previous point, it attempts to transmit the CAN frame.
+    \item If during transmission of CAN frames \modulename{} detects a parity error in any of DATA\_1\_4\_W - DATA\_61\_64\_W words from which it transmits CAN frame data payload, it starts transmitting an error frame.
+\end{enumerate}
+
+If \modulename{} detects a parity error in TX buffer RAM as described in steps 1 to 3 above, such TX buffer moves to ``parity error'' state as shown in \ref{fig:twai-tx-buffer-state} and \hyperref[fielddesc:TWAIFDTXPE]{TWAIFD\_TXPE} bit is set.
+
+If \modulename{} detects a parity error in TX buffer, software should write the whole CAN frame to TX buffer again before it attempts to use it for further transmissions.
+
+Writing \hyperref[fielddesc:TWAIFDCTXPE]{TWAIFD\_CTXPE} = 1 by software clears \hyperref[fielddesc:TWAIFDTXPE]{TWAIFD\_TXPE} bit.
+
+When \hyperref[fielddesc:TWAIFDPCHKE]{TWAIFD\_PCHKE} = 0, \modulename{} ignores the parity error detected in TX buffers. \hyperref[fielddesc:TWAIFDTXPE]{TWAIFD\_TXPE} will not be set, and \hyperref[fielddesc:TWAIFDCTXPE]{TWAIFD\_CTXPE} has no effect and TX buffers do not move to ``parity error'' state.
+
+
+\modulename{} does not detect parity errors in FRAME\_TEST\_W. Purpose of FRAME\_TEST\_W is to intentionally corrupt transmitted frames (e.g. for testing of error scenarios on the CAN bus). Such feature is most likely not useful in applications which require parity protection (high reliability application which aim for fault tolerance).
+
+
+
+\subsubsection{TX Buffer Backup Mode}\label{sec:twai-func-tx-buffer-backup}
+
+When \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1, \modulename{} operates in TX buffer backup mode. In TX buffer backup mode, TX buffers with adjacent indices form pairs as is shown in Figure \ref{fig:twai-tx-buffer-pair}. For example, if \hyperref[fielddesc:TWAIFDTXTBUFFERCOUNT]{TWAIFD\_TXT\_BUFFER\_COUNT} = 8 (\modulename{} contains 8 TX buffers) there are 4 TX buffer pairs: 1-2, 3-4, 5-6, 7-8.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.9]{\modulefiles/figures/TXT_buffer_pairs}
+\par\end{centering}
+\caption{TX buffer pairs}\label{fig:twai-tx-buffer-pair}
+\end{figure}
+
+Operation of \modulename{} in TX buffer backup mode provides additional fault tolerance since TX buffer with higher index within TX buffer pairs serves as ``backup'' in case of parity error in ``original'' TX buffer. The operation of \modulename{} in TX buffer backup mode is shown in Figure \ref{fig:twai-tx-buffer-backup-mode}.
+
+When \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1, and \modulename{} detects a parity error in the ``original'' TX buffer RAM, such TX buffer moves to ``Parity error'' state, and \modulename{} attempts to transmit frames from its ``backup'' TX buffer (e.g. if \modulename{} detects parity error in TX buffer 3, it attempts to transmit a frame from TX buffer 4). If \modulename{} successfully transmits a frame from ``original'' TX buffer, its ``backup'' Buffer moves to ``aborted'' state (\modulename{} does not transmit frames in the ``backup'' TX buffer).
+
+When \modulename{} is transmitting a frame from a ``backup'' TX buffer due to parity errors in ``original'' TX buffer, and it detects parity errors also in ``backup'' TX buffer RAM, \modulename{} sets \hyperref[fielddesc:TWAIFDTXDPE]{TWAIFD\_TXDPE} bit (double parity error).
+
+When \modulename{} operates in TX buffer backup mode, software control of TX buffers has following differences compared to non-backup modes:
+\begin{itemize}
+    \item Priorities of both TX buffers within TX buffer pair are equal, and they are given by \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX{*}P{]} of ``original'' TX buffer. For example, priority of TX buffers 1 and 2 is given by \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX1P{]}, and \hyperref[regdesc:TWAIFDTXPRIORITYREG]{TWAIFD\_TX\_PRIORITY\_REG}{[}TX2P{]} has no effect.
+    \item \modulename{} automatically applies commands issued by software to each ``original'' TX buffer and also to its corresponding ``backup'' TX buffer. For example, if software gives a command to TX buffer 1 (TX\_COMMAND{[}TXB1{]} = 1), \modulename{} automatically applies it to TX buffer 2.
+\end{itemize}
+It is assumed that software stores equal CAN frames to both TX buffers from a TX buffer pair when attempting to send CAN frames. In such case, the effect of TX buffer backup mode is as follows: If a parity error occurs in ``original'' TX buffer RAM, the same frame is transmitted from ``backup'' TX buffer.
+
+\begin{figure}[H]
+\begin{centering}
+\includegraphics[scale=0.7]{\modulefiles/figures/TXT_Buffer_Backup_mode}
+\par\end{centering}
+\caption{Operation in TX buffer backup mode}\label{fig:twai-tx-buffer-backup-mode}
+\end{figure}
+
+Storing equal frames to both TX buffers by separate memory accesses is intended by design. \modulename{} does not automatically store this frame to both TX buffers to avoid effect of potential SEU in the moment of storing the frame to TX buffer. If such SEU occurs, it could happen that the frame is stored to both TX buffers with parity errors already in it.
+
+Software does not necessarily need to store equal frames to both TX buffers from a TX buffer pair. It may simply store any frame which should be transmitted if parity error occurs in ``original'' TX buffer to ``backup'' TX buffer.
+
+Software should set \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1 together with \hyperref[fielddesc:TWAIFDPCHKE]{TWAIFD\_PCHKE} = 1. If \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1 and \hyperref[fielddesc:TWAIFDPCHKE]{TWAIFD\_PCHKE} = 0, \modulename{} ignores parity errors in ``original'' TX buffers and never transmits frames from ``backup'' TX buffers.
+
+If \modulename{} detects a parity error in ``original'' TX buffer during CAN frame transmission, and another TX buffer with higher priority than the currently selected TX buffer pair moves to ``ready'' state due to software issuing ``set ready'' command, \modulename{} will attempt to transmit frame from higher priority TX buffer during next transmission, ignoring ``backup'' TX buffer.
+
+TX buffer backup mode is supported only when \modulename{} contains even number of TX buffers. If \modulename{} contains odd number of TX buffers, there exists one TX buffer which has no ``backup'' buffer. In such case software should not use this spare ``original'' TX buffer when \hyperref[fielddesc:TWAIFDTXBBM]{TWAIFD\_TXBBM} = 1. If this TX buffer is used, \modulename{} behavior is unpredictable.
+
+
+
+\subsection{Special Modes}
+
+\subsubsection{Loopback Mode}
+
+In loopback mode, a CAN frame transmitted by \modulename{} from any of TX buffers, will be stored to the RX buffer if its transmission is successful and the frame passes frame filters. Note that although \modulename{} stores its own transmitted frame to the RX buffer, it still acts as a transmitter, therefore it does not acknowledge its own frame. For successful transmission, the frame must be acknowledged by other node on the CAN bus. Loopback mode is enabled when setting \hyperref[fielddesc:TWAIFDILBP]{TWAIFD\_ILBP} to 1, which can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+\subsubsection{Self Test Mode}
+
+In self test mode, \modulename{} considers the transmitted frame valid, even if it does not receive dominant bits at the ACK slot. This mode can be used along with the loop back mode, to verify operation of \modulename{} when it is single node on a bus. Self test mode is enabled when setting \hyperref[fielddesc:TWAIFDSTM]{TWAIFD\_STM} to 1, which can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+\subsubsection{Acknowledge Forbidden Mode}
+
+When acknowledge forbidden mode is enabled, \modulename{} acting as receiver of a CAN frame does not transmit dominant bits to the ACK slot even if the received CRC matches calculated CRC. Acknowledge forbidden mode is enabled when  setting \hyperref[fielddesc:TWAIFDACF]{TWAIFD\_ACF} to 1. \hyperref[fielddesc:TWAIFDACF]{TWAIFD\_ACF}, which can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+
+
+\subsubsection{Bus Monitoring Mode}
+
+In bus monitoring mode, \modulename{} does not transmit any frames, it only receives CAN frames. If a CAN frame is inserted to TX buffer and ``set ready'' command is issued, the frame will not be transmitted, and TX buffer will immediately move to ``TX failed'' state. In bus monitoring mode, \modulename{} does not transmit any dominant bit on the bus. If a dominant bit is about to be transmitted on the bus (e.g. ACK or error frame), it is re-routed internally so that \modulename{} receives this field, but other nodes on the CAN bus do not see it. Bus monitoring mode is enabled when setting \hyperref[fielddesc:TWAIFDBMM]{TWAIFD\_BMM} to 1, which can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+\subsubsection{Restricted Operation Mode}
+
+In restricted operation mode, \modulename{} is able to receive frames on the CAN bus, but it does not transmit any frames. If a CAN frame is inserted to TX buffer and ``set ready'' command is issued, the frame will not be transmitted, and TX buffer will immediately move to ``TX failed'' state. In restricted operation mode, \modulename{} gives ACK to valid frames, but it does not send error or overload frames. If error or overload condition is detected, \modulename{} enters bus integration state, and waits for 11 consecutive recessive bits. REC and TEC counters are not modified, therefore \modulename{} will always stay in error active state. Restricted operation mode is enabled when setting \hyperref[fielddesc:TWAIFDROM]{TWAIFD\_ROM} to 1, which can be modified only when \modulename{} is disabled (\hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA} = 0).
+
+
+
+\subsection{Other Features}
+
+\subsubsection{Error Code Capture}
+
+\modulename{} contains an error code capture register. This register stores the type and bit position of last error on the CAN bus which causes error frame transmission. Error code capture is updated in the sample point of the bit where error is detected. Error code capture is readable via \hyperref[regdesc:TWAIFDERRCAPTRETRCTRALCTSINFOREG]{TWAIFD\_ERR\_CAPT}. CAN FD standard does not define error types as mutually exclusive (e.g. bit error and stuff error may occur at the same time when the transmitted stuff bit value is corrupted to the opposite value). In such case, the feature captures only one type of error with highest priority. Priorities of error types are defined as (form error having the highest priority):
+
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+\textbf{Priority} \cellcolor{lightgray} & 1 & 2 & 3 & 4 & 5\tabularnewline
+\hline
+\textbf{Error Type} \cellcolor{lightgray} & Form error & Bit error & CRC error & ACK error & Stuff error\tabularnewline
+\hline
+\end{tabular}
+\par\end{center}
+
+Stuff error which occurs during fixed bit stuffing of CAN FD frames is reported as a form error in the error code capture register.
+
+There is an exception to the above mentioned error priority order. If the dominant stuff bit is sent during the arbitration field and a recessive value is sampled, then this is captured as a stuff error, not a bit error.
+
+
+\subsubsection{Arbitration Lost Capture}
+
+\modulename{} contains an arbitration lost capture (ALC) register. This register stores the bit position within CAN arbitration field on which \modulename{} lost arbitration last time.
+
+\subsubsection{Traffic Counters}
+
+\modulename{} can measure CAN frames transmitted/received on the CAN bus. Upon every successfully transmitted CAN frame, TX\_COUNTER increments by 1. Upon every successfully received CAN frame, RX\_COUNTER increments by 1. TX\_COUNTER can be cleared by writing 1 to \hyperref[fielddesc:TWAIFDTXFCRST]{TWAIFD\_TXFCRST}. RX\_COUNTER can be cleared by writing 1 to \hyperref[fielddesc:TWAIFDRXFCRST]{TWAIFD\_RXFCRST}. When \modulename{} is in loopback mode and its own transmitted frame is stored in the RX buffer, RX\_COUNTER also increments. Traffic counters are optional in \modulename{}. Reading \hyperref[fielddesc:TWAIFDSTCNT]{TWAIFD\_STCNT} to learn whether these counters are enabled.
+
+\subsubsection{Debug Register}
+
+\modulename{} contains a debug register \hyperref[regdesc:TWAIFDDEBUGREG]{TWAIFD\_DEBUG\_REG} which directly reflects selected fields of the CAN frame currently being transmitted or received.
+
+
+%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}\label{sec:twai-interrupt}
+
+\chipname{}'s \modulename{} can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item IRQ
+        \item IRQ\_TIMER
+    \end{itemize}
+
+The following interrupt sources can generate the above interrupt signals, depending on where the interrupt source is from:
+
+\begin{itemize}
+    \item \label{int:TWAIFDTXBHCIINT}TWAIFD\_TXBHCI\_INT: Triggered when the TX buffer receives a hardware command from CAN Core which changes the TX buffer state to "TX OK", "error" or "aborted".
+    \item \label{int:TWAIFDRBNEIINT}TWAIFD\_RBNEI\_INT: Triggered when the RX buffer is not empty. Clearing this interrupt and not reading out RX buffer via \hyperref[regdesc:TWAIFDRXDATAREG]{TWAIFD\_RX\_DATA} will re-activate the interrupt.
+    \item \label{int:TWAIFDBSIINT}TWAIFD\_BSI\_INT: Triggered when the bit rate shifts.
+    \item \label{int:TWAIFDRXFIINT}TWAIFD\_RXFI\_INT: Triggered when the RX buffer is full.
+    \item \label{int:TWAIFDOFIINT}TWAIFD\_OFI\_INT: Triggered when overload frame transmission is started.
+    \item \label{int:TWAIFDBEIINT}TWAIFD\_BEI\_INT: Triggered when error frame transmission is started.
+    \item \label{int:TWAIFDALIINT}TWAIFD\_ALI\_INT: Triggered when arbitration is lost.
+    \item \label{int:TWAIFDFCSIINT}TWAIFD\_FCSI\_INT: Triggered when the fault confinement state changes. This interrupt is set when the node turns error-passive from error-active, bus-off from error-passive, or error-active from bus-off after reintegration or from error-passive.
+    \item \label{int:TWAIFDDOIINT}TWAIFD\_DOI\_INT: Triggered when data overrun occurs. Before this interrupt is cleared, \hyperref[fielddesc:TWAIFDDOIINTST]{TWAIFD\_DOI\_INT\_ST} must be cleared to avoid setting this interrupt again.
+    \item \label{int:TWAIFDEWLIINT}TWAIFD\_EWLI\_INT: Triggered when the error warning limit (EWL) is reached. When both TX/RX error counters (TEC/REC) reach EWL, this interrupt is generated. When the interrupt is cleared, and REC or TEC is still equal to or higher than EWL, the interrupt will not be generated again.
+    \item \label{int:TWAIFDTXIINT}TWAIFD\_TXI\_INT: Triggered when a frame is transmitted.
+    \item \label{int:TWAIFDRXIINT}TWAIFD\_RXI\_INT: Triggered when a frame is received.
+    \item \label{int:TWAIFDTIMEROVERFLOWINT}TWAIFD\_TIMER\_OVERFLOW\_INT: Triggered when timer overflow occurs.
+\end{itemize}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:twai-reg-summ} \textit{\nameref{sec:twai-reg-summ}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Examples}
+\label{sec:twai-prog-procedures}
+
+
+\subsection{500 Kbit/2 Mbit Example}
+\label{sec:twai-prog-500-2-example}
+
+A common configuration for CAN bus bit rates in the automotive industry is 500 Kbit/s for the nominal bit rate and 2 Mbit/s for the data bit rate. The following example demonstrates how to configure these settings, assuming \modulename{}'s clock source is PLL\_F80M and a sample point at 80\% of each bit:
+
+\begin{lstlisting}
+uint32 btr;
+btr = (4 << 19);     // Time Quanta: 4
+btr |= 29;           // Prop: 29
+btr |= (10 << 7);    // Phase 1: 10
+btr |= (10 << 13);   // Phase 2: 10
+btr |= (3 << 27);    // SJW：3
+REG32_WR(TWAIFD_BTR_REG, btr); // (29+10+10+1)*4=200*10ns=2us=500Kbit
+uint32 btr_fd;
+btr_fd = (1 << 19);     // Time Quanta: 1
+btr_fd |= 29;           // Prop：29
+btr_fd |= (10 << 7);    // Phase 1: 10
+btr_fd |= (10 << 13);   // Phase 2: 10
+btr_fd |= (3 << 27);    // SJW：3
+REG32_WR(TWAIFD_BTR_FD_REG, btr_fd); // (29+10+10+1)*1=50*10ns=0.5us=2Mbit
+\end{lstlisting}
+
+\subsubsection{CAN Frame Transmission}\label{sec:twai-prog-can-frame-trans}
+
+\paragraph{Sample Code}
+\begin{lstlisting}
+#define CAN_FD_BASE TWAIFD_DEVICE_ID_VERSION_REG
+#define TX_COMMAND_ADDR (CAN_FD_BASE + 0x74)
+#define TXT_BUFFER_1_BASE (CAN_FD_BASE + 0x100)
+/* Insert CAN frames to TX buffer 1 */
+uint32_t frame_format_word = 0;
+frame_format_word |= 4;                               // DLC = 4
+frame_format_word |= (1 << 7);                        // CAN FD Frame
+frame_format_word |= (1 << 9);                        // Switch the bit rate
+REG32_WR(TXT_BUFFER_1_BASE, frame_format_word);       // Store the frame format word
+uint32_t id_word = (55 << 18);                        // Identifier: 55
+REG32_WR(TXT_BUFFER_1_BASE + 0x4, id_word);           // Store the identifier word
+REG32_WR(TXT_BUFFER_1_BASE + 0x8, 1000);
+REG32_WR(TXT_BUFFER_1_BASE + 0xC, 0);                 // Transmitt at time 1000
+REG32_WR(TXT_BUFFER_1_BASE + 0x10, 0xAABBCCDD);       // Data: 0xAA 0xBB 0xCC 0xDD
+/* Issue the set ready command */
+uint32_t command = 0;
+command |= 0x2;                                       // Set ready command
+command |= (1 << 8);                                  // Choose TX buffer 1
+REG32_WR(TX_COMMAND_ADDR, command);                   // Issue the command
+\end{lstlisting}
+
+When \modulename{} is enabled by writing 1 to \hyperref[fielddesc:TWAIFDENA]{TWAIFD\_ENA}, it is still bus-off during integration onto the CAN bus. If during this time a ``set ready'' command is issued to TX buffer, and if \hyperref[fielddesc:TWAIFDTBFBO]{TWAIFD\_TBFBO} = 1, the TX buffer will immediately move to the ``aborted'' state. Before issuing any ``set ready'' command to a TX buffer, software should wait until the node is error-active either by polling \hyperref[regdesc:TWAIFDEWLERPFAULTSTATEREG]{TWAIFD\_EWL\_ERP\_FAULT\_STATE\_REG} or via the FCS interrupt.
+
+TX buffers are not initialized no reset. Therefore, before issuing the ``set ready'' command, software should fill the corresponding TX buffer with valid CAN frames for transmission.
+
+\modulename{} transmits only reactive overload frames. There are no internal conditions within \modulename{} that would cause it to transmit an overload frame without overload being detected.
+
+
+\subsubsection{CAN Frame Reception}\label{sec:twai-prog-can-frame-recep}
+
+\paragraph{Sample Code 1 - Frame Reception in Automatic Mode (32-bit Access)}
+\begin{lstlisting}
+#define CAN_FD_BASE TWAIFD_DEVICE_ID_VERSION_REG
+#define RX_DATA_ADDR (CAN_FD_BASE + 0x6C)
+#define RX_STATUS_ADDR (CAN_FD_BASE + 0x68)
+/* Poll on RX buffer until there is a frame in it */
+uint32_t rx_status;
+do {
+    rx_status = REG32_RD(RX_STATUS_ADDR);
+} while ((rx_status \& 0x1) == 0)
+/* Read the frame from RX buffer */
+uint8_t data[64];
+uint32_t tmp;
+uint32_t ffw = REG32_RD(RX_DATA_ADDR);
+uint32_t id = REG32_RD(RX_DATA_ADDR);
+uint32_t ts_l = REG32_RD(RX_DATA_ADDR);
+uint32_t ts_h = REG32_RD(RX_DATA_ADDR);
+uint32_t rwcnt = (ffw >> 11) \& 0x1F;
+for(int i = 0; i < rwcnt; i++){
+    tmp = REG32_RD(RX_DATA_ADDR);
+    data[i*4] = tmp \& 0xFF;
+    data[i*4+1] = (tmp >> 8) \& 0xFF;
+    data[i*4+2] = (tmp >> 16) \& 0xFF;
+    data[i*4+3] = (tmp >> 24) \& 0xFF;
+}
+\end{lstlisting}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{twai-reg-summ}{}
+\section{Register Summary}
+\label{sec:twai-reg-summ}
+
+The addresses in this section are relative to \modulename{} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/38-TWAI-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{Registers}
+
+
+The addresses in this section are relative to \modulename{} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/38-TWAI-reg__EN}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% To paste template contents into your module's %%%
+%%% root file, finish copying at the LINE ABOVE.  %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\end{document}

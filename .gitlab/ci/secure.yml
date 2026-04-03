@@ -1,0 +1,44 @@
+### Check Tokens, Domains, and API Keys
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml # https://gitlab.com/gitlab-org/gitlab/blob/master/lib/gitlab/ci/templates/Jobs/Secret-Detection.gitlab-ci.yml
+
+secret_detection:
+  stage: secure
+  tags: [check_doc_links]
+  extends:
+    - .secret-analyzer
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+  variables:
+    # SECRET_DETECTION_HISTORIC_SCAN: "true" # Scan the whole repository history for secrets
+  script:
+    - chmod +x tools/check_token_domain_key/check_token_domain_key.sh
+    - sh tools/check_token_domain_key/check_token_domain_key.sh
+  allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - gl-secret-detection-report.merged.json
+    expire_in: 1 week
+
+### Check commit authors are whitelisted
+check_author:
+  stage: secure
+  image: $ESP_DOCS_ENV_IMAGE
+  tags: [check_doc_links]
+  before_script:
+    - git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/${CI_PROJECT_PATH}.git" || git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/${CI_PROJECT_PATH}.git"
+    - git fetch origin master --depth=100
+    # Backport MRs target release/*; check_author.sh uses merge-base vs target branch (not master)
+    - |
+      if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] && [ "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" != "master" ]; then
+        git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --depth=100
+      fi
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "🔍 Checking whether the commit author in this branch is whitelisted..."
+    - chmod +x tools/check_whitelist_author/check_author.sh
+    - bash tools/check_whitelist_author/check_author.sh
+  allow_failure: false

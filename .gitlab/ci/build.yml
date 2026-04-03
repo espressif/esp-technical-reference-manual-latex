@@ -1,0 +1,68 @@
+build PDFs:
+    stage: build
+    tags: [host_test]
+    image: $CI_REGISTRY_IMAGE
+    rules:
+        # Run for all changes to a merge request's source branch
+        - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+        # Run for all changes to the default branch
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    script:
+        - echo "MR labels=$CI_MERGE_REQUEST_LABELS"
+        - python extract-labels.py
+        # Load MODULE_LABELS and CHIP_LABELS from extract-labels.py
+        - source ./labels.env
+        # Download font files
+        - |
+            echo "Downloading font files from $FONT_URL"
+            git clone "$FONT_URL" temp
+            mv temp/fonts 00-shared/fonts
+        - |
+            # Initialize index to 0
+            index=0
+            # Now, use MODULE_LABELS and CHIP_LABELS as needed to build the PDFs.
+            echo "Before PDF building loop: module labels=$MODULE_LABELS and chip labels=$CHIP_LABELS"
+            # Convert CHIP_LABELS into an array
+            IFS=',' read -r -a CHIP_LABELS_ARRAY <<< "$CHIP_LABELS"
+            for CHIP_SERIES in */; do
+                # Remove the trailing slash from CHIP_SERIES
+                CHIP_SERIES=$(echo "$CHIP_SERIES" | sed 's/\/$//')
+                echo "Folder currently being processed: $CHIP_SERIES"
+                if [[ " ${CHIP_LABELS_ARRAY[@]} " =~ " $CHIP_SERIES " ]]; then
+                    for MODULE_NAME in ${MODULE_LABELS//,/ }; do
+                        # Clear doc_path.env to avoid reading previous paths
+                        > ./doc_path.env
+                        # Now build the PDF for the CHIP_SERIES, MODULE_NAME, and LANGUAGE.
+                        echo "Building PDF for $MODULE_NAME in $CHIP_SERIES, $LANGUAGE"
+                        python build-pdf.py -c "$CHIP_SERIES" -m "$MODULE_NAME" -l "$LANGUAGE"
+                        # Prepare the document path and URL for the artifact.
+                        source ./doc_path.env
+                        # Read each line from doc_path.env
+                        while IFS='=' read -r key DOCUMENT_PATH; do
+                            if [[ "$key" == "DOCUMENT_PATH" && -n "$DOCUMENT_PATH" ]]; then
+                                echo "Document path=$DOCUMENT_PATH"
+                                ARTIFACT_URL="$CI_JOB_URL/artifacts/file/$DOCUMENT_PATH"
+                                # Increment the index for each document path
+                                ((index += 1))
+                                LOG_FILE="doc-url-3-$CI_JOB_ID-$index.txt"
+                                echo "Document preview $ARTIFACT_URL"
+                                echo -e "$CHIP_SERIES \t $MODULE_NAME \t $LANGUAGE \t $ARTIFACT_URL" > logs/$LOG_FILE
+                            fi
+                        done < ./doc_path.env
+                    done
+                fi
+            done
+        - rm -f ./labels.env ./doc_path.env
+        - ls -l logs
+    parallel:
+        matrix:
+            - LANGUAGE: [EN, CN]
+    artifacts:
+        when: always
+        paths:
+            - ./*/out/*.pdf
+            - ./*/out/*.log
+            - ./*/out/additional/*.pdf
+            - ./*/out/additional/*.log
+            - ./logs/doc-url-*.txt
+        expire_in: 1 week

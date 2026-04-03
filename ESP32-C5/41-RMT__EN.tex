@@ -1,0 +1,482 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/41-RMT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{rmt}{}
+\chapter{Remote Control Peripheral (RMT)}
+\label{mod:rmt}
+
+\section{Overview}
+
+The Remote Control (RMT) module is designed to transmit and receive infrared remote control signals. A variety of remote control protocols can be encoded/decoded via software based on the RMT module. The RMT module converts pulse codes stored in the module's built-in RAM into output signals, or converts input signals into pulse codes and stores them in RAM. In addition, the RMT module optionally modulates its output signals with a carrier wave, or optionally demodulates and filters its input signals.
+
+The RMT module has four channels, numbered from zero to three. Each channel is able to independently transmit or receive signals.
+\begin{itemize}
+    \item Channels 0 \verb+~+ 1 (TX channel) are dedicated to transmitting signals;
+    \item Channels 2 \verb+~+ 3 (RX channel) are dedicated to receiving signals.
+\end{itemize}
+
+Each TX/RX channel has the same functionality controlled by a dedicated set of registers and is able to independently transmit or receive data. TX channels are indicated by \regindex{n} which is used as a placeholder for the channel number, and by \regindex{m} for RX channels.
+
+\section{Features}
+
+The RMT module has the following features:
+\begin{itemize}
+\item Four channels:
+    \begin{itemize}
+        \item TX channels 0 \verb+~+ 1
+        \item RX channels 2 \verb+~+ 3
+        \item Four channels share a 192 x 32-bit RAM
+    \end{itemize}
+\item The transmitter supports:
+    \begin{itemize}
+        \item Normal TX mode
+        \item Wrap TX mode
+        \item Modulation on TX pulses
+        \item Continuous TX mode
+        \item Multiple channels (programmable) transmitting data simultaneously
+    \end{itemize}
+\item The receiver supports:
+    \begin{itemize}
+        \item Normal RX mode
+        \item Wrap RX mode
+        \item RX filtering
+        \item Demodulation on RX pulses
+    \end{itemize}
+\end{itemize}
+
+\section{Functional Description}
+\subsection{RMT Architecture}
+
+\tagged{ESP32-C5}{%
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/rmt_architecture_20240708}
+\\Note: In the figure, \regindex{n} = 0 and \regindex{m} = 2.
+\centering
+\caption{RMT Architecture} \label{fig:rmt-arch}
+\end{figure}
+}
+
+\tagged{ESP32-H4}{%
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/rmt_architecture_20260127}
+\centering
+\caption{RMT Architecture} \label{fig:rmt-arch}
+\end{figure}
+}
+
+As shown in Figure \ref{fig:rmt-arch}, each TX channel has:
+
+\begin{itemize}
+    \item Clock divider counter (Div Counter)
+    \item State machine (FSM)
+    \item Transmitter
+\end{itemize}
+
+Each RX channel also has:
+\begin{itemize}
+    \item Clock divider counter (Div Counter)
+    \item State machine (FSM)
+    \item Receiver
+\end{itemize}
+
+The four channels share a 192 x 32-bit RAM.
+
+In the ``Clock" frame, the clock-related registers that need to be configured for RMT are specified below:
+\begin{itemize}
+    \item CLK\_EN: \hyperref[fielddesc:PCRRMTSCLKEN]{PCR\_RMT\_SCLK\_EN} to enable the rmt\_sclk clock
+    \item CLK\_SRC\_SEL: \hyperref[fielddesc:PCRRMTSCLKSEL]{PCR\_RMT\_SCLK\_SEL} to select the rmt\_sclk clock
+    \item CLK\_DIV\_NUM: \hyperref[fielddesc:PCRRMTSCLKDIVNUM]{PCR\_RMT\_SCLK\_DIV\_NUM} to configure the integral part of the divisor for the rmt\_sclk clock
+    \item CLK\_DIV\_NUMERATOR: \hyperref[fielddesc:PCRRMTSCLKDIVA]{PCR\_RMT\_SCLK\_DIV\_A} to configure the denominator of the divisor's fractional part for the rmt\_sclk clock
+    \item CLK\_DIV\_DENOMINATOR: \hyperref[fielddesc:PCRRMTSCLKDIVB]{PCR\_RMT\_SCLK\_DIV\_B} to configure the  numerator of the divisor's fractional part for the rmt\_sclk clock
+\end{itemize}
+
+\subsection{RAM}
+\subsubsection{Structure of RAM}
+
+Figure \ref{fig:rmt-data-structure} shows the format of pulse code in RAM. Each pulse code contains a 16-bit entry with two fields: ``level" and ``period". ``level" (0 or 1) indicates a low-/high-level value that has been received or is going to be sent, while ``period" points out the number of clock cycles (see clk\_div in Figure \ref{fig:rmt-arch}) that the level lasts for. 
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/rmt_data_structure.eps}
+\centering
+\caption{Format of Pulse Code in RAM} \label{fig:rmt-data-structure}
+\end{figure}
+
+The minimum value for the period is zero (0) and is interpreted as a transmission end-marker. For a non-zero period (i.e., not an end-marker), its value is limited by APB clock and RMT clock according to the formula below:
+
+\begin{equation}\label{eq:rmt-period-value}
+5 \times T_{apb\_clk} + 6 \times T_{rmt\_sclk} < period \times T_{clk\_div}
+\end{equation}
+
+\begin{tiplisting}
+RMT clock and APB clock must satisfy the following relation:
+    \begin{equation}
+    1.5 \times T_{apb\_clk} < 9 \times T_{rmt\_sclk}
+    \end{equation}
+\end{tiplisting}
+
+\subsubsection{Use of RAM}
+
+The RAM is divided into four 48 x 32-bit blocks. By default, each channel uses one block (block 0 for channel 0, block 1 for channel 1, and so on). 
+
+If the data size of one single transfer is larger than the block size of TX channel \regindex{n} or RX channel \regindex{m}, users can configure the channel:
+\begin{itemize}
+    \item to enable \hyperref[sec:wrap-tx-mode]{wrap mode} by setting \hyperref[fielddesc:RMTMEMTXWRAPENCHN]{RMT\_MEM\_TX/RX\_WRAP\_EN\_CH\regindex{n}/\regindex{m}};
+    \item or to use more blocks by configuring \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}/\regindex{m}}.
+\end{itemize}
+
+Setting \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}/\regindex{m}} > 1 allows channel \regindex{n}/\regindex{m} to use the memory of the subsequent channels, i.e., block (\regindex{n}/\regindex{m}) \verb+~+ block (\regindex{n}/\regindex{m}+\hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}/\regindex{m}$–$1}). In such case, the subsequent channels \regindex{n}/\regindex{m}+1 \verb+~+ \regindex{n}/\regindex{m} + \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}/\regindex{m}}$–$1 can not be used since their RAM blocks are occupied. For example, if channel 0 is configured to use block 0 and block 1, then channel 1 will be unavailable since its block is occupied, while channel 2 and channel 3 are not affected and can be used normally.
+
+Note that the RAM used by each channel is mapped from low address to high address. In such mode, channel 0 is able to use the RAM blocks of channels 1, 2, and 3 by setting \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH0}, but channel 3 can not use the blocks of channels 0, 1, or 2. Therefore, the maximum value of \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} should not exceed (4$–$\regindex{n}) and the value of \hyperref[fielddesc:RMTMEMSIZECHM]{RMT\_MEM\_SIZE\_CH\regindex{m}} should not exceed (2$–$\regindex{m}).
+
+The RMT RAM can be accessed via APB bus, or read by the transmitter and written by the receiver. To avoid any possible access conflict between the receiver writing RAM and the APB bus reading RAM, RMT can be configured to designate the RAM block's owner, be it the receiver or the APB bus, by configuring \hyperref[fielddesc:RMTMEMOWNERCHM]{RMT\_MEM\_OWNER\_CH\regindex{m}}. If this ownership is violated, a flag signal \hyperref[fielddesc:RMTMEMOWNERERRCHM]{RMT\_MEM\_OWNER\_ERR\_CH\regindex{m}} will be generated. 
+
+\subsubsection{RAM Access}
+
+APB bus is able to access RAM in FIFO mode and in NONFIFO (Direct Address) mode, depending on the configuration of \hyperref[fielddesc:RMTAPBFIFOMASK]{RMT\_APB\_FIFO\_MASK}:
+
+\begin{itemize}
+    \item 0: use FIFO mode;
+    \item 1: use NONFIFO mode.
+\end{itemize}
+
+\textbf{FIFO Mode}
+
+In FIFO mode, the APB reads data from or writes data to RAM via a fixed address stored in \hyperref[regdesc:RMTCHNDATAREG]{RMT\_CH\regindex{n}/\regindex{m}DATA\_REG}.
+
+\textbf{NONFIFO Mode}
+
+In NONFIFO mode, the APB writes data to or reads data from a continuous address range.
+\begin{itemize}
+    \item The write-starting address of TX channel \regindex{n} is (RMT base address + 0x400 + \regindex{n}x48). The access address for the second data and the following data are (RMT base address + 0x400 + \regindex{n}x48 + 0x4), and so on, incremented by 0x4. 
+    \item The read-starting address of RX channel \regindex{m} is (RMT base address + 0x460 + \regindex{m}x48). The access address for the second data and the following data are (RMT base address + 0x460 + \regindex{m}x48 + 0x4), and so on, incremented by 0x4. 
+\end{itemize}
+
+
+\subsection{Clock}\label{rmt-clock}
+
+The clock source of RMT can be \tagged{ESP32-C5}{PLL\_F80M\_CLK, }RC\_FAST\_CLK or XTAL\_CLK, depending on the configuration of PCR\_RMT\_SCLK\_SEL. RMT clock can be enabled by setting PCR\_RMT\_SCLK\_EN. RMT working clock (see rmt\_sclk in Figure \ref{fig:rmt-arch}) is obtained by dividing the selected clock source with a fractional divider. The divider is \hyperref[fielddesc:PCRRMTSCLKDIVNUM]{PCR\_RMT\_SCLK\_DIV\_NUM} + 1 + \hyperref[fielddesc:PCRRMTSCLKDIVA]{PCR\_RMT\_SCLK\_DIV\_A} / \hyperref[fielddesc:PCRRMTSCLKDIVB]{PCR\_RMT\_SCLK\_DIV\_B}
+
+For more information, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}. \hyperref[fielddesc:RMTDIVCNTCHN]{RMT\_DIV\_CNT\_CH\regindex{n}/\regindex{m}} is used to configure the divider coefficient of internal clock divider for RMT channels. The coefficient is normally equal to the value of \hyperref[fielddesc:RMTDIVCNTCHN]{RMT\_DIV\_CNT\_CH\regindex{n}/\regindex{m}}, except for value 0 that represents divider 256. The clock divider can be reset by setting \hyperref[fielddesc:RMTREFCNTRSTCHN]{RMT\_REF\_CNT\_RST\_CH\regindex{n}/\regindex{m}}. The clock generated from the divider can be used by the counter (see Figure \ref{fig:rmt-arch}).
+
+\subsection{Transmitter}
+\vspace{0.4cm}
+
+\begin{tiplisting}
+Updating the configuration described in this and subsequent sections requires to set \hyperref[fielddesc:RMTCONFUPDATECHN]{RMT\_CONF\_UPDATE\_CH\regindex{n}/\regindex{m}} first. See Section \ref{rmt-conf-update}.
+\end{tiplisting}
+\vspace{1em}
+
+\subsubsection{Normal TX Mode}\label{sec:normal-tx-mode}
+
+When \hyperref[fielddesc:RMTTXSTARTCHN]{RMT\_TX\_START\_CH\regindex{n}} is set, the transmitter of channel \regindex{n} starts reading and transmitting pulse codes from the starting address of its RAM block. The codes are transmitted starting from low-address entry. 
+When an end-marker (a zero period) is encountered, the transmitter stops the transmission, returns to idle state, and generates an  \hyperref[int:RMTCHNTXENDINT]{RMT\_CH\regindex{n}\_TX\_END\_INT} interrupt. Setting \hyperref[fielddesc:RMTTXSTOPCHN]{RMT\_TX\_STOP\_CH\regindex{n}} to 1 also stops the transmission and immediately sets the transmitter back to idle. 
+The output level of a transmitter in idle state is determined by the ``level" field of the end-marker or by the content of  \hyperref[fielddesc:RMTIDLEOUTLVCHN]{RMT\_IDLE\_OUT\_LV\_CH\regindex{n}}, depending on the configuration of \hyperref[fielddesc:RMTIDLEOUTENCHN]{RMT\_IDLE\_OUT\_EN\_CH\regindex{n}}:
+\begin{itemize}
+    \item 0: the level in idle state is determined by the ``level" field of the end-marker;
+    \item 1: the level is determined by \hyperref[fielddesc:RMTIDLEOUTLVCHN]{RMT\_IDLE\_OUT\_LV\_CH\regindex{n}}.
+\end{itemize}
+
+
+\subsubsection{Wrap TX Mode}\label{sec:wrap-tx-mode}
+
+To transmit more pulse codes than can be fitted in the channel's RAM, users can enable wrap TX mode for channel \regindex{n} by setting \hyperref[fielddesc:RMTMEMTXWRAPENCHN]{RMT\_MEM\_TX\_WRAP\_EN\_CH\regindex{n}}. In this mode, the transmitter transmits the data from RAM in loops till an end-marker is encountered.
+For example, if \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} = 1, the transmitter starts transmitting data from the address 48 * \regindex{n}, and then the data from higher RAM address. Once the transmitter finishes transmitting the data from (48 * (\regindex{n}+1)$–$1), it continues transmitting data from 48 * \regindex{n} again till an end-marker is encountered. Wrap mode is also applicable for \hyperref[fielddesc:RMTMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} > 1.
+
+When the size of transmitted pulse codes is larger than or equal to the value set by  \hyperref[fielddesc:RMTTXLIMCHN]{RMT\_TX\_LIM\_CH\regindex{n}}, an \hyperref[int:RMTCHNTXTHREVENTINT]{RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT} interrupt is triggered. In wrap mode,  \hyperref[fielddesc:RMTTXLIMCHN]{RMT\_TX\_LIM\_CH\regindex{n}} can be set to a half or a fraction of the size of the channel's RAM block. When an  \hyperref[int:RMTCHNTXTHREVENTINT]{RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT} interrupt is detected by software, the already used RAM region can be updated by new pulse codes. In such way, the transmitter can seamlessly transmit unlimited pulse codes in wrap mode.
+
+
+\subsubsection{TX Modulation}
+
+Transmitter output can be modulated with a carrier wave by setting  \hyperref[fielddesc:RMTCARRIERENCHN]{RMT\_CARRIER\_EN\_CH\regindex{n}}. The carrier waveform is configurable. 
+In a carrier cycle, high level lasts for (\hyperref[fielddesc:RMTCARRIERHIGHCHN]{RMT\_CARRIER\_HIGH\_CH\regindex{n}} + 1) rmt\_sclk cycles, while low level lasts for (\hyperref[fielddesc:RMTCARRIERLOWCHN]{RMT\_CARRIER\_LOW\_CH\regindex{n}} + 1) rmt\_sclk cycles. When  \hyperref[fielddesc:RMTCARRIEROUTLVCHN]{RMT\_CARRIER\_OUT\_LV\_CH\regindex{n}} is set, carrier wave is added on the high-level of output signals; while  \hyperref[fielddesc:RMTCARRIEROUTLVCHN]{RMT\_CARRIER\_OUT\_LV\_CH\regindex{n}} is cleared, carrier wave is added on the low-level of output signals. 
+Carrier wave can be added on all output signals during modulation, or just added on valid pulse codes (the data stored in RAM), which can be set by configuring \hyperref[fielddesc:RMTCARRIEREFFENCHN]{RMT\_CARRIER\_EFF\_EN\_CH\regindex{n}}: 
+\begin{itemize}
+    \item 0: add carrier wave on all output signals;
+    \item 1: add carrier wave only on valid signals.
+\end{itemize}
+
+
+\subsubsection{Continuous TX Mode}
+
+The continuous TX mode can be enabled by setting \hyperref[fielddesc:RMTTXCONTIMODECHN]{RMT\_TX\_CONTI\_MODE\_CH\regindex{n}}. In this mode, the transmitter transmits the pulse codes from RAM in loops:
+\begin{itemize}
+    \item If an end-marker is encountered, the transmitter starts transmitting the first data of the channel's RAM again. 
+    \item If no end-marker is encountered, there are two possible situations. In normal TX mode (\hyperref[fielddesc:RMTMEMTXWRAPENCHN]{RMT\_MEM\_TX\_WRAP\_EN\_CH\regindex{n}} = 0), an error interrupt occurs because the RAM is empty without any data to transmit. In wrap TX mode (\hyperref[fielddesc:RMTMEMTXWRAPENCHN]{RMT\_MEM\_TX\_WRAP\_EN\_CH\regindex{n}} = 1), the transmitter starts transmitting the first data again after the last data is transmitted.
+\end{itemize}
+
+If \hyperref[fielddesc:RMTTXLOOPCNTENCHN]{RMT\_TX\_LOOP\_CNT\_EN\_CH\regindex{n}} is set, the loop counting is incremented by 1 each time an end-marker is encountered. If the counting reaches the value set by \hyperref[fielddesc:RMTTXLOOPNUMCHN]{RMT\_TX\_LOOP\_NUM\_CH\regindex{n}}, an \hyperref[int:RMTCHNTXLOOPINT]{RMT\_CH\regindex{n}\_TX\_LOOP\_INT} interrupt is generated. If \hyperref[fielddesc:RMTLOOPSTOPENCHN]{RMT\_LOOP\_STOP\_EN\_CH\regindex{n}} is set, the transmission stops instantly after an \hyperref[int:RMTCHNTXLOOPINT]{RMT\_CH\regindex{n}\_TX\_LOOP\_INT} interrupt is generated. Otherwise, the transmission continues. In an end-marker, if its period[14:0] is 0, then the period of the previous data must satisfy:
+
+\begin{equation}
+10 \times T_{apb\_clk} + 19 \times T_{rmt\_sclk} < period \times T_{clk\_div}
+\end{equation}
+
+The period of the other data only need to satisfy \hyperref[eq:rmt-period-value]{non-zero period relation}.
+
+
+\subsubsection{Simultaneous TX Mode}
+
+RMT module supports multiple channels transmitting data simultaneously. To use this function, follow the steps below:
+
+\begin{enumerate}
+    \item Configure \hyperref[regdesc:RMTTXSIMREG]{RMT\_TX\_SIM\_CH\regindex{n}} to choose which multiple channels are used to transmit data simultaneously;
+    \item Set \hyperref[fielddesc:RMTTXSIMEN]{RMT\_TX\_SIM\_EN} to enable this transmission mode;
+    \item Set \hyperref[fielddesc:RMTTXSTARTCHN]{RMT\_TX\_START\_CH\regindex{n}} for each selected channel to start data transmission.
+\end{enumerate}
+
+The transmission starts once the final channel is configured. Due to hardware limitations, there is no guarantee that two channels can start transmitting data exactly at the same time. The interval between two channels starting transmitting data is within 3 x T$_{clk\_div}$.
+
+
+\subsection{Receiver}
+
+\subsubsection{Normal RX Mode}\label{sec:normal-rx-mode}
+
+The receiver of channel \regindex{m} is controlled by \hyperref[fielddesc:RMTRXENCHM]{RMT\_RX\_EN\_CH\regindex{m}}: 
+\begin{itemize}
+    \item 0: the receiver stops receiving data;
+    \item 1: the receiver starts working.
+\end{itemize}
+
+When the receiver becomes active, it starts counting from the first edge of the signal, detecting signal levels and counting clock cycles the level lasts for. Each cycle count (period) is then written back to RAM together with the level information (level). When the receiver detects no change in a signal level for a number of clock cycles more than the value set by \hyperref[fielddesc:RMTIDLETHRESCHM]{RMT\_IDLE\_THRES\_CH\regindex{m}}, the receiver stops receiving data, returns to idle state, and generates an \hyperref[int:RMTCHMRXENDINT]{RMT\_CH\regindex{m}\_RX\_END\_INT} interrupt. Please note that \hyperref[fielddesc:RMTIDLETHRESCHM]{RMT\_IDLE\_THRES\_CH\regindex{m}} should be configured to a maximum value according to your application, otherwise a valid received level may be mistaken as a level in idle state. If the RAM space of this RX channel is used up by the received data, the receiver stops receiving data, and an \hyperref[int:RMTCHNERRINT]{RMT\_CH\regindex{m}\_ERR\_INT} interrupt is triggered by RAM FULL event.
+
+\subsubsection{Wrap RX Mode}
+
+To receive more pulse codes than can be fitted in the channel's RAM, users can enable wrap mode for channel \regindex{m} by configuring \hyperref[fielddesc:RMTMEMRXWRAPENCHM]{RMT\_MEM\_RX\_WRAP\_EN\_CH\regindex{m}}. In wrap mode, the receiver stores the received data to RAM space of this channel in loops. The receiving ends when the receiver detects no change in a signal level for a number of clock cycles more than the value set by \hyperref[fielddesc:RMTIDLETHRESCHM]{RMT\_IDLE\_THRES\_CH\regindex{m}}. The receiver returns to idle state and generates an \hyperref[int:RMTCHMRXENDINT]{RMT\_CH\regindex{m}\_RX\_END\_INT} interrupt. For example, if \hyperref[fielddesc:RMTMEMSIZECHM]{RMT\_MEM\_SIZE\_CH\regindex{m}} is set to 1, the receiver starts receiving data and stores the data to address 48 * \regindex{m}, and then to higher RAM address. When the receiver finishes storing the received data to (48 * (\regindex{m} + 1)$–$1), the receiver continues receiving data and storing data to the address 48 *  \regindex{m} again, and the receiving ends when no change is detected on a signal level for more than \hyperref[fielddesc:RMTIDLETHRESCHM]{RMT\_IDLE\_THRES\_CH\regindex{m}} clock cycles. Wrap mode is also applicable when \hyperref[fielddesc:RMTMEMSIZECHM]{RMT\_MEM\_SIZE\_CH\regindex{m}} > 1.
+
+An \hyperref[int:RMTCHMRXTHREVENTINT]{RMT\_CH\regindex{m}\_RX\_THR\_EVENT\_INT} interrupt is generated when the size of received pulse codes is larger than or equal to the value set by \hyperref[fielddesc:RMTRXLIMCHM]{RMT\_RX\_LIM\_CH\regindex{m}}.
+In wrap mode, \hyperref[fielddesc:RMTRXLIMCHM]{RMT\_RX\_LIM\_CH\regindex{m}} can be set to a half or a fraction of the size of the channel's RAM block.
+When an \hyperref[int:RMTCHMRXTHREVENTINT]{RMT\_CH\regindex{m}\_RX\_THR\_EVENT\_INT} interrupt is detected, the already used RAM region can be updated by subsequent data.
+
+
+\subsubsection{RX Filtering}
+
+Users can enable the receiver to filter input signals by setting \hyperref[fielddesc:RMTRXFILTERENCHM]{RMT\_RX\_FILTER\_EN\_CH\regindex{m}} for channel \regindex{m}. The filter samples input signals continuously, and detects the signals which remain unchanged for a continuous \hyperref[fielddesc:RMTRXFILTERTHRESCHM]{RMT\_RX\_FILTER\_THRES\_CH\regindex{m}} rmt\_sclk cycles as valid. Otherwise, the signals will be detected as invalid. Only the valid signals can pass through the filter. The filter removes pulses with a length of less than \hyperref[fielddesc:RMTRXFILTERTHRESCHM]{RMT\_RX\_FILTER\_THRES\_CH\regindex{m}} rmt\_sclk cycles.
+
+
+\subsubsection{RX Demodulation}
+
+Users can enable RX demodulation on input signals or on filtered signals by setting \hyperref[fielddesc:RMTCARRIERENCHM]{RMT\_CARRIER\_EN\_CH\regindex{m}}. RX demodulation can be applied to high-level carrier wave or low-level carrier wave, depending on the configuration of \hyperref[fielddesc:RMTCARRIEROUTLVCHM]{RMT\_CARRIER\_OUT\_LV\_CH\regindex{m}}: 
+\begin{itemize}
+    \item 0: demodulate low-level carrier wave;
+    \item 1: demodulate high-level carrier wave.
+\end{itemize}
+
+Users can configure \hyperref[fielddesc:RMTCARRIERHIGHTHRESCHM]{RMT\_CARRIER\_HIGH\_THRES\_CH\regindex{m}} and \hyperref[fielddesc:RMTCARRIERLOWTHRESCHM]{RMT\_CARRIER\_LOW\_THRES\_CH\regindex{m}} to set the thresholds to demodulate high-level carrier or low-level carrier. If the high-level of a signal lasts for less than \hyperref[fielddesc:RMTCARRIERHIGHTHRESCHM]{RMT\_CARRIER\_HIGH\_THRES\_CH\regindex{m}} clk\_div cycles, or the low-level lasts for less than \hyperref[fielddesc:RMTCARRIERLOWTHRESCHM]{RMT\_CARRIER\_LOW\_THRES\_CH\regindex{m}} clk\_div cycles, the signal is detected as a carrier and is then filtered out.
+
+
+\section{Configuration Update}\label{rmt-conf-update}
+
+To update RMT registers configuration, please set \hyperref[fielddesc:RMTCONFUPDATECHN]{RMT\_CONF\_UPDATE\_CH\regindex{n}/\regindex{m}} for each channel first.
+
+All the bits/fields listed in the second column of Table \ref{tab:rmt-config-update} should follow this rule.
+
+\begin{longtable}{ | p{6cm} | p{7cm} | }
+\caption{Configuration Update}
+\label{tab:rmt-config-update}\\
+\hline
+    \rowcolor{lightgray}
+        \textbf{Register} & \textbf{Bit/Field Configuration Update}  \\ \hline
+    \endfirsthead
+    
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+
+    \rowcolor{lightgray}
+        \textbf{Register} & \textbf{Bit/Field Configuration Update}  \\ \hline
+    \endhead
+    \multicolumn{2}{r}{\textbf{Cont'd on next page}} \\
+        \endfoot
+        \endlastfoot
+        \hline
+        
+\multicolumn{2}{|l|}{\textbf{TX Channel}} \\ \hline
+\multirow{8}{*}{\hyperref[regdesc:RMTCHNCONF0REG]{RMT\_CH\regindex{n}CONF0\_REG}}  &   RMT\_CARRIER\_OUT\_LV\_CH\regindex{n}    \\ \cline{2-2} 
+                   & RMT\_CARRIER\_EN\_CH\regindex{n}      \\ \cline{2-2} 
+                   &  RMT\_CARRIER\_EFF\_EN\_CH\regindex{n}     \\ \cline{2-2} 
+                   & RMT\_DIV\_CNT\_CH\regindex{n}      \\ \cline{2-2}
+                   & RMT\_IDLE\_OUT\_EN\_CH\regindex{n}      \\ \cline{2-2}
+                   & RMT\_IDLE\_OUT\_LV\_CH\regindex{n}      \\ \cline{2-2}
+                   & RMT\_TX\_CONTI\_MODE\_CH\regindex{n}      \\ \hline
+\multirow{2}{*}{\hyperref[regdesc:RMTCHNCARRIERDUTYREG]{RMT\_CH\regindex{n}CARRIER\_DUTY\_REG}}  &   RMT\_CARRIER\_HIGH\_CH\regindex{n}    \\ \cline{2-2} 
+                   & RMT\_CARRIER\_LOW\_CH\regindex{n}      \\ \hline
+\multirow{3}{*}{\hyperref[regdesc:RMTCHNTXLIMREG]{RMT\_CH\regindex{n}\_TX\_LIM\_REG}}  &   RMT\_TX\_LOOP\_CNT\_EN\_CH\regindex{n}    \\ \cline{2-2} 
+                   &   RMT\_TX\_LOOP\_NUM\_CH\regindex{n}    \\ \cline{2-2} 
+                   & RMT\_TX\_LIM\_CH\regindex{n}     \\ \hline
+\hyperref[regdesc:RMTTXSIMREG]{RMT\_TX\_SIM\_REG} & RMT\_TX\_SIM\_EN \\ \hline
+
+\multicolumn{2}{|l|}{\textbf{RX Channel}} \\ \hline
+\multirow{4}{*}{\hyperref[regdesc:RMTCHMCONF0REG]{RMT\_CH\regindex{m}CONF0\_REG}}  &   RMT\_CARRIER\_OUT\_LV\_CH\regindex{m}    \\ \cline{2-2} 
+                   &   RMT\_CARRIER\_EN\_CH\regindex{m}    \\ \cline{2-2} 
+                    &   RMT\_IDLE\_THRES\_CH\regindex{m}    \\ \cline{2-2} 
+                   & RMT\_DIV\_CNT\_CH\regindex{m}     \\ \hline
+\multirow{2}{*}{\hyperref[regdesc:RMTCHMCONF1REG]{RMT\_CH\regindex{m}CONF1\_REG}}  &   RMT\_RX\_FILTER\_THRES\_CH\regindex{m}    \\ \cline{2-2} 
+                   & RMT\_RX\_EN\_CH\regindex{m}     \\ \hline
+\multirow{2}{*}{\hyperref[regdesc:RMTCHMRXCARRIERRMREG]{RMT\_CH\regindex{m}\_RX\_CARRIER\_RM\_REG}}  &   RMT\_CARRIER\_HIGH\_THRES\_CH\regindex{m}    \\ \cline{2-2} 
+                   & RMT\_CARRIER\_LOW\_THRES\_CH\regindex{m}     \\ \hline
+
+\hyperref[regdesc:RMTCHMRXLIMREG]{RMT\_CH\regindex{m}\_RX\_LIM\_REG} & RMT\_RX\_LIM\_CH\regindex{m} \\ \hline
+
+\hyperref[regdesc:RMTREFCNTRSTREG]{RMT\_REF\_CNT\_RST\_REG} & RMT\_REF\_CNT\_RST\_CH\regindex{m} \\ \hline
+\end{longtable}
+
+\section{Interrupts}
+
+\chipname{}'s RMT can generate the RMT\_INTR interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+The following interrupt sources can generate the RMT\_INTR interrupt signal:
+
+\begin{itemize}
+\item \label{int:RMTCHNERRINT}RMT\_CH\regindex{n}/\regindex{m}\_ERR\_INT: triggered when channel \regindex{n}/\regindex{m} does not read or write data correctly. For example, if the transmitter still tries to read data from RAM when the RAM is empty, or the receiver still tries to write data into RAM when the RAM is full, this interrupt will be triggered.    
+\item \label{int:RMTCHNTXTHREVENTINT}RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT: triggered when the amount of data the transmitter has transmitted reaches the value set in \hyperref[regdesc:RMTCHNTXLIMREG]{RMT\_CH\regindex{n}\_TX\_LIM\_REG}.
+\item \label{int:RMTCHMRXTHREVENTINT}RMT\_CH\regindex{m}\_RX\_THR\_EVENT\_INT: triggered each time when the amount of data received by the receiver reaches the value set in \hyperref[regdesc:RMTCHMRXLIMREG]{RMT\_CH\regindex{m}\_RX\_LIM\_REG}. 
+\item \label{int:RMTCHNTXENDINT}RMT\_CH\regindex{n}\_TX\_END\_INT: triggered when the transmitter has finished transmitting signals.
+\item \label{int:RMTCHMRXENDINT}RMT\_CH\regindex{m}\_RX\_END\_INT: triggered when the receiver has finished receiving signals.
+\item \label{int:RMTCHNTXLOOPINT}RMT\_CH\regindex{n}\_TX\_LOOP\_INT: triggered when the loop counting reaches the value set by  \hyperref[fielddesc:RMTTXLOOPNUMCHN]{RMT\_TX\_LOOP\_NUM\_CH\regindex{n}}.
+\end{itemize}
+
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:rmt-reg-summ} \textit{\nameref{sec:rmt-reg-summ}}.
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{rmt-reg-summ}{}
+\section{Register Summary}
+\label{sec:rmt-reg-summ}
+
+The addresses in this section are relative to Remote Control Peripheral base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/41-RMT-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to Remote Control Peripheral base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/41-RMT-reg__EN}
+
+
+\end{document}

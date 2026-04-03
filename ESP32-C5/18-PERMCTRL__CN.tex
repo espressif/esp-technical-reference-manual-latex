@@ -1,0 +1,705 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./18-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{permctrl}{}
+\chapter{权限控制 (PMS)}
+\label{mod:permctrl}
+
+\section{概述}
+
+\chipname{} 整个系统的权限控制可以分为两部分：PMP（Physical Memory Protection，物理存储器保护）和 APM（Access Permission Management，访问权限管理）。
+
+PMP 位于 HP CPU 内部，能够管控 HP CPU 访问所有的地址空间。APM 则是一个作用于总线端口处的访问权限管理模块，可以与 PMP 一起管理 HP CPU 访问部分存储器和外设的访问权限，还可以独立管理 LP CPU 访问部分内存和外存的访问权限。此外，APM 还可以独立控制 GDMA，MEM\_MONITOR 等可以发起总线读写请求的主设备访问部分存储器的访问权限。
+
+PMP 和 APM 管控的区域分布如表 \ref{tab:pmp-apm} 所示。对于主机 HP CPU，PMP 和 APM 的管控关系见图 \ref{fig:pmp_apm}。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] HP CPU 相关外设寄存器，地址范围：0x600C\_0000 – 0x600C\_FFFF
+    \item[2] 高性能系统相关外设寄存器，地址范围：0x6000\_0000 – 0x600A\_FFFF
+    \item[3] 低功耗系统相关外设寄存器，地址范围：0x600B\_0000 – 0x600B\_FFFF
+    \item[4] 外部存储器，如 flash、PSRAM。
+    \item[5] 如 TCM\_MEM\_MONITOR、PSRAM\_MEM\_MONITOR 等其他可以发起总线读写请求的主机，可参考表 \ref{tab:master_source}。
+    \item[6] CPU\_APM、HP\_APM、LP\_APM、LP\_APM0、PERI\_APM 的介绍参考章节 \ref{sec:apm_descr}。
+
+\end{TableNotes}
+
+\begin{longtable}[C]{|l|l|l|L{2cm}|L{2cm}|L{2cm}|L{2cm}|l|}
+    \caption{PMP 和 APM 管控的区域分布}
+    \label{tab:pmp-apm}\\\hline
+
+    \rowcolor{lightgray}
+  \backslashbox{\textbf{主机}}{\textbf{从机}}  &\multicolumn{1}{|c|}{\textbf{ROM}}
+    &\multicolumn{1}{|c|}{\textbf{HP SRAM}}
+    &\multicolumn{1}{|c|}{\textbf{LP SRAM}}
+    & \multicolumn{1}{|c|}{\textbf{HP CPU\_PERI}\tnote{1}}
+    & \multicolumn{1}{|c|}{\textbf{HP\_PERI}\tnote{2}}
+    & \multicolumn{1}{|c|}{\textbf{LP\_PERI}\tnote{3}}
+        & \multicolumn{1}{|c|}{\textbf{EXT MEM}\tnote{4}}
+    \\\hline
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+
+    \textbf{HP CPU} & PMP & PMP+ CPU\_APM & PMP + LP\_APM/LP\_APM0 & PMP + HP\_APM + PERI\_APM & PMP + HP\_APM + PERI\_APM & PMP + LP\_APM + PERI\_APM & PMP\\ \hline
+    \textbf{LP CPU} & N/A & HP\_APM & LP\_APM/LP\_APM0 & N/A & HP\_APM + PERI\_APM & LP\_APM + PERI\_APM & N/A\\ \hline
+    \textbf{GDMA} & N/A & HP\_APM & LP\_APM/LP\_APM0 & N/A & N/A & N/A & HP\_APM\\ \hline
+    \textbf{其他主机\tnote{5}} & N/A & HP\_APM & LP\_APM/LP\_APM0 & N/A & N/A & N/A & N/A\\ \hline
+\end{longtable}
+\end{ThreePartTable}
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/pmp_apm}
+\centering
+\caption{PMP 和 APM 的管控关系}
+\label{fig:pmp_apm}
+\end{figure}
+
+如图所示，HP CPU 访问 ROM 和 EXT MEM 只受 PMP 管控，APM 无法控制。HP CPU 访问 HP SRAM 等其他数据通路，则需要先接受 PMP 的权限管控，再接受 APM 的权限管控。如果 PMP 检查不通过，则不会触发 APM 权限管控。对于外设寄存器，会经过两级 APM 权限管控，第一级根据不同地址区域划分管控范围，第二级根据不同外设划分管控范围。
+
+PMP 相关的寄存器位于 HP CPU 内部，需要通过特殊指令进行获取或配置。关于如何配置 PMP，请参考章节 \textit{\nameref{mod:riscvcpu}} > \textit{\nameref{sec:riscvcpu-pmp}}。
+
+以下章节将详细介绍 APM 模块的特性、功能和配置。
+
+\section{APM 简介}
+
+APM 访问权限管理模块包含两部分：TEE（Trusted Execution Environment，可信执行环境）控制器和 APM 控制器。他们分别包含自己的寄存器模块：TEE 寄存器和 APM 寄存器。
+\begin{itemize}
+\item TEE 控制器负责配置 \chipname{} 中主机（如 GDMA）访问存储器或外设寄存器的安全模式，共支持四种安全模式：TEE、REE0 (Rich Execution Environment)、REE1 和 REE2。
+
+\item APM 控制器分为两类，SYS\_APM 控制器 和 PERI\_APM 控制器。SYS\_APM 控制器的寄存器在 APM 寄存器中，PERI\_APM 控制器的寄存器在 TEE 寄存器中。
+
+    \begin{itemize}
+    \item SYS\_APM 控制器负责管理主机访问存储器和外设寄存器的权限。通过将预先配置好的地址范围及每个地址范围对应的读、写以及执行权限，与总线上携带的信息，如 ID 号（具体可参考表 \ref{tab:master_source})、安全模式、访问地址、读写执行等信息做对比，从而判断是否允许访问。
+    \item PERI\_APM 控制器负责管理主机访问外设寄存器的权限。通过将预先配置好的每个外设一组的读、写权限寄存器，与总线上携带的信息，如安全模式、访问地址所属外设、读写执行等信息做对比，从而判断是否允许访问。
+    \end{itemize}
+\end{itemize}
+
+TEE 寄存器用于配置每个主机的安全模式。APM 寄存器用于指定每一个安全模式的访问权限和访问地址范围。通过 TEE 控制器和 APM 控制器的配合，可以精确控制所有主机对存储器和外设寄存器的访问权限。
+
+\section{主要特性}\label{sec:permctrl-features}
+
+\chipname{} 共有两个 TEE 控制器：HP\_TEE 和 LP\_TEE。
+\begin{itemize}
+    \item HP\_TEE 具有以下特性：
+        \begin{itemize}
+        \item 支持 4 种安全模式
+        \item 支持 32 个主机安全模式配置
+        \end{itemize}
+    \item LP\_TEE 具有以下特性：
+        \begin{itemize}
+        \item 支持 4 种安全模式
+        \item 支持 1 个主机 (LP CPU) 安全模式配置
+        \end{itemize}
+\end{itemize}
+
+\chipname{} 共有 4 个 SYS\_APM 控制器：HP\_APM\_CTRL、LP\_APM\_CTRL、LP\_APM0\_CTRL 和 CPU\_APM\_CTRL。
+\begin{itemize}
+    \item HP\_APM\_CTRL 控制器具有以下特性：
+        \begin{itemize}
+        \item 最多支持 16 组地址范围的配置
+        \item 支持 HP SRAM、HP CPU 外设寄存器、HP 系统外设寄存器以及外部存储器的访问权限管理
+        \item 支持中断功能
+        \item 支持异常信息记录功能
+        \end{itemize}
+    \item LP\_APM\_CTRL 控制器具有以下特性：
+        \begin{itemize}
+        \item 最多支持 8 组地址范围的配置
+        \item 支持 LP SRAM 低速访问的权限管理以及 LP 外设寄存器的访问权限管理
+        \item 支持中断功能
+        \item 支持异常信息记录功能
+        \end{itemize}
+    \item LP\_APM0\_CTRL 控制器具有以下特性：
+        \begin{itemize}
+        \item 最多支持 8 组地址范围的配置
+        \item 支持 LP SRAM 高速访问的权限管理
+        \item 支持中断功能
+        \item 支持异常信息记录功能
+        \end{itemize}
+    \item CPU\_APM\_CTRL 控制器具有以下特性：
+        \begin{itemize}
+        \item 最多支持 8 组地址范围的配置
+        \item 支持 HP CPU 访问 HP SRAM 的权限管理
+        \item 支持中断功能
+        \item 支持异常信息记录功能
+        \end{itemize}
+\end{itemize}
+
+\chipname{} 共有 2 个 PERI\_APM 控制器：HP\_PERI\_APM\_CTRL、LP\_PERI\_APM\_CTRL。
+\begin{itemize}
+    \item HP\_PERI\_APM\_CTRL 和 LP\_PERI\_APM\_CTRL 具有以下相同特性：
+        \begin{itemize}
+        \item 支持对每个外设寄存器单独的权限配置
+        \item 支持通过系统总线返回错误状态到主机的功能
+        \item 支持异常信息记录功能
+        \end{itemize}
+\end{itemize}
+
+\section{TEE 与 REE 术语}
+
+\begin{longtable}[L]{ R{2cm} p{13cm} }
+
+\textbf{TEE} & 代表可信执行环境 (Trusted Execution Environment)，它是与主操作系统隔离的安全区域，可以为执行敏感操作提供安全环境。\\
+
+\textbf{REE} & 代表常规执行环境 (Rich Execution Environment)，作为一般用途的执行环境，用于运行大多数应用程序。
+\end{longtable}
+
+\begin{longtable}{|L{3cm}|L{6cm}|L{6cm}|}
+    \caption{TEE 与 REE 之间的比较}
+    \label{tab:tee-ree-comparison}\\
+\hline\rowcolor{lightgray}
+\textbf{方面} & \textbf{TEE} & \textbf{REE} \\
+\hline
+安全性 & 安全增强 & 普通 \\
+\hline
+访问权限 & TEE 模式下的主机始终拥有地址范围内的读、写、执行权限。 & 由用户配置安全权限。REE0/1/2 的安全等级也由用户自定义。\\
+\hline
+\end{longtable}
+
+\section{功能描述}
+
+\subsection{TEE 控制器功能描述}
+
+\chipname{} 芯片支持四种安全模式：TEE、REE0、REE1、REE2。
+
+当 HP CPU 作为主机访问存储器或外设寄存器时，可先配置 HP CPU 的用户模式或机器模式，然后通过配置 HP\_TEE 寄存器模块配置其安全模式。关于 CPU 机器模式及用户模式的配置方法请参考 RISC-V 指令集手册 v1.10 第二卷“特权架构” (RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10)。
+\begin{itemize}
+    \item 当 HP CPU 为机器模式时，其安全模式为 TEE 模式。
+    \item 当 HP CPU 为用户模式时，其安全模式为 REE 模式，具体还需设置 \hyperref[regdesc:TEEMNMODECTRLREG]{TEE\_M0\_MODE\_CTRL\_REG} 寄存器中的 \hyperref[fielddesc:TEEMNMODE]{TEE\_M0\_MODE} 指定 REE0，REE1 或 REE2 模式：
+    \begin{itemize}
+        \item 若 \hyperref[fielddesc:TEEMNMODE]{TEE\_M0\_MODE} 为 0，即选择 TEE 模式，但是在 HP CPU 的用户模式下，其实际的安全模式为 REE0 模式。
+        \item 若 \hyperref[fielddesc:TEEMNMODE]{TEE\_M0\_MODE} 为 1、2 或 3，则安全模式分别为 REE0，REE1，REE2。
+    \end{itemize}
+\end{itemize}
+
+对于 LP CPU 访问存储器或外设寄存器，可通过配置 LP\_TEE 寄存器模块的 \hyperref[fielddesc:LPTEEM0MODE]{LP\_TEE\_M0\_MODE} 来配置其安全模式。
+
+对于除了 LP CPU 以外的其他主机访问存储器或外设寄存器，可通过配置 HP\_TEE 寄存器模块的 \hyperref[fielddesc:TEEMNMODE]{TEE\_M\regindex{n}\_MODE} 来配置其安全模式，其中 \regindex{n} 与表 \ref{tab:master_source} 中的主机 ID 号相对应。
+
+\begin{longtable}{|l| m{10cm} |}
+\caption{HP 系统主机访问来源}\label{tab:master_source}
+\\\hline
+\rowcolor{lightgray}
+{\bfseries \regindex{n} 值} & {\bfseries 来源} \\\hline
+\endfirsthead \hline \rowcolor{lightgray}
+{\bfseries 值} & {\bfseries 来源} \\\hline
+\endhead \endfoot \hline \endlastfoot
+0 & HP CPU \\\hline
+1 & 保留 \\\hline
+2 & 保留 \\\hline
+3 & 保留 \\\hline
+4 & 保留 \\\hline
+5 & TCM\_MEM\_MONITOR \\\hline
+6 & TRACE \\\hline
+7 & 保留 \\\hline
+8 & PSRAM\_MEM\_MONITOR \\\hline
+9 \verb+~+ 15 & 保留 \\\hline
+16 \verb+~+ 31 & 详见章节 \ref{mod:dma} \textit{\nameref{mod:dma}} > 表  \ref{tab:gdma-ahb-peri-sel} 中 0 \verb+~+ 15 对应的外设。例如，16 对应的来源为表 \ref{tab:gdma-ahb-peri-sel} 中 0 对应的外设，17 对应的来源为表 \ref{tab:gdma-ahb-peri-sel} 中 1 对应的外设，以此类推。 \\\hline
+\end{longtable}
+
+可以配置 \hyperref[fielddesc:TEEMNLOCK]{TEE\_M\regindex{n}\_LOCK} 和 \hyperref[fielddesc:LPTEEM0LOCK]{LP\_TEE\_M0\_LOCK} 锁定主机安全模式的配置，只有芯片复位、系统复位及内核复位可以解除锁定并将 TEE 寄存器所有配置恢复成默认值。
+
+\subsection{APM 控制器功能描述}
+\label{sec:apm_descr}
+\subsubsection{结构概览}
+
+图 \ref{fig:APM_Ctrl_Location} 为 APM 控制器的结构图，展示了 APM 控制器管控的总线访问路径。
+
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/APM_Ctrl_Location-cn.png}
+\centering
+\caption{APM 控制器结构图}
+\label{fig:APM_Ctrl_Location}
+\end{figure}
+
+\begin{tiplisting}
+图中 Low-speed mode 和 High-speed mode 访问区别，请参考章节 \ref{mod:sysmem} \nameref{mod:sysmem}。
+\end{tiplisting}
+
+SYS\_APM 控制器共有 4 个：
+\begin{itemize}
+    \item HP\_APM\_CTRL，由 \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} 寄存器模块配置。
+    \item LP\_APM0\_CTRL，由 \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} 寄存器模块配置。
+    \item LP\_APM\_CTRL，由 \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} 寄存器模块配置。
+    \item CPU\_APM\_CTRL，由 \hyperref[sec:permctrl-reg-cpu]{CPU\_APM\_REG} 寄存器模块配置。
+\end{itemize}
+
+PERI\_APM 控制器共有 2 个：
+\begin{itemize}
+    \item HP\_PERI\_APM\_CTRL，由 \hyperref[sec:permctrl-reg-hp-tee]{TEE\_REG} 寄存器模块配置。
+    \item LP\_PERI\_APM\_CTRL，由 \hyperref[sec:permctrl-reg-lp-tee]{LP\_TEE\_REG} 寄存器模块配置。
+\end{itemize}
+
+下面具体介绍各 APM 控制器的访问路径和权限检查。
+
+\begin{itemize}
+    \item HP\_APM\_CTRL 管控 5 条访问路径，即图 \ref{fig:APM_Ctrl_Location} 中蓝色的 M0-M4，可通过配置 \hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_FUNC\_CTRL\_REG} 使能各路径的权限检查（默认使能）。
+
+    \item LP\_APM0\_CTRL 管控 1 条访问路径，即图 \ref{fig:APM_Ctrl_Location} 中最右边的 M0，可通过配置 \hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} 使能该路径的权限检查（默认使能）。
+
+    \item LP\_APM\_CTRL 管控 2 条访问路径，即图 \ref{fig:APM_Ctrl_Location} 中橙色的 M0-M1，可通过配置 \hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG} 使能各路径的权限检查（默认使能）。
+
+    \item CPU\_APM\_CTRL 管控 2 条访问路径，即图 \ref{fig:APM_Ctrl_Location} 中绿色的 M0-M1，可通过配置 \hyperref[regdesc:CPUAPMFUNCCTRLREG]{CPU\_APM \_FUNC\_CTRL\_REG} 使能各路径的权限检查（默认使能）。
+
+    \item HP\_PERI\_APM\_CTRL 管控高性能系统所有外设寄存器访问路径，可通过配置 \hyperref[regdesc:TEEPERICTRLREG]{TEE\_\regindex{PERI}\_CTRL\_REG} 使能各路径的权限检查。
+
+    \item LP\_PERI\_APM\_CTRL 管控低功耗系统所有外设寄存器访问路径，可通过配置 \hyperref[regdesc:LPTEEPERICTRLREG]{LP\_TEE\_\regindex{PERI}\_CTRL\_REG} 使能各路径的权限检查。
+\end{itemize}
+
+各 APM 控制器的详细信息可参考下表 \ref{tab:apm-reg}：
+\begin{footnotesize}
+\begin{longtable}[C]{|L{2.5cm}|L{2.5cm}|L{1.5cm}|L{3cm}|L{1.5cm}|L{3.5cm}|}
+    \caption{APM 控制器配置信息}
+    \label{tab:apm-reg}\\\hline
+    \rowcolor{lightgray}
+    \textbf{APM 控制器} & \textbf{寄存器模块} & \textbf{管控的访问路径数} & \textbf{访问路径权限检查使能} & \textbf{可配地址范围数} & \textbf{地址范围使能}\\ \hline
+    \endfirsthead
+    \endlastfoot
+
+    HP\_APM\_CTRL & \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} &  5 &\hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_ FUNC\_CTRL\_REG} & 16 & \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_ EN\_REG}\\ \hline
+
+    LP\_APM0\_CTRL & \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} &  1 & \hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} & 8 & \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_ EN\_REG}\\ \hline
+
+    LP\_APM\_CTRL & \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} &  2 & \hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG} & 8 & \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_ EN\_REG}\\ \hline
+
+    CPU\_APM\_CTRL & \hyperref[sec:permctrl-reg-cpu]{CPU\_APM\_REG} &  2 & \hyperref[regdesc:CPUAPMFUNCCTRLREG]{CPU\_APM \_FUNC\_CTRL\_REG} & 8 & \hyperref[fielddesc:CPUAPMREGIONFILTEREN]{CPU\_APM\_REGION\_FILTER\_ EN\_REG}\\ \hline
+
+    HP\_PERI\_APM\_CTRL & \hyperref[sec:permctrl-reg-hp-tee]{TEE\_REG} &  与高性能系统寄存器模块数量相同 & N/A & 与高性能系统寄存器模块数量相同 & N/A\\ \hline
+
+    LP\_PERI\_APM\_CTRL & \hyperref[sec:permctrl-reg-lp-tee]{LP\_TEE\_REG} &  与低功耗系统寄存器模块数量相同 & N/A & 与低功耗系统寄存器模块数量相同 & N/A\\ \hline
+
+\end{longtable}
+\end{footnotesize}
+
+\subsubsection{SYS\_APM 控制器}
+\paragraph{地址范围}
+\begin{itemize}
+    \item \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} 寄存器模块可配置 16 组地址范围（即区域 \regindex{n}，\regindex{n}=0-15）。\hyperref[regdesc:HPAPMREGIONNADDRSTARTREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_START} 和 \hyperref[regdesc:HPAPMREGIONNADDRENDREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_END} 分别配置区域 \regindex{n} 的起始地址和结束地址。可通过配置 \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN\_REG} 的 bit \regindex{n} 使能区域 \regindex{n}，默认使能区域 0，即第 1 组的地址范围。
+
+    \item \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} 寄存器模块可配置 8 组地址范围（即区域 \regindex{n}，\regindex{n}=0-7）。\hyperref[fielddesc:LPAPM0REGIONNADDRSTART]{LP\_APM0\_REGION\regindex{n}\_ADDR\_START} 和 \hyperref[fielddesc:LPAPM0REGIONNADDREND]{LP\_APM0\_REGION\regindex{n}\_ADDR\_END} 分别配置区域 \regindex{n} 的起始地址和结束地址。可通过配置 \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_EN\_REG} 的 bit \regindex{n} 使能区域 \regindex{n}，默认使能区域 0，即第 1 组的地址范围。
+
+    \item \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} 寄存器模块可配置 8 组地址范围（即区域 \regindex{n}，\regindex{n}=0-7）。\hyperref[fielddesc:LPAPMREGIONNADDRSTART]{LP\_APM\_REGION\regindex{n}\_ADDR\_START} 和 \hyperref[fielddesc:LPAPMREGIONNADDREND]{LP\_APM\_REGION\regindex{n}\_ADDR\_END} 分别配置区域 \regindex{n} 的起始地址和结束地址。可通过配置 \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_EN\_REG} 的 bit \regindex{n} 使能区域 \regindex{n}，默认使能区域 0，即第 1 组的地址范围。
+
+    \item \hyperref[sec:permctrl-reg-cpu]{CPU\_APM\_REG} 寄存器模块可配置 8 组地址范围（即区域 \regindex{n}，\regindex{n}=0-7）。\hyperref[fielddesc:CPUAPMREGIONNADDRSTART]{CPU\_APM\_REGION\regindex{n}\_ADDR\_START} 和 \hyperref[fielddesc:CPUAPMREGIONNADDREND]{CPU\_APM\_REGION\regindex{n}\_ADDR\_END} 分别配置区域 \regindex{n} 的起始地址和结束地址。可通过配置 \hyperref[fielddesc:CPUAPMREGIONFILTEREN]{CPU\_APM\_REGION\_FILTER\_EN\_REG} 的 bit \regindex{n} 使能区域 \regindex{n}，默认使能区域 0，即第 1 组的地址范围。
+
+\end{itemize}
+
+配置地址范围时，地址的最小对齐单位是 4 字节，即地址的低两位为 0。 例如，地址范围可以设置为 0x4080000C \verb+~+ 0x40808774 或 0x600C0008 \verb+~+ 0x600CFF70。
+
+\paragraph{地址范围的访问权限}
+
+每个地址范围内，均可以为不同的安全模式单独配置访问权限（读/写/执行）：
+
+\begin{itemize}
+
+    \item TEE 模式下的主机始终拥有地址范围内的读、写、执行权限。
+    \item REE0、REE1 和 REE2 模式下的主机，根据不同的访问路径，其读写执行权限由 \hyperref[regdesc:HPAPMREGIONNATTRREG]{HP\_APM\_REGION\regindex{n}\_ATTR\_REG}、 \hyperref[regdesc:LPAPMREGIONNATTRREG]{LP\_APM\_REGION\regindex{n}\_ATTR\_REG} 或  \hyperref[regdesc:LPAPM0REGIONNATTRREG]{LP\_APM0\_REGION\regindex{n}\_ATTR\_REG} 配置。
+
+\end{itemize}
+
+由同一 APM 寄存器模块管理的所有访问路径共享该模块的配置，即配置的地址范围及其权限。例如上图中 HP\_APM\_CTRL M0-M4 在进行访问管控时，都依照 HP\_APM\_REG 寄存器模块中配置的 16 组地址范围及其对应的读、写、执行权限。LP\_APM\_CTRL M0-M1 在进行访问管控时，都依照 LP\_APM\_REG 寄存器模块中配置的 4 组地址范围及其对应的读、写、执行权限。
+
+以 HP SRAM 为例。HP CPU 可通过 PMP 和 CPU\_APM\_CTRL 访问 HP SRAM，LP CPU 可通过 HP\_APM\_CTRL M2 访问 HP SRAM，其他主机都需要通过 HP\_APM\_CTRL M1 访问 HP SRAM。假设 \hyperref[fielddesc:HPAPMM1FUNCEN]{HP\_APM\_M1\_FUNC\_EN} 使能，REE1 安全模式的主机需要通过 HP\_APM\_CTRL M1 这条访问路径读取 HP SRAM 的数据，具体流程如下：
+
+\begin{enumerate}
+    \item HP\_APM\_CTRL M1 会先判断请求访问的地址是否在 \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} 寄存器模块中配置的 16 组地址范围内。
+    \item 假设该访问地址在配置的第 2 组地址范围内，则需判断该组地址范围是否使能，即 \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN} 的 bit 1 是否为 1。
+    \item 若地址范围已使能，判断主机在 REE1 模式下对第 2 组地址范围是否具有读的权限，即  \hyperref[regdesc:HPAPMREGIONNATTRREG]{HP\_APM\_REGION1\_ATTR\_REG} 中的 \hyperref[fielddesc:HPAPMREGIONNR1R]{HP\_APM\_REGION1\_R1\_R} 是否有效（即为 1），若有效，则此次读请求会被正确响应，否则读到的数据恒为 0。
+\end{enumerate}
+
+当 HP 电源域（请参考章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}）掉电重启后，LP CPU 默认没有 HP SRAM 的访问权限。可以在主机 TEE 模式下配置 LP 电源域中的 \hyperref[fielddesc:LPTEEFORCEACCHPMEMEN]{LP\_TEE\_FORCE\_ACC\_HPMEM\_EN} 寄存器，当该寄存器使能时，LP CPU 可以访问 HP SRAM，且不需要经过 SYS\_APM 控制器的权限检查。
+
+
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 芯片上电时，只有 HP CPU 默认处于 TEE 模式，其他主机均处于 REE2 模式。并且默认状态下，SYS\_APM 控制器会阻止所有处于 REE0、REE1 和 REE2 模式的主机的访问请求。
+    \item 章节 \ref{sec:permctrl-reg-summ} \nameref{sec:permctrl-reg-summ} 中列出的所有寄存器均只有处于 TEE 安全模式的主机才可以配置。
+    \item 在 APM 寄存器配置的多个区域的地址空间重叠的情况下，例如一个区域设置为不可读，一个区域设置为可读，两个区域的地址重叠，这部分重叠的地址空间的属性是可读的。写以及执行权限适用同样的规则。
+    \item 可以配置 \hyperref[fielddesc:HPAPMREGIONNLOCK]{HP\_APM\_REGION\regindex{n}\_LOCK}、\hyperref[fielddesc:LPAPMREGIONNLOCK]{LP\_APM\_REGION\regindex{n}\_LOCK} 和 \hyperref[fielddesc:LPAPM0REGIONNLOCK]{LP\_APM0\_REGION\regindex{n}\_LOCK} 锁定 APM 寄存器中 REGION\regindex{n} 的首尾地址及权限的配置，只有芯片复位、系统复位及内核复位可以解除锁定并将 APM 寄存器所有配置恢复成默认值。
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{PERI\_APM 控制器}
+
+PERI\_APM 不是以地址划分权限管控的范围，而是以每个外设寄存器为单位进行权限管控。每一个外设寄存器 \regindex{PERI} 都有以下 8 个域：
+
+\begin{itemize}
+    \item HP/LP\_TEE\_WRITE\_TEE\_\regindex{PERI}
+    \item HP/LP\_TEE\_WRITE\_REE0\_\regindex{PERI}
+    \item HP/LP\_TEE\_WRITE\_REE1\_\regindex{PERI}
+    \item HP/LP\_TEE\_WRITE\_REE2\_\regindex{PERI}
+    \item HP/LP\_TEE\_READ\_TEE\_\regindex{PERI}
+    \item HP/LP\_TEE\_READ\_REE0\_\regindex{PERI}
+    \item HP/LP\_TEE\_READ\_REE1\_\regindex{PERI}
+    \item HP/LP\_TEE\_READ\_REE2\_\regindex{PERI}
+\end{itemize}
+
+通过上述 8 个域，分别控制从机 \regindex{PERI} 在 TEE、REE0、REE1、REE2 四个安全模式下的读/写权限，为 1 表示有对应安全模式下的读/写权限。
+
+复位后默认状态下，每个外设寄存器仅有 HP/LP\_TEE\_WRITE\_TEE\_\regindex{PERI} 和 HP/LP\_TEE\_READ\_TEE\_\regindex{PERI} 为 1，其他域均为 0，表示默认状态下仅有 TEE 安全模式下的主机可以配置外设寄存器。
+
+本文所提及的六个寄存器模块，也是受 PERI\_APM 权限管控的外设。六个寄存器模块和 PERI\_APM 中对应的权限配置寄存器如下所示：
+\begin{itemize}
+    \item \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG}，权限配置寄存器为 \hyperref[regdesc:TEEHPAPMCTRLREG]{TEE\_HP\_APM\_CTRL\_REG}
+
+    \item \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG}，权限配置寄存器为 \hyperref[regdesc:TEEHPAPMCTRLREG]{TEE\_HP\_APM\_CTRL\_REG}
+
+    \item \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG}，权限配置寄存器为 \hyperref[regdesc:LPTEELPAPMCTRLREG]{LP\_TEE\_LP\_APM\_CTRL\_REG}
+
+    \item \hyperref[sec:permctrl-reg-cpu]{CPU\_APM\_REG}，权限配置寄存器为 \hyperref[regdesc:TEECPUAPMCTRLREG]{TEE\_CPU\_APM\_CTRL\_REG}
+
+    \item \hyperref[sec:permctrl-reg-hp-tee]{TEE\_REG}，权限配置寄存器为  \hyperref[regdesc:TEETEECTRLREG]{TEE\_TEE\_CTRL\_REG}
+
+    \item \hyperref[sec:permctrl-reg-lp-tee]{LP\_TEE\_REG}，权限配置寄存器为 \hyperref[regdesc:LPTEELPTEECTRLREG]{LP\_TEE\_LP\_TEE\_CTRL\_REG}
+\end{itemize}
+
+这些权限配置寄存器中，仅有 HP/LP\_TEE\_{WRITE/READ}\_TEE\_\regindex{PERI} 域可配，HP/LP\_TEE\_{WRITE/READ}\_REE{0/1/2}\_\regindex{PERI} 域不可配置且固定为 0，表示这些寄存器不允许安全模式不是 TEE 的主机访问。
+
+\section{非法访问与中断}
+
+\subsection{SYS\_APM 控制器}
+
+若总线上携带的信息与配置不一致时，\chipname{} 将视其为非法访问，并进行如下处理：
+
+\begin{itemize}
+    \item 拒绝该访问请求，并返回默认值，具体表现为：
+    \begin{itemize}
+        \item 读取和执行操作时返回 0
+        \item 写入操作时无效
+    \end{itemize}
+    \item 触发中断
+\end{itemize}
+
+SYS\_APM 控制器会自动记录非法访问的相关信息，包括主机的 ID、安全模式、访问地址、非法访问原因（地址越限/权限不足）以及各访问路径的权限判定状态。所有这些信息都可以从章节 \ref{sec:permctrl-reg-summ} \nameref{sec:permctrl-reg-summ} 列出的相关寄存器中获取。
+
+以 HP\_APM\_CTRL M0 数据访问路径为例，当出现非法访问时：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONID]{HP\_APM\_M0\_EXCEPTION\_ID} 记录访问主机的 ID。
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONMODE]{HP\_APM\_M0\_EXCEPTION\_MODE} 记录访问安全模式。
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONADDR]{HP\_APM\_M0\_EXCEPTION\_ADDR} 记录访问地址。
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONSTATUS]{HP\_APM\_M0\_EXCEPTION\_STATUS} 记录非法访问原因。
+    \begin{itemize}
+        \item  当访问的地址不在 16 组地址范围中配置的区域时，bit 1 会被置 1，表示地址越限。
+        \item  当访问的地址在某一组或多组地址范围内，但访问主机在这一组或多组地址范围内没有对应的读/写/执行操作权限时，bit 0 会被置 1，表示权限不足。
+    \end{itemize}
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONREGION]{HP\_APM\_M0\_EXCEPTION\_REGION} 记录各地址范围的权限判定状态。该寄存器总共 16 个 bit，对应 16 组地址范围， bit 0 对应第 1 组地址范围。若访问的地址在配置使能的某一组地址范围内，但在这组地址范围内没有要求的读/写/执行操作权限时，本寄存器对应于这组地址范围的 bit 位会被置 1。
+\end{itemize}
+
+SYS\_APM 控制器可产生 10 个中断信号，并将其发送给\hyperref[mod:intmtrx]{中断矩阵}：
+
+\begin{itemize}
+    \item HP\_APM\_M0\_INTR
+    \item HP\_APM\_M1\_INTR
+    \item HP\_APM\_M2\_INTR
+    \item HP\_APM\_M3\_INTR
+    \item HP\_APM\_M4\_INTR
+    \item LP\_APM\_M0\_INTR
+    \item LP\_APM\_M1\_INTR
+    \item LP\_APM0\_M0\_INTR
+    \item CPU\_APM\_M0\_INTR
+    \item CPU\_APM\_M1\_INTR
+\end{itemize}
+
+这 10 个中断信号与图 \ref{fig:APM_Ctrl_Location} 中受管控的访问路径一一对应。
+
+每个中断都配置一个中断使能寄存器 APM\_INT\_EN 和一个中断清除寄存器 EXCEPTION\_STATUS\_CLR。当中断使能寄存器为 1 时，当一个受管控的访问路径有非法访问，则对应的中断会被产生，配置中断清除寄存器，则中断信号会被清除，直至下一次非法访问到来。
+
+\subsection{PERI\_APM 控制器}
+
+若总线上携带的信息与配置不一致时，\chipname{} 将视其为非法访问，并进行如下处理：
+
+\begin{itemize}
+    \item 拒绝该访问请求，并返回默认值，具体表现为：
+    \begin{itemize}
+        \item 读取和执行操作时返回 0
+        \item 写入操作时无效
+    \end{itemize}
+    \item 通过总线返回错误信息到主机，使主机进入异常状态
+\end{itemize}
+
+可配置 HP/LP\_BUS\_ERR\_RESP\_EN 为 1 使能非法访问返回总线错误信息的功能。
+
+PERI\_APM 控制器不会记录非法访问的相关信息。
+
+\section{配置流程}
+
+主机访问存储器或外设寄存器路径中 APM 管控的配置流程为：
+
+\begin{enumerate}
+
+    \item 配置 HP CPU 到机器模式（即 TEE 模式）。
+
+    \item 根据表 \ref{tab:master_source} 中的主机 ID 号, 配置 \hyperref[fielddesc:TEEMNMODE]{TEE\_M\regindex{n}\_MODE} 寄存器，或者 \hyperref[fielddesc:LPTEEM0MODE]{LP\_TEE\_M\regindex{n}\_MODE} 寄存器，配置 \chipname{} 中主机的安全模式。
+
+    \item 配置 \hyperref[regdesc:HPAPMREGIONNADDRSTARTREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_START}、\hyperref[regdesc:HPAPMREGIONNADDRENDREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_END} 寄存器，或者 \hyperref[regdesc:LPAPMREGIONNADDRSTARTREG]{LP\_APM\_REGION\regindex{n}\_ADDR\_START}、\hyperref[regdesc:LPAPMREGIONNADDRENDREG]{LP\_APM\_REGION\regindex{n}\_ADDR\_END} 寄存器，或者 \hyperref[regdesc:LPAPM0REGIONNADDRSTARTREG]{LP\_APM0\_REGION\regindex{n}\_ADDR\_START}、\hyperref[regdesc:LPAPM0REGIONNADDRENDREG]{LP\_APM0\_REGION\regindex{n}\_ADDR\_END} 寄存器，或者 \hyperref[regdesc:CPUAPMREGIONNADDRSTARTREG]{CPU\_APM\_REGION\regindex{n}\_ADDR\_START}、\hyperref[regdesc:CPUAPMREGIONNADDRENDREG]{CPU\_APM\_REGION\regindex{n}\_ADDR\_END} 寄存器，配置 APM 寄存器中的各组地址范围。
+
+    \item 配置 \hyperref[regdesc:HPAPMREGIONNATTRREG]{HP\_APM\_REGION\regindex{n}\_ATTR\_REG} 寄存器，或者 \hyperref[regdesc:LPAPMREGIONNATTRREG]{LP\_APM\_REGION\regindex{n}\_ATTR\_REG} 寄存器，或者 \hyperref[regdesc:LPAPM0REGIONNATTRREG]{LP\_APM0\_REGION\regindex{n}\_ATTR\_REG} 寄存器，或者 \hyperref[regdesc:CPUAPMREGIONNATTRREG]{CPU\_APM\_REGION\regindex{n}\_ATTR\_REG} 寄存器，配置 APM 寄存器中的各组地址范围的访问权限。
+
+    \item 配置 \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_ EN\_REG} 寄存器，或者 \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_ EN\_REG} 寄存器，或者 \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_ EN\_REG} 寄存器，或者 \hyperref[fielddesc:CPUAPMREGIONFILTEREN]{CPU\_APM\_REGION\_FILTER\_ EN\_REG} 寄存器，使能对应地址范围的权限检查。
+
+    \item 配置 \hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_ FUNC\_CTRL\_REG}、\hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG}、\hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} 或 \hyperref[regdesc:CPUAPMFUNCCTRLREG]{CPU\_APM \_FUNC\_CTRL\_REG} 寄存器使能对应路径的 APM 控制器，默认使能。
+
+    \item （仅访问外设寄存器时需要）配置 \hyperref[regdesc:TEEPERICTRLREG]{TEE\_\regindex{PERI}\_CTRL\_REG} 或 \hyperref[regdesc:LPTEEPERICTRLREG]{LP\_TEE\_\regindex{PERI}\_CTRL\_REG}，配置 \regindex{PERI} 寄存器的访问权限。
+
+\end{enumerate}
+
+以 I2S 通过 GDMA 访问 HP SRAM 为例，假设仅允许其在第 4 组地址范围 0x40805000 \verb+~+ 0x4080FFFF 地址范围内读写，则配置流程如下：
+
+\begin{enumerate}
+    \item 配置 HP CPU 为机器模式（即 TEE 模式）。
+
+    \item 根据表 \ref{tab:master_source} 中的主机 ID 号, 配置 \hyperref[fielddesc:TEEMNMODE]{TEE\_M19\_MODE} 寄存器为 1，将 I2S 通过 GDMA 访问的安全模式设置为 REE0 模式。
+
+    \item 配置 \hyperref[regdesc:HPAPMREGIONNADDRSTARTREG]{HP\_APM\_REGION3\_ADDR\_START} 为 0x40805000， 配置 \hyperref[regdesc:HPAPMREGIONNADDRSTARTREG]{HP\_APM\_REGION3\_ADDR\_END} 为 0x4080EFFC。
+
+    \item 配置 \hyperref[fielddesc:HPAPMREGIONNR0W]{HP\_APM\_REGION3\_R0\_W} 和 \hyperref[fielddesc:HPAPMREGIONNR0R]{HP\_APM\_REGION3\_R0\_R} 为 1，使能对地址范围的写入、读取权限。
+
+    \item 配置 \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN} 的 bit 3 为 1，使能区域 3（即第 4 组地址范围）。
+
+    \item 配置 \hyperref[fielddesc:HPAPMM1FUNCEN]{HP\_APM\_M1\_FUNC\_EN} 为 1，使能 HP\_APM\_CTRL M1 检查权限。
+\end{enumerate}
+
+通过以上配置，I2S 可通过 GDMA 在 HP SRAM 中的 0x40805000 \verb+~+ 0x4080FFFF 地址范围内读写。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+
+\hypertarget{permctrl-reg-summ}{}
+\section{寄存器列表}
+\label{sec:permctrl-reg-summ}
+
+\subsection{HP\_APM\_REG}
+\label{sec:permctrl-reg-hp}
+
+本小节的地址均为相对于 HP\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-hp_apm_reg_summary__CN}
+
+\subsection{LP\_APM\_REG}
+\label{sec:permctrl-reg-lp}
+
+本小节的地址均为相对于 LP\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-lp_apm_reg_summary__CN}
+
+\subsection{LP\_APM0\_REG}\label{sec:permctrl-reg-lp0}
+
+本小节的地址均为相对于 LP\_APM0 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-lp_apm0_reg_summary__CN}
+
+\subsection{CPU\_APM\_REG}
+\label{sec:permctrl-reg-cpu}
+
+本小节的地址均为相对于 CPU\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-eco2_cpu_apm_reg_summary__CN}
+
+\subsection{TEE\_REG}
+\label{sec:permctrl-reg-hp-tee}
+
+本小节的地址均为相对于 TEE 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-eco2_tee_reg_summary__CN}
+
+
+\subsection{LP\_TEE\_REG}
+\label{sec:permctrl-reg-lp-tee}
+
+本小节的地址均为相对于 LP\_TEE 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/18-eco2_lp_tee_reg_summary__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+\newpage
+\section{寄存器}
+
+\subsection{HP\_APM\_REG}
+
+本小节的地址均为相对于 HP\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-hp_apm_reg__CN.tex}
+
+\subsection{LP\_APM\_REG}
+
+本小节的地址均为相对于 LP\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-lp_apm_reg__CN.tex}
+
+\subsection{LP\_APM0\_REG}
+
+本小节的地址均为相对于 LP\_APM0 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-lp_apm0_reg__CN.tex}
+
+\subsection{CPU\_APM\_REG}
+
+本小节的地址均为相对于 CPU\_APM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-eco2_cpu_apm_reg__CN.tex}
+
+\subsection{TEE\_REG}
+
+本小节的地址均为相对于 TEE 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-eco2_tee_reg__CN.tex}
+
+\subsection{LP\_TEE\_REG}
+
+本小节的地址均为相对于 LP\_TEE 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/18-eco2_lp_tee_reg__CN.tex}
+
+
+\end{document}

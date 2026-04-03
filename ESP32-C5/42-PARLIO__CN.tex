@@ -1,0 +1,708 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/42-PARLIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor} 第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{parlio}{}
+\chapter{并行 IO 控制器 (PARLIO)}
+\label{mod:parlio}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概况}
+
+\chipname{} 包含一个并行 IO 控制器 (PARLIO)，支持通过 GDMA 在并行总线上实现外部设备和内部存储器之间的数据通信。它由 TX 和 RX 两个子模块组成，分别作为发送器和接收器。PARLIO 支持全双工通信。
+
+鉴于 IO 数据的灵活性，PARLIO 可用作通用接口，连接各种外围设备。例如可以把 SPI 作为主机，PARLIO 作为从机，实现点对点传输。详细的应用实例，请参考小节 \ref{sec:parlio-application-example}。
+
+\section{术语}
+为了更好地说明 PARLIO 的功能，本章使用了以下术语。
+
+\begin{longtable}[c]{ R{4cm} p{10cm} }
+
+\textbf{RX 模块}      & PARLIO 子模块，从外部并行总线接收数据并将其存储在内部存储器中。 \\
+\textbf{TX 模块}      & PARLIO 子模块，将数据从内部存储器传输到外部并行总线上。 \\
+\textbf{RXD}          & 从 RX 模块的 IO 接口接收的并行数据。 \\
+\textbf{TXD}          & 从 TX 模块的 IO 接口发送的并行数据。  \\
+\textbf{帧}           & 传输数据的单位，从设置 START 信号时起，到收到 EOF 信号止。 \\
+\textbf{自由运行时钟} & 持续翻转的时钟。若非自由运行时钟，则时钟只在收到有效数据的期间翻转，其余时间停止翻转。\\
+\textbf{GDMA SUC EOF} & GDMA 帧传输成功结束的信号。GDMA 接收到此信号时，触发一个 GDMA 中断，表明当前帧正确，且数据接收结束。 \\
+\textbf{GDMA ERR EOF} & GDMA 帧传输错误结束的信号。GDMA 接收到此信号时，触发一个 GDMA 中断，表明当前帧错误，且数据接收结束。 \\
+\textbf{CDC}          & 跨时钟域处理 (Clock Domain Crossing)。 \\
+
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{特性}
+\label{sec:parlio-features}
+
+PARLIO 模块具备以下特性：
+
+\begin{itemize}
+    \item 支持多种时钟源可选：
+    \begin{itemize}
+        \item 包括外部 IO 时钟 PAD\_CLK\_TX/RX、内部系统时钟 XTAL\_CLK、PLL\_F240M\_CLK 和 RC\_FAST\_CLK
+        \item 支持最大时钟频率 40 MHz
+        \item 支持对时钟频率进行整数分频
+    \end{itemize}
+    \item 支持将传输数据总线位宽配置为 1/2/4/8 位
+    \item 支持 8 位全双工传输
+    \item 总线位宽为 1/2/4 位时，支持在一个字节范围内对比特数据顺序进行翻转
+    \item 包含用于接收 IO 并行数据的 RX 子模块：
+    \begin{itemize}
+        \item 支持对输出时钟进行门控
+        \item 支持 RX 子模块输入时钟和输出时钟分别取反
+        \item 支持多种接收模式
+        \item 支持配置 GDMA SUC EOF 信号生成模式
+        \item 支持配置外部使能信号的 IO 管脚
+    \end{itemize}
+    \item 包含用于发送 IO 并行数据的 TX 子模块：
+    \begin{itemize}
+        \iftagged{ESP32-C5}{\item 支持片选功能}{\item 支持有效信号输出}
+        \item 支持对输出时钟进行门控
+        \item 支持 TX 子模块输入时钟和输出时钟分别取反
+        \item 支持配置总线空闲值
+    \end{itemize}
+
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{系统架构}
+\label{sec:parlio-arch-overview}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/parlio_architecture_20240618.pdf}
+    \caption{PARLIO 系统框图}
+    \label{fig:parlio-architecture}
+\end{figure}
+
+图 \ref{fig:parlio-architecture} 展示了 PARLIO 的系统内部架构。除了 RX 模块和 TX 模块外，PARLIO 还包括一组状态配置寄存器。RX 模块接收 RXD 信号，并在完成串并转换后将其存入异步 FIFO，然后将这些数据通过 GDMA 存到内部存储器。
+
+TX 模块通过 GDMA 从内部存储器获取数据并存入异步 FIFO，将这些数据进行并串转换后，通过 TXD 信号从 IO 总线输出。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:parlio-func-descr}
+
+\subsection{时钟生成器}
+\label{subsec:PARLIO-clock_cfg}
+
+PARLIO 模块有四个输入时钟域，即 RX Core、TX Core、AHB 和 APB，如图 \ref{fig:parlio-architecture} 所示。
+
+状态配置寄存器组位于 APB 时钟域内。
+
+GDMA 接口逻辑位于 AHB 时钟域内。
+
+RX Core 和 TX Core 时钟域各有四个时钟源可供选择，分别为内部系统时钟源 XTAL\_CLK、RC\_FAST\_CLK、PLL\_F240M\_CLK 和外部时钟源 (PAD\_CLK\_TX/RX)，如图 \ref{fig:parlio-clock-gen} 所示。配置 \hyperref[fielddesc:PCRPARLCLKRXSEL]{PCR\_PARL\_CLK\_RX\_SEL} 和 \hyperref[fielddesc:PCRPARLCLKTXSEL]{PCR\_PARL\_CLK\_TX\_SEL} 选择时钟源，配置 \hyperref[fielddesc:PCRPARLCLKRXDIVNUM]{PCR\_PARL\_CLK\_RX\_DIV\_NUM} 和 \hyperref[fielddesc:PCRPARLCLKTXDIVNUM]{PCR\_PARL\_CLK\_TX\_DIV\_NUM} 对时钟进行分频，分频系数最大可配置为 \begin{math} (2^{16}-1) \end{math}。
+
+RX 模块和 TX 模块支持对输入时钟进行取反，同时其工作时钟可以输出到 IO，并在输出前支持对输出时钟进行取反。此外 RX 模块和 TX 模块还支持对输出时钟进行门控。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/parlio-clock-gen_20230106.pdf}
+    \caption{PARLIO 时钟生成}
+    \label{fig:parlio-clock-gen}
+\end{figure}
+
+
+\subsection{时钟复位使用限制}
+\label{subsec:parlio-clock_reset_restriction}
+
+由于 PARLIO 模块的通用性，其 PAD 时钟 (PAD\_CLK\_TX/RX) 可能来自不同的主机（外部设备或内部时钟源），这些时钟可能是自由运行时钟，也可能不是。如果外部运行时钟不是自由运行时钟，PARLIO 内部的一些控制信号将无法进行 CDC，因此对操作过程会有一定限制。
+
+\begin{enumerate}
+    \item 异步 FIFO 复位时，需要两个时钟周期才能初始化 FIFO。因此如果需要在使用非自由运行时钟时复位 AHB 时钟域，需保证提前两个时钟周期进行复位同步。具体的操作步骤见下表。
+    
+\begin{table}[H]
+    \centering
+    \caption{时钟限制下复位 AHB 时钟域操作步骤}
+    \label{tab:parlio-ahb-reset-clk-restriction}
+    
+    \begin{tabular}{|l|l|p{10cm}|}
+    \hline
+        \rowcolor{lightgray}
+        \multicolumn{2}{|c|}{\textbf{时钟限制}} & \\
+        \rowcolor{lightgray}
+        \textbf{当前帧传输时钟} &\textbf{下一帧传输时钟} & \multirow{-2}{*}{\textbf{具体操作}}\\ \hline
+    
+        % table contents
+        自由运行时钟    & 非自由运行时钟  & 在切换到非自由运行时钟之前复位下一帧传输，并在复位完成后配置时钟切换。    \\ \hline
+        非自由运行时钟  & 自由运行时钟    & 只需确保在复位和正式开始传输期间有两个时钟周期的间隔。     \\ \hline
+        非自由运行时钟  & 非自由运行时钟  & 如需复位下一帧传输，需要先切换到内部的自由运行时钟，复位完成后再切换回实际时钟。     \\ \hline
+    \end{tabular}
+\end{table}
+    
+    \item 由于非自由运行时钟造成的限制，\hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} 和 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} 无法进行 CDC，所以在操作时必须等到 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} 和 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} 稳定后再开始数据传输，否则可能会发生亚稳态的问题。
+    
+    RX 模块中的具体操作步骤为：
+    \begin{enumerate}
+        \item 清除 \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} 关闭 RX Core 时钟域；
+        \item 向 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} 写 1；
+        \item 置位 \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} 打开 RX Core 时钟域；
+        \item 操作外部设备，使其开始发送数据；
+        \item 清除 \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} 关闭 RX Core 时钟域；
+        \item 向 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} 写 0。
+    \end{enumerate}
+    TX 模块中的具体操作步骤为：
+    \begin{enumerate}
+        \item 清除 \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} 关闭 TX Core 时钟域；
+        \item 向 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} 写 1；
+        \item 置位 \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} 打开 TX Core 时钟域；
+        \item 操作外部设备，使其开始接收数据；
+        \item 清除 \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} 关闭 TX Core 时钟域；
+        \item 向 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} 写 0。
+    \end{enumerate}
+    
+    \item 复位需遵循以下要求：
+    \begin{itemize}
+        \item 芯片启动时，时钟复位应遵循以下顺序：
+        \begin{enumerate}
+            \item 复位 APB 时钟域；
+            \item 复位 AHB 时钟域；
+            \item 复位 Core 时钟域。
+        \end{enumerate}
+        \item 帧间传输需要复位 Core 时钟域和异步 FIFO。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{主从机模式}
+
+RX 模块和 TX 模块均支持主从机模式。
+
+当 TX 模块作为主机时，必须将时钟源设置为内部自由运行时钟。TX 模块在时钟的上升沿驱动 TXD。
+
+当 TX 模块作为从机时，可能出现的三种情况及其具体要求如下表所示：
+
+\begin{table}[H]
+    \centering
+    \caption{时钟限制下 TX 模块从机模式操作要求}
+    \label{tab:parlio-tx-slave-restriction}
+    
+    \begin{tabular}{|l|l|p{10cm}|}
+    \hline
+        \rowcolor{lightgray}
+        \multicolumn{2}{|c|}{\textbf{时钟条件}} & \\
+        \rowcolor{lightgray}
+        \textbf{主机发送时钟} &\textbf{时钟波形} & \multirow{-2}{*}{\textbf{具体要求}} \\ \hline
+        
+        % table contents
+        自由运行时钟    & 任意波形  & 对主机的驱动时钟采集边沿没有要求。 \\ \hline
+        非自由运行时钟  & 正向波形（图 \ref{fig:parlio-pos-clock}） & 主机需要在下降沿时采集。     \\ \hline
+        非自由运行时钟  & 负向波形（图 \ref{fig:parlio-neg-clock}）  & 主机在输出前需要对原时钟进行取反，将其转换成正向波形。   \\ \hline
+    \end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/parlio-pos-clock.png}
+    \caption{主机时钟正向波形}
+    \label{fig:parlio-pos-clock}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/parlio-neg-clock.png}
+    \caption{主机时钟负向波形}
+    \label{fig:parlio-neg-clock}
+\end{figure}
+
+当 RX 模块作为主机时，必须将时钟源设置为内部自由运行时钟。RX 模块在时钟的上升沿驱动 RXD。
+
+当 RX 模块作为从机时，可能出现的三种情况及其具体要求如下表所示：
+
+\begin{table}[H]
+    \centering
+    \caption{时钟限制下 RX 模块从机模式操作要求}
+    \label{tab:parlio-rx-slave-restriction}
+    
+    \begin{tabular}{|l|l|p{10cm}|}
+    \hline
+        \rowcolor{lightgray}
+        \multicolumn{2}{|c|}{\textbf{时钟条件}} & \\
+        \rowcolor{lightgray}
+        \textbf{主机发送时钟} &\textbf{时钟波形} & \multirow{-2}{*}{\textbf{具体要求}} \\ \hline
+        
+        % table contents
+        自由运行时钟    & 任意波形  & 对主机的驱动时钟采集边沿没有要求，采集的有效数据以外部使能信号为准。 \\ \hline
+        非自由运行时钟  & 正向波形（图 \ref{fig:parlio-pos-clock}） & 主机需在上升沿驱动数据，RX 模块需在下降沿采集数据（即对主时钟进行翻转）。    \\ \hline
+        非自由运行时钟  & 负向波形（图 \ref{fig:parlio-neg-clock}）  & 主机需在下降沿驱动数据，RX 模块需在上升沿采集数据（即使用原始主时钟）   \\ \hline
+    \end{tabular}
+\end{table}
+
+\subsection{RX 模块接收模式}
+
+PARLIO 的 RX 模块有 8 种接收模式，可根据使能信号规格分为三大类：
+
+\begin{itemize}
+    \item 电平使能模式：接收的数据由外部信号电平使能；
+    \item 脉冲使能模式：接收的数据由外部信号脉冲使能；
+    \item 软件使能模式：数据接收的使能信号可由用户直接配置。
+\end{itemize}
+
+RX 模块还支持对外部使能信号进行翻转。如果外部使能信号为低电平或负脉冲，可通过置位 \hyperref[fielddesc:PARLIORXEXTENINV]{PARL\_IO\_RX\_EXT\_EN\_INV} 使能该功能，转换为以下相应的接收模式。
+
+\subsubsection{电平使能模式}
+
+电平使能模式如图 \ref{fig:parlio-level-sub-mode} 所示。在这种模式下，外部使能信号的有效电平必须与有效数据对齐。由于外部电平使能信号需要占用一个 IO 管脚，RXD 可用的 IO 管脚最多为 7 个。
+
+\begin{figure}[H]
+\centering
+
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/parlio-level-submode.pdf}
+\caption{RX 模块电平使能子模式}
+\label{fig:parlio-level-sub-mode}
+\end{figure}
+
+\subsubsection{脉冲使能模式}
+根据脉冲有效电平及其与有效数据的对应性，脉冲使能模式可分为 6 种子模式，详细分类可参见图 \ref{fig:parlio-pulse-sub-mode}。
+
+子模式 1 \verb+~+ 4 都包含起始脉冲和结束脉冲，不同之处在于起始脉冲和结束脉冲是否与有效数据对齐。
+
+子模式 5 \verb+~+ 6 只包含起始脉冲，通过配置 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN} 可表示有效数据传输结束。
+
+由于外部脉冲使能信号需要占用一个 IO 管脚，RXD 可用的 IO 管脚最多为 7 个。但在子模式 4 和子模式 6 下，数据在脉冲的第一个边沿后和最后一个边沿前被认为有效，可以实现使能信号的 IO 管脚与数据 IO 管脚的复用，此时 RXD 可使用 8 个 IO 管脚。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/parlio-pulse-submode.png}
+\caption{RX 模块脉冲使能子模式}
+\label{fig:parlio-pulse-sub-mode}
+\end{figure}
+
+
+\subsubsection{软件使能模式}
+
+软件使能模式下的使能信号由内部配置寄存器决定。用户切换到此模式时，只有同时写 1 到 \hyperref[fielddesc:PARLIORXSWEN]{PARL\_IO\_RX\_SW\_EN} 和 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}，才能开始接收数据。
+
+由于使能信号不占用接口 IO 管脚，RXD 在接口上的最大可用 IO 管脚数量为 8。由于时钟域不同，使能信号无法与有效数据对齐，因此只能通过有效时钟沿来判定有效数据。此时，RX Core 时钟需要与有效数据一一对应。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/parlio-software-submode}
+\caption{RX 模块软件使能子模式}
+\label{fig:parlio-software-sub-mode}
+\end{figure}
+
+\subsection{RX 模块 GDMA SUC EOF 信号生成}
+
+RX 模块产生一个 GDMA SUC EOF 信号，表示当前帧传输结束，并将其发送到 GDMA 接口。GDMA SUC EOF 信号可由外部使能信号生成，也可基于内部配置的比特长度触发。
+
+\begin{itemize}
+    \item 当 GDMA SUC EOF 信号由内部配置的比特长度生成时，接收模式的选择不受限制。但在这种情况下必须配置 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN}。如果 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN} 的配置值小于实际接收的数据，将提前触发 GDMA SUC EOF，此时 RX 模块停止从 FIFO 读取数据，但 FIFO 会继续接收外部数据，直到 \hyperref[int:RXFIFOWOVFINT]{RX\_FIFO\_WOVF\_INT} 中断被触发。
+    \item 当 GDMA SUC EOF 信号由外部使能信号产生时，只可选脉冲使能模式的子模式 1、3。在这种模式下，传输不受 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN} 值的影响，并且传输帧的数据长度不受限制。
+\end{itemize}
+
+\subsection{RX 模块超时}
+
+RX 模块支持接收超时功能。当 RX 模块 FIFO 长时间未接收到有效数据，超时将被触发，产生一个 GDMA ERR EOF 信号，并发送至 GDMA 接口以表示结束数据接收。配置 \hyperref[fielddesc:PARLIORXTIMEOUTTHRES]{PARL\_IO\_RX\_TIMEOUT\_THRES} 可设置超时阈值。
+
+默认情况下启用超时功能，用户也可以选择禁用该功能。超时阈值的配置上限为 AHB 时钟域的 \begin{math} (2^{16}-1) \end{math} 周期，下限取决于 AHB 时钟域和 RX Core 时钟域之间的相对频率关系。建议将 \hyperref[fielddesc:PARLIORXTIMEOUTTHRES]{PARL\_IO\_RX\_TIMEOUT\_THRES} 设置为较大的数值，以避免生成非期望的 GDMA ERR EOF 信号。
+
+\iftagged{ESP32-C5}{
+\subsection{TX 模块无限制长度数据传输}
+
+默认情况下，TX 模块的传输结束标志由 \hyperref[fielddesc:PARLIOTXBITLEN]{PARL\_IO\_TX\_BITLEN} 的配置值决定。当发送的数据达到配置值时，系统会生成一个 TX EOF 中断信号，标志着该数据帧的传输结束。此时，单帧传输的最大值受到 \hyperref[fielddesc:PARLIOTXBITLEN]{PARL\_IO\_TX\_BITLEN} 的位宽限制，使其无法实现无限长度的数据传输。
+
+为了实现更大长度的单帧传输，可以将 \hyperref[fielddesc:PARLIOTXEOFGENSEL]{PARL\_IO\_TX\_EOF\_GEN\_SEL} 设置为 1。在这种配置下，硬件将使用 GDMA 发送链表配置的 EOF 信号作为单帧传输结束的标志。此时，数据传输不
+再受限于 \hyperref[fielddesc:PARLIOTXBITLEN]{PARL\_IO\_TX\_BITLEN} 的位宽，从而能够支持更大长度的数据传输。
+
+\subsection{TX 片选功能}
+
+为模拟 LCD 的 I8080 协议，TX 模块配备了一个可输出的片选信号，在拉低时有效。用户可通过配置 \hyperref[fielddesc:PARLIOTXCSSTARTDELAY]{PARL\_IO\_TX\_CS\_START\_DELAY} 和 \hyperref[fielddesc:PARLIOTXCSSTOPDELAY]{PARL\_IO\_TX\_CS\_STOP\_DELAY} 来控制 DMA 输出数据和片选信号的相位关系。需要注意的是，在开启时钟门控、且使用片选信号作为时钟门控控制源的情况下，对上述两个寄存器的操作在实现基础功能的同时，还可以控制输出时钟和片选信号的相位关系。
+
+\subsection{TX 模块输出时钟门控}
+
+TX 模块支持对输出时钟进行门控。时钟门控功能默认关闭，可通过软件置位 \hyperref[fielddesc:PARLIOTXGATINGEN]{PARL\_IO\_TX\_GATING\_EN} 使能该功能。
+
+目前 TXD 最高位有两个控制源可配置，分别为 DMA 输出数据和片选信号 (CS)。将 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN} 配置为 0 即选择 DMA 输出数据为控制源，此时必须将 TX 模块配置为最大位宽，因为当控制源为 DMA 输出数据时，门控信号固定为 TXD 最高位，该位为高电平时，时钟信号可以翻转。需要注意的是，在选择 DMA 输出数据作为控制源时，如果外设处于空闲状态，则此时时钟门控将被用户配置的总线空闲值的最高位控制，应参照小节 \ref{subsec:parlio-tx-bus-idle-value} \textit{\nameref{subsec:parlio-tx-bus-idle-value}} 中的注意事项进行配置；若选择 DMA 输出数据作为门控功能控制源时启用时钟门控功能，门控信号将占用一个 IO，此时 TXD 可以使用的 IO 管脚最多为 7 个。
+
+将 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN} 配置为 1 即选择片选信号为控制源，此时对位宽无限制。
+}
+{
+\subsection{TX 模块输出时钟门控}
+
+TX 模块支持对输出时钟进行门控。时钟门控功能默认关闭，可通过软件置位 \hyperref[fielddesc:PARLIOTXGATINGEN]{PARL\_IO\_TX\_GATING\_EN} 使能该功能。门控信号固定为 TXD 最高位，该位为高电平时，时钟信号可以翻转。目前 TXD 最高位有两个控制源可配置，分别为 DMA 输出数据和有效信号。将 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN} 配置为 0 即选择 DMA 输出数据为控制源，此时必须将 TX 模块配置为最大位宽；将 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN} 配置为 1 即选择有效信号为控制源，此时对位宽无限制。
+
+若启用时钟门控功能，门控信号将占用一个 IO，此时 TXD 可以使用的 IO 管脚最多为 7 个。
+
+\subsection{TX 模块有效信号输出}
+
+TX 模块可生成与 TXD 对齐的有效信号，可通过配置 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN} 选择是否将其输出到 TXD。有效信号的极性固定为高电平有效。
+
+默认情况下禁用有效输出功能。若启用该功能，输出的有效信号将占据 TXD 的最高有效位，即无论原始值为多少，TXD 的第 7 位将维持在高电平，并作为有效信号输出。然而，有效信号管脚并不影响总线宽度的配置。例如，如果用户将数据总线宽度配置为 1 位，即数据管脚为 TXD[0]，此时用户仍然可以启用有效输出功能，将 TXD[7] 固定为有效信号输出管脚。
+
+\begin{tiplisting}
+如果开启 TX 模块有效信号输出功能，则当 TX 模块输出信号有效时，输出时钟会被打开；当输出信号无效时，输出时钟会被关闭。因此如果输出时钟需始终保持有效，则不可以开启 TX 模块的有效信号输出功能。
+\end{tiplisting}
+}
+
+\subsection{TX 模块总线空闲值}\label{subsec:parlio-tx-bus-idle-value}
+
+TX 模块不传输数据时被认为保持在空闲状态。TX 模块支持总线空闲值可配置。
+
+注意，应避免配置的空闲值与其他已开启的功能产生冲突，例如当使用 TXD 的最高有效位作为有效信号时，应避免将空闲值的最高有效位配置为 1。
+
+\subsection{单帧数据传输}
+
+RX/TX 模块以比特为单位进行传输，即单帧至少传输 1 个比特的数据。
+
+当 RX 模块通过比特长度生成 GDMA EOF 信号时，单帧传输的最大长度是 \begin{math} (2^{19}-1) \end{math} 比特。当 RX 模块通过外部设备的使能信号产生 GDMA EOF 信号时，单帧传输的比特数没有限制。
+
+TX 模块仅通过比特长度生成 EOF 信号，因此单帧传输的最大长度为 \begin{math} (2^{19}-1) \end{math} 比特。
+
+由于 PARLIO 在 GDMA 一侧以字节为单位进行传输，因此当 IO 一侧的数据不与字节对齐时，PARLIO 会对数据进行特殊处理。
+
+\begin{itemize}
+    \item 在接收状态下，通过 GDMA 存入内存的数据将自动在高位补 0， 从而与字节对齐。
+    \item 在发送状态下，从内存中取出的数据将根据配置的 \hyperref[fielddesc:PARLIOTXBITLEN]{PARL\_IO\_TX\_BITLEN} 值被截断，超过该配置值的数据不会被发送。
+\end{itemize}
+
+当配置的数据总线宽度为 2/4/8 位时，比特长度必须配置为对应总线宽度的倍数。
+
+
+\subsection{字节范围内数据顺序翻转}
+
+总线位宽为 1/2/4 位时，可以对一个字节范围内的数据顺序进行翻转。以 RX 模块为例，当配置总线位宽为 2 比特时，数据在被写入 RX FIFO 之前需要被打包成一个字节。
+
+假设原始的比特数据排列顺序为：
+
+\begin{center}
+$\{ \{ b_{0}, b_{1} \}, \{ b_{2}, b_{3} \}, \{ b_{4}, b_{5} \}, \{ b_{6}, b_{7} \} \}$
+\end{center}
+
+则启用该功能后，数据顺序将更改为：
+
+\begin{center}
+$\{ \{ b_{6}, b_{7} \}, \{ b_{4}, b_{5} \}, \{ b_{2}, b_{3} \}, \{ b_{0}, b_{1} \} \}$
+\end{center}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断} \label{sec:parlio-interrupts}
+
+\chipname{} 的 PARLIO 模块可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item PARL\_IO\_TX\_INTR
+        \item PARL\_IO\_RX\_INTR
+    \end{itemize}
+
+这些中断信号由 PARLIO 模块的内部中断源生成。表 \ref{tab:parlio-int-sources} 列出了 PARLIO 的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{3.8cm} | L{8.5cm} | L{3.2cm} | }
+\caption{PARLIO 的内部中断源} \label{tab:parlio-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:TXFIFOREMPTYINT}TX\_FIFO\_REMPTY\_INT  &  TX 模块 FIFO 空（此时 TX 发送的数据可能出现错误） &  PARL\_IO\_TX\_INTR \\ \hline
+\label{int:RXFIFOWOVFINT}RX\_FIFO\_WOVF\_INT &  RX 模块 FIFO 满（此时 RX 接收的数据可能出现错误） & PARL\_IO\_RX\_INTR \\ \hline
+\label{int:TXEOFINT}TX\_EOF\_INT &  TX 模块发送完成完整的一帧数据 & PARL\_IO\_TX\_INTR \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:parlio-reg-summ} \textit{\nameref{sec:parlio-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:parlio-prog-procedures}
+
+\subsection{数据接收操作流程}
+
+本节介绍 RX 模块接收数据的配置流程。参照以下流程，从连接到外部设备的 IO 管脚接收并行数据，并存储在内部存储器中。关于 RX 模块时钟和复位的详细操作限制，请参考小节 \ref{subsec:parlio-clock_reset_restriction}。
+
+\begin{enumerate}
+    \item 复位 RX 模块。具体复位方法与顺序，请参考小节 \ref{subsec:parlio-clock_reset_restriction}。
+    \item 置位 \hyperref[fielddesc:PARLIORXFIFOWOVFINTCLR]{PARL\_IO\_RX\_FIFO\_WOVF\_INT\_CLR} 和 \hyperref[fielddesc:PARLIORXFIFOWOVFINTENA]{PARL\_IO\_RX\_FIFO\_WOVF\_INT\_ENA}。
+    \item 选择 RXD IO 管脚。如果用户使用 PAD 时钟，则也需配置时钟 IO 管脚。
+    \item 配置 PCR 寄存器，选择时钟源并对时钟进行分频。
+    \item 关闭 RX 模块 Core 时钟域的时钟。
+    \item 按照小节 \ref{sec:parlio-features} 和 \ref{sec:parlio-func-descr} 中的描述，选择所需接收模式并启用相关功能。
+    \item 配置 GDMA 接收链表。
+    \item 置位 \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE}，同步寄存器信号。
+    \item 置位 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+    \item 打开 RX 模块 Core 时钟域的时钟。
+    \item 操作外部设备，使其发送数据。
+    \item 轮询 GDMA SUC EOF 中断信号。
+    \item 清除 GDMA SUC EOF 中断信号。
+    \item 关闭 RX 模块 Core 时钟域的时钟。
+    \item 清除 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+\end{enumerate}
+
+\subsection{数据发送操作流程}
+
+本节介绍 TX 模块发送数据的编程流程。参照以下流程，将内部存储器中的并行数据传输到与外部设备相连的 IO 管脚。关于 TX 模块时钟和复位的详细操作限制，请参考小节 \ref{subsec:parlio-clock_reset_restriction}。
+
+\begin{enumerate}
+    \item 复位 TX 模块。具体复位方法与顺序，请参考小节 \ref{subsec:parlio-clock_reset_restriction}。
+    \item 依次置位 \hyperref[fielddesc:PARLIOTXFIFOREMPTYINTCLR]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_CLR}、\hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}、\hyperref[fielddesc:PARLIOTXFIFOREMPTYINTENA]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_ENA} 和 \hyperref[fielddesc:PARLIOTXEOFINTENA]{PARL\_IO\_TX\_EOF\_INT\_ENA}。
+    \item 选择 TXD IO 管脚。如果用户使用 PAD 时钟，则也需配置时钟 IO 管脚。
+    \item 配置 PCR 寄存器，选择时钟源并对时钟进行分频。
+    \item 关闭 TX 模块 Core 时钟域的时钟。
+    \item 按照小节 \ref{sec:parlio-func-descr} 中的描述，选择开启所需功能。
+    \item 配置 GDMA 发送链表。
+    \item 轮询 \hyperref[fielddesc:PARLIOTXREADY]{PARL\_IO\_TX\_READY}。
+    \item 置位 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}。
+    \item 打开 TX 模块 Core 时钟域的时钟。
+    \item 操作外部设备，使其接收数据。
+    \item 轮询 \hyperref[fielddesc:PARLIOTXEOFINTST]{PARL\_IO\_TX\_EOF\_INT\_ST} 中断信号。
+    \item 置位 \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR} 中断信号。
+    \item 关闭 TX 模块 Core 时钟域的时钟。
+    \item 清除 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}。
+\end{enumerate}
+
+
+\section{应用示例}
+\label{sec:parlio-application-example}
+
+本节介绍 PARLIO 模块的应用示例及其具体操作过程。示例中使用的外围设备都来自 ESP 系列芯片，这些外设均可以和 PARLIO 模块组成完整的数据通路。
+
+\begin{tiplisting}
+示例中所构建的数据通路可能不是最佳方案，例如，在实际应用中，用户可使用两颗相同 ESP 芯片上的 SPI 外设来完成点对点传输，而无需使用 PARLIO。但本小节中的示例在一定程度上证明了 PARLIO 接口的灵活性。\end{tiplisting}
+
+\subsection{与 SPI 进行数据传输}
+
+在本示例中，外部 SPI 作为主机发送数据，PARLIO RX 模块作为从机接收数据，与此同时，PARLIO TX 模块作为主机发送数据，外部 SPI 作为从机接收数据，从而实现点对点串行数据传输。
+
+\begin{itemize}
+    \item 实现 SPI 发送、PARLIO 接收，请参考以下操作过程：
+    \begin{enumerate}
+        \item 配置 SPI 时钟。
+        \item 将 SPI 配置为主机。
+        \item 配置信号管脚，将 FSPICLK 管脚连接至 PAD\_CLK\_RX，FSPICS0 管脚连接至 RXD[7]，FSPID 管脚连接至 RXD[0]。 
+        \item 将发送的数据写入 SPI 缓冲器中，并配置发送数据的位长。
+        \item 置位 \hyperref[fielddesc:SPIUPDATE]{SPI\_UPDATE}，更新配置的寄存器值。
+        \item 复位 PARLIO RX 模块。
+        \item 配置 PARLIO RX 模块时钟。
+        \item 关闭 PARLIO RX 模块 Core 时钟域。
+        \item 将 PARLIO 接收模式配置为电平使能模式的子模式 1，配置 RX 模块数据总线宽度为 1 位，然后根据 SPI 的发送数据长度配置 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN}，最后置位 \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE}。
+        \item 配置 PARLIO GDMA 接收链表。
+        \item 置位 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+        \item 打开 PARLIO RX 模块 Core 时钟域。
+        \item 置位 \hyperref[fielddesc:SPIUSR]{SPI\_USR}，开始传输 SPI 的数据。
+        \item 轮询 GDMA SUC EOF 中断信号。
+        \item 清除 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+    \end{enumerate} 
+    \item 实现 PARLIO 发送、SPI 接收，请参考以下操作过程：
+    \begin{enumerate}
+        \item 配置 SPI 时钟。
+        \item 将 SPI 配置为从机。
+        \item 配置信号管脚，将 FSPICLK 管脚连接至 PAD\_CLK\_TX，FSPICS0 管脚连接至 TXD[7]，FSPID 管脚连接至 TXD[0]。
+        \item 置位 \hyperref[fielddesc:SPIRDBITORDER]{SPI\_RD\_BIT\_ORDER}，翻转比特数据顺序。
+        \item 置位 \hyperref[fielddesc:SPIUPDATE]{SPI\_UPDATE}，更新配置的寄存器值。  
+        \item 复位 PARLIO TX 模块。
+        \item 置位 \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR} 和 \hyperref[fielddesc:PARLIOTXEOFINTENA]{PARL\_IO\_TX\_EOF\_INT\_ENA}。
+        \item 配置 PARLIO TX 模块时钟。
+        \item 关闭 PARLIO TX 模块 Core 时钟域。
+        \item 配置数据总线宽度为 1 位，写 1 至 \hyperref[fielddesc:PARLIOTXVALIDOUTPUTEN]{PARL\_IO\_TX\_VALID\_OUTPUT\_EN}，然后配置 \hyperref[fielddesc:PARLIOTXBITLEN]{PARL\_IO\_TX\_BITLEN}。
+        \item 配置 PARLIO GDMA 发送链表。
+        \item 轮询 \hyperref[fielddesc:PARLIOTXREADY]{PARL\_IO\_TX\_READY}。        
+        \item 写 1 至 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}。
+        \item 打开 PARLIO TX 模块 Core 时钟域。
+        \item 开始数据传输。
+        \item 轮询 \hyperref[fielddesc:PARLIOTXEOFINTST]{PARL\_IO\_TX\_EOF\_INT\_ST}。
+        \item 置位 \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}。
+        \item 关闭 PARLIO TX 模块 Core 时钟域。
+        \item 清除 \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}。  
+    \end{enumerate} 
+\end{itemize}
+
+\subsection{与 I2S 进行数据传输}
+
+在本示例中，外部 I2S 作为主机发送数据，PARLIO RX 模块作为从机接收数据。PARLIO 支持 I2S TDM MSB 对齐标准模式和 TDM PCM 标准模式下的传输。当 I2S 传输协议为 TDM MSB 对齐标准模式时，需将 PARLIO 的接收模式配置为电平使能模式。当 I2S 传输协议为 TDM PCM 标准模式时，需将 PARLIO 的接收模式配置为脉冲使能模式的子模式 4，并置位 \hyperref[fielddesc:PARLIORXEXTENINV]{PARL\_IO\_RX\_EXT\_EN\_INV}。
+
+本节以 TDM PCM 标准模式为例，具体操作过程如下：
+
+\begin{enumerate}
+    \item 配置 I2S 时钟。
+    \item 配置信号管脚，将 I2SO\_BCK\_out 连接至 PAD\_CLK\_RX，I2SO\_WS\_out 连接至 RXD[7]，I2SO\_Data\_out 管脚连接至 RXD[0]。
+    \item 将 I2S 配置为主机。
+    \item 配置所需 I2S TX 数据和通道模式，并置位 \hyperref[fielddesc:I2STXUPDATE]{I2S\_TX\_UPDATE}。
+    \item 复位 I2S TX 模块和 TX FIFO。
+    \item 使能 \hyperref[int:I2STXDONEINT]{I2S\_TX\_DONE\_INT}。 
+    \item 配置 I2S GDMA 发送链表。
+    \item 置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN}。
+    \item 复位 PARLIO RX 模块。
+    \item 配置 PARLIO RX 模块时钟。
+    \item 关闭 PARLIO RX 模块 Core 时钟域。
+    \item 将 PARLIO 接收模式配置为脉冲使能模式的子模式 4，配置 RX 模块数据总线宽度为 1 位，然后根据 I2S 的发送数据长度配置 \hyperref[fielddesc:PARLIORXBITLEN]{PARL\_IO\_RX\_BITLEN}，最后置位 \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE}。
+    \item 配置 PARLIO GDMA 接收链表。
+    \item 置位 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+    \item 打开 PARLIO RX 模块 Core 时钟域。
+    \item 置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}，开始发送数据。
+    \item 轮询 \hyperref[int:I2STXDONEINT]{I2S\_TX\_DONE\_INT}。 
+    \item 轮询 GDMA SUC EOF 中断信号。
+    \item 清除 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。
+    \item 清除 \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}。
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{parlio-reg-summ}{}
+\section{寄存器列表}
+\label{sec:parlio-reg-summ}
+
+本小节的所有地址均为相对于并行 IO 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/42-PARLIO-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于并行 IO 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/42-PARLIO-reg__CN}
+
+\end{document}

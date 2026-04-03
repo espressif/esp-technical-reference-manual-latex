@@ -1,0 +1,551 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./20-DBGASSIST}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{Debug Assistant}
+\label{mod:dbgassist}
+\hypertarget{dbgassist}{}
+
+\section{Overview}
+
+Debug Assistant is an auxiliary module that features a set of functions to help locate bugs and issues during software debugging.
+
+\section{Features}
+\label{sec:dbgassist-features}
+
+The Debug Assistant module has the following features:
+
+\begin{itemize}
+    \item \textbf{Region read/write monitoring}: Monitors whether the High-Performance CPU (HP CPU) bus reads from or writes to a specified memory address space. A detected read or write in the monitored address space will trigger an interrupt.
+    \item \textbf{Stack pointer (SP) monitoring}: Monitors whether the SP exceeds the specified address space. A bounds violation will trigger an interrupt.
+    \item \textbf{Program counter (PC) logging}: Records the PC value. The last PC value at the most recent reset of HP CPU can be fetched.
+    \item\textbf{Bus access logging}: Records the information about bus access. When the HP CPU, Low-Power CPU (LP CPU), or the Direct Memory Access controller (DMA) writes a specified value, the Debug Assistant module will record the data type, address of this write operation, and additionally the PC value when the write is performed by HP CPU, and push such information to the HP SRAM.
+\end{itemize}
+
+
+\section{Functional Description}
+\label{sec:dbgassist-func-descr}
+
+\subsection{Region Read/Write Monitoring}
+
+The Debug Assistant module can monitor reads/writes performed by HP CPU bus in a certain address space, i.e., memory region. Whenever the bus reads or writes to the specified address space, an interrupt will be triggered. Please refer to Table \ref{tab:riscvcpu-mem-blocks} in Chapter \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}.
+
+In this chapter, when HP CPU bus accesses the data space, it is referred to as the \textbf{Data bus}, and when HP CPU bus accesses the AHB peripheral space, it is referred to as the \textbf{Peripheral bus}. The Debug Assistant module can simultaneously monitor two memory regions (assuming they are HP CPU region 0 and HP CPU region 1) on the Data bus, as well as on the Peripheral bus. The region 0 and 1 should be defined based on the developer's needs. 
+The supported region read/write monitoring modes are listed below.
+
+\begin{itemize}
+    \item Monitoring the read/write operations performed by the Data bus
+        \begin{itemize}
+            \item HP CPU Data bus reads from HP CPU region 0
+            \item HP CPU Data bus writes to HP CPU region 0
+            \item HP CPU Data bus reads from HP CPU region 1
+            \item HP CPU Data bus writes to HP CPU region 1
+        \end{itemize}    
+    \item Monitoring the read/write operations performed by the Peripheral bus
+        \begin{itemize}
+            \item HP CPU Peripheral bus reads from HP CPU region 0
+            \item HP CPU Peripheral bus writes to HP CPU region 0
+            \item HP CPU Peripheral bus reads from HP CPU region 1
+            \item HP CPU Peripheral bus writes to HP CPU region 1
+        \end{itemize}
+\end{itemize}
+
+
+\subsection{SP Monitoring}
+
+The Debug Assistant module can monitor the SP to prevent stack overflow or erroneous push/pop in HP CPU. When the HP CPU SP exceeds the monitored region's lower or upper bounds, the module will record the PC and generate an interrupt. The bound is configured by software. 
+
+The supported SP monitoring modes are listed below.
+
+\begin{itemize}
+    \item HP CPU SP goes beyond the upper bound of the HP CPU SP monitored region
+    \item HP CPU SP goes below the lower bound of the HP CPU SP monitored region
+\end{itemize}
+
+\subsection{PC Logging}
+
+In some cases, software developers may need to identify the PC value at the last reset of HP CPU. For instance, when the program is stuck and requires a reset, the developer may want to know where the program got stuck in order to debug. The Debug Assistant module can record the PC at the last reset of HP CPU, which can be then read for software debugging.
+
+\subsection{CPU/DMA Bus Access Logging}
+
+The Debug Assistant module can record the write operations of the HP CPU Data bus, LP CPU bus, and DMA bus in real time. When a write operation occurs in or a specific value is written to a specified address space, the module will record the bus type, the address, PC (only when the write is performed by the HP CPU), and other information. It will then store the data in the HP SRAM in a certain format. The specified address range must fall within the permitted memory regions of HP SRAM or external RAM.
+
+
+%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:dbgassist-interrupts}
+
+The Debug Assistant can generate the BUS\_MONITOR\_INT interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}. The following interrupt sources can generate this interrupt signal.
+
+\begin{itemize}
+    \item \label{int:BUSMONITORCORE0AREADRAM00RDINT}BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_RD\_INT: Triggered when the HP CPU Data bus reads from HP CPU region 0.
+    \item \label{int:BUSMONITORCORE0AREADRAM00WRINT}BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_WR\_INT: Triggered when the HP CPU Data bus writes to HP CPU region 0.
+    \item \label{int:BUSMONITORCORE0AREADRAM01RDINT}BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_1\_RD\_INT: Triggered when the HP CPU Data bus reads from HP CPU region 1.
+    \item \label{int:BUSMONITORCORE0AREADRAM01WRINT}BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_1\_WR\_INT: Triggered when the HP CPU Data bus writes to HP CPU region 1.
+    \item \label{int:BUSMONITORCORE0AREAPIF0RDINT}BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_0\_RD\_INT: Triggered when the HP CPU Peripheral bus reads from HP CPU region 0.
+    \item \label{int:BUSMONITORCORE0AREAPIF0WRINT}BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_0\_WR\_INT: Triggered when the HP CPU Peripheral bus writes to HP CPU region 0.
+    \item \label{int:BUSMONITORCORE0AREAPIF1RDINT}BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_1\_RD\_INT: Triggered when the HP CPU Peripheral bus reads from HP CPU region 1.
+    \item \label{int:BUSMONITORCORE0AREAPIF1WRINT}BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_1\_WR\_INT: Triggered when the HP CPU Peripheral bus writes to HP CPU region 1.
+    \item \label{int:BUSMONITORCORE0SPSPILLMININT}BUS\_MONITOR\_CORE\_0\_SP\_SPILL\_MIN\_INT: Triggered when the HP CPU SP goes below the lower bound of the HP CPU SP monitored region.
+    \item \label{int:BUSMONITORCORE0SPSPILLMAXINT}BUS\_MONITOR\_CORE\_0\_SP\_SPILL\_MAX\_INT: Triggered when the HP CPU SP goes beyond the upper bound of the HP CPU SP monitored region.
+\end{itemize}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:dbgassist-reg-summ} \textit{\nameref{sec:dbgassist-reg-summ}}.
+
+
+\section{Programming Procedures}
+\label{sec:dbgassist-prog-procedures}
+
+\subsection{Region Monitoring and SP Monitoring Configuration}
+
+The configuration process for region monitoring and SP monitoring is as follows:
+
+\begin{enumerate}
+    \item Configure the monitored region and SP bounds.
+        \begin{itemize}
+            \item Configure the HP CPU Data bus region 0 with \hyperref[regdesc:BUSMONITORCORE0AREADRAM00MINREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_MIN\_REG} and  \hyperref[regdesc:BUSMONITORCORE0AREADRAM00MAXREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_MAX\_REG}. 
+            \item Configure the HP CPU Data bus region 1 with \hyperref[regdesc:BUSMONITORCORE0AREADRAM01MINREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_1\_MIN\_REG} and \hyperref[regdesc:BUSMONITORCORE0AREADRAM01MAXREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_1\_MAX\_REG}.
+            \item Configure the HP CPU Peripheral bus region 0 with \hyperref[regdesc:BUSMONITORCORE0AREAPIF0MINREG]{BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_0\_MIN\_REG} and \hyperref[regdesc:BUSMONITORCORE0AREAPIF0MAXREG]{BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_0\_MAX\_REG}.
+            \item Configure the HP CPU Peripheral bus region 1 with \hyperref[regdesc:BUSMONITORCORE0AREAPIF1MINREG]{BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_1\_MIN\_REG} and  \hyperref[regdesc:BUSMONITORCORE0AREAPIF1MAXREG]{BUS\_MONITOR\_CORE\_0\_AREA\_PIF\_1\_MAX\_REG}.
+            \item Configure the HP CPU SP bounds with \hyperref[regdesc:BUSMONITORCORE0SPMINREG]{BUS\_MONITOR\_CORE\_0\_SP\_MIN\_REG} and \hyperref[regdesc:BUSMONITORCORE0SPMAXREG]{BUS\_MONITOR\_CORE\_0\_SP\_MAX\_REG}.
+        \end{itemize}
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0INTRENAREG]{BUS\_MONITOR\_CORE\_0\_INTR\_ENA\_REG} to enable interrupts of a monitoring mode.
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0MONTRENAREG]{BUS\_MONITOR\_CORE\_0\_MONTR\_ENA\_REG} to enable the monitoring mode(s). Various monitoring modes can be enabled at the same time.
+    \item Read \hyperref[regdesc:BUSMONITORCORE0INTRRAWREG]{BUS\_MONITOR\_CORE\_0\_INTR\_RAW\_REG} to get the raw interrupt status of a monitoring mode. 
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0INTRCLRREG]{BUS\_MONITOR\_CORE\_0\_INTR\_CLR\_REG} to clear the interrupt of a monitoring mode.
+\end{enumerate}
+
+For example, if the Debug Assistant module needs to monitor whether the HP CPU Data bus has written to [A \verb+~+ B] address space, the user can enable monitoring in either the HP CPU Data bus region 0 or region 1. The following configuration process is based on region 0:
+
+\begin{enumerate}
+    \item Configure \hyperref[fielddesc:BUSMONITORCORE0RCDPDEBUGEN]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGEN} to 1 to enable HP CPU to update the PC signals to the Debug Assistant module.
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0AREADRAM00MINREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_MIN\_REG} to Address A.
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0AREADRAM00MAXREG]{BUS\_MONITOR\_CORE\_0\_AREA\_DRAM0\_0\_MAX\_REG} to Address B.
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0INTRENAREG]{BUS\_MONITOR\_CORE\_0\_INTR\_ENA\_REG} bit[1] to enable the interrupt for write operations by the HP CPU Data bus in region 0.
+    \item Configure \hyperref[regdesc:BUSMONITORCORE0MONTRENAREG]{BUS\_MONITOR\_CORE\_0\_MONTR\_ENA\_REG} bit[1] to enable monitoring write operations by the HP CPU Data bus in region 0.
+    \item Configure interrupt matrix to map BUS\_MONITOR\_INTR into HP CPU interrupt (refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}}).
+    \item After the interrupt is triggered:
+        \begin{itemize}
+            \item Read \hyperref[regdesc:BUSMONITORCORE0INTRRAWREG]{BUS\_MONITOR\_CORE\_0\_INTR\_RAW\_REG} to identify the interrupt source.
+            \item If the interrupt is triggered by HP CPU region monitoring, read \hyperref[fielddesc:BUSMONITORCORE0AREAPC]{BUS\_MONITOR\_CORE\_0\_AREA\_PC} for the HP CPU PC value, and \hyperref[fielddesc:BUSMONITORCORE0AREASP]{BUS\_MONITOR\_CORE\_0\_AREA\_SP} for the HP CPU SP.
+            \item If the interrupt is triggered by SP monitoring, read \hyperref[fielddesc:BUSMONITORCORE0SPPC]{BUS\_MONITOR\_CORE\_0\_SP\_PC} for the HP CPU PC value.
+            \item Write 1 to the corresponding bit of \hyperref[regdesc:BUSMONITORCORE0INTRCLRREG]{BUS\_MONITOR\_CORE\_0\_INTR\_CLR\_REG} to clear the interrupt.
+        \end{itemize}
+\end{enumerate}
+
+\subsection{PC Logging Configuration}
+
+Configure \hyperref[fielddesc:BUSMONITORCORE0RCDPDEBUGEN]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGEN} to 1 to enable HP CPU to update the PC signals to the Debug Assistant module. If \hyperref[fielddesc:BUSMONITORCORE0RCDRECORDEN]{BUS\_MONITOR\_CORE\_0\_RCD\_RECORDEN} is also configured to 1, \hyperref[regdesc:BUSMONITORCORE0RCDPDEBUGPCREG]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGPC\_REG} will record the HP CPU's PC value and \hyperref[regdesc:BUSMONITORCORE0RCDPDEBUGSPREG]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGSP\_REG} will record the HP CPU SP value. Otherwise, these two registers will retain their original values.
+
+When the HP CPU resets, \hyperref[regdesc:BUSMONITORCORE0RCDENREG]{BUS\_MONITOR\_CORE\_0\_RCD\_EN\_REG} will reset, while \hyperref[regdesc:BUSMONITORCORE0RCDPDEBUGPCREG]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGPC\_REG} and \hyperref[regdesc:BUSMONITORCORE0RCDPDEBUGSPREG]{BUS\_MONITOR\_CORE\_0\_RCD\_PDEBUGSP\_REG} will not. Therefore, these two registers will retain the PC and SP values at the HP CPU reset.
+
+\subsection{CPU/DMA Bus Access Logging Configuration}
+
+\subsubsection{Bus Access Logging 1 Configuration}
+\label{sec:hp-cpu-access-mon}
+
+Bus access logging 1 includes HP CPU Bus access logging (HP SRAM and external RAM monitoring), LP CPU Bus access logging (HP SRAM monitoring), and DMA Bus access logging (HP SRAM monitoring). The configuration process is described below.
+
+\begin{enumerate}
+    \item Configure monitored address space: set \hyperref[regdesc:MEMMONITORLOGMINREG]{MEM\_MONITOR\_LOG\_MIN\_REG} and \hyperref[regdesc:MEMMONITORLOGMAXREG]{MEM\_MONITOR\_LOG\_MAX\_REG} to specify monitored address space. For HP CPU, the monitored address space should be in the address range of HP SRAM (0x4080\_0000 \verb+~+ 0x4085\_FFFF) or external RAM (0x4200\_0000 \verb+~+ 0x43FF\_FFFF). For LP CPU or DMA, the monitored address space should be in the address range of HP SRAM (0x4080\_0000 \verb+~+ 0x4085\_FFFF).
+    \item Configure the monitoring mode with \hyperref[fielddesc:MEMMONITORLOGMODE]{MEM\_MONITOR\_LOG\_MODE}:
+        \begin{itemize}
+            \item Write monitoring (detects bus write operations)
+            \item Word monitoring (detects writes of a specific word)
+            \item Halfword monitoring (detects writes of a specific halfword)
+            \item Byte monitoring (detects writes of a specific byte)
+        \end{itemize}
+    \item Configure the specific values to be monitored.
+       \begin{itemize}
+            \item In word monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG} specifies the monitored word.
+            \item In halfword monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}[15:0] specifies the monitored halfword.
+            \item In byte monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}[7:0] specifies the monitored byte.
+            \item \hyperref[regdesc:MEMMONITORLOGDATAMASKREG]{MEM\_MONITOR\_LOG\_DATA\_MASK\_REG} is used to mask the byte(s) specified in \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}. A masked byte can be any value. For example, in word monitoring, if \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG} is configured to 0x01020304 and \hyperref[regdesc:MEMMONITORLOGDATAMASKREG]{MEM\_MONITOR\_LOG\_DATA\_MASK\_REG} is configured to 0x1, then any writes of the data matching the 0x010203XX pattern by the bus will be recorded.
+        \end{itemize}
+    \item Configure the storage space for recorded data.
+        \begin{itemize}
+            \item \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} and \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG} specify the storage space for recorded data. The storage space must be in the range of 0x4080\_0000 \verb+~+ 0x4085\_FFFF.
+            \item Set \hyperref[regdesc:MEMMONITORLOGMEMADDRUPDATEREG]{MEM\_MONITOR\_LOG\_MEM\_ADDR\_UPDATE\_REG} to update the value in \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} to \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG}.
+            \item Configure the permission of the Debug Assistant module to access the HP SRAM. The Debug Assistant module can only access HP SRAM when the access permission is enabled. For more information, please refer to Chapter \ref{mod:permctrl} \textit{\nameref{mod:permctrl}}.
+        \end{itemize}
+    \item \label{other:dbgassist-item-log-config-step5} Configure the writing mode for the recorded data for loop mode or non-loop mode.
+        \begin{itemize}
+            \item In loop mode, writing to the specified address space is performed in loops. When writing reaches the end address, it returns to the starting address and continues, overwriting the previously recorded data. Set \hyperref[fielddesc:MEMMONITORLOGMEMLOOPENABLE]{MEM\_MONITOR\_LOG\_MEM\_LOOP\_ENABLE} to 1 to enable loop mode.\\
+            For example, there are 10 write operations (1 \verb+~+ 10) to address space 0 \verb+~+ 4 during bus access. After the 5th operation writes to address 4, the 6th operation will start writing from address 0. The 6th to 10th operations will overwrite the previous data written by the 1st to 5th operations.
+            \item In non-loop mode, when writing reaches the end address, it stops at the end address and dumps the remaining data. The previously recorded data will not be overwritten. Clear \hyperref[fielddesc:MEMMONITORLOGMEMLOOPENABLE]{MEM\_MONITOR\_LOG\_MEM\_LOOP\_ENABLE} to enable non-loop mode.\\
+            For example, there are 10 write operations (1 \verb+~+ 10) to address space 0 \verb+~+ 4 during bus access. After the 5th operation writes to address 4, the 6th to 10th write operations will stop at address 4 and will not be performed any more. Therefore, the address 0 \verb+~+ 4 stores the values written by the 1st to 5th operations and the values of the 6th to 10th operations are dumped.
+        \end{itemize}
+    \item Configure bus enable registers.
+        \begin{itemize}
+            \item Enable HP CPU, LP CPU, and DMA bus access logging respectively with \hyperref[fielddesc:MEMMONITORLOGCOREENA]{MEM\_MONITOR\_LOG\_CORE\_ENA}, \hyperref[fielddesc:MEMMONITORLOGDMA1ENA]{MEM\_MONITOR\_LOG\_DMA\_1\_ENA}, and \hyperref[fielddesc:MEMMONITORLOGDMA0ENA]{MEM\_MONITOR\_LOG\_DMA\_0\_ENA}. They can be enabled at the same time.
+        \end{itemize}
+\end{enumerate}
+
+The Debug Assistant module first writes the recorded data to the internal buffer A, and then fetches the data from the buffer and writes it to the configured memory space. When the monitored behaviors are triggered continuously, the generated recording packets may fill the buffer, preventing it from accepting new packets. In such cases, the module dumps the incoming packets and buffers a LOST packet instead before the buffer reaches full capacity. However, it is only possible to know the bus type of the dumped packets when the LOST packet was generated, but not the number of the dumped packets before the generation.
+
+When bus access logging is finished, the recorded data can be read from memory for decoding. The recorded data is in four packet formats, namely, HP CPU packet (corresponding to the HP CPU Data bus), LP CPU packet (corresponding to LP CPU Data bus), DMA packet (corresponding to DMA Data bus), and LOST packet. The packet formats are shown in Tables \ref{tab:dbgassist-hpcpu-package}, \ref{tab:dbgassist-lpcpu-package}, \ref{tab:dbgassist-dma-package}, and \ref{tab:dbgassist-lost-package}.
+
+    \begin{longtable}[c]{|L{3cm}|L{3cm}|L{3cm}|L{3cm}|l|}
+        \caption{HP CPU Packet Format}\label{tab:dbgassist-hpcpu-package}
+        \\\hline
+        \rowcolor{lightgray}
+        \textbf{Bit[63:33]} & \textbf{Bit[32]} & \textbf{Bit[31:3]} & \textbf{Bit[2:1]} & \textbf{Bit[0]} \\\hline
+        pc\_offset & anchored(1) & addr\_offset & format & anchored(0) \\\hline
+    \end{longtable}
+
+    \begin{longtable}[c]{|L{3cm}|L{3cm}|L{3cm}|l|}
+        \caption{LP CPU Packet Format}\label{tab:dbgassist-lpcpu-package}
+        \\\hline
+        \rowcolor{lightgray}
+        \textbf{Bit[31:8]} & \textbf{Bit[7:3]} & \textbf{Bit[2:1]} & \textbf{Bit[0]} \\\hline
+        addr\_offset & reserved & format & anchored(0) \\\hline
+    \end{longtable}
+
+    \begin{longtable}[c]{|L{3cm}|L{3cm}|L{3cm}|l|}
+        \caption{DMA Packet Format}\label{tab:dbgassist-dma-package}
+        \\\hline
+        \rowcolor{lightgray}
+        \textbf{Bit[31:8]} & \textbf{Bit[7:3]} & \textbf{Bit[2:1]} & \textbf{Bit[0]} \\\hline
+        addr\_offset & dma\_source & format & anchored(0) \\\hline
+    \end{longtable}
+    
+    \begin{longtable}[c]{|L{3cm}|L{3cm}|L{3cm}|l|}
+        \caption{LOST Packet Format}\label{tab:dbgassist-lost-package}
+        \\\hline
+        \rowcolor{lightgray}
+        \textbf{Bit[31:7]} & \textbf{Bit[6:3]} & \textbf{Bit[2:1]} & \textbf{Bit[0]} \\\hline
+        reserved & lost\_source & format & anchored(0) \\\hline
+    \end{longtable}
+
+The data packet formats show that the HP CPU packet has 64 bits, and other packets have 32 bits each. These packets have the following fields:
+
+\begin{itemize}
+    \item \textbf{format} – the packet type:
+        \begin{itemize}
+            \item 0: HP CPU packet
+            \item 1: DMA packet
+            \item 2: LP CPU packet
+            \item 3: LOST packet
+        \end{itemize}
+    \item \textbf{pc\_offset} - the offset of the HP CPU PC register at the time of access. Actual PC = pc\_offset + 0x0000\_0000.
+    \item \textbf{addr\_offset} - the address offset of a write operation. Actual address = addr\_offset + \{\hyperref[regdesc:MEMMONITORLOGMINREG]{MEM\_MONITOR\_LOG\_MIN\_REG}[31:2], 2'b0\}.
+    \item \textbf{dma\_source} - the source of DMA access. Details can be found in Table \ref{tab:assistdbg-dma-source}, where sources corresponding to value 16 \verb+~+ 31 are detailed in \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \item \textbf{lost\_source} - the dumped packets when the LOST packet was generated.
+    \begin{itemize}
+        \item Bit[4:3]:
+        \begin{itemize}
+            \item 0: HP CPU packets were not dumped
+            \item 3: HP CPU packets were dumped
+            \item Other values: reserved
+        \end{itemize}
+        \item Bit[5]:
+        \begin{itemize}
+            \item 0: DMA packets were not dumped
+            \item 1: DMA packets were dumped
+        \end{itemize}
+        \item Bit[6]:
+        \begin{itemize}
+            \item 0: LP CPU packets were not dumped
+            \item 1: LP CPU packets were dumped
+        \end{itemize}
+    \end{itemize}
+    \item \textbf{anchored} - the location of the 32 bits in the data packet:
+    \begin{itemize}
+        \item 0: Lower 32 bits
+        \item 1: Higher 32 bits
+    \end{itemize}
+\end{itemize}
+
+\begin{longtable}{|l| m{8cm} |}
+    \caption{DMA Access Source}\label{tab:assistdbg-dma-source}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Value} & \textbf{Source} \\\hline
+    \endfirsthead \hline \rowcolor{lightgray}
+    \textbf{Value} & \textbf{Source} \\\hline
+    \endhead \endfoot \hline \endlastfoot
+    0 & HP CPU \\\hline
+    1 & LP CPU \\\hline
+    2 & Reserved \\\hline
+    3 & Reserved \\\hline
+    4 & Reserved \\\hline
+    5 & MEM\_MONITOR \\\hline
+    6 & TRACE \\\hline 
+    7 & Reserved \\\hline
+    8 & PSRAM\_MEM\_MONITOR \\\hline
+    9 \verb+~+ 15 & Reserved \\\hline
+    16 \verb+~+ 31 & Refer to the peripheral corresponding to the value 0 \verb+~+ 15 in Chapter \ref{mod:dma} \textit{\nameref{mod:dma}} > Table \ref{tab:gdma-ahb-peri-sel}. For example, a value of 16 matches the peripheral corresponding to 0 in this table, a value of 17 matches the peripheral corresponding to 1 \\\hline
+\end{longtable}
+
+The internal buffer of the module is 32-bit wide. If HP CPU, LP CPU, and DMA bus access loggings are enabled at the same time, and the record data is generated at the same time, the HP CPU packets are cached into the buffer first, then the DMA packets, and finally the LP CPU packets. The Debug Assistant module will automatically fetch the buffered data and store it in 32-bit data width into the specified memory space.
+
+In loop mode, data looping several times in the storage memory may cause residual data, which can interfere with packet parsing. For example, the lower 32 bits of an HP CPU packet are overwritten, thus making its higher 32 bits residual data. Therefore, users need to filter out the possible residual data when determining the starting position of the first valid packet. Read \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} to identify the starting position of the packet, then check the anchored bit value of the packet. If it is 0, retain the data. If it is 1, discard it. 
+
+The process of packet parsing is described below.
+
+\begin{itemize}
+    \item Read \hyperref[fielddesc:MEMMONITORLOGMEMFULLFLAG]{MEM\_MONITOR\_LOG\_MEM\_FULL\_FLAG} to determine whether there is a data overflow.
+    \begin{itemize}
+        \item If no, the address space to read is \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} $-$ 4.
+        \item If yes and the loop mode is enabled, the address space is \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG} and \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} $-$ 4.
+        \item If yes and loop mode is not enabled, the address space is \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG}.
+    \end{itemize}
+    \item Read and parse data from the starting address. Read 32 bits at a time.
+\end{itemize}
+
+After packet parsing is completed, clear the \hyperref[fielddesc:MEMMONITORLOGMEMFULLFLAG]{MEM\_MONITOR\_LOG\_MEM\_FULL\_FLAG} flag bit by setting \hyperref[fielddesc:MEMMONITORCLRLOGMEMFULLFLAG]{MEM\_MONITOR\_CLR\_LOG\_MEM\_FULL\_FLAG} to 1.
+
+
+\subsubsection{Bus Access Logging 2 Configuration}
+
+Bus access logging 2 includes DMA Bus access logging (external RAM monitoring). The configuration process is described below.
+
+\begin{enumerate}
+    \item Configure monitored address space: Configure \hyperref[regdesc:MEMMONITORLOGMINREG]{MEM\_MONITOR\_LOG\_MIN\_REG} and \hyperref[regdesc:MEMMONITORLOGMAXREG]{MEM\_MONITOR\_LOG\_MAX\_REG} to specify monitored address space. The monitored address space should range from 0x4200\_0000 to 0x43FF\_FFFF.
+    \item Configure the monitoring mode with \hyperref[fielddesc:MEMMONITORLOGMODE]{MEM\_MONITOR\_LOG\_MODE}:
+        \begin{itemize}
+            \item Write monitoring (detects bus write operations)
+            \item Word monitoring (detects writes of a specific word)
+            \item Halfword monitoring (detects writes of a specific halfword)
+            \item Byte monitoring (detects writes of a specific byte)
+        \end{itemize}
+    \item Configure the specific values to be monitored.
+        \begin{itemize}
+            \item In word monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG} specifies the monitored word.
+            \item In halfword monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}[15:0] specifies the monitored halfword.
+            \item In byte monitoring mode, \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}[7:0] specifies the monitored byte.
+            \item \hyperref[regdesc:MEMMONITORLOGDATAMASKREG]{MEM\_MONITOR\_LOG\_DATA\_MASK\_REG} is used to mask the byte specified in \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG}. A masked byte can be any value. For example, in word monitoring, if \hyperref[regdesc:MEMMONITORLOGCHECKDATAREG]{MEM\_MONITOR\_LOG\_CHECK\_DATA\_REG} is configured to 0x01020304 and \hyperref[regdesc:MEMMONITORLOGDATAMASKREG]{MEM\_MONITOR\_LOG\_DATA\_MASK\_REG} is configured to 0x1, then any writes of the data matching the 0x010203XX pattern by the bus will be recorded.
+        \end{itemize}
+    \item Configure the storage space for recorded data.
+        \begin{itemize}
+            \item \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} and \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG} specify the storage space for recorded data. The storage space must be in the range of 0x4080\_0000 \verb+~+ 0x4085\_FFFF.
+            \item Set \hyperref[regdesc:MEMMONITORLOGMEMADDRUPDATEREG]{MEM\_MONITOR\_LOG\_MEM\_ADDR\_UPDATE\_REG} to update the value in \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} to \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG}.
+            \item Configure the permission for the Debug Assistant module to access the HP SRAM. Only when the access permission is enabled can the Debug Assistant module access the HP SRAM. For more information, please refer to Chapter \ref{mod:permctrl} \textit{\nameref{mod:permctrl}}.
+        \end{itemize}
+    \item Configure the writing mode for the recorded data in loop mode or non-loop mode.
+        \begin{itemize}
+            \item In loop mode, writing to the specified address space is performed in loops. When writing reaches the end address, it will return to the starting address and continue, overwriting the previously recorded data. Set \hyperref[fielddesc:MEMMONITORLOGMEMLOOPENABLE]{MEM\_MONITOR\_LOG\_MEM\_LOOP\_ENABLE} to enable loop mode.
+            \item In non-loop mode, when writing reaches the end address, it will stop at the end address and dump the remaining data, not overwriting the previously recorded data. Clear \hyperref[fielddesc:MEMMONITORLOGMEMLOOPENABLE]{MEM\_MONITOR\_LOG\_MEM\_LOOP\_ENABLE} to enable non-loop mode.
+            \item See examples in Section \ref{sec:hp-cpu-access-mon} > step \ref{other:dbgassist-item-log-config-step5}.
+        \end{itemize}
+    \item Configure \hyperref[fielddesc:MEMMONITORLOGDMA0ENA]{MEM\_MONITOR\_LOG\_DMA\_0\_ENA} to enable DMA\_0 channel groups bus access logging.
+\end{enumerate}
+
+The Debug Assistant module first writes the DMA recorded data to the internal buffer B, and then fetches the data from the buffer and writes it to the configured memory space. When the monitored behaviors are triggered continuously, the generated recording packets may fill the buffer, preventing it from accepting new packets. In such cases, the module dumps the incoming packets and buffers an DMA LOST packet instead before the buffer reaches full capacity. However, it is only possible to know the bus type of the dumped packets when the DMA LOST packet was generated, but not the number of the dumped packets before the generation.
+
+When bus access logging is finished, the recorded data can be read from memory for decoding. The recorded data is in two packet formats, namely, DMA\_0 packet (corresponding to DMA\_0 Data bus) and DMA LOST packet. The packet formats are shown in Table \ref{tab:dbgassist-dma0-package} and \ref{tab:dbgassist-dma-lost-package}.
+
+\begin{longtable}[c]{|L{3cm}|L{2cm}|L{2cm}|l|}
+    \caption{DMA\_0 Packet Format}\label{tab:dbgassist-dma0-package}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Bit[31:7]} & \textbf{Bit[6:2]} & \textbf{Bit[1]} & \textbf{Bit[0]} \\\hline
+    addr\_offset & dma\_source & format & anchored(0)  \\\hline
+\end{longtable}
+    
+\begin{longtable}[c]{|L{3cm}|L{3cm}|L{3cm}|L{3cm}|l|}
+    \caption{DMA LOST Packet Format}\label{tab:dbgassist-dma-lost-package}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Bit[31:3]} & \textbf{Bit[2]} & \textbf{Bit[1]} & \textbf{Bit[0]} \\\hline
+    reserved & lost\_source & format & anchored(0) \\\hline
+\end{longtable}
+
+The data packet formats show that the DMA\_0 and DMA LOST packets both have 32 bits. These packets contain the following fields:
+
+\begin{itemize}
+    \item \textbf{format} – the packet type:
+    \begin{itemize}
+        \item 0: DMA\_0 packet
+        \item 1: DMA LOST packet
+    \end{itemize}
+    \item \textbf{addr\_offset0} - the address offset of a write operation. Actual address = addr\_offset + \{\hyperref[regdesc:MEMMONITORLOGMINREG]{MEM\_MONITOR\_LOG\_MIN\_REG}[31:2], 2'b0\}.
+    \item \textbf{dma\_source} - the source of DMA access. Details can be found in Table \ref{tab:assistdbg-dma-source}.
+    \item \textbf{lost\_source} - the dumped packets when the DMA LOST packet was generated:
+    \begin{itemize}
+        \item 0: DMA\_0 packets were not dumped
+        \item 1: DMA\_0 packets were dumped
+    \end{itemize}
+    \item \textbf{anchored} - the location of the 32 bits in the data packet:
+    \begin{itemize}
+        \item 0: Lower 32 bits
+        \item 1: Higher 32 bits
+    \end{itemize}
+\end{itemize}
+
+The internal buffer of the module is 32 bits wide. When the bus access logging of DMA\_0 channel groups is enabled and the record data is generated, the DMA\_0 data packets are buffered. The Debug Assistant module will automatically fetch the buffered data and store it in 32-bit data width into the specified memory space.
+
+The process of packet parsing is described below.
+
+\begin{itemize}
+    \item Read \hyperref[fielddesc:MEMMONITORLOGMEMFULLFLAG]{MEM\_MONITOR\_LOG\_MEM\_FULL\_FLAG} to determine whether there is a data overflow.
+    \begin{itemize} 
+        \item If no, the address space to read is \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG}  \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} $-$ 4.
+        \item If yes and the loop mode is enabled, the address space is \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG} and \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMCURRENTADDRREG]{MEM\_MONITOR\_LOG\_MEM\_CURRENT\_ADDR\_REG} $-$ 4.
+        \item If yes and loop mode is not enabled, the address space is \hyperref[regdesc:MEMMONITORLOGMEMSTARTREG]{MEM\_MONITOR\_LOG\_MEM\_START\_REG} \verb+~+ \hyperref[regdesc:MEMMONITORLOGMEMENDREG]{MEM\_MONITOR\_LOG\_MEM\_END\_REG}.
+    \end{itemize}
+    \item Read and parse data from the starting address. Read 32 bits at a time.
+\end{itemize}
+
+After packet parsing is completed, clear the \hyperref[fielddesc:MEMMONITORLOGMEMFULLFLAG]{MEM\_MONITOR\_LOG\_MEM\_FULL\_FLAG} flag bit by setting \hyperref[fielddesc:MEMMONITORCLRLOGMEMFULLFLAG]{MEM\_MONITOR\_CLR\_LOG\_MEM\_FULL\_FLAG} to 1.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\begin{landscape}
+\hypertarget{dbgassist-reg-summ}{}
+\section{Register Summary}
+\label{sec:dbgassist-reg-summ}
+
+The addresses of \textbf{bus logging configuration registers} in Section \ref{sec:dbgassist-mem-monitor-reg-summ} are relative to the \textbf{TCM\_MEM\_MONITOR} base address and the \textbf{PSRAM\_MEM\_MONITOR}. The addresses of other registers in Section \ref{sec:dbgassist-bus-monitor-reg-summ} are relative to the \textbf{BUS\_MONITOR} base address. All base addresses are provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subsection{Bus Logging Configuration Register Summary}
+\label{sec:dbgassist-mem-monitor-reg-summ}
+
+\subfile{\modulefiles/20-DBGASSIST-mem-monitor-reg-summ__EN}
+
+\subsection{Summary of Other Registers}
+\label{sec:dbgassist-bus-monitor-reg-summ}
+
+\subfile{\modulefiles/20-DBGASSIST-bus-monitor-reg-summ__EN}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses of \textbf{bus logging configuration registers} in Section \ref{sec:dbgassist-mem-monitor-reg} are relative to the \textbf{TCM\_MEM\_MONITOR} base address and the \textbf{PSRAM\_MEM\_MONITOR}. The addresses of other registers in Section \ref{sec:dbgassist-bus-monitor-reg} are relative to the \textbf{BUS\_MONITOR} base address. All base addresses are provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subsection{Bus Logging Configuration Registers}
+\label{sec:dbgassist-mem-monitor-reg}
+
+\subfile{\modulefiles/20-DBGASSIST-mem-monitor-reg__EN}
+
+\subsection{Other Registers}
+\label{sec:dbgassist-bus-monitor-reg}
+
+\subfile{\modulefiles/20-DBGASSIST-bus-monitor-reg__EN}
+
+\end{document}

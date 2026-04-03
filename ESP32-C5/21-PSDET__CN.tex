@@ -1,0 +1,304 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/21-PSDET}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{psdet}{}
+\chapter{电源检测器}
+\label{mod:psdet}
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+\chipname{} 芯片上的电源检测器能够监测片上时钟和数字电路相关的电源管脚上的电压。它包含一个欠压检测器和四个电压毛刺保护器。欠压检测器防止欠压复位，电压毛刺保护器防止电压毛刺攻击。电源检测器属于 always-on（常开）电源区域，可以在任何时刻监控电压。
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:alias-features}
+
+\begin{itemize}
+    \item 欠压检测器支持两种欠压检测模式（模式 0 和 模式 1）
+    \begin{itemize}
+    \item 模式 0 支持如下动作：
+        \begin{itemize}
+        \item 发出中断
+        \item 关闭射频电路
+        \item 请求 flash 进入 suspend 状态
+        \item 发出系统复位
+        \end{itemize}
+    \item 模式 1 支持如下动作：
+        \begin{itemize}
+        \item 发出系统复位直到电压恢复正常
+        \end{itemize}
+    \end{itemize}
+    \item 电压毛刺保护器能够检测约 50 ns 以上的电压毛刺并触发系统复位。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+
+\subsection{架构图}
+
+图 \ref{fig:psdet-architecture} 为电源检测器的架构图。由图可知，电源检测器包含一个欠压检测器 (Brown-out Detector) 和四个电压毛刺保护器 (Voltage Glitch Detector)。
+
+\label{sec:alias-arch-overview}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/power_supply_detect_struct.png}
+   \caption{电源检测器架构图}
+    \label{fig:psdet-architecture}
+\end{figure}
+\subsection{欠压检测器}
+
+\chipname{} 的欠压检测器可以周期性轮流检查管脚 VDDA3、VDDPST1、VDDPST2、VDDPST3 的电压，周期约 280 $\mu$s。一旦被检测电压下落至预设阈值（默认为 2.7 V）以下时，欠压检测器发出触发信号，并进行相应处理，关闭功耗较高的射频电路，为数字模块争取更多时间，用以保存、转移重要数据。欠压检测器的功耗非常低，在芯片开启时将永远保持开启。
+
+\hyperref[fielddesc:LPANABODMODE0INTRAW]{LP\_ANA\_BOD\_MODE0\_INT\_RAW} 用于指示欠压检测器的输出结果，默认为 0，可在检测管脚电压下降至阈值以下时置位。
+
+欠压检测器检测到欠压信号后，有两种处理模式（默认为模式 1）：
+
+\begin{itemize}
+    \item 模式 0：
+    \begin{itemize}
+   \item 此模式需通过 \texttt{bod\_mode0\_en} (\hyperref[fielddesc:LPANABODMODE0INTRENA]{LP\_ANA\_BOD\_MODE0\_INTR\_ENA}) 使能。
+   \item 当欠压计数器达到 Int Comparer (\hyperref[fielddesc:LPANABODMODE0INTRWAIT]{LP\_ANA\_BOD\_MODE0\_INTR\_WAIT}) 中设定的阈值后触发中断，如果使能了 \hyperref[fielddesc:LPANABODMODE0CLOSEFLASHENA]{LP\_ANA\_BOD\_MODE0\_CLOSE\_FLASH\_ENA}，将会使 flash 进入 SUSPEND 状态；如果使能了 \hyperref[fielddesc:LPANABODMODE0PDRFENA]{LP\_ANA\_BOD\_MODE0\_PD\_RF\_ENA}，将会关闭射频模块。
+   \item 当欠压计数器达到 Rst Comparer (\hyperref[fielddesc:LPANABODMODE0RESETWAIT]{LP\_ANA\_BOD\_MODE0\_RESET\_WAIT}) 设定的阈值后根据 \texttt{bod\_mode0\_rst\_sel} (\hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL}) 的配置选择复位方式。复位需通过 \texttt{bod\_mode0\_rst\_en} (\hyperref[fielddesc:LPANABODMODE0RESETENA]{LP\_ANA\_BOD\_MODE0\_RESET\_ENA}) 使能。
+    \end{itemize}
+
+    \item 模式 1：直接触发系统复位。
+\end{itemize}
+
+详情如下图所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/brownout-reset-workflow}
+   \caption{欠压检测器处理方式}
+    \label{fig:lowpowm-Brown-out-detector-mode}
+\end{figure}
+
+图中的选择信号均由寄存器控制，对应关系如下：
+
+\begin{itemize}
+    \item \texttt{bod\_mode0\_en}：\hyperref[fielddesc:LPANABODMODE0INTRENA]{LP\_ANA\_BOD\_MODE0\_INTR\_ENA}
+    \item \texttt{bod\_mode0\_rst\_en}： \hyperref[fielddesc:LPANABODMODE0RESETENA]{LP\_ANA\_BOD\_MODE0\_RESET\_ENA}
+    \item \texttt{bod\_mode0\_rst\_sel}： \hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL} 用于选择模式 0 欠压检测器被触发后的复位方式。
+        \begin{itemize}
+            \item 0：芯片复位
+            \item 1：系统复位
+        \end{itemize}
+    更多有关复位的信息请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+    \item \texttt{bod\_mode1\_sel}：\hyperref[fielddesc:LPANAANAFIBENA]{LP\_ANA\_ANA\_FIB\_ENA} 的第一位。
+    \item \texttt{bod\_mode1\_rst\_en}： \hyperref[fielddesc:LPANABODMODE1RESETENA]{LP\_ANA\_BOD\_MODE1\_RESET\_ENA}
+\end{itemize}
+
+\subsection{电压毛刺检测器}
+
+\chipname{} 的电压毛刺检测器的结构如下图所示：
+\begin{figure}[H]
+    \centering   \includegraphics[width=0.7\textwidth]{\modulefiles/figures/power_glitch.png}
+   \caption{电压毛刺检测器}\label{fig:psdet-power-glitch-detector-mode}
+\end{figure}
+
+\chipname{} 有 4 个电源检测器，每个电源检测器可以检测对应电源上大于 50 ns 的毛刺，包括 VDDPST1、VDDPST2、VDDPST3、VDDA8、VDDA3，其中 VDDPST2 和 VDDPST3 互连，因此可以共用一个电源检测器，所有检测器产生的复位合并为一个 voltage glitch 复位。
+
+电压毛刺检测器的使能控制由 SW\_RESET\_ENA\_SEL 控制，选择为 1 时，由硬件强制开启，选 0 时，由软件寄存器 SW\_RESET\_ENA 控制。对于不同的电源管脚检测的配置如下表所示：
+
+\begin{longtable}{ | l | l | l | }
+\caption{电源管脚检测的配置} \label{tab:alias-power-detec-pins}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{VDD 管脚} & \textbf{SW\_RESET\_ENA}  &  \textbf{SW\_RESET\_ENA\_SEL}\\ \hline
+VDDPST2/3 & \hyperref[fielddesc:LPANAPWRGLITCHRESETENA]{LP\_ANA\_PWR\_GLITCH\_RESET\_ENA[0]} & \hyperref[fielddesc:LPANAANAFIBENA]{LP\_ANA\_ANA\_FIB\_ENA[2]} \\\hline
+VDDPST1 & \hyperref[fielddesc:LPANAPWRGLITCHRESETENA]{LP\_ANA\_PWR\_GLITCH\_RESET\_ENA[1]} & \hyperref[fielddesc:LPANAANAFIBENA]{LP\_ANA\_ANA\_FIB\_ENA[3]} \\\hline
+VDDA3 & \hyperref[fielddesc:LPANAPWRGLITCHRESETENA]{LP\_ANA\_PWR\_GLITCH\_RESET\_ENA[2]} & \hyperref[fielddesc:LPANAANAFIBENA]{LP\_ANA\_ANA\_FIB\_ENA[4]} \\\hline
+VDDA8 & \hyperref[fielddesc:LPANAPWRGLITCHRESETENA]{LP\_ANA\_PWR\_GLITCH\_RESET\_ENA[3]} & \hyperref[fielddesc:LPANAANAFIBENA]{LP\_ANA\_ANA\_FIB\_ENA[5]} \\\hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的电源检测器可可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item LP\_ANA\_INTR（该中断供 HP CPU 使用）
+        \item LP\_ANA\_LP\_INTR（该中断供 LP CPU 使用）
+    \end{itemize}
+
+这些中断信号由电源检测器的内部中断源生成。表 \ref{tab:psdet-int-sources} 列出了电源检测器的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ |l | l | l | }
+\caption{电源检测器的内部中断源} \label{tab:psdet-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:LPANABODMODE0INT}LP\_ANA\_BOD\_MODE0\_INT  & 欠压检测器检测到电压低于阈值时触发  & LP\_ANA\_INTR  \\ \hline
+\label{int:LPANABODMODE0LPINT}LP\_ANA\_BOD\_MODE0\_LP\_INT  & 欠压检测器检测到电压低于阈值时触发  & LP\_ANA\_LP\_INTR  \\ \hline
+
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:alias-reg-summ} \textit{\nameref{sec:alias-reg-summ}}。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{alias-reg-summ}{}
+\section{寄存器列表}
+\label{sec:alias-reg-summ}
+
+本小节的所有地址均为相对于电源检测器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/21-PSDET-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于电源检测器z基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/21-PSDET-reg__CN}
+
+
+\end{document}

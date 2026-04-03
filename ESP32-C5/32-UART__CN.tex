@@ -1,0 +1,653 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-C5/32-UART}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{uart}{}
+\chapter{UART 控制器 (UART)}
+\label{mod:uart}
+
+\section{概述}
+
+UART 是一种以字符为导向、用于实现设备间通信的异步传输接口。异步传输的意思是不需要在发送数据上添加时钟信息。这也要求发送端和接收端的速率、停止位、奇偶校验位等都要相同，通信才能成功。
+
+一个典型的 UART 帧开始于一个起始位，紧接着是有效数据，然后是奇偶校验位（可有可无），最后是停止位。\chipname{} 上的 UART 控制器支持多种字符长度和停止位。\untagged{ESP32-C61}{另外，控制器还支持软硬件流控和 GDMA，可以实现高速的数据传输。}开发者可以使用多个 UART 端口，同时又能保证很少的软件开销。
+
+\iftagged{ESP32-C5}{
+\chipname{} 芯片中共有三个 UART 控制器，包含两个正常功能的 UART 和一个满足低功耗需求的 LP UART。UART 控制器可以兼容不同的 UART 设备。另外，UART 还可以用于红外数据交换 (IrDA) 或 RS485 调制解调器。本文以 UART\regindex{n} 指代两个 UART 控制器，\regindex{n} 为 0、1。LP UART 是 UART 的功能剪裁版本，且单独控制一组寄存器，通过表 \ref{tab:uart-feature-distinction} 可以区分 UART 和 LP UART 的特性。
+}
+{
+\chipname{} 芯片中共有两个 UART 控制器，UART 控制器可以兼容不同的 UART 设备。另外，UART 还可以用于红外数据交换 (IrDA) 或 RS485 调制解调器。本文以 UART\regindex{n} 指代两个 UART 控制器，\regindex{n} 为 0、1。
+}
+
+\section{主要特性}
+
+\iftagged{ESP32-C5}{
+UART 控制器的特性以及与 LP UART 的特性区分见下表：
+
+\input{./32-UART/tables/32-UART-feature-distinction__CN}
+
+下文主要针对正常功能的 UART 进行叙述。
+}
+{
+UART 控制器具有如下特性：
+\begin{itemize}
+    \item 可编程收发波特率，最大为 5 MBaud
+    \item 一个 UART 的发送通道和接收通道分别有 128 x 8 bit RAM 存储空间
+    \item 全双工异步通信
+    \item 数据位（5 到 8 位）
+    \item 停止位（1、1.5 或 2 位）
+    \item 奇偶校验位
+    \item AT\_CMD 特殊字符检测
+    \item RS485 协议
+    \item IrDA 协议
+    \untagged{ESP32-C61}{\item GDMA 高速数据通信}
+    \item 接收超时
+    \item UART 唤醒模式
+    \item 软件流控和硬件流控
+    \item 三个可分频的时钟源：\\1. XTAL\_CLK\\ 2. RC\_FAST\_CLK\\ 3. PLL\_F80M\_CLK
+\end{itemize}
+}
+
+\section{UART 架构}
+
+\begin{figure}[H]
+\centerline{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/uart-architecture}}
+\centering
+\caption{UART 基本架构图}
+\label{fig:one-uart-structure}
+\end{figure}
+
+图 \ref{fig:one-uart-structure} 为 UART 基本架构图。UART 模块工作在 4 个时钟域，分别为 APB\_CLK、AHB\_CLK、UART\_SCLK、UART\_FCLK。其中 APB\_CLK 与 AHB\_CLK 时钟关系为同步不同频（APB\_CLK 由 AHB\_CLK 分频得到），UART\_SCLK 与 UART\_FCLK 时钟关系为同步不同频（UART\_SCLK 由 UART\_FCLK 分频得到）。UART\_FCLK 有三个时钟源：PLL\_F80M\_CLK、RC\_FAST\_CLK 以及晶振时钟 XTAL\_CLK（详情请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}）。可以通过配置 \hyperref[fielddesc:PCRUART0SCLKSEL]{PCR\_UART\regindex{n}\_SCLK\_SEL} 来选择 UART\_FCLK 时钟源，之后使用分频器对时钟源进行分频，然后产生时钟信号 UART\_SCLK。分频系数的整数部分由 \hyperref[fielddesc:PCRUART0SCLKDIVNUM]{PCR\_UART\regindex{n}\_SCLK\_DIV\_NUM} 配置，小数部分的分母由 \hyperref[fielddesc:PCRUART0SCLKDIVA]{PCR\_UART\regindex{n}\_SCLK\_DIV\_A} 配置，小数部分的分子由 \hyperref[fielddesc:PCRUART0SCLKDIVB]{PCR\_UART\regindex{n}\_SCLK\_DIV\_B} 配置。支持的分频范围为 1 \verb+~+ 256。\iftagged{ESP32-C5}{只有正常功能的 UART 包含此分频器，LP UART 不包含。}
+
+
+UART 控制器可以分为两个功能块：发送块和接收块。
+
+发送块包含一个发送 FIFO 用于缓存待发送的数据。软件可以通过 APB 总线向 Tx\_FIFO 写数据\untagged{ESP32-C61}{，也可以通过 GDMA 将数据搬入 Tx\_FIFO}。Tx\_FIFO\_Ctrl 用于控制 Tx\_FIFO 的读写过程，当 Tx\_FIFO 非空时，Tx\_FSM 通过 Tx\_FIFO\_Ctrl 读取数据，并将数据按照配置的帧格式转化成比特流。比特流输出信号 txd\_out 可以通过配置 \hyperref[fielddesc:UARTTXDINV]{UART\_TXD\_INV} 寄存器实现取反功能。
+
+接收块包含一个接收 FIFO 用于缓存待处理的数据。输入比特流 rxd\_in 可以输入到 UART 控制器。可以通过 \hyperref[fielddesc:UARTRXDINV]{UART\_RXD\_INV} 寄存器实现取反。Baudrate\_Detect 通过检测最小比特流输入信号的脉宽来测量输入信号的波特率。Start\_Detect 用于检测数据的起始位，当检测到起始位之后，Rx\_FSM 通过 Rx\_FIFO\_Ctrl 将帧解析后的数据存入 Rx\_FIFO 中。软件可以通过 APB 总线读取 Rx\_FIFO 中的数据\untagged{ESP32-C61}{，也可以使用 GDMA 进行数据接收}。
+
+HW\_Flow\_Ctrl 通过标准 UART RTS 和 CTS（rtsn\_out 和 ctsn\_in）流控信号来控制 rxd\_in 和 txd\_out 的数据流。SW\_Flow\_Ctrl 通过在发送数据流中插入特殊字符以及在接收数据流中检测特殊字符来进行数据流的控制。当 UART 处于 Light-sleep 模式（详情请参考章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}）时，可以通过四种不同的方式产生 wake\_up 信号给 PMU 模块，由 PMU 来唤醒 \chipname{} 芯片。具体唤醒方式请参考章节 \ref{sec:uart-wakeup}。
+
+
+\section{功能描述}
+
+\subsection{时钟与复位}
+UART 为异步外设。其寄存器配置模块工作在 APB\_CLK 时钟域，TX/RX FIFO 作为跨时钟域模块工作在 AHB\_CLK 和 UART\_FCLK 时钟域。UART RAM 控制单元工作在 UART\_FCLK 时钟域，控制 UART 发送与接收的模块工作在 UART\_SCLK 时钟域，即 UART Core 模块的时钟域。
+
+在 UART\_SCLK 时钟频率满足生成波特率的需求下，可通过预分频使 UART Core 模块工作在较小的时钟频率，从而减小 UART 外设的功耗。通常情况下，UART Core 模块时钟小于 APB\_CLK 时钟，并且在满足 UART 波特率的情况下，UART Core 时钟分频系数可以配置到最大值。UART 也支持 UART Core 模块时钟大于 APB\_CLK 时钟，此时，UART Core 模块时钟最大为 APB\_CLK 的 3 倍。另外，UART Core 的 TX/RX 时钟可以被单独控制。置位 \hyperref[fielddesc:UARTTXSCLKEN]{UART\_TX\_SCLK\_EN} 使能 UART Core 的 TX 时钟；置位 \hyperref[fielddesc:UARTRXSCLKEN]{UART\_RX\_SCLK\_EN} 使能 UART Core 的 RX 时钟。
+
+为确保配置寄存器的值成功从 APB\_CLK 时钟域同步到 UART\_SCLK 时钟域，寄存器配置需要遵循一定的流程，详情请参考章节 \ref{sec:uart-program}。
+
+对整个 UART 的复位，需要遵循如下配置流程：
+\begin{itemize}
+    \item 将 \hyperref[fielddesc:PCRUART0CLKEN]{PCR\_UART\regindex{n}\_CLK\_EN} 置 1 打开 UART\regindex{n} Core 时钟。
+    \item 向 \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN} 位写 1。
+    \item 将 \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN} 位清 0。
+\end{itemize}
+
+
+\subsection{UART FIFO}
+
+
+UART 控制器的发送块和接收块分别使用一块 128 x 8 位 RAM 存储空间，并且分别通过一个 4 x 8 位的异步 FIFO 接口访问对应的 RAM。发送块和接收块的存储空间和异步 FIFO 接口相互独立，不可复用。
+
+UART 的 Tx\_FIFO 可以通过置位 \hyperref[fielddesc:UARTTXFIFORST]{UART\_TXFIFO\_RST} 来复位，Rx\_FIFO 可以通过置位 \hyperref[fielddesc:UARTRXFIFORST]{UART\_RXFIFO\_RST} 来复位。
+
+对于 TX FIFO，可以通过 APB 总线\untagged{ESP32-C61}{或 GDMA }向其写入数据，硬件 Tx\_FSM 自动从其中读取数据，数据将按照配置的帧格式转换成比特流；对于 RX FIFO，可以通过 APB 总线\untagged{ESP32-C61}{或 GDMA }读取其中的数据，并存储到内存，硬件 Rx\_FSM 将接收到的比特流转换成字节并写入 RX FIFO。\untagged{ESP32-C61}{两个 UART 共享同一个 GDMA 通道。}
+
+配置 \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD} 可以设置 Tx\_FIFO 空信号阈值，当存储在 Tx\_FIFO 中的数据量小于 \\\hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD} 时会产生中断 UART\_TXFIFO\_EMPTY\_INT；配置 \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD} 可以设置 Rx\_FIFO 满信号阈值，当储存在 Rx\_FIFO 中的数据量大于或等于 \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD} 会产生中断 UART\_RXFIFO\_FULL\_INT。另外，当 Rx\_FIFO 中储存的数据量超过其能存储的最大值时，会产生 UART\_RXFIFO\_OVF\_INT 中断。
+
+UART\regindex{n} 可以通过寄存器 \hyperref[regdesc:UARTFIFOREG]{UART\_FIFO\_REG} 访问 FIFO。您可以写 \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} 将数据存入 TX FIFO，也可以读 \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} 获取 RX FIFO 中的数据。
+\subsection{波特率产生与检测}
+
+\subsubsection{波特率产生}
+
+在 UART 发送或接收数据之前，需要配置寄存器来设置波特率。波特率发生器主要通过对输入时钟源的分频来实现，支持小数分频。\hyperref[regdesc:UARTCLKDIVSYNCREG]{UART\_CLKDIV\_SYNC\_REG} 将分频系数分成两个部分：\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} 用于配置整数部分，\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} 用于配置小数部分。在输入时钟为 80 MHz 的情况下，UART 能支持的最大波特率为 5 MBaud。
+
+波特率分频器系数为
+\[
+    \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + \frac{\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}}{16}
+\]
+也就是说，最终波特率为
+\[
+    \frac{INPUT\_FREQ}{\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + \frac{\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}}{16}}
+\]
+其中，INPUT\_FREQ 为 UART Core 时钟。例如，若 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} = 694，\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} = 7，则分频系数为
+\[
+    694 + \frac{7}{16} = 694.4375
+\]
+
+
+\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} 为 0 时，分频器为整数分频，每 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} 个输入脉冲都会产生一个输出脉冲。
+
+\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} 不为 0 时，分频器为小数分频，输出波特率脉冲不完全统一。如图 \ref{fig:uart-frag-div} 所示，每 16 个输出脉冲，波特率发生器分频 (\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + 1) 个输入脉冲或 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} 个输入脉冲。分频 (\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + 1) 个输入脉冲产生 \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} 个输出脉冲，分频 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} 个输入脉冲产生剩余的 (16 - \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}) 个输出脉冲。
+
+如图 \ref{fig:uart-frag-div} 所示，输出脉冲相互交错，使得输出时序更加统一。
+
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/uart_frag_div_cn.eps}
+\centering
+\caption{UART 控制器分频}
+\label{fig:uart-frag-div}
+\end{figure}
+
+为了支持 IrDA（详情见章节 \ref{sub:uart-func-desc-irda}），IrDA 小数分频器会产生 16 × \hyperref[regdesc:UARTCLKDIVSYNCREG]{UART\_CLKDIV\_SYNC\_REG} 分频的时钟用于 IrDA 数据传输。产生 IrDA 数据传输时钟的小数分频器原理与上述小数分频器一样，取\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV}/16 作为分频值的整数部分，取 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} 的低 4 比特作为小数部分。
+
+
+\subsubsection{波特率检测}
+
+置位 \hyperref[fielddesc:UARTAUTOBAUDEN]{UART\_AUTOBAUD\_EN} 可以开启 UART 波特率自检测功能。图 \ref{fig:baud-det} 中的 Baudrate\_Detect 可以滤除信号脉宽小于 \hyperref[fielddesc:UARTGLITCHFILT]{UART\_GLITCH\_FILT} 的噪声。
+
+在 UART 双方进行通信之前，可以通过发送随机数据，让具有波特率检测功能的数据接收方进行波特率分析。\hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} 存储了最小低电平脉冲宽度，\hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} 存储了最小高电平脉冲宽度，\hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} 存储了两个上升沿之间的最小脉冲宽度，\hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} 存储了两个下降沿之间最小的脉冲宽度。软件可以通过读取这四个寄存器获取发送方的波特率。
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/baud_det}
+\centering
+\caption{UART 信号下降沿较差时序图}
+\label{fig:baud-det}
+\end{figure}
+
+波特率的计算分为三种情况：
+
+\begin{enumerate}
+\item 正常情况下，为防止因亚稳态在上升沿或下降沿附近采样数据错误而导致 \hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} 或者 \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} 不准确，单比特脉冲宽度可以通过将这两个值相加取平均消除误差。计算公式如下：
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} + \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} + 2)/2}}
+    \]
+\item 对于 UART 信号的下降沿信号比较差的情况，如图\ref{fig:baud-det} 所示，这时通过取 \hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} 与
+ \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} 的和平均得到的值不准确，可以通过 \hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} 获取发送方波特率。计算公式如下：
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} + 1)/2}}
+    \]
+\item 对于 UART 信号的上升沿信号比较差的情况，可以通过 \hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} 获取发送方波特率。计算公式如下：
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} + 1)/2}}
+    \]
+\end{enumerate}
+
+\subsection{UART 数据帧}
+
+\begin{figure}[H]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/uart_data_frame}
+\centering
+\caption{UART 数据帧结构}
+\label{fig:uart-data-frame}
+\end{figure}
+
+
+图 \ref{fig:uart-data-frame} 所示为基本数据帧格式，数据帧从起始位开始，以停止位结束。起始位占用 1 位，停止位可以通过配置 \hyperref[fielddesc:UARTSTOPBITNUM]{UART\_STOP\_BIT\_NUM} 实现 1、1.5、2 位宽（RS485 模式下可增加转换延时，详见章节 \ref{sec:uart-turnaround-delay}）。起始位为低电平，停止位为高电平。
+
+数据位宽 (BIT0 \verb+~+ BITn) 为 5 \verb+~+ 8 位，可以通过 \hyperref[fielddesc:UARTBITNUM]{UART\_BIT\_NUM} 进行配置。当置位 \hyperref[fielddesc:UARTPARITYEN]{UART\_PARITY\_EN} 时，数据帧会在数据之后添加一位奇偶校验位。\hyperref[fielddesc:UARTPARITY]{UART\_PARITY} 用于选择奇校验或是偶校验。当接收器检测到输入数据的校验位错误时会产生 UART\_PARITY\_ERR\_INT 中断，输入数据仍会存入 Rx\_FIFO。当接收器检测到数据数据帧格式错误时会产生 UART\_FRM\_ERR\_INT 中断，默认情况下，输入数据会被存入 Rx\_FIFO。
+
+Tx\_FIFO 中数据都发送完成后会产生 UART\_TX\_DONE\_INT 中断。置位 \hyperref[fielddesc:UARTTXDBRK]{UART\_TXD\_BRK} 时，Tx\_FIFO 中数据发送完成后，发送端会进入终止状态 (break condition)，继续发送几个连续的特殊数据帧 NULL。在 NULL 数据帧发送完成后，TX 数据线输出为低电平。NULL 数据帧的数量可由 \hyperref[fielddesc:UARTTXBRKNUM]{UART\_TX\_BRK\_NUM} 进行配置。发送器发送完所有的 NULL 数据帧之后会产生 UART\_TX\_BRK\_DONE\_INT 中断。数据帧之间可以通过配置 \hyperref[fielddesc:UARTTXIDLENUM]{UART\_TX\_IDLE\_NUM} 保持最小间隔时间。当一帧数据之后的空闲时间大于等于 \hyperref[fielddesc:UARTTXIDLENUM]{UART\_TX\_IDLE\_NUM} 寄存器的配置值时则产生 UART\_TX\_BRK\_IDLE\_DONE\_INT 中断。
+
+在传输一个 NULL 数据帧所需的时间内，接收端 RX 数据线若一直检测到低电平，接收端会检测为终止状态，并触发 UART\_BRK\_DET\_INT 中断表示终止状态已结束。
+
+接收端通过 UART\_RXFIFO\_TOUT\_INT 中断检测总线状态。接收端接收到至少一个字节数据后，总线处于空闲状态超过 \hyperref[fielddesc:UARTRXTOUTTHRHD]{UART\_RX\_TOUT\_THRHD} 位时间时，触发 UART\_RXFIFO\_TOUT\_INT 中断。您可用此中断检测发送端是否已经发送所有数据。
+
+\subsection{AT\_CMD 字符格式}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/uart_at_cmd}
+\centering
+\caption{AT\_CMD 字符格式}
+\label{fig:uart-at-cmd}
+\end{figure}
+
+图 \ref{fig:uart-at-cmd} 为一种特殊的 AT\_CMD 字符格式。当接收器连续收到 AT\_CMD\_CHAR 字符且字符之间满足如下条件时将会产生 UART\_AT\_CMD\_CHAR\_DET\_INT 中断。
+
+
+\begin{itemize}
+    \item 接收到的第一个 AT\_CMD\_CHAR 与上一个非 AT\_CMD\_CHAR 之间间隔至少 \hyperref[fielddesc:UARTPREIDLENUM]{UART\_PRE\_IDLE\_NUM} 个波特率周期。
+    \item AT\_CMD\_CHAR 字符之间间隔小于 \hyperref[fielddesc:UARTRXGAPTOUT]{UART\_RX\_GAP\_TOUT} 个波特率周期。
+    \item 接收的 AT\_CMD\_CHAR 字符个数必须大于等于 \hyperref[fielddesc:UARTCHARNUM]{UART\_CHAR\_NUM}。
+    \item 接收到的最后一个 AT\_CMD\_CHAR 字符与下一个非 AT\_CMD\_CHAR 之间间隔至少 \hyperref[fielddesc:UARTPOSTIDLENUM]{UART\_POST\_IDLE\_NUM} 个波特率周期。
+\end{itemize}
+
+注意： 由于 AT\_CMD\_CHAR 字符之间间隔小于 \hyperref[fielddesc:UARTRXGAPTOUT]{UART\_RX\_GAP\_TOUT} 个波特率周期的限制，建议用户使用该功能时，配置的 APB 时钟频率不要低于 8 MHz。
+
+\subsection{RS485}
+
+两个 UART 控制器支持 RS485 通讯模式，RS485 因使用差分信号传输数据，相比于 RS232 具有更远的传输距离及更高的传输速率。RS485 有两线半双工及四线全双工两种选择，UART 模块采用两线半双工模式，并支持侦听总线的功能。
+\subsubsection{驱动控制}
+
+如图 \ref{fig:rs485} 所示，RS485 两线 multidrop 系统中，需要一个外部 RS485 收发器实现单端信号与差分信号的转换。RS485 收发器包括一个驱动器与一个接收器。当 UART 不作为发送器时，通过关闭驱动器来断开与差分传输线的连接。DE 为 1 时，使能驱动器；DE 为 0 关闭驱动器。
+
+UART 接收端通过外部接收器将差分信号转为单端信号。RE 作为接收器的使能控制信号，RE 为 0，使能接收器；RE 为 1，关闭接收器。如果 RE 被配置为 0，从而允许 UART 保持侦听总线上的数据，包括 UART 发送的数据。
+
+DE 信号的控制分为软件控制和硬件控制两种方法。为减少软件的开销，DE 信号采用硬件来控制。图 \ref{fig:rs485} 所示，DE 与 UART 的 dtrn\_out 相连（详见 \ref{sec:uart-hd-flow-control} 小节）。
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/rs485}
+\centering
+\caption{RS485 模式驱动控制结构图}
+\label{fig:rs485}
+\end{figure}
+
+\subsubsection{转换延时}\label{sec:uart-turnaround-delay}
+
+默认情况下，UART 处于接收状态。当从发送转为接收状态时，为保证发送数据被稳定接收，RS485 协议要求在发送停止位之后增加一个波特率的转换延时。UART 发送模块支持在起始位之前或在停止位之后增加一个波特率的延时。置位 \hyperref[fielddesc:UARTDL0EN]{UART\_DL0\_EN}，在起始位之前增加一个波特率周期延时；置位 \hyperref[fielddesc:UARTDL1EN]{UART\_DL1\_EN}，在停止位之后增加一个波特率周期延时。
+
+\subsubsection{总线侦听}
+
+RS485 两线 multidrop 系统中，当外部 RS485 收发器的 RE 被配置为 0 时，UART 支持侦听总线。默认情况下，不允许 UART 在发送数据时接收数据。置位 \hyperref[fielddesc:UARTRS485TXRXEN]{UART\_RS485TX\_RX\_EN}，允许在发送数据时接收数据，配合图 \ref{fig:rs485} 中外部 RS485 收发器的配置，UART 保持侦听传输总线。另外，默认情况下，不允许 UART 在接收数据时发送数据。置位 \hyperref[fielddesc:UARTRS485RXBYTXEN]{UART\_RS485RXBY\_TX\_EN}，允许在接收数据时发送数据。
+
+UART 支持侦听 UART 发送的数据。UART 处于发送状态下，当侦听到 UART 发送的数据与 UART 接收的数据冲突时，触发 UART\_RS485\_CLASH\_INT 中断；侦听到发送的数据帧错误时，触发 UART\_RS485\_FRM\_ERR\_INT 中断；侦听到发送数据校验位错误时，触发 UART\_RS485\_PARITY\_ERR\_INT 中断。
+
+\subsection{IrDA} \label{sub:uart-func-desc-irda}
+
+IrDA 数据协议由物理层，链路接入层和链路管理层三个基本层协议组成。UART 实现了其物理层协议。在 IrDA 编码模式下，支持最大信号速率到 115.2 Kbit/s，即 SIR 模式 。如图 \ref{fig:sir-endec} 所示，IrDA 编码器将来自 UART 的非归零编码 (NRZ) 信号采用反向归零编码 (RZI) 并输出给外部驱动和红外 LED，用 3/16 Bit Time 的脉宽调制信号表示逻辑“0”，用低电平表示逻辑“1”。IrDA 解码器接收来自红外接收器的信号并输出为 UART 的 NRZ 编码。一般情况下，接收端信号空闲时为高电平，编码器输出校验位与解码器输入校验位相反。当检测到低脉冲表示接收到开始信号。
+
+IrDA 使能时，一个位被划分为 16 个时钟周期，在其第 9、10、11 个时钟周期中，当需要发送的比特为 0 时，IrDA 输出为高。
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/sir_endec}
+\centering
+\caption{SIR 模式编解码时序图}
+\label{fig:sir-endec}
+\end{figure}
+
+
+IrDA 为半双工传输协议，不允许同时进行收发。如图\ref{fig:irda_arc} 所示，置位 \hyperref[fielddesc:UARTIRDAEN]{UART\_IRDA\_EN} 使能 IrDA 功能。置位 \hyperref[fielddesc:UARTIRDATXEN]{UART\_IRDA\_TX\_EN}（置 1）使能 IrDA 发送数据，这时不允许 IrDA 接收数据；复位 \hyperref[fielddesc:UARTIRDATXEN]{UART\_IRDA\_TX\_EN}（清 0）使能 IrDA 接收数据，这时不允许 IrDA 发送数据。
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/IrDA_arc}
+\centering
+\caption{IrDA 编解码结构图}
+\label{fig:irda_arc}
+\end{figure}
+
+\subsection{唤醒}\label{sec:uart-wakeup}
+
+UART 支持唤醒功能。当 UART 处于 Light-sleep 模式时，可以通过四种不同的方式产生 wake\_up 信号给 PMU 模块，由 PMU 来唤醒芯片。
+\begin{itemize}
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL}=0，当所有的时钟都关闭时，此时可以通过使 RXD 翻转若干周期，当上升沿个数大于等于 \hyperref[fielddesc:UARTACTIVETHRESHOLD]{UART\_ACTIVE\_THRESHOLD} +3 时唤醒芯片。
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL}=1，由于 UART Core 时钟保持工作，因此 UART RX
+仍然可以接收数据并将数据暂存在 Rx FIFO 中。当 Rx FIFO 中的数据量超过 \hyperref[fielddesc:UARTRXWAKEUPTHRHD]{UART\_RX\_WAKE\_UP\_THRHD} 时，可以将芯片从 Light-sleep 中唤醒。
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL}=2，当 UART RX 监测到起始位后，唤醒芯片。
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL}=3，当 UART RX 接收到特定字符序列后，唤醒芯片。用户通过配置 \hyperref[fielddesc:UARTWKCHAR0]{UART\_WK\_CHAR0}、\hyperref[fielddesc:UARTWKCHAR1]{UART\_WK\_CHAR1}、\hyperref[fielddesc:UARTWKCHAR2]{UART\_WK\_CHAR2}、\hyperref[fielddesc:UARTWKCHAR3]{UART\_WK\_CHAR3}、\hyperref[fielddesc:UARTWKCHAR4]{UART\_WK\_CHAR4} 自定义唤醒字符。UART 监测到由 CHAR0/CHAR1/CHAR2/CHAR3/CHAR4 组成的字符序列流之后唤醒芯片。可以通过配置 \hyperref[fielddesc:UARTCHARNUM]{UART\_CHAR\_NUM} 和 \hyperref[fielddesc:UARTWKCHARMASK]{UART\_WK\_CHAR\_MASK} 来设置不同的字符序列。如下表所示，对于最后一个配置，UART 将依次检测 CHAR0 \verb+~+ CHAR4。
+\end{itemize}
+
+\input{./32-UART/tables/32-UART-char-wakeup-cfg__CN}
+
+使用 UART 唤醒之后，需要通过在 Active 模式下向 UART 传输数据或是复位整个 UART 模块清除 wake\_up 信号，否则下一次唤醒所需的上升沿个数将减少。
+
+\subsection{流控}
+
+UART 控制器有两种数据流控方式：硬件流控和软件流控。硬件流控主要通过输出信号 rtsn\_out 以及输入信号 ctsn\_in 进行数据流控制。软件流控主要通过在发送数据流中插入特殊字符以及在接收数据流中检测特殊字符来实现数据流控功能。
+
+\subsubsection{硬件流控}\label{sec:uart-hd-flow-control}
+
+\begin{figure}[H]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/UART-hardware-flow-control-20211123}
+\centering
+\caption{硬件流控图}
+\label{fig:uart-flow-control}
+\end{figure}
+
+图 \ref{fig:uart-flow-control} 为 UART 硬件流控图。硬件流控的控制信号为输出信号 rtsn\_out 及输入信号  ctsn\_in。图 \ref{fig:hw-flow-control-connect} 为 两个 UART 之间 硬件流控信号连接图。记\chipname{} UART 为 IU0，External UART 为 EU0，下文将使用这两个标记来区分两个 UART。 输出信号 rtsn\_out (IU0) 为低电平表示允许对方 (EU0) 发送数据，rtsn\_out (IU0) 为高电平表示通知对方 (EU0) 中止数据发送直到 rtsn\_out (IU0) 恢复低电平。rtsn\_out 输出信号的控制有两种方式。
+
+\begin{itemize}
+    \item 软件控制：将 \hyperref[fielddesc:UARTRXFLOWEN]{UART\_RX\_FLOW\_EN} 置 0 进入该模式。该模式下通过软件配置 \hyperref[fielddesc:UARTSWRTS]{UART\_SW\_RTS} 改变 rtsn\_out 的电平。
+    \item 硬件控制：将 \hyperref[fielddesc:UARTRXFLOWEN]{UART\_RX\_FLOW\_EN} 置 1 进入该模式。该模式下硬件会当 Rx\_FIFO 中的数据大于\\ \hyperref[fielddesc:UARTRXFLOWTHRHD]{UART\_RX\_FLOW\_THRHD} 时拉高 rtsn\_out 的电平。
+\end{itemize}
+
+\begin{figure}[H]
+\includegraphics[width=0.55\textwidth]{\modulefiles/figures/hardware_flow_control_connect_figure.eps}
+\centering
+\caption{硬件流控信号连接图}
+\label{fig:hw-flow-control-connect}
+\end{figure}
+
+
+输入信号 ctsn\_in (IU0) 为低电平表示允许发送端 (IU0) 发送数据；ctsn\_in (IU0) 为高电平表示禁止发送端 (IU0) 发送数据。当 UART 检测到输入信号 ctsn\_in (IU0) 的沿变化时会产生 UART\_CTS\_CHG\_INT 中断。
+
+UART 发送设备 (IU0) 输出信号 dtrn\_out 为高电平表示发送数据已经准备完毕，处于可用状态。dtrn\_out 通过配置寄存器  \hyperref[fielddesc:UARTSWDTR]{UART\_SW\_DTR} 产生。UART 接收设备 (IU0) 在检测到输入信号 dsrn\_in 的沿变化时会产生 UART\_DSR\_CHG\_INT 中断。软件在检测到中断后，通过读取  \hyperref[fielddesc:UARTDSRN]{UART\_DSRN} 可以获取 dsrn\_in 的输入信号电平，\hyperref[fielddesc:UARTDSRN]{UART\_DSRN} 为高电平时，表示对方设备 (EU0) 处于可用状态。
+
+对于 RS485 两线 multidrop 系统，使用 dtrn\_out 来收发转换。置位 \hyperref[fielddesc:UARTRS485EN]{UART\_RS485\_EN} 使能 RS485 功能，dtrn\_out 由硬件产生。数据开始发送时，dtrn\_out 拉高，使能外部驱动器；数据最后一位发送完成后，dtrn\_out 拉低，关闭外部驱动器。注意，当使能停止位之后增加一个波特率延时时，dtrn\_out 会在延时结束后才拉低。
+
+置位 \hyperref[fielddesc:UARTLOOPBACK]{UART\_LOOPBACK} 即开启 UART 的回环测试功能。此时 UART 的输出信号 txd\_out 和其输入信号 rxd\_in 相连，rtsn\_out 和 ctsn\_in 相连，dtrn\_out 和 dsrn\_out 相连。当接收的数据与发送的数据相同时表明 UART 能够正常发送和接收数据。
+
+\subsubsection{软件流控}
+
+软件流控不使用硬件的 CTS/RTS 控制线，而是在发送数据流中嵌入 XON/XOFF 字符来通知对方是否可以使用数据发送来实现流控。将 \hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} 置 1 使能软件流控。
+
+在使用软件流控后，硬件会自动检测接收数据流中是否有 XON/XOFF 字符，在检测到相应的字符后会产生 UART\_SW\_XOFF\_INT 或 UART\_SW\_XON\_INT 中断。在检测到接收数据流中有 XOFF 字符后，发送器将会在发送完当前数据后停止发送；在检测到接收数据流中有 XON 字符后，将会使能发送器发送数据。另外，软件可以通过置位 \hyperref[fielddesc:UARTFORCEXOFF]{UART\_FORCE\_XOFF} 来强制发送器停止发送数据，发送器会在发送完当前字节后停止发送；也可以通过置位 \hyperref[fielddesc:UARTFORCEXON]{UART\_FORCE\_XON} 来使能发送器发送数据。
+
+软件可以根据 Rx\_FIFO 中剩余空间大小决定流控字符的发送。置位 \hyperref[fielddesc:UARTSENDXOFF]{UART\_SEND\_XOFF}，发送器会在发送完当前数据之后插入一个 XOFF 字符，该字符通过寄存器 \hyperref[fielddesc:UARTXOFFCHAR]{UART\_XOFF\_CHAR} 配置；置位 \hyperref[fielddesc:UARTSENDXON]{UART\_SEND\_XON}，发送器会在发送完当前数据之后插入一个 XON 字符，该字符通过寄存器  \hyperref[fielddesc:UARTXONCHAR]{UART\_XON\_CHAR} 配置。另外，当 UART 接收 FIFO 中的数据量超过 \hyperref[fielddesc:UARTXOFFTHRESHOLD]{UART\_XOFF\_THRESHOLD} 时，硬件会置位 \hyperref[fielddesc:UARTSENDXOFF]{UART\_SEND\_XOFF}，UART 发送器会在发送完当前数据之后插入一个 XOFF 字符，该字符通过寄存器 \hyperref[fielddesc:UARTXOFFCHAR]{UART\_XOFF\_CHAR} 配置 。当 UART 接收 FIFO 中的数据量小于 \hyperref[fielddesc:UARTXONTHRESHOLD]{UART\_XON\_THRESHOLD} 时，硬件会置位 \hyperref[fielddesc:UARTSENDXON]{UART\_SEND\_XON}，UART 发送器会在发送完当前数据之后插入一个 XON 字符，该字符通过寄存器 \hyperref[fielddesc:UARTXONCHAR]{UART\_XON\_CHAR} 配置。
+
+当 UART 工作在全双工模式时，如果 UART RX 接收到 XOFF，此时尽管 UART RX 接受的数据超过阈值，UART TX 将被禁止发送包括 XOFF 在内的任何数据。为了避免该种情况导致的软流控死锁或者 overflow，可以使能 \hyperref[fielddesc:UARTXONXOFFSTILLSEND]{UART\_XON\_XOFF\_STILL\_SEND}，此时允许 UART TX 在被禁止发送时，仍然可以发送一个 XOFF 字符。
+
+\untagged{ESP32-C61}{
+\subsection{GDMA 模式}
+
+\chipname{} 中的两个 UART 接口通过通用主机控制器接口 (UHCI) 共用 1 组 GDMA TX/RX 通道。在 GDMA 模式下，支持对 HCI 协议数据包的解析 (decoder) 及数据包封装 (encoder)。\hyperref[fielddesc:UHCIUARTSEL]{UHCI\_UART\_SEL} 字段用于选择哪个串口占用 GDMA 通道。
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/UDMA}
+\centering
+\caption{GDMA 模式数据传输}
+\label{fig:uart-gdma}
+\end{figure}
+
+图 \ref{fig:uart-gdma} 为 GDMA 方式数据传输图。在 GDMA Rx 通道接收数据前，软件将接收链表准备好。\hyperref[fielddesc:AHBDMAINLINKADDRCHN]{AHB\_DMA\_INLINK\_ADDR\_CH\regindex{n}} 用于指向第一个接收链表描述符。置位 \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB\_DMA\_INLINK\_START\_CH\regindex{n}} 之后，通用主机控制器接口 (UHCI) 会将 UART 接收到的数据传送给 decoder。经过 decoder 解析之后的数据在 GDMA 通道的控制下存入接收链表指定的 RAM 空间。
+
+在 GDMA Tx 通道发送数据前，软件需要将发送链表和发送数据准备好，\hyperref[fielddesc:AHBDMAOUTLINKADDRCHN]{AHB\_DMA\_OUTLINK\_ADDR\_CH\regindex{n}} 用于指向第一个发送链表描述符。置位 \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB\_DMA\_OUTLINK\_START\_CH\regindex{n}} 之后，GDMA 引擎即从链表中指定的 RAM 地址读取数据，并通过 encoder 进行数据包封装，然后经 UART 的发送模块串行发送出去。
+
+HCI 的数据包格式为（分隔符+数据+分隔符）。encoder 用于在数据前后加上分隔符，并将数据中和分隔符一样的数据替换为特殊字符。decoder 用于去除数据包前后分隔符，并将数据中的特殊字符替换为分隔符。数据前后的分隔符可以有连续多个。分隔符可由 \hyperref[fielddesc:UHCISEPERCHAR]{UHCI\_SEPER\_CHAR} 进行配置，默认值为 0xC0。数据中与分隔符一样的数据可以用 \hyperref[fielddesc:UHCIESCSEQ0CHAR0]{UHCI\_ESC\_SEQ0\_CHAR0}（默认为 0xDB）和 \hyperref[fielddesc:UHCIESCSEQ0CHAR1]{UHCI\_ESC\_SEQ0\_CHAR1}（默认为 0xDD）进行替换。当数据全部发送完成后，会产生 GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT 中断。当数据接收完成后，会产生 GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 中断。
+}
+
+\section{中断}
+
+
+\chipname{} 的 UART\regindex{n}\untagged{ESP32-C61}{ 和 UHCI} 可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item { UART\regindex{n}\_INTR}
+        \untagged{ESP32-C61}{\item { UHCI\_INTR}}
+    \end{itemize}
+
+这些中断信号分别由 UART\regindex{n}\untagged{ESP32-C61}{ 和 UHCI} 的内部中断源生成。
+
+UART\regindex{n} 中断源如下所列：
+
+\begin{itemize}
+\item \label{int:UARTATCMDCHARDETINT}UART\_AT\_CMD\_CHAR\_DET\_INT：当接收器检测到 AT\_CMD 字符时触发此中断。
+\item \label{int:UARTRS485CLASHINT}UART\_RS485\_CLASH\_INT：在 RS485 模式下检测到发送器和接收器之间的冲突时触发此中断。
+\item \label{int:UARTRS485FRMERRINT}UART\_RS485\_FRM\_ERR\_INT：在 RS485 模式下检测到发送块发送的数据帧错误时触发此中断。
+\item \label{int:UARTRS485PARITYERRINT}UART\_RS485\_PARITY\_ERR\_INT：在 RS485 模式下检测到发送块发送的数据校验位错误时触发此中断。
+\item \label{int:UARTTXDONEINT}UART\_TX\_DONE\_INT：当发送器发送完 FIFO 中的所有数据时触发此中断。
+\item \label{int:UARTTXBRKIDLEDONEINT}UART\_TX\_BRK\_IDLE\_DONE\_INT：当发送器在最后一个数据发送后保持了最短的间隔时间时触发此中断。
+\item \label{int:UARTTXBRKDONEINT}UART\_TX\_BRK\_DONE\_INT：当发送 FIFO 中的数据发送完之后发送器完成了发送 NULL 则触发此中断。
+\item \label{int:UARTGLITCHDETINT}UART\_GLITCH\_DET\_INT：当接收器在起始位的中点处检测到毛刺时触发此中断。
+\item \label{int:UARTSWXOFFINT}UART\_SW\_XOFF\_INT：\hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} 置位时，当接收器接收到 XOFF 字符时触发此中断。
+\item \label{int:UARTSWXONINT}UART\_SW\_XON\_INT：\hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} 置位时，当接收器接收到 XON 字符时触发此中断。
+\item \label{int:UARTRXFIFOTOUTINT}UART\_RXFIFO\_TOUT\_INT：当接收器至少已经接收一个字节的数据，且之后在 \hyperref[fielddesc:UARTRXTOUTTHRHD]{UART\_RX\_TOUT\_THRHD} 位的时间内，总线一直处于 idle 状态将触发此中断。
+\item \label{int:UARTBRKDETINT}UART\_BRK\_DET\_INT：当接收器在停止位之后检测到一个 NULL（即传输一个 NULL 的时间内保持逻辑低电平）时触发此中断。
+\item \label{int:UARTCTSCHGINT}UART\_CTS\_CHG\_INT：当接收器检测到 CTSn 信号的沿变化时触发此中断。
+\item \label{int:UARTDSRCHGINT}UART\_DSR\_CHG\_INT：当接收器检测到 DSRn 信号的沿变化时触发此中断。
+\item \label{int:UARTRXFIFOOVFINT}UART\_RXFIFO\_OVF\_INT：当接收器接收到的数据量多于 FIFO 的存储量时触发此中断。
+\item \label{int:UARTFRMERRINT}UART\_FRM\_ERR\_INT：当接收器检测到数据帧错误时触发此中断。
+\item \label{int:UARTPARITYERRINT}UART\_PARITY\_ERR\_INT：当接收器检测到校验位错误时触发此中断。
+\item \label{int:UARTTXFIFOEMPTYINT}UART\_TXFIFO\_EMPTY\_INT：当发送 FIFO 中的数据量少于 \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD} 所指定的值时触发此中断。
+\item \label{int:UARTRXFIFOFULLINT}UART\_RXFIFO\_FULL\_INT：当接收器接收到的数据多于 \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD} 所指定的值时触发此中断。
+\item \label{int:UARTWAKEUPINT}UART\_WAKEUP\_INT：UART 被唤醒时产生此中断。
+\end{itemize}
+
+\untagged{ESP32-C61}{
+UHCI 中断源如下所列：
+
+\begin{itemize}
+\item \label{int:UHCIAPPCTRL1INT}UHCI\_APP\_CTRL1\_INT：软件置位 \hyperref[fielddesc:UHCIAPPCTRL1INTRAW]{UHCI\_APP\_CTRL1\_INT\_RAW} 时触发此中断。
+\item \label{int:UHCIAPPCTRL0INT}UHCI\_APP\_CTRL0\_INT：软件置位 \hyperref[fielddesc:UHCIAPPCTRL0INTRAW]{UHCI\_APP\_CTRL0\_INT\_RAW} 时触发此中断。
+\item \label{int:UHCIOUTLINKEOFERRINT}UHCI\_OUTLINK\_EOF\_ERR\_INT：当检测到发送链表描述符中的 EOF 有错误时触发此中断。
+\item \label{int:UHCISENDAREGQINT}UHCI\_SEND\_A\_REG\_Q\_INT：当使用 always\_send 发送一串短包，UHCI 发送了短包后触发此中断。
+\item \label{int:UHCISENDSREGQINT}UHCI\_SEND\_S\_REG\_Q\_INT：当使用 single\_send 发送一串短包，UHCI 发送了短包后触发此中断。
+\item \label{int:UHCITXHUNGINT}UHCI\_TX\_HUNG\_INT：当 UHCI 利用 GDMA Tx 通道从 RAM 中读取数据的时间过长时触发此中断。
+\item \label{int:UHCIRXHUNGINT}UHCI\_RX\_HUNG\_INT：当 UHCI 利用 GDMA Rx 通道接收数据的时间过长时触发此中断。
+\item \label{int:UHCITXSTARTINT}UHCI\_TX\_START\_INT：当检测到分隔符时触发此中断。
+\item \label{int:UHCIRXSTARTINT}UHCI\_RX\_START\_INT：当分隔符已发送时触发此中断。
+\end{itemize}
+}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:uart-reg-summ} \textit{\nameref{sec:uart-reg-summ}}。
+
+
+
+\section{编程流程}\label{sec:uart-program}
+
+\subsection{寄存器类型}
+
+UART 的所有寄存器都处于 APB\_CLK 时钟域。
+
+UART 上的配置寄存器分为两类：第一类寄存器作用在 APB/AHB 时钟域，该类寄存器配置后不需要额外的操作；第二类寄存器作用在 UART\_SCLK 时钟域，因此需要进行跨时钟域处理。在配置完该类寄存器后，需要通过写寄存器 \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} 使配置的值同步到 Core 时钟域。当同步完成后，硬件会将 \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} 自动清零。推荐用户在配置需要同步的寄存器之后，检查 \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} 是否为 0，确保上一次的同步操作完成之后再执行接下来的寄存器配置。
+
+为了方便用户区分这两类寄存器，章节 \ref{sec:uart-reg-summ} 中将需要做跨时钟域操作的寄存器放在一起，该类寄存器名称附带\_SYNC 后缀。不需要做跨时钟域操作的寄存器放在一起，该类寄存器名称不带\_SYNC 后缀。
+
+
+\clearpage
+\subsection{具体步骤}
+
+图\ref{fig:uart-program-flow} 显示了 UART 模块的编程流程。主要包括：初始化、寄存器配置、启动 UART TX/RX 和数据传输结束。
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/uart_program_flow}
+\centering
+\caption{UART 编程流程}
+\label{fig:uart-program-flow}
+\end{figure}
+
+\subsubsection{UART\regindex{n} 模块初始化}
+
+UART\regindex{n} 模块初始化流程如下：
+
+\begin{itemize}
+    \item 将 \hyperref[fielddesc:PCRUART0CLKEN]{PCR\_UART\regindex{n}\_CLK\_EN} 置 1，打开 UART\regindex{n} 的 APB\_CLK；
+    \item 向 \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN} 写 1；
+    \item 将 \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN} 清 0。
+\end{itemize}
+
+\subsubsection{UART\regindex{n} 通信配置}
+
+UART\regindex{n} 通信配置流程如下：
+\begin{itemize}
+    \item 等待 \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} 为 0，确保上一次同步已经完成；
+    \item 配置 \hyperref[fielddesc:PCRUART0SCLKSEL]{PCR\_UART\regindex{n}\_SCLK\_SEL} 选择时钟源；
+    \item 配置 \hyperref[fielddesc:PCRUART0SCLKDIVNUM]{PCR\_UART\regindex{n}\_SCLK\_DIV\_NUM}、\hyperref[fielddesc:PCRUART0SCLKDIVA]{PCR\_UART\regindex{n}\_SCLK\_DIV\_A}、\hyperref[fielddesc:PCRUART0SCLKDIVB]{PCR\_UART\regindex{n}\_SCLK\_DIV\_B} 设置预分频器系数；
+    \item 配置 \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV}、\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} 设置发送波特率；
+    \item 配置 \hyperref[fielddesc:UARTBITNUM]{UART\_BIT\_NUM} 设置数据长度；
+    \item 配置 \hyperref[fielddesc:UARTPARITYEN]{UART\_PARITY\_EN}、\hyperref[fielddesc:UARTPARITY]{UART\_PARITY} 设置奇偶校验；
+    \item 可选步骤，根据应用不同存在差异；
+    \item 向 \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} 写 1，将配置的值同步到 Core 时钟域。
+\end{itemize}
+
+\subsubsection{启动 UART\regindex{n}}
+启动 UART\regindex{n} TX 发送数据：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD}，设置 TX FIFO 空阈值；
+    \item 对 \hyperref[fielddesc:UARTTXFIFOEMPTYINTENA]{UART\_TXFIFO\_EMPTY\_INT\_ENA} 置 0， 关闭 UART\_TXFIFO\_EMPTY\_INT 中断；
+    \item 向 \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} 写入需要发送的数据；
+    \item 置位 \hyperref[fielddesc:UARTTXFIFOEMPTYINTCLR]{UART\_TXFIFO\_EMPTY\_INT\_CLR}，清除 UART\_TXFIFO\_EMPTY\_INT 中断；
+    \item 置位 \hyperref[fielddesc:UARTTXFIFOEMPTYINTENA]{UART\_TXFIFO\_EMPTY\_INT\_ENA}， 使能 UART\_TXFIFO\_EMPTY\_INT 中断；
+    \item 检测 \hyperref[fielddesc:UARTTXFIFOEMPTYINTST]{UART\_TXFIFO\_EMPTY\_INT\_ST}，等待发送数据结束。
+\end{itemize}
+
+启动 UART\regindex{n} RX 数据接收：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD}，设置 RX FIFO 满阈值；
+    \item 置位 \hyperref[fielddesc:UARTRXFIFOFULLINTENA]{UART\_RXFIFO\_FULL\_INT\_ENA}，使能 UART\_RXFIFO\_FULL\_INT 中断；
+    \item 检测 \hyperref[fielddesc:UARTRXFIFOFULLINTST]{UART\_RXFIFO\_FULL\_INT\_ST}，等待 RX FIFO 接收数据满；
+    \item 通过读 \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE}， 从 RX FIFO 中读出数据，并可通过 \hyperref[fielddesc:UARTRXFIFOCNT]{UART\_RXFIFO\_CNT} 获得当前 RX FIFO 中的接收数据量。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{寄存器列表}
+\label{sec:uart-reg-summ}
+\hypertarget{uart-reg-summ}{}
+
+
+\subsection{UART 寄存器列表}
+
+本小节的所有地址均为相对于 UART 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/32-UART-reg-summ__CN}
+
+
+\tagged{ESP32-C5}{
+\subsection{LP UART 寄存器列表}
+
+本小节的所有地址均为相对于 LP UART 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/32-LP-UART-reg-summ__CN}
+}
+
+
+\untagged{ESP32-C61}{
+\subsection{UHCI 寄存器列表}
+
+本小节的所有地址均为相对于 UHCI 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/32-UHCI-reg-summ__CN}
+}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{寄存器}
+
+
+\subsection{UART 寄存器}
+
+本小节的所有地址均为相对于 UART 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/32-UART-reg__CN}
+
+
+\tagged{ESP32-C5}{
+\clearpage
+\subsection{LP UART 寄存器}
+
+本小节的所有地址均为相对于 LP UART 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/32-LP-UART-reg__CN}
+}
+
+\untagged{ESP32-C61}{
+\clearpage
+\subsection{UHCI 寄存器}
+
+本小节的所有地址均为相对于 UHCI 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/32-UHCI-reg__CN}
+}
+
+\end{document}
