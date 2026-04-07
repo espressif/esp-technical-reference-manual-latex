@@ -116,7 +116,7 @@ See where to find logs in Section [Build Artifacts](#build-artifacts).
 During project compilation you may see the following error:
 
 ```
-/Users/../latex-trm/ESP32-S3/ESP32-S3-main__EN.tex:21: Package minted Error: You must have `pygmentize' installed to use this package.
+/Users/../esp-technical-reference-manual-latex/ESP32-S3/ESP32-S3-main__EN.tex:21: Package minted Error: You must have `pygmentize' installed to use this package.
 ```
 
 If the issue occurs when using local TeX Live installation, open a terminal and run the command `pygmentize -V` to check if you have Python package `pytments` installed:
@@ -292,6 +292,6 @@ Espressif Documentation Team encourages contributions from the community to enha
 If you have insights, updates, or suggestions to share, feel free to:
 
 - Leave a comment using the `Submit Documentation Feedback` button at the bottom of any [documentation page](https://documentation.espressif.com/esp32_technical_reference_manual_en.pdf).
-- Report an issue via [GitHub Issues](https://github.com/espressif/latex-trm/issues).
-- Submit a fix via [Pull Request (PR)](https://github.com/espressif/latex-trm/pulls).
+- Report an issue via [GitHub Issues](https://github.com/espressif/esp-technical-reference-manual-latex/issues).
+- Submit a fix via [Pull Request (PR)](https://github.com/espressif/esp-technical-reference-manual-latex/pulls).
     > For PRs, follow the [Contributing Guide](./CONTRIBUTING.md).
