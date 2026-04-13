@@ -1,0 +1,349 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./19-LEDPWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ledpwm}{}
+\chapter{LED PWM Controller (LEDC)}
+\label{mod:ledpwm}
+
+\section{Overview}
+
+
+The LED PWM Controller is a peripheral designed to generate PWM signals for LED control. It has specialized features such as automatic duty cycle fading. However, the LED PWM Controller can also be used to generate PWM signals for other purposes.
+
+\section{Features}
+The LED PWM Controller has the following features:
+\begin{itemize}
+    \item Eight independent PWM generators (i.e., eight channels)
+    \item Four independent timers that support division by fractions
+    \item Automatic duty cycle fading (i.e., gradual increase/decrease of a PWM's duty cycle without interference from the processors) with interrupt generation on fade completion
+    \item Adjustable phase of PWM signal output
+    \item PWM signal output in low-power mode (Light-sleep mode)
+    \item Maximum PWM resolution: 14 bits
+\end{itemize}
+
+Note that the four timers are identical regarding their features and operation. The following sections refer to the timers collectively as Timer\regindex{x} (where \regindex{x} ranges from 0 to 3). Likewise, the eight PWM generators are also identical in features and operation, and thus are collectively referred to as PWM\regindex{n} (where \regindex{n} ranges from 0 to 7).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/led2-1_723}
+    \caption{LED PWM Architecture}
+    \label{fig:ledc-architecture}
+\end{figure}
+
+\section{Functional Description}
+
+
+\subsection{Architecture}
+
+Figure \ref{fig:ledc-architecture} shows the architecture of the LED PWM Controller.
+
+The four timers can be independently configured (i.e., clock divider, and counter overflow value) and each internally maintains a timebase counter (i.e., a counter that counts on cycles of a reference clock). Each PWM generator will select one of the timers and uses the timer's counter value as a reference to generate its PWM signal.
+
+Figure \ref{fig:ledc-pwm-generator} illustrates the main functional blocks of the timer and the PWM generator.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ledc2-2}
+    \caption{LED PWM Generator Diagram}
+    \label{fig:ledc-pwm-generator}
+\end{figure}
+
+\subsection{Timers}\label{sec:ledc-timers}
+
+Each timer in LED PWM Controller internally maintains a timebase counter. Referring to Figure \ref{fig:ledc-pwm-generator}, this clock signal used by the timebase counter is named ref\_pulse\regindex{x}. All timers use the same clock source LEDC\_CLK\regindex{x}, which is then passed through a clock divider to generate ref\_pulse\regindex{x} for the counter.
+
+\subsubsection{Clock Source}
+
+LED PWM registers configured by software are clocked by APB\_CLK. For more information about APB\_CLK, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}. To use the LED PWM peripheral, the APB\_CLK signal to the LED PWM has to be enabled. The APB\_CLK signal to LED PWM can be enabled by setting the  \hyperref[fielddesc:SYSTEMLEDCCLKEN]{SYSTEM\_LEDC\_CLK\_EN} field in the register \hyperref[regdesc:SYSTEMPERIPCLKEN0REG]{SYSTEM\_PERIP\_CLK\_EN0\_REG} and be reset via software by setting the \hyperref[fielddesc:SYSTEMLEDCRST]{SYSTEM\_LEDC\_RST} field in the register \hyperref[regdesc:SYSTEMPERIPRSTEN0REG]{SYSTEM\_PERIP\_RST\_EN0\_REG}. For more information, please refer to Table \ref{tab:sysreg-mem-controlling-bit} in Chapter \ref{mod:sysreg} \textit{\nameref{mod:sysreg}}.
+
+Timers in the LED PWM Controller choose their common clock source from one of the following clock signals: APB\_CLK, RC\_FAST\_CLK and XTAL\_CLK (see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}} for more details about each clock signal). The procedure for selecting a clock source signal for LEDC\_CLK\regindex{x} is described below:
+
+\begin{itemize}
+    \item APB\_CLK: Set \hyperref[fielddesc:LEDCAPBCLKSEL]{LEDC\_APB\_CLK\_SEL}[1:0] to 1
+    \item RC\_FAST\_CLK: Set \hyperref[fielddesc:LEDCAPBCLKSEL]{LEDC\_APB\_CLK\_SEL}[1:0] to 2
+    \item XTAL\_CLK: Set \hyperref[fielddesc:LEDCAPBCLKSEL]{LEDC\_APB\_CLK\_SEL}[1:0] to 3
+
+\end{itemize}
+
+
+The LEDC\_CLK\regindex{x} signal will then be passed through the clock divider.
+
+\subsubsection{Clock Divider Configuration}
+
+The LEDC\_CLK\regindex{x} signal is passed through a clock divider to generate the ref\_pulse\regindex{x} signal for the counter. The frequency of ref\_pulse\regindex{x} is equal to the frequency of LEDC\_CLK\regindex{x} divided by the divisor LEDC\_CLK\_DIV (see Figure \ref{fig:ledc-pwm-generator}).
+
+The divisor LEDC\_CLK\_DIV is a fractional value. Thus, it can be a non-integer divisor. LEDC\_CLK\_DIV is configured according to the following equation.
+
+\begin{center}
+$LEDC\_CLK\_DIV = A + \frac{B}{256}$
+\end{center}
+
+\begin{itemize}
+    \item \textit{A} corresponds to the most significant 10 bits of \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} (i.e., \hyperref[regdesc:LEDCTIMERXCONFREG]{LEDC\_TIMER\regindex{x}\_CONF\_REG}[21:12])
+    \item The fractional part \textit{B} corresponds to the least significant 8 bits of \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} \\(i.e., \hyperref[regdesc:LEDCTIMERXCONFREG]{LEDC\_TIMER\regindex{x}\_CONF\_REG}[11:4])
+\end{itemize}
+
+When the fractional part \textit{B} is zero, LEDC\_CLK\_DIV is equivalent to an integer divisor (i.e., an integer prescaler). In other words, a ref\_pulse\regindex{x} clock pulse is generated after every \textit{A} number of LEDC\_CLK\regindex{x} clock pulses.
+
+However, when \textit{B} is nonzero, LEDC\_CLK\_DIV becomes a non-integer divisor. The clock divider implements non-integer frequency division by alternating between \textit{A} and (\textit{A}+1) LEDC\_CLK\regindex{x} clock pulses per ref\_pulse\regindex{x} clock pulse. This will result in the average frequency of ref\_pulse\regindex{x} clock pulse being the desired frequency (i.e., the non-integer divided frequency). For every 256 ref\_pulse\regindex{x} clock pulses:
+
+\begin{itemize}
+    \item A number of \textit{B} ref\_pulse\regindex{x} clock pulses will consist of (\textit{A}+1) LEDC\_CLK\regindex{x} clock pulses
+    \item A number of (256-\textit{B}) ref\_pulse\regindex{x} clock pulses will consist of \textit{A} LEDC\_CLK\regindex{x} clock pulses
+    \item The ref\_pulse\regindex{x} clock pulses consisting of (\textit{A}+1) pulses are evenly distributed amongst those consisting of \textit{A} pulses
+\end{itemize}
+
+Figure \ref{fig:ledc-divider} illustrates the relation between LEDC\_CLK\regindex{x} clock pulses and ref\_pulse\regindex{x} clock pulses when dividing by a non-integer LEDC\_CLK\_DIV.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/ledc_frag_div}}
+    \caption{Frequency Division When LEDC\_CLK\_DIV is a Non-Integer Value}
+    \label{fig:ledc-divider}
+\end{figure}
+
+To change the timer's clock divisor at runtime, first configure the \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} field, and then set the \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} field to apply the new configuration. This will cause the newly configured values to take effect upon the next overflow of the counter. \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} field will be automatically cleared by hardware.
+
+
+\subsubsection{14-bit Counter}
+
+Each timer contains a 14-bit timebase counter that uses ref\_pulse\regindex{x} as its reference clock (see Figure \ref{fig:ledc-pwm-generator}). The \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} field configures the overflow value of this 14-bit counter. Hence, the  maximum resolution of the PWM signal is 14 bits. The counter counts up to $2^{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}-1$, overflows and begins counting from 0 again. The counter's value can be read, reset, and suspended by software.
+
+The counter can trigger \hyperref[int:ledc-timer-ovf]{LEDC\_TIMER\regindex{x}\_OVF\_INT} interrupt (generated automatically by hardware without configuration) every time the counter overflows. It can also be configured to trigger \hyperref[int:ledc-ovf-cnt]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT} interrupt after the counter overflows $\hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} + 1$ times. To configure \hyperref[int:ledc-ovf-cnt]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT} interrupt, please:
+
+ \begin{enumerate}
+    \item Configure \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}} as the counter for the PWM generator
+    \item Enable the counter by setting  \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}}
+    \item Set
+    \hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} to the number of counter overflows to generate an interrupt, minus 1
+    \item Enable the overflow interrupt by setting \hyperref[fielddesc:LEDCOVFCNTCHNINTENA]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT\_ENA}
+    \item Set \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} to enable the timer and
+    wait for a \hyperref[int:ledc-ovf-cnt]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT} interrupt
+\end{enumerate}
+
+Referring to Figure \ref{fig:ledc-pwm-generator}, the frequency of a PWM generator output signal (sig\_out\regindex{n}) is dependent on the frequency of the timer's clock source LEDC\_CLK\regindex{x}, the clock divisor LEDC\_CLK\_DIV, and the duty resolution (counter width) \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}:
+
+    \[
+    f_{\textrm{PWM}}=\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+                        {\textrm{LEDC\_CLK\_DIV}\cdot 2^{\textrm{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}}}
+    \]
+
+Based on the formula above, the desired duty resolution can be calculated as follows:
+
+    \[
+    \textrm{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}
+    =\log_2\left(\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+    {f_{\textrm{PWM}}\cdot \textrm{LEDC\_CLK\_DIV}}\right)
+    \]
+
+Table \ref{tab:ledc-common-freq-res} lists the commonly-used frequencies and their corresponding resolutions.
+
+\begin{ThreePartTable}
+
+    \begin{TableNotes}
+
+        \item[1] The highest resolution is calculated when the clock divisor LEDC\_CLK\_DIV is 1 and rounded down. If the highest resolution calculated by the formula is higher than the counter's width 14 bits, then the highest resolution should be 14 bits.
+
+        \item[2] The lowest resolution is calculated when the clock divisor LEDC\_CLK\_DIV is $1023+\frac{255}{256}$ and rounded up. If the lowest resolution calculated by the formula is lower than 0, then the lowest resolution should be 1.
+
+    \end{TableNotes}
+
+\begin{longtable}[c]{ | l | l | l | l | }
+\caption{Commonly-used Frequencies and Resolutions}
+\label{tab:ledc-common-freq-res}
+\\\hline
+\rowcolor{lightgray}
+LEDC\_CLK\regindex{x} & PWM Frequency & Highest Resolution (bit) \tnote{1} & Lowest Resolution (bit) \tnote{2} \\\hline
+
+\endhead
+\insertTableNotes
+\endfoot
+
+APB\_CLK (80 MHz) & 1 kHz & 14 & 7 \\\hline
+APB\_CLK (80 MHz) & 5 kHz & 13 & 4 \\\hline
+APB\_CLK (80 MHz) & 10 kHz & 12 & 3 \\\hline
+XTAL\_CLK (40 MHz) & 1 kHz & 14 & 6 \\\hline
+XTAL\_CLK (40 MHz) & 4 kHz & 13 & 4 \\\hline
+RC\_FAST\_CLK (17.5 MHz) & 1 kHz & 14 & 5 \\\hline
+RC\_FAST\_CLK (17.5 MHz) & 1.75 kHz & 13 & 4 \\\hline
+
+\end{longtable}
+\end{ThreePartTable}
+
+
+To change the overflow value at runtime, first set the \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} field, and then set the\\ \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} field. This will cause the newly configured values to take effect upon the next overflow of the counter. If \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}} field is reconfigured,  \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} should be set to apply the new configuration. In summary, these configuration values need to be updated by setting \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} or \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}}. \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} and \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} will be automatically cleared by hardware.
+
+\subsection{PWM Generators}\label{sec:ledc-pwm-generator}
+To generate a PWM signal, a PWM generator (PWM\regindex{n}) selects a timer (Timer\regindex{x}). Each PWM generator can be configured separately by setting \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}} to use one of four timers to generate the PWM output.
+
+As shown in Figure \ref{fig:ledc-pwm-generator}, each PWM generator has a comparator and two multiplexers. A PWM generator compares the timer's 14-bit counter value (Timer\regindex{x}\_cnt) to two trigger values Hpoint\regindex{n} and Lpoint\regindex{n}. When the timer's counter value is equal to Hpoint\regindex{n} or Lpoint\regindex{n}, the PWM signal is high or low, respectively, as described below:
+
+\begin{itemize}
+\item If Timer\regindex{x}\_cnt == Hpoint\regindex{n}, sig\_out\regindex{n} is 1.
+\item If Timer\regindex{x}\_cnt == Lpoint\regindex{n}, sig\_out\regindex{n} is 0.
+\end{itemize}
+
+Figure \ref{fig:ledc-fixed-duty} illustrates how Hpoint\regindex{n} or Lpoint\regindex{n} are used to generate a fixed duty cycle PWM output signal.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/ledc_2-3-1_723}}
+    \caption{LED\_PWM Output Signal Diagram}
+    \label{fig:ledc-fixed-duty}
+\end{figure}
+
+For a particular PWM generator (PWM\regindex{n}), its Hpoint\regindex{n} is sampled from the \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}} field each time the selected timer's counter overflows. Likewise, Lpoint\regindex{n} is also sampled on every counter overflow and is calculated from the sum of the \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] and \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}} fields. By setting Hpoint\regindex{n} and Lpoint\regindex{n} via the \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}} and \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] fields, the relative phase and duty cycle of the PWM output can be set.
+
+
+The PWM output signal (sig\_out\regindex{n}) is enabled by setting \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}}. When \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}} is cleared, PWM signal output is disabled, and the output signal (sig\_out\regindex{n}) will output a constant level as specified by \hyperref[fielddesc:LEDCIDLELVCHN]{LEDC\_IDLE\_LV\_CH\regindex{n}}.
+
+The bits \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] are used to dither the duty cycles of the PWM output signal (sig\_out\regindex{n}) by periodically altering the duty cycle of sig\_out\regindex{n}. When \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] is set to a non-zero value, then for every 16 cycles of sig\_out\regindex{n}, \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] of those cycles will have PWM pulses that are one timer tick longer than the other (16- \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0]) cycles. For instance, if \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] is set to 10 and \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] is set to 5, then 5 of 16 cycles will have a PWM pulse with a duty value of 11 and the rest of the 16 cycles will have a PWM pulse with a duty value of 10. The average duty cycle after 16 cycles is 10.3125.
+
+If fields \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}},
+\hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}}, \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] and  \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}} are reconfigured, \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} must be set to apply the new configuration. This will cause the newly configured values to take effect upon the next overflow of the counter. \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} field will be automatically cleared by hardware.
+
+
+\subsection{Duty Cycle Fading}
+
+The PWM generators can fade the duty cycle of a PWM output signal (i.e., gradually change the duty cycle from one value to another). If Duty Cycle Fading is enabled, the value of Lpoint\regindex{n} will be incremented/decremented after a fixed number of counter overflows occurs. Figure \ref{fig:ledc-unfixed-duty} illustrates Duty Cycle Fading.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/ledc_f5}}
+    \caption{Output Signal Diagram of Fading Duty Cycle}
+    \label{fig:ledc-unfixed-duty}
+\end{figure}
+
+Duty Cycle Fading is configured using the following register fields:
+\begin{itemize}
+\item \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}} is used to set the initial value of Lpoint\regindex{n}.
+\item \hyperref[fielddesc:LEDCDUTYSTARTCHN]{LEDC\_DUTY\_START\_CH\regindex{n}} will enable/disable duty cycle fading when set/cleared.
+\item \hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}} sets the number of counter overflow cycles for every Lpoint\regindex{n} increment/decrement. In other words, Lpoint\regindex{n} will be incremented/decremented after \hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}} counter overflows.
+\item \hyperref[fielddesc:LEDCDUTYINCCHN]{LEDC\_DUTY\_INC\_CH\regindex{n}} configures whether Lpoint\regindex{n} is incremented/decremented if set/cleared.
+\item \hyperref[fielddesc:LEDCDUTYSCALECHN]{LEDC\_DUTY\_SCALE\_CH\regindex{n}} sets the amount that Lpoint\regindex{n} is incremented/decremented.
+\item \hyperref[fielddesc:LEDCDUTYNUMCHN]{LEDC\_DUTY\_NUM\_CH\regindex{n}} sets the maximum number of increments/decrements before duty cycle fading stops.
+\end{itemize}
+
+If the fields
+\hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}},
+\hyperref[fielddesc:LEDCDUTYSTARTCHN]{LEDC\_DUTY\_START\_CH\regindex{n}},
+\hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}},
+\hyperref[fielddesc:LEDCDUTYINCCHN]{LEDC\_DUTY\_INC\_CH\regindex{n}},
+\hyperref[fielddesc:LEDCDUTYSCALECHN]{LEDC\_DUTY\_SCALE\_CH\regindex{n}}, and
+\hyperref[fielddesc:LEDCDUTYNUMCHN]{LEDC\_DUTY\_NUM\_CH\regindex{n}}  are reconfigured, \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} must be set to apply the new configuration. After this field is set, the values for duty cycle fading will take effect at once. \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} field will be automatically cleared by hardware.
+
+\subsection{Interrupts}
+\begin{itemize}
+\item \label{int:ledc-ovf-cnt}LEDC\_OVF\_CNT\_CH\regindex{n}\_INT: Triggered when the timer counter overflows for (\hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} + 1) times and the register \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}} is set to 1.
+\item \label{int:ledc-duty-chng-end}LEDC\_DUTY\_CHNG\_END\_CH\regindex{n}\_INT: Triggered when a fade on an LED PWM generator has finished.
+\item \label{int:ledc-timer-ovf}LEDC\_TIMER\regindex{x}\_OVF\_INT: Triggered when an LED PWM timer has reached its maximum counter value.
+\end{itemize}
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{ledpwm-reg-summ}{}
+\section{Register Summary}
+\label{sec:ledpwm-reg-summ}
+
+The addresses in this section are relative to \textcolor{red}{LED PWM Controller} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-LEDPWM-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to \textcolor{red}{LED PWM Controller} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/19-LEDPWM-reg__EN}
+
+
+\end{document}

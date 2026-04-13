@@ -1,0 +1,242 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./46-ANAI2C}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[10pt]{article}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{anai2c}{}
+\chapter{模拟 I2C 控制器}
+\label{mod:anai2c}
+
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+模拟 I2C 控制器包含两个专用于模拟电路配置的 I2C 主机，用于与一些模拟电路模块的通信，这些模拟模块可通过配置其内部寄存器，使其工作状态更加适用于芯片当前的应用场景。以模拟传感器为例，可以通过模拟 I2C 控制器的配置，给 ADC 采样值统一加一个偏置，这样能扩展 ADC 支持的采样电压范围。每个可配置模拟模块内部都有一个 I2C 从机，并拥有独立的地址，该模拟 I2C 控制器支持如下模拟模块的配置：
+
+
+
+\begin{itemize}
+    \item CPU\_PLL：主要包含 CPLL\_CLK 的配置寄存器, 从机地址为 0x67， CPLL\_CLK 参见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}
+    \item SYS\_PLL：主要包含 SPLL\_CLK 的配置寄存器，从机地址为 0x66，SPLL\_CLK 参见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}
+    \item MSPI：主要包含 MPLL\_CLK 的配置寄存器，从机地址为 0x63，MPLL\_CLK 参见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}
+    \item PLLA：主要包含 APLL\_CLK 的配置寄存器，从机地址为 0x6f，APLL\_CLK 参见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}
+    \item ANA\_SENSOR：主要包含模拟传感器的配置寄存器，从机地址为 0x69，主要包括 \textit{\nameref{mod:tmpsen}} 和 \textit{\nameref{mod:adc}}
+    \item BIAS：主要包含电压的检测相关的配置寄存器，从机地址为 0x6a，参见章节 \ref{mod:brownout} \textit{\nameref{mod:brownout}}
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:anai2c-features}
+
+模拟 I2C 控制器支持以下特性：
+
+\begin{itemize}
+    \item 仅支持主机模式
+    \item 7-bit 地址寻址
+    \item 传输速率可调
+    \item 支持睡眠模式下工作（LP CPU 可用的睡眠模式）
+    \item 支持双主机工作模式
+\end{itemize}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:anai2c-arch-overview}
+
+下图为模拟 I2C 控制器模块的的架构图。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ana_i2c_arch.pdf}
+    \caption{模拟 I2C 主机模块结构图}
+    \label{fig:anai2c-functional-overview}
+\end{figure}
+
+\begin{itemize}
+    \item 配置寄存器 (Configuration Registers)：寄存器模块，与软件的接口，该模块给出 I2C 主机工作的相关配置，以控制传输的地址、数据等信息，同时通过读取 I2C0/1\_MST 的状态寄存器以监控传输过程。
+    \item I2C0/1\_MST：两个 I2C 主机，支持独立并行的配置不同模拟模块，它们产生的 I2C 信号将由后级的 MUX 选择一路输出给模拟模块。
+    \item I2C signal MUX：决定某个模拟模块由 I2C0\_MST 还是 I2C1\_MST 配置。
+
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:anai2c-func-descr}
+
+\textbf{传输速率调整}
+
+可通过配置 \hyperref[fielddesc:ANAI2CMSTI2C0SDASIDEGUARD]{ANA\_I2C\_MST\_I2C\regindex{x}\_SDA\_SIDE\_GUARD} 与 \hyperref[fielddesc:ANAI2CMSTI2C0SCLPULSEDUR]{ANA\_I2C\_MST\_I2C\regindex{x}\_SCL\_PULSE\_DUR} 决定 I2C 信号的传输速率与信号相位，寄存器值与波形关系如下图所示：
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2c_phase.pdf}
+    \caption{信号相位图}
+    \label{fig:anai2c-signal-phase}
+\end{figure}
+
+\textbf{睡眠模式下的使用}
+
+芯片睡眠模式下，可使用 LP CPU（章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}）驱动模拟 I2C 控制器的工作。
+
+\textbf{双主机工作模式}
+
+该模块内置两个独立的主机模块，拥有独立的两套配置，两个主机可独立工作，配置不同的模拟模块，以此提高工作效率。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:anai2c-prog-procedures}
+
+以下为模拟 I2C 控制器配置模拟模块的流程。
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:LPPERICKENLPI2CMST]{LPPERI\_CK\_EN\_LP\_I2CMST} 为 1，使能模块时钟。
+    \item 配置 \hyperref[fielddesc:ANAI2CMSTANACONF2]{ANA\_I2C\_MST\_ANA\_CONF2} 选择要通信的模块。
+    \item 配置 \hyperref[fielddesc:ANAI2CMSTI2C0SDASIDEGUARD]{ANA\_I2C\_MST\_I2C\regindex{x}\_SDA\_SIDE\_GUARD} 与 \hyperref[fielddesc:ANAI2CMSTI2C0SCLPULSEDUR]{ANA\_I2C\_MST\_I2C\regindex{x}\_SCL\_PULSE\_DUR} 决定 I2C 信号的传输速率与信号相位。
+    \item 配置 \hyperref[fielddesc:ANAI2CMSTI2C0CTRL]{ANA\_I2C\_MST\_I2C\regindex{x}\_CTRL} 选择本次通讯的相关信息。
+    \item 读取 \hyperref[fielddesc:ANAI2CMSTI2C0BUSY]{ANA\_I2C\_MST\_I2C\regindex{x}\_BUSY}，若读到该寄存器拉低，代表 I2C\regindex{x} 当次通信结束。
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{anai2c-reg-summ}{}
+\section{寄存器列表}
+\label{sec:anai2c-reg-summ}
+
+本小节的所有地址均为相对于模拟 I2C 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/46-ANAI2C-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于模拟 I2C 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/46-ANAI2C-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,414 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./18-SDHOST}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{sdhost}{}
+\chapter{SD/MMC Host Controller (SDHOST)}
+\label{mod:sdhost}
+
+
+\section{Overview}
+
+The \chipname{} memory card interface controller provides a hardware interface between the Advanced Peripheral Bus (APB) and an external memory device. The memory card interface allows the \chipname{} to be connected to SDIO memory cards, MMC cards and devices with a CE-ATA interface. It supports two external cards (Card0 and Card1).
+And all SD/MMC module interface signals only connect to GPIO pad by GPIO matrix.
+
+\section{Features}
+This module supports the following features:
+\begin{itemize}
+    \item Two external cards
+    \item SD Memory Card standard: V3.0 and V3.01
+    \item MMC: V4.41, V4.5, and V4.51
+    \item CE-ATA: V1.1
+    \item Up to 80 MHz clock output
+    \item 1-bit, 4-bit, and 8-bit modes
+\end{itemize}
+
+\begin{tiplisting}
+When working at 80 MHz, the clock phase adjustment is limited and only phase 0° and 180° are supported. The PCB layout should be optimized accordingly to ensure timing closure. For details, see Section \ref{sec:sdhost-phase-selection} \textit{\nameref{sec:sdhost-phase-selection}}.
+\end{tiplisting}
+
+The SD/MMC controller topology is shown in Figure \ref{fig:sdhost-card-system-topo}.
+The controller supports two peripherals which cannot be functional at the same time.
+
+\begin{figure}[H]
+    \centering
+   \includegraphics[width=0.55\textwidth]{./18-SDHOST/figures/18-SDHOST-card-system-topo.eps}
+    \caption{SD/MMC Controller Topology}
+    \label{fig:sdhost-card-system-topo}
+\end{figure}
+
+\section{SD/MMC External Interface Signals}
+The primary external interface signals, which enable the SD/MMC controller to communicate with an external device, are clock (sdhost\_cclk\_out\_1.eg:card1), command (sdhost\_ccmd\_out\_1) and data signals \\(sdhost\_cdata\_in\_1[7:0]/sdhost\_cdata\_out\_1[7:0]). Additional signals include the card interrupt, card detect, and write-protect signals. The direction of each signal is shown in Figure \ref{fig:sdhost-external-interface-signals}. The direction and description of each pin are listed in Table \ref{tab:sdhost-signal-description}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./18-SDHOST/figures/18-SDHOST-external-signals.eps}
+    \caption{SD/MMC Controller External Interface Signals}
+    \label{fig:sdhost-external-interface-signals}
+\end{figure}
+
+\input{./18-SDHOST/tables/18-SDHOST-signal-desc__EN}
+
+\section{Functional Description}
+\subsection{SD/MMC Host Controller Architecture}
+The SD/MMC host controller consists of two main functional blocks, as shown in Figure \ref{fig:sdhost-block-diagram}:
+
+\begin{itemize}
+    \item Bus Interface Unit (BIU): It provides APB interfaces for registers, data access method for RAM, and data read and write operation by DMA.
+    \item Card Interface Unit (CIU): It handles external memory card interface protocols. It also provides clock control.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{./18-SDHOST/figures/18-SDHOST-block-diagram}
+    \caption{SDIO Host Block Diagram}
+    \label{fig:sdhost-block-diagram}
+\end{figure}
+
+\subsubsection{Bus Interface Unit (BIU)}
+The BIU provides the access to registers and RAM data through the Host Interface Unit (HIU). Additionally, it provides a method to access to memory data through a DMA interface. Figure \ref{fig:sdhost-block-diagram} illustrates the internal components of the BIU. Figure \ref{fig:sdhost-clock-phase-selection} illustrates the clock selection. The BIU provides the following functions:
+
+\begin{itemize}
+	\item Host interface
+	\item DMA interface
+	\item Interrupt control
+	\item Register access
+	\item FIFO access
+	\item Power/pull-up control and card detection
+\end{itemize}
+
+\subsubsection{Card Interface Unit (CIU)}
+The CIU module implements the card-specific protocols. Within the CIU, the command path control unit and data path control unit are used to interface with the command and data ports, respectively, of the SD/MMC/CE-ATA cards. The CIU also provides clock control. Figure \ref{fig:sdhost-block-diagram} illustrates the internal structure of the CIU, which consists of the following primary functional blocks:
+
+\begin{itemize}
+	\item Command path
+	\item Data path
+	\item SDIO interrupt control
+	\item Clock control
+	\item Mux/De-Mux unit
+\end{itemize}
+
+\subsection{Command Path}
+The command path performs the following functions:
+
+\begin{itemize}
+	\item Configures clock parameters
+	\item Configures card command parameters
+	\item Sends commands to card bus (sdhost\_ccmd\_out line)
+	\item Receives responses from card bus (sdhost\_ccmd\_in line)
+	\item Sends responses to BIU
+	\item Drives the P-bit on the command line
+\end{itemize}
+
+The command path State Machine is shown in Figure \ref{fig:sdhost-cmd-state-machine}.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\textwidth]{./18-SDHOST/figures/18-SDHOST-cmd-state-machine.eps}
+    \caption{Command Path State Machine}
+    \label{fig:sdhost-cmd-state-machine}
+\end{figure}
+
+\subsection{Data Path}
+
+The data path block pops RAM data and transmits them on sdhost\_cdata\_out during a write-data transfer, or it receives data on sdhost\_cdata\_in and pushes them into RAM during a read-data transfer. The data path loads new data parameters, i.e., expected data, read/write data transfer, stream/block transfer, block size, byte count, card type, timeout registers, etc., whenever a data transfer command is not in progress.
+
+If the SDHOST\_DATA\_EXPECTED bit is set in \hyperref[regdesc:CMDREG]{SDHOST\_CMD\_REG} register, the new command is a data-transfer command and the data path starts one of the following operations:
+
+\begin{itemize}
+\item Transmitting data if the SDHOST\_READ\_WRITE bit is 1
+\item Receiving data if the SDHOST\_READ\_WRITE bit is 0
+\end{itemize}
+
+\subsubsection{Data Transmit Operation}
+
+The module starts data transmission two clock cycles after a response for the data-write command is received. This occurs even if the command path detects a response error or a cyclic redundancy check (CRC) error in a response. If no response is received from the card until the response timeout, no data are transmitted. Depending on the value of the SDHOST\_TRANSFER\_MODE bit in \hyperref[regdesc:CMDREG]{SDHOST\_CMD\_REG} register, the data-transmit state machine adds data to the card's data bus in a stream or in block(s).
+The data transmit state machine is shown in Figure \ref{fig:sdhost-tx-data-state-machine}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\textwidth]{./18-SDHOST/figures/18-SDHOST-tx-state-machine.eps}
+    \caption{Data Transmit State Machine}
+    \label{fig:sdhost-tx-data-state-machine}
+\end{figure}
+
+\subsubsection{Data Receive Operation}
+
+The module receives data two clock cycles after the end bit of a data-read command, even if the command path detects a response error or a CRC error. If no response is received from the card and a response timeout occurs, the BIU does not receive a signal about the completion of the data transfer. If the command sent by the CIU is an illegal operation for the card, it would prevent the card from starting a read-data transfer, and the BIU will not receive a signal about the completion of the data transfer.
+
+If no data is received by the data timeout, the data path signals a data timeout to the BIU, which marks an end to the data transfer. Based on the value of the SDHOST\_TRANSFER\_MODE bit in \hyperref[regdesc:CMDREG]{SDHOST\_CMD\_REG} register, the data-receive state machine gets data from the card's data bus in a stream or block(s).
+The data receive state machine is shown in Figure \ref{fig:sdhost-rx-data-state-machine}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\textwidth]{./18-SDHOST/figures/18-SDHOST-rx-state-machine.eps}
+    \caption{Data Receive State Machine}
+    \label{fig:sdhost-rx-data-state-machine}
+\end{figure}
+
+\section{Software Restrictions for Proper CIU Operation}
+\begin{itemize}
+	\item Only one card at a time can be selected to execute a command or data transfer. For example, when data are being transferred to or from a card, a new command must not be issued to another card. A new command, however, can be issued to the same card, allowing it to read the device status or stop the transfer.
+	\item Only one command at a time can be issued for data transfers.
+	\item During an open-ended card-write operation, if the card clock is stopped due to RAM being empty, the software must fill RAM with data first, and then start the card clock. Only then can it issue a stop/abort command to the card.
+	\item During an SDIO/Combo card transfer, if the card function is suspended and the software wants to resume the suspended transfer, it must first reset RAM, setting SDHOST\_FIFO\_RESET bits and then issue the resume command as if it were a new data-transfer command.
+	\item When issuing card reset commands (CMD0, CMD15 or CMD52\_reset), while a card data transfer is in progress, the software must set the SDHOST\_STOP\_ABORT\_CMD bit in \hyperref[regdesc:CMDREG]{SDHOST\_CMD\_REG} register, so that the CIU can stop the data transfer after issuing the card reset command.
+	\item When the data's end bit error is set in the \hyperref[regdesc:RINTSTSREG]{SDHOST\_RINTSTS\_REG} register, the CIU does not guarantee SDIO interrupts. In such a case, the software ignores SDIO interrupts and issues a stop/abort command to the card, so that the card stops sending read-data.
+    \item If the card clock is stopped due to RAM being full during a card read, the software will read at least two RAM locations to restart the card clock.
+	\item Only one CE-ATA device  at a time can be selected for a command or data transfer. For example, when data are transferred from a CE-ATA device, a new command should not be sent to another CE-ATA device.
+	\item If a CE-ATA device's interrupts are enabled (nIEN=0), a new SDHOST\_RW\_BLK command should not be sent to the same device if the execution of a SDHODT\_RW\_BLK command is already in progress. Only the CCSD can be sent while waiting for the CCS.
+	\item If, however, a CE-ATA device's interrupts are disabled (nIEN=1), a new command can be issued to the same device, allowing it to read status information.
+	\item Open-ended transfers are not supported in CE-ATA devices.
+	\item The sdhost\_send\_auto\_stop signal is not supported (software should not set the sdhost\_send\_auto\_stop bit) in CE-ATA transfers.
+\end{itemize}
+
+After configuring the command start bit to 1, the values of the following registers cannot be changed before a command has been issued:
+
+\begin{itemize}
+	\item CMD - command
+	\item CMDARG -  command argument
+	\item BYTCNT -  byte count
+	\item BLKSIZ -  block size
+	\item CLKDIV -  clock divider
+	\item CKLENA -  clock enable
+	\item CLKSRC -  clock source
+	\item TMOUT -   timeout
+	\item CTYPE -   card type
+\end{itemize}
+
+\section{RAM for Receiving and Sending Data}
+
+The submodule RAM is a buffer area for sending and receiving data. It can be divided into two units: the one is for sending data, and the other is for receiving data. The process of sending and receiving data can also be achieved by the CPU and DMA for reading and writing. The latter method is described in detail in Section \ref{sec:sdhost-linked-list}.
+
+\subsection{TX RAM Module}
+
+There are two ways to enable a write operation: DMA and CPU read/write.
+
+If SDIO-sending is enabled, data can be written to the TX RAM module by APB interface. Data will be written to register \hyperref[regdesc:BUFFIFOREG]{SDHOST\_BUFFIFO\_REG} from the CPU, directly, by an APB interface.
+
+Another way of data transmission is by DMA.
+
+\subsection{RX RAM Module}
+
+There are two ways to enable a read operation: DMA and CPU read/write.
+
+When the data path receives data, the data will be written to the RX RAM. Then, these data can be read with the APB method at the reading end. Register \hyperref[regdesc:BUFFIFOREG]{SDHOST\_BUFFIFO\_REG} can be read by the APB directly.
+
+Another way of receiving data is by DMA.
+
+\section{DMA Descriptor Chain}
+Each linked list module consists of two parts: the linked list itself and a data buffer. In other words, each module points to a unique data buffer and the linked list that follows the module. Figure \ref{fig:sdhost-chain-descriptor} shows the descriptor chain.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./18-SDHOST/figures/18-SDHOST-chain-descriptor.eps}
+    \caption{Descriptor Chain}
+    \label{fig:sdhost-chain-descriptor}
+\end{figure}
+
+\section{The Structure of DMA Descriptor Chain}
+\label{sec:sdhost-linked-list}
+Each linked list consists of four words. As is shown below, Figure \ref{fig:sdhost-linked-list-structure} demonstrates the linked list's structure, and Table \ref{tab:sdhost-DES0}, Table \ref{tab:sdhost-DES1}, Table \ref{tab:sdhost-DES2}, Table \ref{tab:sdhost-DES3} provide the descriptions of linked lists.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./18-SDHOST/figures/18-SDHOST-linkded-list}
+    \caption{The Structure of a Linked List}
+    \label{fig:sdhost-linked-list-structure}
+\end{figure}
+
+The DES0 element contains control and status information.
+
+\input{./18-SDHOST/tables/18-SDHOST-des0__EN}
+
+The DES1 element contains the buffer size.
+
+\input{./18-SDHOST/tables/18-SDHOST-des1__EN}
+
+The DES2 element contains the address pointer to the data buffer.\\
+
+\input{./18-SDHOST/tables/18-SDHOST-des2__EN}
+
+The DES3 element contains the address pointer to the next descriptor if the present descriptor is not the last one in a chained descriptor structure.
+
+\input{./18-SDHOST/tables/18-SDHOST-des3__EN}
+
+\section{Initialization}
+\subsection{DMA Initialization}
+
+The DMA Controller initialization should proceed as follows:
+
+\begin{enumerate}
+\item  Write to the DMA Bus Mode Register (\hyperref[regdesc:BMODREG]{SDHOST\_BMOD\_REG}) will set the Host bus's access parameters.
+\item Write to the DMA Interrupt Enable Register (\hyperref[regdesc:IDINTENREG]{SDHOST\_IDINTEN\_REG}) will mask any unnecessary interrupt causes.
+\item The software driver creates either the inlink or the outlink descriptors. Then, it writes to the DMA Descriptor List Base Address Register (\hyperref[regdesc:DBADDRREG]{SDHOST\_DBADDR\_REG}), providing the DMA Controller with the starting address of the list.
+\item The DMA Controller engine attempts to acquire descriptors from descriptor lists.
+\end{enumerate}
+
+\subsection{DMA Transmission Initialization}
+
+The DMA transmission occurs as follows:
+
+\begin{enumerate}
+\item The Host sets up the elements (DES0-DES3) for transmission, and sets the OWNER bit (DES0[31]). The Host also prepares the data buffer.
+\item The Host programs the write-data command in the CMD register in BIU.
+\item The Host also programs the required transmit threshold  (SDHOST\_TX\_WMARK field in \hyperref[regdesc:FIFOTHREG]{SDHOST\_FIFOTH\_REG} register).
+\item The DMA Controller engine fetches the descriptor and checks the OWNER bit. If the OWNER bit is not set, it means that the host owns the descriptor. In this case, the DMA Controller enters a suspend-state and asserts the Descriptor Unable interrupt in the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register. In such a case, the host needs to release the DMA Controller by writing any value to \hyperref[regdesc:PLDMNDREG]{SDHOST\_PLDMND\_REG}.
+\item It then waits for the Command Done (CD) bit in DHOST\_RINTSTS\_REG register and no errors from BIU, which indicates that a transfer has completed.
+\item Subsequently, the DMA Controller engine waits for a DMA interface request from BIU. This request will be generated, based on the programmed transmit-threshold value. For the last bytes of data which cannot be accessed using a burst, single transfers are performed on the AHB Master Interface.
+\item The DMA Controller fetches the transmit data from the data buffer in the Host memory and transfers them to RAM for transmission to card.
+\item When data span across multiple descriptors, the DMA Controller fetches the next descriptor and extends its operation using the following descriptor. The last descriptor bit indicates whether the data span multiple descriptors or not.
+\item When data transmission is complete, the status information is updated in the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register by setting the SDHOST\_IDSTS\_TI, if it has already been enabled. Also, the OWNER bit is cleared by the DMA Controller by performing a write transaction to DES0.
+\end{enumerate}
+
+\subsection{DMA Reception Initialization}
+
+The DMA  reception occurs as follows:
+
+\begin{enumerate}
+\item The Host sets up the element (DES0-DES3) for reception, and sets the OWNER bit (DES0[31]).
+\item The Host programs the read-data command in the CMD register in BIU.
+\item Then, the Host programs the required level of the receive-threshold (SDHOST\_RX\_WMARK field in \hyperref[regdesc:FIFOTHREG]{SDHOST\_FIFOTH\_REG} register).
+\item The DMA Controller engine fetches the descriptor and checks the OWNER bit. If the OWNER bit is not set, it means that the host owns the descriptor. In this case, the DMA enters a suspend-state and asserts the Descriptor Unable interrupt in the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register. In such a case, the host needs to release the DMA Controller by writing any value to \hyperref[regdesc:PLDMNDREG]{SDHOST\_PLDMND\_REG}.
+\item It then waits for the Command Done (CD) bit and no errors from BIU, which indicates that a reception can be done.
+\item The DMA Controller engine then waits for a DMA interface request from BIU. This request will be generated, based on the programmed receive-threshold value. For the last bytes of the data which cannot be accessed using a burst, single transfers are performed on the AHB.
+\item The DMA Controller fetches the data from RAM and transfers them to the Host memory.
+\item When data span across multiple descriptors, the DMA Controller will fetch the next descriptor and extend its operation using the following descriptor. The last descriptor bit indicates whether the data span multiple descriptors or not.
+\item When data reception is complete, the status information is updated in the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register by setting SDHOST\_IDSTS\_RI, if it has already been enabled. Also, the OWNER bit is cleared by the DMA Controller by performing a write-transaction to DES0.
+\end{enumerate}
+
+\section{Clock Phase Selection}\label{sec:sdhost-phase-selection}
+
+If the setup time requirements for the input or output data signal are not met, users can specify the clock phase, as shown in the figure \ref{fig:sdhost-clock-phase-selection}.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.5\textwidth]{./18-SDHOST/figures/18-sdhost-clock-phase-selection.pdf}}
+    \caption{Clock Phase Selection}
+    \label{fig:sdhost-clock-phase-selection}
+\end{figure}
+
+This issue can be fixed by configuring register \hyperref[regdesc:CLKEDGESEL]{SDHOST\_CLK\_DIV\_EDGE\_REG}. For example, set CCLKIN\_EDGE\_DRV\_SEL bit to 0 to drive the output data in phase0, and set the CCLKIN\_EDGE\_SAM\_SEL bit to 1 to select phase90 to sample the data from SDIO slave, if there are still timing issue, please set bit 4 or 6 to use phase180 or phase 270 to sample the data from SDIO slave.
+
+Please find detailed information on the clock phase selection register \hyperref[regdesc:CLKEDGESEL]{SDHOST\_CLK\_DIV\_EDGE\_REG} in Section Registers.
+
+\input{./18-SDHOST/tables/18-sdhost-clksel__EN}
+
+\section{Interrupt}
+Interrupts can be generated as a result of various events. The \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register contains all the bits that might cause an interrupt. The \hyperref[regdesc:IDINTENREG]{SDHOST\_IDINTEN\_REG} register contains an enable bit for each of the events that can cause an interrupt.
+
+There are two groups of summary interrupts, "Normal" ones (bit8 SDHOST\_IDSTS\_NIS) and "Abnormal" ones (bit9 SDHOST\_IDSTS\_AIS), as outlined in the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register. Interrupts are cleared by writing 1 to the position of the corresponding bit. When all the enabled interrupts within a group are cleared, the corresponding summary bit is also cleared. When both summary bits are cleared, the interrupt signal connected to CPU is de-asserted (stops signalling).
+
+Interrupts are not queued up, and if a new interrupt-event occurs before the driver has responded to it, no additional interrupts are generated. For example, the SDHOST\_IDSTS\_RI indicates that one or more data were transferred to the Host buffer.
+
+An interrupt is generated only once for concurrent events. The driver must scan the \hyperref[regdesc:IDSTSREG]{SDHOST\_IDSTS\_REG} register for the interrupt cause.
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{sdhost-reg-summ}{}
+\section{Register Summary}
+\label{sec:sdhost-reg-summ}
+
+The addresses in this section are relative to SD/MMC Host Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/18-SDHOST-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to SD/MMC Host Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/18-SDHOST-reg__EN}
+
+
+\end{document}

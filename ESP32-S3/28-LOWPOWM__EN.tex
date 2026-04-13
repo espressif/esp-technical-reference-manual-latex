@@ -1,0 +1,704 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./28-LPM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{lowpowm}{}
+\chapter{Low-power Management (RTC\_CNTL)}\label{mod:lowpowm}
+
+\section{Introduction}
+
+\chipname{} has an advanced Power Management Unit (PMU), which can flexibly power up different power domains of the chip, to achieve the best balance among chip performance, power consumption, and wakeup latency. To simplify power management for typical scenarios, \chipname{} has predefined four power modes, which are preset configurations that power up different combinations of power domains. On top of that, the chip also allows the users to independently power up any particular power domain to meet more complex requirements. \chipname{} has integrated two Ultra-Low-Power coprocessors (ULP co-processors), which allow the chip to work when most of the power domains are powered down, thus achieving extremely low-power consumption.
+
+\section{Features}
+\chipname{}'s low-power management supports the following features:
+\begin{itemize}
+    \item Four predefined power modes to simplify power management for typical scenarios
+    \item Up to 16 KB of retention memory (slow memory and fast memory)
+    \item 8 x 32-bit retention registers
+    \item RTC Boot supported for reduced wakeup latency
+    \item ULP co-processors supported in all power modes
+
+\end{itemize}
+
+In this chapter, we first introduce the working process of \chipname{}'s low-power management, then introduce the predefined power modes of the chip, and at last, introduce the RTC boot of the chip.
+
+\section{Functional Description}
+
+\chipname{}'s low-power management involves the following components:
+
+\begin{itemize}
+    \item Power management unit: controls the power supply to three power domain categories
+    \begin{itemize}
+        \item Real Time Controller (RTC)
+        \item Digital
+        \item Analog
+    \end{itemize}
+    For a complete list of 10 power domains grouped in these three power domain categories, see Section \ref{sec:lpm-power-domain}.
+    \item Power isolation unit: isolates different power domains, so powered up and powered down domains do not affect each other.
+    \item Low-power clocks: provide clocks to power domains working in low-power modes.
+    \item Timers:
+    \begin{itemize}
+        \item RTC timer: logs the status of the RTC main state machine in dedicated registers.
+        \item ULP timer: wakes up the ULP co-processors at a predefined time. For details, please refer to Chapter \ref{mod:ulp} \textit{\nameref{mod:ulp}}.
+        \item Touch sensor timer: wakes up the touch sensor at a predefined time. For details, please refer to Chapter \ref{mod:sensor} \textit{\nameref{mod:sensor}}.
+    \end{itemize}
+    \item 8 x 32-bit ``always-on" retention registers: These registers are always powered up and are not affected by any low-power modes, thus can be used for storing data that cannot be lost.
+    \item 22 x ``always-on" pins: These pins are always powered up and not affected by any low-power modes. They can be used as wakeup sources when the chip is working in the low-power modes (for details, please refer to Section \ref{sec:lpm-wakeup-source}), or can be used as regular GPIOs (for details, please refer to Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}).
+    \item RTC slow memory: 8 KB SRAM that works under RTC fast clock (rtc\_fast\_clk), which can be used as extended memory or to store ULP co-processor directives and data.
+    \item RTC fast memory: 8 KB SRAM that works under CPU clock (CPU\_CLK), which can be used as extended memory.
+    \item Voltage regulators: regulate the power supply to different power domains.
+\end{itemize}
+
+The schematic diagram of \chipname{}'s low-power management is shown in Figure \ref{fig:lpm-ESP32-power-control}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/28-LPM-power_ctrl.pdf}
+    \caption{Low-power Management Schematics}
+    \label{fig:lpm-ESP32-power-control}
+\end{figure}
+
+
+
+
+\clearpage
+\begin{tiplisting}
+\begin{itemize}
+\vspace{-3em}
+    \item For a complete list of all power domains and power domain categories, please check Section \ref{sec:lpm-power-domain}.
+    \item Signals in the above diagram are described below:
+    \begin{itemize}
+        \item xpd\_rtc\_reg:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLRTCREGULATORFORCEPU]{RTC\_CNTL\_RTC\_REGULATOR\_FORCE\_PU} is set to 1, low power voltage regulator is always-on;
+            \item Otherwise, the low power voltage regulator is off when chip enters Light-sleep and Deep-sleep modes. In this case, the RTC domain is powered by an ultra low-power internal power source.
+        \end{itemize}
+        \item xpd\_dig\_reg:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_DG\_WRAP\_PD\_EN} is enabled, the digital voltage regulator is off when the chip enters Light-sleep and Deep-sleep modes;
+            \item Otherwise, the digital voltage regulator is always on.
+        \end{itemize}
+        \item xpd\_peri:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_RTC\_PD\_EN} is enabled, RTC peripherals is off when chip enters Light-sleep and Deep-sleep modes;
+            \item Otherwise, the RTC peripherals are always on.
+        \end{itemize}
+
+        \item xpd\_cpu:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_CPU\_PD\_EN} is enabled, CPU is off when chip enters Light-sleep and Deep-sleep modes;
+            \item Otherwise, the CPU is always on.
+        \end{itemize}
+        \item xpd\_pd\_peri:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_DG\_PERI\_PD\_EN} is enabled, the PD Peripherals are off when chip enters Light-sleep and Deep-sleep modes;
+            \item Otherwise, the PD peripherals are always on.
+        \end{itemize}
+
+        \item xpd\_dg\_wrap: this signal is always the same with xpd\_dig\_reg.
+
+        \item xpd\_wireless:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_WIFI\_PD\_EN} is enabled, the wireless circuit is off when chip enters Light-sleep and Deep-sleep modes;
+            \item Otherwise, the wireless circuit is always on.
+        \end{itemize}
+
+        \item xpd\_sdio\_reg: see Section \ref{sec:lowpowm-flash} below.
+        \item  xpd\_ex\_crystal:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:RTCCNTLXTLFORCEPU]{RTC\_CNTL\_XTL\_FORCE\_PU} is set to 1, the external main crystal clock is always-on;
+            \item Otherwise, the external main crystal clock is off when chip enters Light-sleep and Deep-sleep modes.
+        \end{itemize}
+        \item xpd\_rc\_oscilator:
+        \begin{itemize}
+            \item when \hyperref[fielddesc:RTCCNTLCK8MFORCEPU]{RTC\_CNTL\_CK8M\_FORCE\_PU} is set to 1, the fast RC oscillator is always-on;
+            \item Otherwise, the fast RC oscillator is off when chip enters Light-sleep and Deep-sleep modes.
+        \end{itemize}
+        \item RF Circuits and Phase Lock Loop (PLL) are controlled by internal signals and cannot be modified by users.
+\end{itemize}
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Power Management Unit}
+
+\chipname{}'s power management unit controls the power supply to different power domains. The main components of the power management unit include:
+
+\begin{itemize}
+    \item RTC main state machine: generates power gating, clock gating, and reset signals.
+    \item Power controllers: power up and power down different power domains, according to the power gating signals from the main state machine.
+    \item Sleep/wakeup controllers: send sleep or wakeup requests to the RTC main state machine.
+    \item Clock controller: selects and powers up/down clock sources.
+    \item Protection Timer: controls the transition interval between main state machine states.
+\end{itemize}
+
+In \chipname{}'s power management unit, the sleep/wakeup controllers send sleep or wakeup requests to the RTC main state machine, which then generates power gating, clock gating, and reset signals. Then, the power controller and clock controller power up and power down different power domains and clock sources, according to the signals generated by the RTC main state machine, so that the chip enters or exits the low-power modes. The main workflow is shown in Figure \ref{fig:lpm-RTC-structure}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/28-LPM-rtc_structure.pdf}
+    \caption{Power Management Unit Workflow}
+    \label{fig:lpm-RTC-structure}
+\end{figure}
+
+\begin{tiplisting}
+\vspace{-3em}
+\begin{enumerate}
+    \item For a complete list of power domains, please refer to Section \ref{sec:lpm-power-domain}.
+    \item For a complete list of all the available wakeup sources, please refer to  Table \ref{tab:lpm-wakeup-source}.
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Low-Power Clocks}
+
+In general, \chipname{} powers down its external crystal XTAL\_CLK and PLL to reduce power consumption when working in low-power modes. During this time, the chip's low-power clocks remain on to provide clocks to different power domains, such as the power management unit, RTC peripherals, RTC fast memory, RTC slow memory, and wireless circuits in the digital domain.
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/28-LPM-rtc_clock.pdf}
+\caption{RTC Clocks}
+\label{fig:lpm-RTC-clocks}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/28-LPM-low_power_clk.pdf}
+\caption{Wireless Clocks}
+\label{fig:lpm-Digital-low-power-clocks}
+\end{figure}
+
+\begin{table}[H]
+\caption{Low-Power Clocks}\label{tab:lpm-clock-type}
+\begin{tabular}{| l |l| l | L{4.5cm}| }
+\hline
+\rowcolor{lightgray}
+\textbf{Clock Type} & \textbf{Clock Source}  & \textbf{Selection Option}                                                      & \textbf{Effective for} \\ \hline
+
+\multirow{3}*{RTC Slow Clock}    & XTAL32K\_CLK &  & Power management unit \\ \cline{2-2}\cline{4-4}
+                            & RC\_FAST\_DIV\_CLK &  &  RTC Timers \\ \cline{2-2} \cline{4-4}
+ & RC\_SLOW\_CLK (Default)& \multirow{-3}{*}{\hyperref[fielddesc:RTCCNTLANACLKRTCSEL]{RTC\_CNTL\_ANA\_CLK\_RTC\_SEL}} &  ULP Timers \\\hline
+
+\multirow{4}*{RTC Fast Clock} & RC\_FAST\_CLK divided by n &  & ULP co-processor \\\cline{4-4}
+& (Default) &  & Sensor controller \\\cline{2-2} \cline{4-4}
+&  &  & RTC registers \\ \cline{4-4}
+ & \multirow{-2}{*}{XTAL\_DIV\_CLK} & \multirow{-4}{*}{\hyperref[fielddesc:RTCCNTLFASTCLKRTCSEL]{RTC\_CNTL\_FAST\_CLK\_RTC\_SEL}} & RTC slow memory \\\hline
+
+
+\multirow{4}*{Wireless Clock}& XTAL32K\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL32K} & \multirow{4}*{\makecell[l]{Wireless modules (Wi-Fi/BT)\\ in the digital domain working \\ in low-power modes}} \\ \cline{2-3}
+& RC\_FAST\_CLK divided by n  & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_8M} &  \\ \cline{2-3}
+& RTC\_SLOW\_CLK & \hyperref[fielddesc:SYSTEMLPCLKSELRTCSLOW]{SYSTEM\_LPCLK\_SEL\_RTC\_SLOW} &  \\ \cline{2-3}
+ & XTAL\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL} &  \\\hline
+\end{tabular}
+\end{table}
+
+For more detailed description about clocks, please refer to \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+\subsection{Timers}
+
+\chipname{}'s low-power management uses 3 timers:
+\begin{itemize}
+    \item RTC timer
+    \item ULP timer
+    \item Touch timer
+\end{itemize}
+
+This section only introduces the RTC timer. For detailed description of ULP timer, please refer to Chapters \ref{mod:ulp} \textit{\nameref{mod:ulp}}. For detailed description of touch timer, please refer to Chapters \ref{mod:sensor} \textit{\nameref{mod:sensor}}.
+
+The readable 48-bit RTC timer is a real-time counter (using RTC slow clock) that can be configured to log the time when one of the following events happens. For details, see Table \ref{tab:lpm-Update-RTC-TIMER-VALUE}.
+
+\begin{longtable}[c]{|p{5.5cm}|p{9cm}|}
+    \caption{The Triggering Conditions for the RTC Timer} \label{tab:lpm-Update-RTC-TIMER-VALUE}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Enabling Options} & \textbf{Triggering Conditions} \\
+    \hline
+    \multirow{2}{*}{\hyperref[fielddesc:RTCCNTLTIMERXTLOFF]{RTC\_CNTL\_TIMER\_XTL\_OFF}} & RTC main state machine powers down or XTAL\_CLK crystal powers up.\\
+    \hline
+    \multirow{2}{*}{\hyperref[fielddesc:RTCCNTLTIMERSYSSTALL]{RTC\_CNTL\_TIMER\_SYS\_STALL}} & CPU enters or exits the stall state. This is to ensure the SYS\_TIMER is continuous in time. \\
+    \hline
+    \hyperref[fielddesc:RTCCNTLTIMERSYSRST]{RTC\_CNTL\_TIMER\_SYS\_RST} & Resetting digital core completes.\\
+    \hline
+    \multirow{2}{*}{\hyperref[fielddesc:RTCCNTLRTCTIMEUPDATE]{RTC\_REG\_TIME\_UPDATE}} & Register \hyperref[fielddesc:RTCCNTLRTCTIMEUPDATE]{RTC\_CNTL\_RTC\_TIME\_UPDATE} is configured by CPU (i.e., users).\\
+    \hline
+\end{longtable}
+
+
+The RTC timer updates two groups of registers upon any new trigger. The first group logs the time of the current trigger, and the other logs the previous trigger. Detailed information about these two register groups is shown below:
+
+\begin{itemize}
+    \item Register group 0: logs the status of RTC timer at the current trigger.
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCCNTLRTCTIMEHIGH0REG]{RTC\_CNTL\_RTC\_TIME\_HIGH0\_REG}
+        \item \hyperref[regdesc:RTCCNTLRTCTIMELOW0REG]{RTC\_CNTL\_RTC\_TIME\_LOW0\_REG}
+    \end{itemize}
+    \item Register group 1: logs the status of RTC timer at the previous trigger.
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCCNTLRTCTIMEHIGH1REG]{RTC\_CNTL\_RTC\_TIME\_HIGH1\_REG}
+        \item \hyperref[regdesc:RTCCNTLRTCTIMELOW1REG]{RTC\_CNTL\_RTC\_TIME\_LOW1\_REG}
+    \end{itemize}
+\end{itemize}
+
+On a new trigger, information on previous trigger is moved from register group 0 to register group 1 (and the original trigger logged in register group 1 is overwritten), and this new trigger is logged in register group 0. Therefore, only the last two triggers can be logged at any time.
+
+It should be noted that any reset/sleep other than power-up reset will not stop or reset the RTC timer.
+
+Also, the RTC timer can be used as a wakeup source. For details, see Section \ref{sec:lpm-wakeup-source}.
+
+\subsection{Voltage Regulators}
+
+\chipname{} has three voltage regulators to regulate the power supply to different power domains:
+\begin{itemize}
+    \item Digital voltage regulator for digital power domains;
+    \item Low-power voltage regulator for RTC power domains;
+    \item Flash voltage regulator for the rest of power domains.
+\end{itemize}
+
+\begin{tiplisting}
+For a full list of power domains, please refer to Section \ref{sec:lpm-power-domain}.
+\end{tiplisting}
+
+
+\subsubsection{Digital Voltage Regulator}
+
+\chipname{}'s built-in digital voltage regulator converts the external power supply (typically 3.3 V) to 1.1 V for digital power domains. This regulator is controlled by xpd\_dig\_reg (see details in Figure \ref{fig:lpm-ESP32-power-control}). For the architecture of the \chipname{} digital voltage regulator, see Figure \ref{fig:lpm-Digital-regulator}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/28-LPM-REG_DIGITAL.jpg}
+    \caption{Digital Voltage Regulator}
+    \label{fig:lpm-Digital-regulator}
+\end{figure}
+
+\subsubsection{Low-power Voltage Regulator}
+
+\chipname{}'s built-in low-power voltage regulator converts the external power supply (typically 3.3 V) to 1.1 V for RTC power domains. When the pin CHIP\_PU is at a high level, the RTC domain is always-on. The low power voltage regulator is off when chip enters Light-sleep and Deep-sleep modes. In this case, the RTC domain is powered by an ultra low-power built-in power supply (This power supply cannot be turned off). For the architecture of the \chipname{} low-power voltage regulator, see Figure \ref{fig:lpm-ESP32-power-control}.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/28-LPM-REG_RTC.pdf}
+    \caption{Low-power Voltage Regulator}
+    \label{fig:lpm-Low-power-regulator}
+\end{figure}
+
+\subsubsection{Flash Voltage Regulator} \label{sec:lowpowm-flash}
+
+\chipname{}'s built-in flash voltage regulator can supply a voltage of 3.3 V or 1.8 V to other components outside of digital and RTC, such as flash. For the architecture of the \chipname{} flash voltage regulator, see Figure \ref{fig:lpm-Flash-regulator}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/28-LPM-REG1P8.pdf}
+    \caption{Flash Voltage Regulator}
+    \label{fig:lpm-Flash-regulator}
+\end{figure}
+
+\begin{enumerate}
+    \item Configure XPD\_SDIO\_REG to select power source to components outside of the digital and RTC:
+    \begin{itemize}
+        \item 1: the voltage regulator outputs a voltage of 3.3 V or 1.8 V;
+        \item 0: the voltage regulator outputs high-impedance. In this case, the voltage is provided by the external power supply.
+    \end{itemize}
+    \item Configure SDIO\_TIEH to choose between 3.3 V or 1.8 V:
+    \begin{itemize}
+        \item 1: the voltage regulator shorts pin VDD\_SPI to pin VDD3P3\_RTC, and outputs a voltage of 3.3 V, which is the voltage of pin VDD3P3\_RTC.
+        \item 0: the voltage regulator outputs the reference voltage VREF, which is typically 1.8 V.
+    \end{itemize}
+\end{enumerate}
+The signals mentioned above can be configured as below:
+
+\begin{itemize}
+    \item The configuration of XPD\_SDIO\_REG:
+    \begin{itemize}
+       \item When the chip is in active mode, \hyperref[fielddesc:RTCCNTLSDIOFORCE]{RTC\_CNTL\_SDIO\_FORCE} == 0 and  \hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} == 1, the XPD\_SDIO\_REG voltage is defined by \hyperref[fielddesc:EFUSEVDDSPIXPD]{EFUSE\_VDD\_SPI\_XPD};
+       \item When the chip is in sleep modes and \hyperref[fielddesc:RTCCNTLSDIOREGPDEN]{ RTC\_CNTL\_SDIO\_REG\_PD\_EN} == 1, XPD\_SDIO\_REG is 0;
+       \item When \hyperref[fielddesc:RTCCNTLSDIOFORCE]{RTC\_CNTL\_SDIO\_FORCE} == 1, XPD\_SDIO\_REG is defined by \hyperref[fielddesc:RTCCNTLXPDSDIOREG]{RTC\_CNTL\_XPD\_SDIO\_REG}.
+    \end{itemize}
+    \item The configuration of SDIO\_TIEH:
+    \begin{itemize}
+        \item When \hyperref[fielddesc:RTCCNTLSDIOFORCE]{RTC\_CNTL\_SDIO\_FORCE}== 0 and \hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} == 1, SDIO\_TIEH = \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH}
+        \item Otherwise, SDIO\_TIEH = \hyperref[fielddesc:RTCCNTLSDIOTIEH]{RTC\_CNTL\_SDIO\_TIEH}.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Brownout Detector}
+
+The brownout detector checks the voltage of pins VDD3P3, VDD3P3\_RTC and VDD3P3\_CPU. If the voltage of these pins drops below the predefined threshold (2.7 V by default), the detector would trigger a signal to shut down some power-consuming blocks (such as LNA, PA, etc.) to allow extra time for the digital to save and transfer important data.
+
+The brownout detector has ultra-low power consumption and remains enabled whenever the chip is powered up.
+For the architecture of the \chipname{} brownout detector, see Figure \ref{fig:lpm-Brown-out-detector}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/28-LPM-BROWN_OUT_DET.pdf}
+   \caption{Brown-out detector}
+    \label{fig:lpm-Brown-out-detector}
+\end{figure}
+\hyperref[fielddesc:RTCCNTLRTCBROWNOUTDET]{RTC\_CNTL\_RTC\_BROWN\_OUT\_DET} indicates the output level of brown-out detector. This register is low level by default, and outputs high level when the voltage of the detected pin drops below the predefined threshold.
+
+When a brown-out signal is detected, the brownout detector can handle it in one of the two methods described below:
+\begin{itemize}
+    \item mode0: triggers an interrupt when the counter counts to the thresholds pre-defined in int comparer and rst comparer, then resets the chip based on the rst\_sel configuration. This method can be enabled by setting the bod\_mode0\_en signal.
+    \item mode1: resets the system directly.
+    \end{itemize}
+
+Workflow is illustrated in the diagram below:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/10-LOWPOWM_brownout.pdf}
+   \caption{Brown-out detector}
+    \label{fig:lpm-Brown-out-detector-mode}
+\end{figure}
+
+Registers for controlling related signals are described below:
+    \begin{itemize}
+        \item bod\_mode0\_en: \hyperref[fielddesc:RTCCNTLBROWNOUTENA]{RTC\_CNTL\_BROWN\_OUT\_ENA}
+        \item bod\_mode0\_rst\_en: \hyperref[fielddesc:RTCCNTLBROWNOUTRSTENA]{RTC\_CNTL\_BROWN\_OUT\_RST\_ENA}
+        \item bod\_mode0\_rst\_sel: \hyperref[fielddesc:RTCCNTLBROWNOUTRSTSEL]{RTC\_CNTL\_BROWN\_OUT\_RST\_SEL} configures the reset type. For more information regarding Chip Reset and System Reset, please refer to \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+            \begin{itemize}
+                \item 0: resets the chip
+                \item 1: resets the system
+            \end{itemize}
+        \item bod\_mode1\_sel: the first bit of \hyperref[fielddesc:RTCCNTLRTCFIBSEL]{RTC\_CNTL\_RTC\_FIB\_SEL}.
+        \item bod\_mode1\_rst\_en: \hyperref[fielddesc:RTCCNTLBROWNOUTANARSTEN]{RTC\_CNTL\_BROWN\_OUT\_ANA\_RST\_EN}
+    \end{itemize}
+\section{Power Modes Management}
+
+\subsection{Power Domain}\label{sec:lpm-power-domain}
+
+\chipname{} has 10 power domains in three power domain categories:
+\begin{itemize}
+    \item RTC
+        \begin{itemize}
+            \item Power management unit
+            \item RTC peripherals, including RTC GPIO, RTC I2C, Temperature Sensor, Touch Sensor, RTC ADC Controller, and ULP Coprocessor
+        \end{itemize}
+    \item Digital
+        \begin{itemize}
+            \item Digital core
+            \item Wireless digital circuits
+            \item CPU
+            \item PD peripherals, including SPI2, GDMA, SHA, RSA, AES, HMAC, DS, and Secure Boot
+        \end{itemize}
+    \item Analog
+    \begin{itemize}
+        \item Fast RC Oscillator (RC\_FAST\_CLK)
+        \item External Main Clock (XTAL\_CLK)
+        \item Phase Lock Loop (PLL)
+        \item RF circuits
+    \end{itemize}
+\end{itemize}
+
+\clearpage
+
+\subsection{RTC States}\label{sec:lpm-RTC-STATUS}
+
+\chipname{} has three main RTC states: Active, Monitor, and Sleep. The transition process among these states can be seen in Figure \ref{fig:lpm-RTC-states}.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/28-LPM-rtc_states.pdf}}
+    \caption{RTC States}
+    \label{fig:lpm-RTC-states}
+\end{figure}
+
+
+Under different RTC states, different power domains are powered up or down by default, but can also be force-powered-up (FPU) or force-powered-down (FPD) individually based on actual requirements. For details, please refer to Table \ref{tab:lpm-rtc-power-domains}.
+
+
+\begin{table}[H]
+\centering
+\caption{RTC Statues Transition}
+\label{tab:lpm-rtc-power-domains}
+\begin{threeparttable}
+\begin{tabular}{|L{3cm}|L{5cm}|l|l|l|}
+\hline
+\rowcolor{lightgray}
+\multicolumn{2}{|c|}{\textbf{Power Domain}} & \multicolumn{3}{c|}{\textbf{RTC Status}}  \\\hline
+\rowcolor{lightgray}
+\textbf{Category} & \textbf{Sub-category} & \textbf{Active} & \textbf{Monitor} & \textbf{Sleep} \\\hline
+\multirow{2}*{RTC\tnote{1,}  \tnote{  2}}                       & Power Management Unit\tnote{3}  & ON & ON  & ON  \\\cline{2-5}
+                       & RTC Peripherals\tnote{4}    & ON & ON  & OFF \\ \hline
+\multirow{4}*{Digital}  & CPU\tnote{5}  & ON & OFF* & OFF* \\ \cline{2-5}
+ & Wireless digital circuits\tnote{6} & ON & OFF* & OFF* \\  \cline{2-5}
+                       & Digital Core \tnote{7}& ON & OFF* & OFF \\ \cline{2-5}
+                       & PD Peripherals  & ON & OFF* & OFF* \\ \hline
+ \multirow{4}*{Analog}                       & RC\_FAST\_CLK  & ON & ON  & OFF \\ \cline{2-5}
+                       & XTAL\_CLK & ON & OFF & OFF \\ \cline{2-5}
+                       & PLL       & ON & OFF & OFF \\ \cline{2-5}
+ & RF Circuits      & -  & -   & -   \\ \hline
+\end{tabular}
+\begin{tablenotes}
+    \item[*] Configurable.
+    \item[1] RTC slow memory supports 8 KB SRAM, which can be used to reserve memory or to store ULP instructions and/or data. This memory (starting address is 0x{}5000\_0000) can be accessed by CPU via PIF bus, and should be force-power-on. RTC slow memory is always OFF under the RTC state of Monitor with only one exception when the ULP coprocessor is working.
+    \item[2] RTC fast memory supports 8 KB SRAM, which can be used to reserve memory. This memory can be accessed by CPU via IRAM0/DRAM0, and should be forced-power-up.
+    \item[3] \chipname{}'s power management unit is specially designed to be ``always-on", which means it is always on when the chip is powered up. Therefore, users cannot FPU or FPD the power management unit.
+    \item[4] The RTC peripherals include \ref{mod:ulp} \textit{\nameref{mod:ulp}} and \ref{mod:sensor} \textit{\nameref{mod:sensor}} (i.e., temperature sensor controller and SAR ADC controller).
+    \item[5] CPU can be powered down separately in light-sleep, but retention DMA is required to resume CPU.
+    \item[6] Power domain Wireless digital circuits includes Wi-Fi MAC, BT and BB (Base Band).
+    \item[7] When the digital core of the digital is powered down, all components in the digital are turned off. It's worth noting that, \chipname{}'s ROM and SRAM are no longer controlled as independent power domains, thus cannot be force-powered-up or force-powered-down when the digital core is powered down.
+\end{tablenotes}
+\end{threeparttable}
+
+\end{table}
+
+\subsection{Pre-defined Power Modes}
+As mentioned earlier, \chipname{} has four power modes, which are predefined configurations that power up different combinations of power domains. For details, please refer to Table \ref{tab:lpm-predefined-power-modes}.
+
+\begin{table}[H]
+    \centering
+    \caption{Predefined Power Modes}
+    \label{tab:lpm-predefined-power-modes}
+    \begin{threeparttable}
+    \begin{tabular}{|l|c|c|c|c|c|c|c|c|c|c|}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{10}{c|}{\textbf{Power Domain}} \\\cline{2-11}
+        \rowcolor{lightgray}
+        \multirow{-2}{*}{\textbf{Power Mode}} & \textbf{PMU} & \textbf{\makecell{RTC \\Peripherals}} & \textbf{\makecell{Digital\\ System}} & \textbf{CPU} & \textbf{\makecell{PD \\Peripherals}} & \textbf{\makecell{Wireless\\ Digital \\ Circuits}} & \textbf{\makecell{RC\\\_FAST\\\_CLK}} & \textbf{\makecell{XTAL\\\_CLK}} & \textbf{PLL} & \textbf{\makecell{RF \\Circuits}} \\\hline
+        Active      & ON & ON  & ON  & ON  & ON  & ON   & ON  & ON  & ON  & ON  \\ \hline
+        Modem-sleep & ON & ON  & ON  & ON  & ON  & ON\tnote{*} & ON  & ON  & ON  & OFF \\ \hline
+        Light-sleep & ON & ON  & ON  & OFF\tnote{*}  & ON\tnote{*}  & OFF\tnote{*} & OFF & OFF & OFF & OFF \\ \hline
+        Deep-sleep  & ON & ON\tnote{*}  & OFF  & OFF  & OFF & OFF     & OFF & OFF & OFF & OFF \\ \hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[*] Configurable.
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+By default, \chipname{} first enters the Modem-sleep mode after a system reset and can be configured to Active mode when transmitting or receiving packets. After the CPU stalls for a while, the chip can enter different low-power modes (including Modem-sleep, Light-sleep, and Deep-sleep) to save power. From Active to Deep-sleep, the number of available functionalities\hyperref[other:lpm-predefined-modes-notes]{$^1$} and power consumption\hyperref[other:lpm-predefined-modes-notes]{$^2$} decreases and wakeup latency increases. Also, the supported wakeup sources for different power modes are different\hyperref[other:lpm-predefined-modes-notes]{$^3$}. Users can choose a power mode based on their requirements of performance, power consumption, wakeup latency, and available wakeup sources.
+
+\begin{tiplisting}
+\vspace{-2em}
+\label{other:lpm-predefined-modes-notes}
+\begin{enumerate}
+    \item For details, please refer to Table \ref{tab:lpm-predefined-power-modes}.
+    \item For details on power consumption, please refer to the Current Consumption Characteristics in \href{https://www.espressif.com/sites/default/files/documentation/\chipname{}_datasheet_en.pdf}{\it{\chipname{} Datasheet}}.
+    \item For details on the supported wakeup sources, please refer to Section \ref{sec:lpm-wakeup-source}.
+\end{enumerate}
+\end{tiplisting}
+
+
+\subsection{Wakeup Source}\label{sec:lpm-wakeup-source}
+
+The \chipname{} supports various wakeup sources, which could wake up the CPU in different sleep modes. The wakeup source is determined by \hyperref[fielddesc:RTCCNTLRTCWAKEUPENA]{RTC\_CNTL\_RTC\_WAKEUP\_ENA} as shown in Table \ref{tab:lpm-wakeup-source}.
+
+\begin{table}[H]
+\centering
+\caption{Wakeup Source}
+\label{tab:lpm-wakeup-source}
+\begin{tabular}[h]{ | r | l | c | c | r | }
+\hline
+\rowcolor{lightgray}
+\textbf{WAKEUP\_ENA} & \textbf{Wakeup Source\hyperref[wakeup-sources-note10]{$^{10}$}} &  \textbf{Light-sleep} & \textbf{Deep-sleep}  & \textbf{Note}\\
+\hline
+0x{}1 & EXT0 & Y & Y  & \hyperref[wakeup-sources-note1]{1} \\
+\hline
+0x{}2 & EXT1 & Y & Y  & \hyperref[wakeup-sources-note2]{2} \\
+\hline
+0x{}4 & GPIO & Y & Y  & \hyperref[wakeup-sources-note3]{3} \\
+\hline
+0x{}8 & RTC timer & Y & Y  & -\\
+\hline
+0x{}20 & Wi-Fi & Y & -  & \hyperref[wakeup-sources-note4]{4} \\
+\hline
+0x{}40 & UART0 & Y & -  & \hyperref[wakeup-sources-note5]{5} \\
+\hline
+0x{}80 & UART1 & Y & -  & \hyperref[wakeup-sources-note5]{5} \\
+\hline
+0x{}100 & TOUCH  Active & Y &  Y &  \hyperref[wakeup-sources-note6]{6}\\
+\hline
+0x{}200 & ULP-FSM & Y & Y   & \hyperref[wakeup-sources-note7]{7} \\
+\hline
+0x{}400 & BT & Y & -  & \hyperref[wakeup-sources-note4]{4}\\
+\hline
+0x{}800 & ULP-RISC-V & Y & Y   &  \\\hline
+0x{}1000 & XTAL\_32K & Y & Y   & \hyperref[wakeup-sources-note8]{8} \\
+\hline
+0x{}2000 & ULP-RISC-V Trap & Y & Y  & \hyperref[wakeup-sources-note9]{9} \\
+\hline
+0x{}8000 & TOUCH Timeout & Y & Y  & - \\\hline
+0x{}c000 & BROWNOUT & Y & Y & - \\\hline
+\end{tabular}
+\end{table}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+\item \label{wakeup-sources-note1}EXT0 can only wake up the chip from Light-sleep/Deep-sleep modes. If \hyperref[fielddesc:RTCCNTLEXTWAKEUP0LV]{RTC\_CNTL\_EXT\_WAKEUP0\_LV} is 1, it's triggered when the pin level is high. Otherwise, it's triggered when the pin level is low. Users can configure RTCIO\_EXT\_WAKEUP0\_SEL to select an RTC pin as a wakeup source.
+\item \label{wakeup-sources-note2}EXT1 is especially designed to wake up the chip from any sleep modes, and can be triggered by a combination of pins. Users should define the combination of wakeup sources by configuring \hyperref[fielddesc:RTCCNTLEXTWAKEUP1SEL]{RTC\_CNTL\_EXT\_WAKEUP1} \hyperref[fielddesc:RTCCNTLEXTWAKEUP1SEL]{\_SEL[17:0]} according to the bitmap of selected wakeup source. When \hyperref[fielddesc:RTCCNTLEXTWAKEUP1LV]{RTC\_CNTL\_EXT\_WAKEUP1\_LV} == 1, the chip is waken up if any pin in the combination is high level. When \hyperref[fielddesc:RTCCNTLEXTWAKEUP1LV]{RTC\_CNTL\_EXT\_WAKEUP1\_LV} == 0, the chip is only waken up if any pins in the combination is low level. {\bfseries Note} that the EXT1 hold time should be longer than three RTC slow clock cycles, otherwise the signal status will not be captured in \hyperref[regdesc:RTCCNTLRTCEXTWAKEUP1STATUSREG]{RTC\_CNTL\_EXT\_WAKEUP1\_STATUS}.
+\item \label{wakeup-sources-note3}In Deep-sleep mode, only the RTC GPIOs (not regular GPIOs) can work as a wakeup source.
+\item \label{wakeup-sources-note4}To wake up the chip with a Wi-Fi or BT source, the chip switches between the Active, Modem-sleep, and Light-sleep modes. The CPU and radio are woken up at predetermined intervals to keep
+Wi-Fi/BT connections active.
+\item \label{wakeup-sources-note5}A wakeup is triggered when the number of RX pulses received exceeds the setting in the threshold register.
+\item \label{wakeup-sources-note6}A wakeup is triggered when any touch event is detected by the touch sensor.
+\item \label{wakeup-sources-note7}A wakeup is triggered when \hyperref[fielddesc:RTCCNTLRTCSWCPUINT]{RTC\_CNTL\_RTC\_SW\_CPU\_INT} is configured by the ULP co-processor.
+\item \label{wakeup-sources-note8}When the 32 kHz crystal is working as RTC slow clock, a wakeup is triggered upon any detection of any crystal stops by the 32 kHz watchdog timer.
+\item \label{wakeup-sources-note9}A wakeup is triggered when the ULP co-processor starts capturing exceptions (e.g., stack overflow).
+\item \label{wakeup-sources-note10}All wakeup sources can also be configured as the causes to reject sleep, except UART.
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Reject Sleep}\label{sec:lpm-reject-source}
+
+\chipname{} implements a hardware mechanism that equips the chip with the ability to reject to sleep, which prevents the chip from going to sleep unexpectedly when some peripherals are still working but not detected by the CPU, thus guaranteeing the proper functioning of the peripherals.
+
+All the wakeup sources specified in Table \ref{tab:lpm-wakeup-source} (except UART) can also be configured as the causes to reject sleep.
+
+Users can configure the reject to sleep option via the following registers.
+\begin{itemize}
+    \item Configure the \hyperref[fielddesc:RTCCNTLRTCSLEEPREJECTENA]{RTC\_CNTL\_RTC\_SLEEP\_REJECT\_ENA} field to enable or disable the option to reject to sleep:
+        \begin{itemize}
+            \item Set \hyperref[fielddesc:RTCCNTLLIGHTSLPREJECTEN]{RTC\_CNTL\_LIGHT\_SLP\_REJECT\_EN} to enable reject-to-light-sleep.
+            \item Set \hyperref[fielddesc:RTCCNTLDEEPSLPREJECTEN]{RTC\_CNTL\_DEEP\_SLP\_REJECT\_EN} to enable reject-to-deep-sleep.
+        \end{itemize}
+    \item Read \hyperref[fielddesc:RTCCNTLREJECTCAUSE]{RTC\_CNTL\_SLP\_REJECT\_CAUSE\_REG} to check the reason for rejecting to sleep.
+\end{itemize}
+
+\section{Retention DMA}
+
+\chipname{} can power off the CPU in the Light-sleep mode to further reduce the power consumption. To facilitate the CPU to wake up from Light-sleep and resume execution from the previous breakpoint, \chipname{} introduced a retention DMA.
+
+\chipname{}'s retention DMA stores CPU information to the Internal SRAM Block2 to Block8 before CPU enters into sleep, and restore such information from Internal SRAM to CPU after CPU wakes up from sleep, thus enabling the CPU to resume execution from the previous breakpoint.
+
+\chipname{}'s Retention DMA:
+
+\begin{itemize}
+    \item Retention DMA operates on date of 128 bits, and only supports address alignment of four words.
+    \item Retention DMA's link list is specifically designed that it can be used to execute both write and read transactions. The configuration of Retention DMA is similar to that of GDMA:
+    \begin{enumerate}
+        \item First allocate enough memory in SRAM before CPU enters sleep to store 432 words\hyperref[dma-note1]{*}: CPU registers (428 words) and configuration information (4 words).
+        \item Then configure the link list according to the memory allocated in the first step. See details in Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \end{enumerate}
+
+
+\begin{tiplisting}\label{dma-note1}
+\textbf{*} Note that if the memory allocated is smaller than 432 words, then chip can only enter the Light-sleep mode and cannot further power down CPU.
+\end{tiplisting}
+\end{itemize}
+
+After configuration, users can enable the Retention function by configuring the  \hyperref[fielddesc:RTCCNTLRETENTIONEN]{RTC\_CNTL\_RETENTION\_EN} field in Register \hyperref[regdesc:RTCCNTLRETENTIONCTRLREG]{RTC\_CNTL\_RETENTION\_CTRL\_REG} to:
+\begin{itemize}
+    \item Use Retention DMA to store CPU information before the chip enters sleep
+    \item Restore information from Retention DMA to CPU after CPU wakes up.
+\end{itemize}
+
+\clearpage
+\section{RTC Boot}
+The wakeup time from Deep-sleep mode is much longer, compared to Light-sleep and Modem-sleep modes, because the ROMs and RAMs are both powered down in this case, and the CPU needs more time for SPI booting (data-copying from the flash). However, it's worth noting that both RTC fast memory and RTC slow memory remain powered up in the Deep-sleep mode. Therefore, users can store codes (so called ``deep sleep wake stub" of up to 8 KB) either in RTC fast memory or RTC slow memory, which doesn't require the above-mentioned  SPI booting, thus speeding up the wakeup process.
+
+\textbf{Method one: Boot using RTC slow memory}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:RTCCNTLPROCPUSTATVECTORSEL]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL} to 0.
+    \item Send the chip into sleep.
+    \item After the CPU is powered up, the reset vector starts resetting from 0x{}50000000 instead of 0x{}40000400, which does not involve any SPI booting. The codes stored in RTC slow memory starts running immediately after the CPU reset. The code stored in the RTC slow memory only needs to be partially initialized in a C environment.
+\end{enumerate}
+
+
+\textbf{Method two: Boot using RTC fast memory}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:RTCCNTLPROCPUSTATVECTORSEL]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL} to 1.
+    \item Calculate CRC for the RTC fast memory, and save the result in \hyperref[regdesc:RTCCNTLRTCSTORE7REG]{RTC\_CNTL\_RTC\_STORE7\_REG[31:0]}.
+    \item Set \hyperref[regdesc:RTCCNTLRTCSTORE6REG]{RTC\_CNTL\_RTC\_STORE6\_REG[31:0]} to the entry address of RTC fast memory.
+    \item Send the chip into sleep.
+    \item ROM unpacking and some of the initialization starts after the CPU is powered up. After that, the CRC for the RTC fast memory will be calculated again. If the result matches with register \hyperref[regdesc:RTCCNTLRTCSTORE7REG]{RTC\_CNTL\_RTC\_STORE7\_REG[31:0]}, the CPU jumps to the entry address.
+\end{enumerate}
+
+The boot flow is shown in Figure \ref{fig:lpm-RTC-boot}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/28-LPM-rtc_boot-2.pdf}
+    \caption{\chipname{} Boot Flow}
+    \label{fig:lpm-RTC-boot}
+\end{figure}
+
+\clearpage
+\section{Register Summary}\label{sec:lowpowm-reg-summ}
+\hypertarget{lowpowm-reg-summ}{}
+The addresses in this section are relative to low-power management base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/28-LOWPOWM-reg-summ__EN}
+
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to low-power management base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/28-LOWPOWM-reg__EN}
+
+
+\end{document}

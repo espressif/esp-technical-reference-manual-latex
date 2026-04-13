@@ -1,0 +1,874 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./07-2DDMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{2ddma}{}
+\chapter{2D-DMA 控制器 (2D-DMA)}
+\label{mod:2ddma}
+
+
+\section{概述}
+
+2D-DMA 控制器是专用于二维图像处理的 DMA，在支持 GDMA-AXI 的全部功能基础上，增加了宏块重排 (Reorder) 和颜色空间转换（Color Space Convert: CSC）功能，能够更好地支持 JPEG 和 PPA 外设的数据传输需求。2D-DMA 支持存储器到存储器的传输，可以将宏块从存储器的一段地址空间搬运到另一段地址空间，并完成颜色空间转换。
+
+
+\section{特性}
+\label{sec:2ddma-features}
+
+\begin{itemize}
+    \item 1 个 AXI 主机接口
+    \item 支持首地址非对齐的数据传输
+    \item 支持存储到存储、外设到存储 (RX)、以及存储到外设 (TX) 的数据传输
+    \iftagged{ESP32-P4-latest}{
+        \item 包含 4 个存储到外设通道，3 个外设到存储通道
+    }{
+        \item 包含 3 个存储到外设通道，2 个外设到存储通道
+    }
+    \item 支持 PPA 和 JPEG 图像编解码器 外设
+    \item 支持宏块重排序功能
+    \item 支持颜色空间转换功能
+    \item 支持通道优先级、权重配置
+\end{itemize}
+
+\section{架构}
+\label{sec:2ddma-arch-overview}
+
+\chipname{} 中只有 JPEG 和 PPA 两个外设支持 2D-DMA 功能。2D-DMA 控制器与 CPU 的数据总线使用相同的地址空间访问存储器。图 \ref{fig:dma2d_arch} 为 2D-DMA 控制器基本架构图。
+
+\begin{figure}[H]
+\iftagged{ESP32-P4-latest}{
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/dma2d_arch_latest}
+}{
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/dma2d_arch}
+}
+\centering
+\caption{2D-DMA 基本架构图}
+\label{fig:dma2d_arch}
+\end{figure}
+
+
+\iftagged{ESP32-P4-latest}{
+    2D-DMA 控制器有 7 个独立的通道，其中包括 4 个发送通道和 3 个接收通道。
+}{
+    2D-DMA 控制器有 5 个独立的通道，其中包括 3 个发送通道和 2 个接收通道。
+}
+每个通道可选择与不同的外设相连，从而实现通道资源由外设共享。
+
+2D-DMA 控制器支持宏块重排 (Reorder) 和颜色空间转换 (CSC) 功能，仅发送通道 0 和接收通道 0 支持宏块重排，仅发送通道 0、1、2\tagged{ESP32-P4-latest}{、3} 和接收通道 0 支持颜色空间转换功能。
+
+2D-DMA 通过 AXI\_BUS 将数据写入存储器，或者从存储器读取数据，其中存储器包含片内存储器和片外存储器。在通过总线传输数据之前，2D-DMA 采用可配置的仲裁机制对每个通道的读写请求进行仲裁。内外部存储器的具体使用范围详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+软件可以通过挂载链表的方式来使用 2D-DMA 控制器。链表可以存储在片内或片外存储器中。这些链表包括 outlink\textcolor{red}{\it{n}} 与 inlink\textcolor{red}{\it{n}}，本文以 \textcolor{red}{\it{n}} 来表示通道号，outlink\textcolor{red}{\it{n}} 中，n 的范围是 0 \verb+~+ \iftagged{ESP32-P4-latest}{3}{2}，但是 inlink\textcolor{red}{\it{n}} 中，\textcolor{red}{\it{n}} 的范围是 0 \verb+~+ \iftagged{ESP32-P4-latest}{2}{1}。2D-DMA 从存储器中取得链表，然后根据 outlink\textcolor{red}{\it{n}} 中的内容将相应 存储器 中的数据发送出去，也可根据 inlink\textcolor{red}{\it{n}} 中的内容将接收的数据存入指定存储器地址空间。
+
+
+\section{功能描述}
+\label{sec:2ddma-func-descr}
+
+\subsection{传输模式}
+
+2D-DMA 共支持 4 种传输模式：
+
+\begin{itemize}
+\item 1D 模式：将链表描述符 DW0 的 2DEN 置 0，DW2 的 mod 置 0 进入该模式，该模式下 2D-DMA 将根据链表配置的数据长度、存储器空间大小进行存储器数据的读写操作，操作地址是连续的，与 GDMA-AXI 功能相同。
+\item 2D-MOD0 模式：将链表描述符 DW0 的 2DEN 置 1，DW2 的 mod 置 0 进入该模式，该模式下，2D-DMA 从 HA*VA 图像的 (X, Y) 坐标开始，读/写一个 hb*vb 宏块，地址在每行最后一个读/写数据处理完成后都会跳变到下一行需要被读/写的第一个数据地址。
+\item 2D-MOD1 模式：将链表描述符 DW0 的 2DEN 置 1，DW2 的 mod 置 1 进入该模式，该模式下，2D-DMA 从 HA*VA 图像的首地址开始，连续读/写多个单位大小的宏块，直到 HA*VA 图像读/写完成。对于 JPEG 外设，在该模式下需要配置寄存器 \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}，选择读取宏块的单位大小，有三种尺寸可选（水平 $\times$ 垂直）：8 像素 $\times$ 8 像素、8 像素 $\times$ 16 像素、16 像素 $\times$ 16 像素，如何选择可参照章节 \ref{mod:jpegcodec} \textit{\nameref{mod:jpegcodec}}。宏块单位大小与链表描述符 hb、vb 的选择可参照表 \ref{tab:ro_out_conf} 和表  \ref{tab:ro_in_conf}。
+\item DSCR-PORT 模式：将链表描述符 DW0 的 2DEN 置 1，DW2 的 mod 置 0，并配置寄存器 \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_IN\_DSCR\_PORT\_EN\_CH\regindex{n}} 为 1 进入该模式，该模式仅为 PPA 应用，具体操作可参照章节 \ref{mod:ppa} \textit{\nameref{mod:ppa}}。
+\end{itemize}
+
+1D 模式、2D-MOD0 模式、2D-MOD1 模式和 DSCR-PORT 模式均支持外设到存储及存储到外设的数据传输。
+仅 1D 模式和 2D-MOD0 模式支持存储到存储数据传输。
+
+
+\subsection{链表}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_dscr_arch}
+\centering
+\caption{链表结构图}
+\label{fig:link_descr_arch}
+\end{figure}
+
+图 \ref{fig:link_descr_arch} 所示为链表的结构图。发送链表与接收链表结构相同。每个链表由一个或者若干个描述符构成，一个描述符由 5 个字组成。链表应存放在存储器中，供 2D-DMA 控制器使用。描述符每一字段的意义如下：
+
+{\bfseries 注意： } 本文以 DMA2D\_OUT 开头的寄存器对应 TX 通道寄存器，以 DMA2D\_IN 开头的寄存器对应 RX 通道寄存器。
+
+\begin{longtable}[c]{|m{1.8cm}|m{2.5cm}|L{10.2cm}|}
+\caption{描述符字段说明} \label{tab:2ddma-dw}\\\hline
+\rowcolor{lightgray}
+\textbf{位} & \textbf{名称} & \textbf{说明} \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\textbf{位} & \textbf{名称} & \textbf{说明} \\\hline
+\endhead
+\endfoot
+
+DW0[31] & owner & 表示当前描述符对应的 buffer 允许的操作者。
+    \begin{itemize}
+        \item 0：允许的操作者为 CPU
+        \item 1: 1：允许的操作者为 2D-DMA 控制器
+    \end{itemize}
+    在 2D-DMA 使用完该描述符对应的 buffer 后，对于 接收描述符，硬件默认会自动将该位清零；对于发送描述符，需要将 \hyperref[fielddesc:DMA2DOUTAUTOWRBACKCHN]{DMA2D\_OUT\_AUTO\_WRBACK\_CH\regindex{n}} 置 1，硬件才会自动将该位清零。软件在挂载链表时需要将该位置 1。\\\hline
+DW0[30] & eof & 表示结束标志。
+    \begin{itemize}
+        \item 0：当前描述符不是一张图片的最后一个描述符
+        \item 1：当前描述符为一张图片的最后一个描述符
+    \end{itemize}
+    对于接收描述符，需要软件将该位写 0，硬件会在收完一张图片后将该位置 1。对于发送描述符，需要软件在一张图片最后一个描述符中的该位置 1。\\\hline
+DW0[29] & 2DEN & 2D 功能使能标志。
+    \begin{itemize}
+        \item 0：2D-DMA 启用 1D 工作模式
+        \item 1：2D-DMA 启用 2D 工作模式
+        \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+DW0[28] & err\_eof & 表示接收结束错误标志（仅 JPEG 支持）。
+    \begin{itemize}
+        \item 0：接收数据没有错误
+        \item 1：接收数据有错误
+    \end{itemize}
+    对于接收描述符，硬件在收完一张图片并检测到接收数据错误会将该位置 1。 \\\hline
+DW0[27:14] & length[13:0]/hb &  启用 2D 工作模式时为 \textbf{hb}  -- 表示想要搬运的宏块的水平宽度，单位为像素。
+
+    启用 1D 工作模式时为 \textbf{length[13:0]} -- 即 length 的低 14 位。length 表示当前描述符对应的 buffer 中的有效字节数。对于发送描述符，该段由软件填写，表示从 buffer 中读取数据时需要读取的字节数；对于接收描述符，该段由硬件使用完该 buffer 后或者接收到最后一个数据时自动填写，表示 buffer 中存储的有效字节数。 \\\hline
+DW0[13:0] & size[13:0]/vb &  启用 2D 工作模式时为 \textbf{vb}  -- 表示想要搬运的宏块的垂直高度，单位为像素。
+
+    启用 1D 工作模式时为 \textbf{size[13:0]}  -- 即 size 的低 14 位。size 表示当前描述符对应的 buffer 容量的字节数。 \\\hline
+
+DW1[31:28] & pbyte & 启用 2D 工作模式时，表示从存储器搬运／搬运到存储器的图像单个像素占用的字节数。（如应用了颜色空间转换功能，该字段表示的是存储器中存放的图像每个像素所占用的字节数。）
+    \begin{itemize}
+        \item 0: 0.5 byte/pixel
+        \item 1: 1 byte/pixel
+        \item 2: 1.5 bytes/pixel
+        \item 3: 2 bytes/pixel
+        \item 4: 3 bytes/pixel
+        \item 5: 4 bytes/pixel
+    \end{itemize}
+    启用 1D 工作模式时，该字段没有使用，可为任意值。\\\hline
+DW1[27:14] & length[27:14]/HA & 启用 2D 工作模式时为 \textbf{HA} -- 表示想要搬运的宏块对应的原始图像的水平宽度，单位为像素。
+
+    启用 1D 工作模式时为 \textbf{length[27:14]} -- 即 length 的高 14 位。\\\hline
+DW1[13:0] & size[27:14]/VA & 启用 2D 工作模式时为 \textbf{VA} -- 表示想要搬运的宏块对应的原始图像的垂直高度，单位为像素。
+
+    启用 1D 工作模式时为 \textbf{size[27:14]} -- 即 size 的高 14 位。 \\\hline
+
+DW2[31:29] & Reserved & 保留。此位为无关项。 \\\hline
+DW2[28] & mod & 宏块读取模式。
+    \begin{itemize}
+        \item 0：2D-DMA 只读/写一次水平宽度为 hb、垂直高度为 vb 的宏块
+        \item 1：2D-DMA 读/写多次水平宽度为 hb、垂直高度为 vb 的宏块，直到将水平宽度为 HA，垂直高度为 VA 的图像数据读/写完成
+    \end{itemize}
+    1D 模式下，该位必须为 0。
+    \begin{tiplisting}
+        hb/vb/HA/VA 的单位为像素。
+    \end{tiplisting}
+    \\\hline
+DW2[27:14] & X & 启用 2D 工作模式时，表示 hb*vb 宏块在 HA*VA 图像中的 X 坐标，单位为像素。
+
+    启用 1D 工作模式时，该域没有使用，可为任意值。\\\hline
+DW2[13:0] & Y & 启用 2D 工作模式时，表示 hb*vb 宏块在 HA*VA 图像中的 Y 坐标，单位为像素。
+
+    启用 1D 工作模式时，该域没有使用，可为任意值。\\\hline
+
+DW3 & Buffer address pointer & 启用 2D 工作模式时，表示 HA*VA 宏块原点坐标在 buffer 中的地址（原始图像在存储器中第一个字节的地址）。
+
+    启用 1D 工作模式时，表示 buffer 的起始地址。\\\hline
+
+DW4 & Next descriptor address & 下一个描述符的地址。如果当前描述符为链表中最后一个描述符时，该值可以为 0。该地址可以指向片内或片外存储器的地址空间。
+    \begin{tiplisting}
+        需要注意，2D-DMA 链表描述符的存放首地址要求 8 字节对齐。
+    \end{tiplisting}
+    \\\hline
+\end{longtable}
+
+
+\subsection{2D-MOD1 模式和 DSCR-PORT 模式的补数方式}
+
+本小节仅应用于 2D-DMA 的发送方向且选择 2D-MOD1 或 DSCR-PORT 模式。
+
+JPEG 解码方向输入的图像数据的基本单元为 8 $\times$ 8 或 8 $\times$ 16 或 16 $\times$ 16（像素）的块，在 2D-MOD1 模式下当图像的长宽不满足基本单元的整数倍时，需要根据上一个宏块或者当前宏块作补齐操作，完成整数个基本单元的传输。
+
+PPA 在发送通道 DSCR-PORT 模式的补数基本单元为 \iftagged{ESP32-P4-latest}{36 $\times$ 36（YUV420）、36 $\times$ 34（YUV422）和 34 $\times$ 34 三种（水平尺寸 $\times$ 垂直尺寸）}{20 $\times$ 20 (YUV420) 和 18 $\times$ 18 两种}，可通过配置寄存器 \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_H\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_V\_CH\regindex{n}} 来配置不同发送通道基本单元的宽/高。当图像的长宽不满足基本单元的整数倍时，需要做数据补齐操作。
+
+补数规则如下：
+
+水平方向不满一行时，补齐的数据与描述符中 pbyte 字段相关：
+\begin{itemize}
+    \item 当 pbyte 为 0 (0.5 byte/piexl)，要求剩余像素为偶数个，补齐数据为最后 0.5 byte
+    \item 当 pbyte 为 1 (1 byte/piexl)， 补齐数据为最后 1 byte
+    \item 当 pbyte 为 2 (1.5 byte/piexl)，要求剩余像素为偶数个，补齐数据为最后 3 byte
+    \item 当 pbyte 为 3 (2 byte/piexl)， 补齐数据为最后 2 byte
+    \item 当 pbyte 为 4 (3 byte/piexl)， 补齐数据为最后 3 byte
+    \item 当 pbyte 为 5 (4 byte/piexl)， 补齐数据为最后 4 byte
+\end{itemize}
+
+垂直方向不满一个 block 时，以最后一行补齐剩下的行。
+
+补齐方式如图 \ref{fig:padding_arch} 和图 \ref{fig:padding_details} 所示。
+
+图 \ref{fig:padding_arch} 中，一个蓝色方框表示一个基本单元(8 $\times$ 8 或 8 $\times$ 16 或 16 $\times$ 16（像素）的块)，右侧和下侧一个黄色方框加上一个绿色方框表示一个基本单元，右下角一个黄色方框和两个绿色方框表示一个基本单元。
+
+图 \ref{fig:padding_details} 中一个方框表示一个像素，方框内的不同数字表示不同的像素值。
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/padding_arch}
+\centering
+\caption{补齐示意图（整体）}
+\label{fig:padding_arch}
+\end{figure}
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/padding_details}
+\centering
+\caption{补齐示意图（细节）}
+\label{fig:padding_details}
+\end{figure}
+
+
+
+\subsection{外设到存储及存储到外设的数据传输}
+
+当 \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_MEM\_TRANS\_EN\_CH\regindex{n}} 配置为 0 时，2D-DMA 进入外设模式。发送通道从存储器中读取数据后传输给外设，接收通道接收来自外设的数据后写入存储器。
+
+2D-DMA 支持存储到外设及外设到存储的数据传输，分别对应 TX 及 RX 功能。TX 通道通过 outlink\textcolor{red}{\it{n}} 实现将指定存储区域中的数据搬运到外设的发送端；RX 通道通过 inlink\textcolor{red}{\it{n}} 实现将外设接收到的数据搬运到指定的存储区域。
+
+每个 RX/TX 通道均可以被配置连接到任意一个支持 2D-DMA 功能的外设，表 \ref{tab:2ddma-tx-peri-sel} 和表 \ref{tab:2ddma-rx-peri-sel} 所示为通过寄存器配置通道与其对应外设的关系。其中 "Dummy-\regindex{n}" 是 2D-DMA 在实现存储到存储数据搬运功能时可选配的寄存器值。当其中一个通道已经与某一个外设连接时，其他通道将不能配置为与该外设连接。
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{2D-DMA TX 方向配置寄存器与外设选择关系表}
+\label{tab:2ddma-tx-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_PERI\_OUT\_SEL\_CH\regindex{n}}} & \textbf{外设}\\\hline
+
+    0   & JPEG \\ \hline
+    1   & PPA 的 SRM 模块\\ \hline
+    2   & PPA 的 BLEND0 模块\\ \hline
+    3   & PPA 的 BLEND1 模块\\ \hline
+    4 \verb+~+ 7 & Dummy-4 \verb+~+ 7 \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{2D-DMA RX 方向配置寄存器与外设选择关系表}
+\label{tab:2ddma-rx-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_PERI\_IN\_SEL\_CH\regindex{n}}} & \textbf{外设}\\\hline
+
+    0   & JPEG \\ \hline
+    1   & PPA 的 SRM 模块\\ \hline
+    2   & PPA 的 BLEND 通道 \\ \hline
+    3 \verb+~+ 7 & Dummy-3 \verb+~+ 7 \\ \hline
+\end{longtable}
+
+
+\subsection{存储到存储数据传输}
+2D-DMA 只有 1D 模式和 2D-MOD0 模式支持存储到存储的数据传输。置位 \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_IN\_MEM\_TRANS\_EN\_CH\regindex{n}}，TX 通道\textcolor{red}{\it{n}} 的输出将与 RX 通道\textcolor{red}{\it{n}} 的输入相连，从而使能存储到存储的数据传输功能。需要注意的是，一个 TX 通道只与其编号对应的 RX 通道相连而实现存储到存储的数据传输，并且需要将 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} 配置成 Dummy 的值。
+
+
+可以搭配颜色空间转换功能，完成将一块宏块从一段存储器地址空间转移到另一段地址空间，并转换颜色空间。
+
+
+\subsection{宏块重排功能}
+
+\subsubsection{发送方向宏块重排功能}
+当 2D-DMA 通过 SPI 访问外部存储器时，为了提高 SPI 的带宽利用率，需要以较大的 burst length 发起 AXI 传输。对于 2D-MOD1，2D-DMA 可以通过一次取若干个宏块来提高 AXI 的 burst length。例如，一次读取 5 个 8x8 的宏块，此时，描述符中的 hb 设为 40，vb 设为 8。而对于 JPEG， 2D-DMA 需要按照宏块顺序给出数据。也就是需要重新排列取出的若干个宏块以满足 JPEG 的需求。
+
+
+推荐宏块重排的配置见表 \ref{tab:ro_out_conf}。
+
+\begin{longtable}[c]{|l|c|r|r|r|}
+\caption{2D-DMA 发送方向宏块重排推荐配置表}
+\label{tab:ro_out_conf}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf {byte/pixel} & \textbf{宏块大小（像素）} & \textbf{最佳宏块数} & \textbf{hb}  & \textbf{vb} \\\hline
+    3          & 8 $\times$ 8      & 5     & 40  & 8  \\ \hline
+    3          & 16 $\times$ 8     & 2     & 32  & 8  \\ \hline
+    3          & 16 $\times$ 16    & 2     & 32  & 16 \\ \hline
+    2          & 8 $\times$ 8      & 8     & 64  & 8  \\ \hline
+    2          & 16 $\times$ 8     & 4     & 64  & 8  \\ \hline
+    2          & 16 $\times$ 16    & 3     & 48  & 16 \\ \hline
+    1          & 8 $\times$ 8      & 16    & 128 & 8 \\ \hline
+\end{longtable}
+
+
+发送方向宏块重排需要配置宏块大小寄存器 \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}。
+
+\subsubsection{接收方向宏块重排功能}
+目前接收宏块重排仅支持 JPEG 解码（码流为 1 个 scan，详见章节 \ref{mod:jpegcodec} \textit{\nameref{mod:jpegcodec}}）数据重排，将来自 JPEG 解码的颜色分量数据包拆解为像素格式并组装成较大的宏块通过 2D-DMA 写入存储器。
+
+JPEG 解码的数据格式包括：GRAY、YUV444、YUV422、YUV420。推荐宏块重排的配置见表 \ref{tab:ro_in_conf}。
+
+\begin{longtable}[c]{|l|c|r|r|r|}
+\caption{2D-DMA 接收方向宏块重排推荐配置表（不做颜色格式转换）}
+\label{tab:ro_in_conf}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{颜色格式}   & \textbf{宏块大小（像素）} & \textbf{最佳宏块数} & \textbf{hb}  & \textbf{vb} \\\hline
+    GRAY   & 8 $\times$ 8      & 12    & 96  & 8  \\ \hline
+    YUV444 & 8 $\times$ 8      & 5     & 40  & 8  \\ \hline
+    YUV422 & 16 $\times$ 8     & 4     & 64  & 8  \\ \hline
+    YUV420 & 16 $\times$ 16    & 3     & 48  & 16 \\ \hline
+\end{longtable}
+
+
+接收方向宏块重排需要配置宏块大小寄存器 \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}。
+
+JPEG 解码输出的宏块排布如图 \ref{fig:jpeg_output} 所示，其中每一个蓝色正方形表示连续的 8x8 byte 数据。图中每一个颜色格式均展示了 4 个 8 $\times$ 8 像素的宏块。
+
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/jpeg_output}
+\centering
+\caption{JPEG 解码输出数据宏块排布}
+\label{fig:jpeg_output}
+\end{figure}
+
+
+\subsection{颜色空间转换功能}
+
+发送侧将从存储器读取到的数据按像素组装后，像素数据可进行颜色空间转换。暂不支持 YUV420 格式转换。可支持：
+\begin{itemize}
+    \item RGB888 转 RGB565
+    \item RGB565 转 RGB888
+    \item RGB888 转 YUV444
+    \item RGB888 转 YUV422（RGB 一行像素个数需要为偶数个）
+    \item YUV444 转 RGB888
+    \item YUV422 转 RGB888
+\end{itemize}
+
+接收侧只有 JPEG 需要颜色空间转换，支持的格式如下：
+\begin{itemize}
+    \item YUV444 转 RGB888/RGB565\tagged{ESP32-P4-latest}{/YUV422/YUV420}
+    \item YUV422 转 YUV444 转 RGB888/RGB565\tagged{ESP32-P4-latest}{/YUV420}
+    \item YUV420 转 YUV444 转 RGB888/RGB565
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 对于 JPEG 解码，即 2D-DMA 的接收侧，硬件会强制将 YUV422 和 YUV420 转换成 YUV444 格式，软件可选是否利用颜色空间转换功能，将其转换为 RGB888/RGB565。
+\end{itemize}
+\end{tiplisting}
+
+
+颜色空间转换模块的结构示意图如 \ref{fig:csc_arch} 所示。
+
+\begin{figure}[H]
+\includegraphics[width=0.95\textwidth]{\modulefiles/figures/csc_arch}
+\centering
+\caption{颜色空间转换示意图}
+\label{fig:csc_arch}
+\end{figure}
+
+颜色空间转换分为 3 级进行，第一级进行输入颜色格式转换，可将特定的 2 Byte/pixel 的像素格式转换为 3 Byte/pixel，通过 \hyperref[fielddesc:DMA2DOUTCOLORINPUTSELCHN]{DMA2D\_OUT\_COLOR\_INPUT\_SEL\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DINCOLORINPUTSELCH0]{DMA2D\_IN\_COLOR\_INPUT\_SEL\_CH0} 进行源数据选择。（可点击寄存器链接查看第一级支持的颜色格式转换）
+
+第二级通过公式对选择后的源数据计算处理。计算公式如下：
+
+\[
+256*Q = A[9:0] * x + B[10:0] * y + C[9:0] * z + D[17:0]
+\]
+
+其中 Q 为输出数据，x、y、z 为输入数据的高、中、低字节，A、B、C、D 为对应乘法/加法系数，为有符号数。同一时刻可处理最多 3 Byte 数据，因此需要通过以下字段配置 3*4=12 个参数：
+\begin{itemize}
+    \item DMA2D\_OUT\_COLOR\_PARAM\_H0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_H0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_H1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_H1\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_M0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_M0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_M1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_M1\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_L0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_L0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_L1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_L1\_CH0
+\end{itemize}
+字段名称中的 PARAM\_H\regindex{x}、PARAM\_M\regindex{x} 和 PARAM\_L\regindex{x}（\regindex{x} 为 0 或 1）分别表示高、中、低三个字节各自的参数。以 PARAM\_H\regindex{x} 为例，PARAM\_H0 的低 10 位为系数 A，PARAM\_H0 的高 11 位为系数 B，PARAM\_H1 的 低 10 位 为系数 C，PARAM\_H1 的高 18 位 为系数 D。
+
+第三级与第一级类似，通过 \hyperref[fielddesc:DMA2DOUTCOLOROUTPUTSELCHN]{DMA2D\_OUT\_COLOR\_OUTPUT\_SEL\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DINCOLOROUTPUTSELCH0]{DMA2D\_IN\_COLOR\_OUTPUT\_SEL\_CH0} 选择直接输出或者进行第三级颜色空间转换模块后输出。
+
+下表列出常用的颜色格式转换需要的参数配置：
+
+
+
+\setlength\tabcolsep{3pt}
+
+\begin{small}
+
+\begin{longtable}[c]{ |L{2.5cm}|l|l|l|l|l|l|l|l|l| }
+    \caption{TX 方向颜色格式转换参数配置}
+    \label{tab:2ddma-tx-format-conversion}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{转换类型} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endfirsthead
+
+    \multicolumn{10}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{转换类型} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endhead
+
+    \multicolumn{10}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+    % table contents
+    不转换 & 7 & N/A & N/A & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    仅乱序 & 2/3 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB888  $\rightarrow$  RGB565 & 3 & 0 & 0 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB565  $\rightarrow$  RGB888 & 0 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB888  $\rightarrow$ (601) YUV444 & 3 & 1 & 2 & 20442 & 400019 & 1EDBDA & 2000070 & 1E8870 & 20003EE \\ \hline
+    RGB888  $\rightarrow$ (709) YUV444 & 3 & 1 & 2 & 2742F & 400010 & 1EABE6 & 2000070 & 1E6870 & 20003F6 \\ \hline
+    RGB888  $\rightarrow$ (601) YUV422-MIPI & 3 & 1 & 1 & 20442 & 400019 & 1EDBDA & 2000070 & 1E8870 & 20003EE \\ \hline
+    RGB888  $\rightarrow$ (709) YUV422-MIPI & 3 & 1 & 1 & 2742F & 400010 & 1EABE6 & 2000070 & 1E6870 & 20003F6 \\ \hline
+    YUV444  $\rightarrow$ (601) RGB888 & 3 & 1 & 2 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV444  $\rightarrow$ (709) RGB888 & 3 & 1 & 2 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV422-MIPI  $\rightarrow$ (601) RGB888 & 1 & 1 & 2 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV422-MIPI  $\rightarrow$ (709) RGB888 & 1 & 1 & 2 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+
+\end{longtable}
+
+\begin{longtable}[c]{ |L{2.5cm}|l|l|l|l|l|l|l|l|l| }
+    \caption{RX 方向颜色格式转换参数配置}
+    \label{tab:2ddma-rx-format-conversion}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{转换类型} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endfirsthead
+
+    \multicolumn{10}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{转换类型} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endhead
+
+    \multicolumn{10}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+    % table contents
+    不转换 & 7 & N/A & N/A & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    仅乱序 & 1/2 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    YUV422 $\rightarrow$ YUV444 & 0 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    YUV420 $\rightarrow$ YUV444 & 0 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    \tagged{ESP32-P4-latest}{
+        YUV444 $\rightarrow$ YUV422 & 0 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+        YUV444 $\rightarrow$ YUV420 & 0 & 0 & 3 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+        YUV422 $\rightarrow$ YUV420 & 0 & 0 & 3 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    }
+    YUV420 $\rightarrow$ (601) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV422 $\rightarrow$ (601) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV444 $\rightarrow$ (601) RGB888/RGB565 & 2 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV420 $\rightarrow$ (709) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV422 $\rightarrow$ (709) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV444 $\rightarrow$ (709) RGB888/RGB565 & 2 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+
+\end{longtable}
+
+\end{small}
+
+另外，颜色格式转换模块支持单个像素（最大 3 byte）的字节乱序处理，发送侧在格式转换之前支持，接收侧在格式转换之前及之后均支持。颜色格式转换模块需要的像素字节顺序如表 \ref{tab:rgb888_order}、 表 \ref{tab:yuv444_order}、 表 \ref{tab:yuv422_order} 所示。对于 JPEG 解码方向，接收侧宏块重排后在不配置乱序处理的情况下，像素字节顺序符合颜色格式转换所需字节顺序。假设输入数据的字节序 MSB 到 LSB 用 2、1、0 表示，字节乱序支持输出 210、201、102、120、021、012 六种顺序，默认输出为 2、1、0，可根据需要进行配置。可配置 \hyperref[fielddesc:DMA2DINSCRAMBLESELPRECH0]{DMA2D\_IN\_SCRAMBLE\_SEL\_PRE\_CH0}／\hyperref[fielddesc:DMA2DINSCRAMBLESELPOSTCH0]{DMA2D\_IN\_SCRAMBLE\_SEL\_POST\_CH0} 在颜色格式转换前／后对接收侧数据进行乱序处理。可配置 \hyperref[fielddesc:DMA2DOUTSCRAMBLESELPRECHN]{DMA2D\_OUT\_SCRAMBLE\_SEL\_PRE\_CH\regindex{n}} 在颜色格式转换前对发送侧数据进行乱序处理。
+
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|l|}
+\caption{RGBB888 的存储格式}
+\label{tab:rgb888_order}\\
+\hline
+          & LSB &    &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & B1  & G1 & R1 & B2 & G2 & R2 & B3 & G3 & R3  \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|l|}
+\caption{YUV444 的存储格式}
+\label{tab:yuv444_order}\\
+\hline
+          & LSB &    &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & V1  & U1 & Y1 & V2 & U2 & Y2 & V3 & U3 & Y3  \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|}
+\caption{YUV422 的存储格式}
+\label{tab:yuv422_order}\\
+\hline
+          & LSB &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & U1  & Y1 & V1 & Y2 & U3 & Y3 & V3 & Y4  \\ \hline
+\end{longtable}
+
+
+
+
+\subsection{启动 2D-DMA}
+
+软件通过挂载链表的方式来使用 2D-DMA。对于接收通道，软件挂载好接收链表并准备好接收数据，配置 \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} 字段指向第一个接收链表描述符，置位 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 位启动 2D-DMA。对于发送通道，软件挂载好发送链表并准备好发送数据，配置 \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} 字段指向第一个发送链表描述符，置位 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 位启动 2D-DMA。\hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 与 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 位由硬件自动清零。
+
+有时您可能想要在 2D-DMA 数据传输已经开始后追加更多描述符。要挂载更多描述符，原本看似只需清空已挂载链表最后一个描述符的 eof 位，并将该描述符的 next descriptor address (DW4) 字段配置为新链表第一个描述符的地址。但如果 DMA 数据传输已经或即将结束，这个方法便无法奏效。2D-DMA 控制器有专门的逻辑来确保数据传输继续或重启：如果数据传输仍在进行，2D-DMA 控制器会确保顾及到新追加的描述符；如果数据传输已经结束，2D-DMA 控制器会重启数据传输，传输新追加的描述符。这个逻辑由 Restart 功能实现。
+
+软件使用 Restart 功能时，需要先置位 \hyperref[fielddesc:DMA2DINLINKSTOPCHN]{DMA2D\_INLINK\_STOP\_CH\regindex{n}} 或者 \hyperref[fielddesc:DMA2DOUTLINKSTOPCHN]{DMA2D\_OUTLINK\_STOP\_CH\regindex{n}} 寄存器，让 2D-DMA 处理完当前描述符后暂停处理下一个描述符，然后重写已挂载链表的最后一个描述符，使其第五个字中的内容（即 DW4）指向新链表的首地址，最后置位 \hyperref[fielddesc:DMA2DINLINKRESTARTCHN]{DMA2D\_INLINK\_RESTART\_CH\regindex{n}} 或者 \hyperref[fielddesc:DMA2DOUTLINKRESTARTCHN]{DMA2D\_OUTLINK\_RESTART\_CH\regindex{n}}（这两个位由硬件自动清零），硬件会在读取已挂载链表的最后一个描述符时，获取新挂载链表的地址，从而继续处理新挂载的链表。
+
+
+
+\subsection{读链表}
+
+软件在配置并启动 2D-DMA 后，2D-DMA 会从存储器读取链表。2D-DMA 会检查读入的链表描述符是否正确。只有当链表描述符通过检查时，2D-DMA 对应的通道 才会开始搬运数据。当链表描述符没有通过检查，硬件将触发描述符错误中断（\hyperref[int:DMA2DINDSCRERRINT]{DMA2D\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT} 或者 \hyperref[int:DMA2DOUTDSCRERRINT]{DMA2D\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT}），同时该通道将会处于阻塞状态，停止工作，可重新置位  \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 或者  \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 再次开启该通道。
+
+描述符检查项包括：
+\begin{itemize}
+    \item \hyperref[fielddesc:DMA2DINCHECKOWNERCHN]{DMA2D\_IN\_CHECK\_OWNER\_CH\regindex{n}} 或者 \hyperref[fielddesc:DMA2DOUTCHECKOWNERCHN]{DMA2D\_OUT\_CHECK\_OWNER\_CH\regindex{n}} 置 1 时，检查描述符的 owner 位。如果该位为 0，表示当前操作者为 CPU，则不通过检查。\hyperref[fielddesc:DMA2DINCHECKOWNERCHN]{DMA2D\_IN\_CHECK\_OWNER\_CH\regindex{n}} 或者 \hyperref[fielddesc:DMA2DOUTCHECKOWNERCHN]{DMA2D\_OUT\_CHECK\_OWNER\_CH\regindex{n}} 置 0 时，不检查描述符的 owner 位。\\
+
+    \item 检查描述符本身的存储地址是否在配置的存储器地址空间内。如果 2D-DMA 的描述符地址在 \hyperref[fielddesc:DMA2DACCESSINTRMEMSTARTADDR]{DMA2D\_ACCESS\_INTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSINTRMEMENDADDR]{DMA2D\_ACCESS\_INTR\_MEM\_END\_ADDR}（配置值应为片内存储器地址）或 \hyperref[fielddesc:DMA2DACCESSEXTRMEMSTARTADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSEXTRMEMENDADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_END\_ADDR}（配置值应为片外存储器地址）值的范围内，则通过检查。请参见章节 \ref{sec:dma2d-access-ram}）。\\
+
+    \item 检查描述符的 HA/VA/hb/vb/SIZE 其中任意一个字段是否为 0，如果为 0，则不通过检查。其中 HA/VA/hb/vb 在 1D 模式下不检查，SIZE 仅在 1D 模式下检查。
+\end{itemize}
+
+软件在检查到通道描述符错误中断后，需要复位对应的通道，并置位 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 或者  \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 位重新启动 2D-DMA。\\
+
+可以将 \hyperref[fielddesc:DMA2DINDSCRBURSTENCHN]{DMA2D\_INDSCR\_BURST\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTDSCRBURSTENCHN]{DMA2D\_OUTDSCR\_BURST\_EN\_CH\regindex{n}} 置 1，使能 2D-DMA 以 AXI burst 传输快速从存储器获取接收/发送侧链表描述符。
+
+
+\subsection{数据传输结束标志}
+
+{\bfseries 注意：} 本章中提到发送链表描述符的 EOF 为 描述符中的第一个字中的 bit 30 指示的 eof，接收链表描述符的 EOF 可以为 bit 30 指示的 eof 和 bit 28 指示的 err\_eof。
+
+ 2D-DMA 通过 EOF 来指示一张图片传输结束。
+
+发送数据时，产生 EOF 和 TOTAL EOF 两种中断：
+\begin{itemize}
+    \item DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT：链表中的任意一个描述符有配置 eof 标志位，则当该描述符对应的数据传输完成后，2D-DMA 都会产生 EOF 中断。通常在一张图片的最后一个描述符配置 eof。置位 \hyperref[fielddesc:DMA2DOUTEOFCHNINTENA]{DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT\_ENA} 位使能该中断。
+    \item DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT：如果该链表中的最后一个描述符配置了 eof 标志位，则当该链表的最后一个描述符对应的数据传输完成后，2D-DMA 会产生 TOTAL EOF 中断。置位 \hyperref[fielddesc:DMA2DOUTTOTALEOFCHNINTENA]{DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT\_ENA} 位使能该中断。
+\end{itemize}
+
+
+接收数据时，可以产生以下中断：
+\begin{itemize}
+    \item DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT：表示一张图片数据接收完成。置位 \hyperref[fielddesc:DMA2DINSUCEOFCHNINTENA]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT\_ENA} 位使能该中断。
+    \item（仅 JPEG）DMA2D\_IN\_ERR\_CH\regindex{n}\_EOF\_INT：表示一张图片接收完成但接收数据有错误。置位 \hyperref[fielddesc:DMA2DINERREOFCHNINTENA]{DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT\_ENA} 使能该中断。需要注意的是，只有当通道连接的外设为 JPEG 时，才支持该中断。
+\end{itemize}
+
+
+软件在检测到 \hyperref[int:DMA2DOUTTOTALEOFINT]{DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT} 或 \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} 中断时，可以通过获取 \hyperref[fielddesc:DMA2DOUTEOFDESADDRCHN]{DMA2D\_OUT\_EOF\_DES\_ADDR\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DINSUCEOFDESADDRCHN]{DMA2D\_IN\_SUC\_EOF\_DES\_ADDR\_CH\regindex{n}} 字段中的的值，获取当前已经完成数据传输的描述符的存储地址。这样，软件可以知道哪些描述符已经被使用并根据需要回收描述符。RX 方向还支持记录 \hyperref[int:DMA2DINERREOFINT]{DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT} 中断触发时描述符的存储地址，可通过 \hyperref[fielddesc:DMA2DINERREOFDESADDRCHN]{DMA2D\_IN\_ERR\_EOF\_DES\_ADDR\_CH\regindex{n}} 字段获取。
+
+
+\subsection{访问存储}\label{sec:dma2d-access-ram}
+2D-DMA 任意 RX/TX 通道均可以访问片内和片外存储器，其可访问的片内地址空间为寄存器 \hyperref[fielddesc:DMA2DACCESSINTRMEMSTARTADDR]{DMA2D\_ACCESS\_INTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSINTRMEMENDADDR]{DMA2D\_ACCESS\_INTR\_MEM\_END\_ADDR} 的配置值区间，可访问的片外地址空间为 \hyperref[fielddesc:DMA2DACCESSEXTRMEMSTARTADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSEXTRMEMENDADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_END\_ADDR} 的配置值区间。
+
+2D-DMA 利用 AXI 总线在片内进行数据传输，AXI 总线的突发传输模式默认打开且无法关闭，但是用户可以通过\hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}} 来控制 AXI 总线突发传输传输的数据量，将突发传输长度配置为 8/16/32/64/128 字节。
+
+2D-DMA 访问外部存储器的加密空间（详见章节 \ref{mod:extmemencr} \textit{\nameref{mod:extmemencr}}）时，buffer address pointer 和对应数据量需按 16 字节对齐，其他参数无要求；访问配置的片内存储器空间和外部存储器的非加密空间时，链表描述符参数无对齐要求。
+
+
+\subsection{仲裁}
+
+为了确保及时响应高速低延迟外设的请求，2D-DMA 引入通道优先级仲裁和通道权重仲裁两种仲裁机制。
+
+\begin{itemize}
+\item 优先级仲裁方式：2D-DMA 支持 \iftagged{ESP32-P4-latest}{16（0 \textasciitilde 15）}{4（0 \textasciitilde 3）}
+ 个等级的优先级，数字越大优先级越高。若多个通道在同一时刻存在数据传输需求，2D-DMA 会按照通道优先级从高到低顺序响应每个通道的数据传输请求；优先级越高，请求响应越及时。
+\item 权重仲裁方式：
+    \begin{itemize}
+        \item 每个通道的的权重（即令牌数）可以配置为 0 \verb+~+ 15 之间的任意值。2D-DMA 将时间按照一定的总线 (AXI) 时钟周期长度划分成片，在每个时间片内，各个通道的数据传输请求次数应该将按照通道所配置的令牌数进行分配，在任意一个时间片内，某通道每请求一次数据传输消耗一次令牌，若某个通道在某个时间片内消耗尽令牌数，则该通道请求将不再被响应，直到仲裁时间达到时间片规定长度或者所有通道的令牌数均已经消耗尽，此时将刷新令牌数，进入下一个时间片周期内。
+        \item 若通道令牌数配置为非零值，即使无数据传输请求，也会在每个时间片内等待所有通道的令牌数耗尽，不会提前退出当前仲裁时间片。通道无数据传输请求且令牌值非 0 时，会导致一些带宽浪费，基于此，2D-DMA 提供额外的权重仲裁优化开关。权重仲裁优化打开时，如果通道无数据传输需求，则该通道令牌数会被认为是 0，不再参与仲裁，当所有通道均无数据传输请求时，仲裁器提前退出当前时间片，以此提高仲裁响应时间，提高传输速率。
+    \end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 若同时配置优先级仲裁和通道权重仲裁，且优先级不同，权重相同，则在各个通道传输相同的数据量，且数据量较少的前提下，优先级高的通道优先传输完成。
+    \item 若优先级不同且权重也不同，各个通道传输数据量相同且较大，则权重较大的通道是能优先分配到大带宽的，会优先完成传输。
+\end{itemize}
+\end{tiplisting}
+
+
+
+
+\section{事件任务矩阵功能} \label{sec:dma2d-etm-func}
+
+在 \chipname{} 中，2D-DMA 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 2D-DMA 的 ETM 任务，或者通过 2D-DMA 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与 2D-DMA 相关的 ETM 任务和 ETM 事件。
+
+
+2D-DMA 可接收的 ETM 任务有：
+
+\begin{itemize}
+\item DMA2D\_TASK\_IN\_START\_CH\regindex{n}：触发时开启 2D-DMA 的接收通道 \regindex{n} 进行数据传输。
+\item DMA2D\_TASK\_OUT\_START\_CH\regindex{n}：触发时开启 2D-DMA 的发送通道 \regindex{n} 进行数据传输。
+    \begin{tiplisting}
+    以上两个 ETM 任务与 CPU 配置 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}}、\hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 实现的功能相同。 当 \hyperref[fielddesc:DMA2DINETMENCHN]{DMA2D\_IN\_ETM\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTETMENCHN]{DMA2D\_OUT\_ETM\_EN\_CH\regindex{n}} 为 1 时，只有 ETM 可以配置对应方向及对应通道 2D-DMA 的启动，当 \hyperref[fielddesc:DMA2DINETMENCHN]{DMA2D\_IN\_ETM\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTETMENCHN]{DMA2D\_OUT\_ETM\_EN\_CH\regindex{n}} 为 0 时，仅可通过 CPU 使能对应的 2D-DMA。
+    \end{tiplisting}
+\item DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n}：触发时允许 2D-DMA 的接收通道 \regindex{n} 处理下一个链表描述符。
+\item DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n}：触发时允许 2D-DMA 的发送通道 \regindex{n} 处理下一个链表描述符。
+    \begin{tiplisting}
+    正常模式下 2D-DMA 开始工作后，每处理完一个链表描述符，如果还存在下一个链表描述符（即 next descriptor address 字段非 0），则会继续处理下一个链表描述符并按照描述符的描述信息读/写存储器，直到所有描述符都被处理完成。 当配置 \hyperref[fielddesc:DMA2DINETMLOOPENCHN]{DMA2D\_IN\_ETM\_LOOP\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTETMLOOPENCHN]{DMA2D\_OUT\_ETM\_LOOP\_EN\_CH\regindex{n}} 为 1 时，2D-DMA 处理完当前描述符后会等待 DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} 或 DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} 任务，才可以开始处理下一个链表描述符。\\
+    DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} 或 DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} 任务可以存储到任务缓存中，最多可以缓存 4 个任务。当 2D-DMA 接收到此任务，但是当前链表描述符还未处理完成时，可以缓存任务。任务缓存的深度由 \hyperref[fielddesc:DMA2DINDSCRTASKMAKCHN]{DMA2D\_IN\_DSCR\_TASK\_MAX\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTDSCRTASKMAKCHN]{DMA2D\_OUT\_DSCR\_TASK\_MAX\_CH\regindex{n}} 决定。\\
+    当任务缓存超过最大值时，会上报 \hyperref[int:DMA2DINDSCRTASKOVFINT] {DMA2D\_IN\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT} 或 \\\hyperref[int:DMA2DOUTDSCRTASKOVFINT] {DMA2D\_OUT\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT} 中断。
+    \end{tiplisting}
+\end{itemize}
+
+2D-DMA 可产生的 ETM 事件有：
+
+\begin{itemize}
+\item DMA2D\_EVT\_IN\_DONE\_CH\regindex{n}：表示通道 \regindex{n} 接收方向链表描述符指向的数据接收完成。
+\item DMA2D\_EVT\_IN\_SUC\_EOF\_CH\regindex{n}：通道 \regindex{n} 接收方向 eof 位为 1 的链表描述符指向的数据接收完成指示。
+\item DMA2D\_EVT\_OUT\_DONE\_CH\regindex{n}：通道 \regindex{n} 表示通道 \regindex{n} 发送方向链表描述符指向的数据发送完成。
+\item DMA2D\_EVT\_OUT\_SUC\_EOF\_CH\regindex{n}：通道 \regindex{n} 发送方向 eof 位为 1 的链表描述符指向的数据发送完成指示。
+\item DMA2D\_EVT\_OUT\_TOTAL\_EOF\_CH\regindex{n}：通道 \regindex{n} 发送方向最后一个并且 eof 位为 1 的链表描述指向的数据发送符完成指示。
+\end{itemize}
+
+在具体应用中，2D-DMA 的 ETM 事件可以用来触发 2D-DMA 的 ETM 任务，例如，DMA2D\_EVT\_OUT\_TOTAL\_EOF\_CH0 事件可以触发 DMA2D\_TASK\_IN\_START\_CH1 任务，从而触发新一轮的 2D-DMA 操作。
+
+
+\section{中断}
+
+\chipname{} 的 2D-DMA 可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item DMA2D\_IN\_CH0\_INTR
+        \item DMA2D\_IN\_CH1\_INTR
+        \tagged{ESP32-P4-latest}{\item DMA2D\_IN\_CH2\_INTR}
+        \item DMA2D\_OUT\_CH0\_INTR
+        \item DMA2D\_OUT\_CH1\_INTR
+        \item DMA2D\_OUT\_CH2\_INTR
+        \tagged{ESP32-P4-latest}{\item DMA2D\_OUT\_CH3\_INTR}
+    \end{itemize}
+
+这些中断信号由 2D-DMA 的内部中断源生成。
+
+以下中断源生成 DMA2D\_IN\_CH\regindex{n}\_INTR (\regindex{n} 为 0 \verb+~+ \iftagged{ESP32-P4-latest}{2}{1}) 中断信号：
+
+\begin{itemize}
+    \item \label{int:DMA2DINDONEINT}DMA2D\_IN\_DONE\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当一个接收链表描述符对应的数据接收完成时触发此中断。
+    \item \label{int:DMA2DINSUCEOFINT}DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT：对于接收通道\regindex{n}，当一个接收链表描述符对应的数据接收完成，并且描述符的 eof 为 1 时（即当一个接收链表对应的一张图片接收完成时）触发此中断。
+    \item \label{int:DMA2DINERREOFINT}DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收的一张图片中有错误发生时触发此中断。(该中断只用于外设选择 JPEG 时）。
+    \item \label{int:DMA2DINDSCREMPTYINT}DMA2D\_IN\_DSCR\_EMPTY\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收链表描述符指向的 buffer size 小于待接收数据长度时触发此中断。
+    \item \label{int:DMA2DINDSCRERRINT}DMA2D\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收链表描述符未通过任一描述符检查时触发此中断。
+    \item \label{int:DMA2DINFIFOOVFINT} DMA2D\_INFIFO\_L1/L2/L3\_OVF\_CH\regindex{n}\_INT：当 2D-DMA 接收数据方向缓存写溢出时触发此中断。
+    \item \label{int:DMA2DINFIFOUDFINT} DMA2D\_INFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT：当 2D-DMA 接收数据方向缓存读溢出时触发此中断。
+    \item \label{int:DMA2DINDSCRTASKOVFINT} DMA2D\_IN\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT：当 2D-DMA 的 DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} 任务缓存超过最大值时触发此中断。
+    \item \label{int:DMA2DINFIFOROOVFINT} DMA2D\_INFIFO\_RO\_OVF\_CH0\_INT（仅通道 0 支持）：当 2D-DMA 接收数据方向宏块重排功能的缓存写溢出时触发此中断。
+    \item \label{int:DMA2DINFIFOROUDFINT} DMA2D\_INFIFO\_RO\_UDF\_CH0\_INT（仅通道 0 支持）：当 2D-DMA 接收数据方向宏块重排功能的缓存读溢出时触发此中断。
+\end{itemize}
+
+以下中断源生成 DMA2D\_OUT\_CH\regindex{n}\_INTR (\regindex{n} 为 0 \verb+~+ \iftagged{ESP32-P4-latest}{3}{2}) 中断信号：
+
+\begin{itemize}
+    \item \label{int:DMA2DOUTDONEINT}DMA2D\_OUT\_DONE\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当一个发送链表描述符对应的数据发送完成时触发此中断。
+    \item \label{int:DMA2DOUTEOFINT}DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当发送描述符的 eof 位为 1，且 \hyperref[fielddesc:DMA2DOUTEOFMODECHN]{DMA2D\_OUT\_EOF\_MODE\_CH\regindex{n}} 为 0 时，该描述符对应的最后一个数据由总线传入 2D-DMA TX 通道时，该中断触发；当发送描述符的 eof 位为 1，且 \hyperref[fielddesc:DMA2DOUTEOFMODECHN]{DMA2D\_OUT\_EOF\_MODE\_CH\regindex{n}} 为 1 时，该描述符对应的最后一个数据从 2D-DMA TX 通道发出时，该中断触发。
+    \item \label{int:DMA2DOUTDSCRERRINT}DMA2D\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当发送链表描述符未通过任一描述符检查时会触发此中断。
+    \item \label{int:DMA2DOUTTOTALEOFINT}DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当一个链表（可包含多个链表描述符）对应的所有数据都已发送完成时触发此中断。
+    \item \label{int:DMA2DOUTFIFOOVFINT} DMA2D\_OUTFIFO\_L1/L2/L3\_OVF\_CH\regindex{n}\_INT：当 2D-DMA 发送数据方向缓存写溢出时触发此中断。
+    \item \label{int:DMA2DOUTFIFOUDFINT} DMA2D\_OUTFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT：当 2D-DMA 发送数据方向缓存读溢出时触发此中断。
+    \item \label{int:DMA2DOUTDSCRTASKOVFINT} DMA2D\_OUT\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT：当 2D-DMA 的 DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} 任务缓存超过最大值时时触发此中断。
+    \item \label{int:DMA2DOUTFIFOROOVFINT} DMA2D\_OUTFIFO\_RO\_OVF\_CH0\_INT（仅通道 0 支持）：当 2D-DMA 发送数据方向宏块重排/颜色空间转换功能的缓存写溢出时触发此中断。
+    \item \label{int:DMA2DOUTFIFOROUDFINT} DMA2D\_OUTFIFO\_RO\_UDF\_CH0\_INT（仅通道 0 支持）：当 2D-DMA 发送数据方向宏块重排/颜色空间转换功能的缓存读溢出时触发此中断。
+\end{itemize}
+
+
+\section{编程流程}
+\label{sec:2ddma-prog-procedures}
+
+可通过配置 \hyperref[fielddesc:HPSYSCLKRSTDMA2DSYSCLKEN]{HP\_SYS\_CLKRST\_DMA2D\_SYS\_CLK\_EN} 寄存器管理 2D-DMA 时钟门控，默认时钟门控打开。可通过配置 \hyperref[fielddesc:HPSYSCLKRSTRSTENDMA2D]{HP\_SYS\_CLKRST\_RST\_EN\_DMA2D} 对 2D-DMA 模块全局复位。
+
+\subsection{2D-DMA 通用配置}
+
+配置片内、片外存储器访问空间及突发传输的数据量，详见章节 \ref{sec:dma2d-access-ram}。
+
+
+\subsection{2D-DMA 模式专属配置}
+\begin{itemize}
+\item 1D 模式：无专属配置
+\item 2D-MOD0 模式：无专属配置
+\item 2D-MOD1 模式：对于 JPEG 外设，需要配置寄存器 \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 或 \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}，选择读取宏块的基本单元，有三种尺寸可选（水平 $\times$ 垂直）：8 像素 $\times$ 8 像素、8 像素 $\times$ 16 像素、16 像素 $\times$ 16 像素，如何选择可参照 JPEG 相关章节。宏块单位大小与链表描述符 hb、vb 的选择可参照表 \ref{tab:ro_out_conf}、 \ref{tab:ro_in_conf}。
+\item DSCR-PORT 模式：配置寄存器 \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\regindex{n}} 为 1 进入该模式，该模式仅为 PPA 应用，具体操作可参照 PPA 相关章节。
+\end{itemize}
+
+
+\subsection{2D-DMA TX 通道配置流程}
+利用 2D-DMA 发送数据时，2D-DMA TX 通道的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 2D-DMA TX 通道状态机和 FIFO 指针；
+    \item 挂载好发送链表，配置寄存器 \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} 指向第一个发送链表描述符；
+    \item 配置 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_PERI\_OUT\_SEL\_CH\regindex{n}} 为对应的外设号，见表 \ref{tab:2ddma-tx-peri-sel}；
+    \item 置位 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 启动 2D-DMA TX 通道发送数据；
+    \item 配置对应的外设，并启动该外设，具体配置请参考对应的外设章节；
+    \item 等待 \hyperref[int:DMA2DOUTEOFINT]{DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT} 中断，即数据传输完成。
+\end{enumerate}
+
+\subsection{2D-DMA RX 通道配置流程}
+利用 2D-DMA 接收数据时，2D-DMA RX 通道的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 2D-DMA RX 通道状态机和 FIFO 指针；
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} 指向第一个接收链表描述符；
+    \item 配置 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_PERI\_IN\_SEL\_CH\regindex{n}} 为对应的外设号，见表 \ref{tab:2ddma-rx-peri-sel}；
+    \item 置位 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 启动 2D-DMA RX 通道发送数据；
+    \item 配置对应的外设，并启动该外设，具体配置请参考对应的外设章节；
+    \item 等待 \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} 中断，即一张图片接收完成。
+\end{enumerate}
+
+\subsection{2D-DMA 存储器到存储器配置流程}
+利用 2D-DMA 从存储到存储搬运数据时配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 2D-DMA TX 通道状态机和 FIFO 指针；
+    \item 对寄存器 \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 2D-DMA RX 通道状态机和 FIFO 指针；
+    \item 挂载好发送链表，配置寄存器 \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} 指向第一个发送链表描述符；
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} 指向第一个接收链表描述符；
+    \item 配置 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_PERI\_OUT\_SEL\_CH\regindex{n}} 为某一个 Dummy 号，见表 \ref{tab:2ddma-tx-peri-sel}；
+    \item 配置 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_PERI\_IN\_SEL\_CH\regindex{n}} 为某一个 Dummy 号，见表 \ref{tab:2ddma-rx-peri-sel}；
+    \item 置位 \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_MEM\_TRANS\_EN\_CH\regindex{n}} 使能 存储器到存储器 传输功能；
+    \item 置位 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 启动 2D-DMA TX 通道发送数据；
+    \item 置位 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 启动 2D-DMA RX 通道发送数据；
+    \item 等待 \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} 中断，即一次数据搬运完成。
+\end{enumerate}
+
+\subsection{通道优先级和权重配置流程}
+
+优先级仲裁配置方法如下：
+\begin{enumerate}
+\item  配置 \hyperref[fielddesc:DMA2DOUTARBPRIORITYCHN]{DMA2D\_OUT\_ARB\_PRIORITY\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DINARBPRIORITYCHN]{DMA2D\_IN\_ARB\_PRIORITY\_CH\regindex{n}} 为 TX 和 RX 通道的优先级。
+\end{enumerate}
+
+权重仲裁配置方法如下:
+\begin{enumerate}
+\item 配置 \hyperref[fielddesc:DMA2DOUTARBTIMEOUTNUM]{DMA2D\_OUT\_ARB\_TIMEOUT\_NUM} 和 \hyperref[fielddesc:DMA2DINARBTIMEOUTNUM]{DMA2D\_IN\_ARB\_TIMEOUT\_NUM} 为 TX 和 RX 权重仲裁的时间片长度；
+\item 配置 \hyperref[fielddesc:DMA2DOUTARBTOKENNUMCHN]{DMA2D\_OUT\_ARB\_TOKEN\_NUM\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DINARBTOKENNUMCHN]{DMA2D\_IN\_ARB\_TOKEN\_NUM\_CH\regindex{n}} 为各个通道的令牌值；
+\item 清零 \hyperref[fielddesc:DMA2DOUTARBWEIGHTOPTDISCHN]{DMA2D\_OUT\_ARB\_WEIGHT\_OPT\_DIS\_CH\_CH\regindex{n}} 和\hyperref[fielddesc:DMA2DINARBWEIGHTOPTDISCHN]{DMA2D\_IN\_ARB\_WEIGHT\_OPT\_DIS\_CH\regindex{n}}，使能 TX 和 RX 方向的权重仲裁优化；
+\item 置位 \hyperref[fielddesc:DMA2DOUTWEIGHTEN]{DMA2D\_OUT\_WEIGHT\_EN} 和 \hyperref[fielddesc:DMA2DINWEIGHTEN]{DMA2D\_IN\_WEIGHT\_EN}，使能权重仲裁。
+\end{enumerate}
+
+
+\subsection{工作状态下复位流程}
+当 2D-DMA 处于工作状态，即链表描述符未全部处理完成时，如果想要复位 2D-DMA 的 AXI 功能（包括 2D-DMA 系统复位 \hyperref[fielddesc:HPSYSCLKRSTRSTENDMA2D]{HP\_SYS\_CLKRST\_RST\_EN\_DMA2D} 及 AXI 功能复位 \hyperref[fielddesc:DMA2DAXIMRDRST]{DMA2D\_AXIM\_RD\_RST} 和\hyperref[fielddesc:DMA2DAXIMWRRST]{DMA2D\_AXIM\_WR\_RST}），必须先暂停当前 2D-DMA 工作，流程如下：
+
+\begin{enumerate}
+    \item 置位 \hyperref[fielddesc:DMA2DINCMDDISABLECHN]{DMA2D\_IN\_CMD\_DISABLE\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DOUTCMDDISABLECHN]{DMA2D\_OUT\_CMD\_DISABLE\_CH\regindex{n}} 寄存器，暂停 2D-DMA；
+    \item 等待  \hyperref[fielddesc:DMA2DOUTRESETAVAILCHN]{DMA2D\_OUT\_RESET\_AVAIL\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DINRESETAVAILCHN]{DMA2D\_IN\_RESET\_AVAIL\_CH\regindex{n}} 寄存器置 1 后可进行复位操作；
+    \item 复位完成后将 \hyperref[fielddesc:DMA2DINCMDDISABLECHN]{DMA2D\_IN\_CMD\_DISABLE\_CH\regindex{n}} 和 \hyperref[fielddesc:DMA2DOUTCMDDISABLECHN]{DMA2D\_OUT\_CMD\_DISABLE\_CH\regindex{n}} 寄存器置 0。
+\end{enumerate}
+
+
+
+% >>> If your module has no registers，delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\begin{landscape}
+\hypertarget{2ddma-reg-summ}{}
+\section{寄存器列表}
+\label{sec:2ddma-reg-summ}
+
+本小节的所有地址均为相对于 2D-DMA 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\iftagged{ESP32-P4-latest}{
+    \subfile{\modulefiles/07-2DDMA-reg-summ-latest__CN}
+}{
+    \subfile{\modulefiles/07-2DDMA-reg-summ__CN}
+}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 2D-DMA 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\iftagged{ESP32-P4-latest}{
+    \subfile{\modulefiles/07-2DDMA-reg-latest__CN}
+}{
+    \subfile{\modulefiles/07-2DDMA-reg__CN}
+}
+
+
+\end{document}

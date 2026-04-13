@@ -16,11 +16,19 @@ Backporting to `release/v0.1` is primarily for **preview builds**, including:
 The goal is to ensure that the document builds as a complete TRM.
 
 
+## Trigger Conditions
+
+The backport workflow is triggered when reused chapters (see [Reused Chapters](#reused-chapters)) are updated in an MR:
+
+1. After a merge to `master`, `check_needs_backport.py` checks whether any changed file is in `reused_chapter_list.txt` (see [Reused Chapters](#reused-chapters)). If so, it adds the **`needs backport`** label and posts a note in the original MR.
+2. `create_backport_mr.py` runs to create a backport MR and adds the **`backport created`** label to the original MR.
+
+
 ## Reused Chapters
 
-**Reused chapters** are chapters in TRM A (source TRM) that include chapter files from TRM B (the target TRM) via `\subfile`, because the two chapters are highly similar. The list of such files is maintained in `reused_chapter_list.txt` on `master`.
+**Reused chapters** are chapters in TRM A (target TRM) that include chapter files from TRM B (source TRM) via `\subfile`, because the two chapters are highly similar. The list of such files is maintained in `reused_chapter_list.txt` on `master`.
 
-When a reused chapter in the source TRM is updated on `master`, the same change should be backported so that target TRMs on `release/v0.1` that reuse it stay in sync.
+**What counts as a “reused chapter” change for CI:** `check_needs_backport.py` compares MR changes to `reused_chapter_list.txt`. A path triggers backport if it is listed as a `.tex` file, **or** lies under a listed **module directory**.
 
 **Updating the list:** Run `collect_reused_chapters.py` from the repo root. It scans `.tex` files for `\subfile{../...}` and overwrites `reused_chapter_list.txt` with the collected paths:
 
@@ -28,20 +36,10 @@ When a reused chapter in the source TRM is updated on `master`, the same change 
 python3 tools/auto_backport/collect_reused_chapters.py
 ```
 
-Run this whenever you add or remove `\subfile` references so the backport check stays accurate.
-
 When preparing new TRM chapters:
 
 - If the source TRM is maintained on `master`, module PMs could manually add reused chapters to `reused_chapter_list.txt` on `master`, or run the script on `release/v0.1` and update the list on `master`.
-- If the source TRM is maintained on `release/v0.1`, the TRM owner should run the script and update the list on `master` when the source TRM is published to `master`.
-
-
-## Trigger Conditions
-
-The backport flow is triggered when **reused chapters are updated** in an MR:
-
-1. On every MR pipeline, `check_needs_backport.py` checks whether any changed file is in `reused_chapter_list.txt`. If so, it adds the **`needs backport`** label and posts a note.
-2. `create_backport_mr.py` runs and adds the **`backport created`** label.
+- If the source TRM is maintained on `release/v0.1`, when published to `master`, the TRM owner should run the script and update the list on `master`.
 
 
 ## Components
@@ -55,32 +53,32 @@ The backport flow is triggered when **reused chapters are updated** in an MR:
 - If the label is already present or no reused files are changed, the script exits silently.
 
 ### 2. `create_backport_mr.py`
-- Runs when an MR is merged.
-- Creates a backport when the MR has **`needs backport`** and does not yet have **`backport created`**.
+- Runs in the same pipeline after `check_needs_backport.py`.
 - Performs the following steps:
 
 #### Step 1: Check Backport Labels
-- Confirms that the MR requires backport and hasn't been backported yet.
+- Confirms that the MR requires backport (has **`needs backport`**) and has not been backported yet (has no **`backport created`**).
 
-#### Step 2: Create or Use Backport Branch
-- Branch name: `<source-branch>_<target-branch>` (e.g., `docs/add_auto_backport_v0.1`).
-- If the branch does not exist, it is created from the target branch (`release/v0.1`).
+#### Step 2: Create Backport Branch
+- Branch name: `<source-branch>_v0.1` (e.g., `docs/add_auto_backport_v0.1`).
+- If the branch does not exist, it is created from the target branch `release/v0.1`.
 - If it exists, the existing branch is used.
 
-#### Step 3: Cherry-pick Commit(s)
-- Currently only the **latest commit** of the original MR is cherry-picked for testing. In the final design, all commits in the original MR will be backported.
+#### Step 3: Cherry-Pick Commits
+- Cherry-picks **all commits of the original MR**, oldest first.
 - Sets Git committer info to the original MR assignee.
-- Conflicts are recorded. Cherry-pick failures do **not block MR creation**.
+- Revision-history paths are skipped per [Revision History Handling](#revision-history-handling).
+- Conflicts are recorded in the pipeline log. Cherry-pick failures do **not block MR creation**.
 
 #### Step 4: Push Backport Branch
 - The branch is pushed to GitLab using `TRM_BACKPORT_GL_TOKEN` for authentication.
 
 #### Step 5: Create Backport MR
-- Title: Copies original MR title with `(v0.1)` suffix.
+- Title: Copies the original MR title with `(v0.1)` suffix.
 - Description:
   - If `## Related` exists in the original MR, a reference to the original MR is added below it.
   - Otherwise, a new `## Related` section is appended.
-- Assignee and reviewers are copied from the original MR.
+- Assignee and reviewers are copied from the original MR; labels are copied except `needs backport`, `backport created`, and `release`.
 
 #### Step 6: Update Original MR
 - Description:

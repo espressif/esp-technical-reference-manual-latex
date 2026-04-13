@@ -1,0 +1,205 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./25-RNG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{rng}{}
+\chapter{Random Number Generator (RNG)}\label{mod:rng}
+
+\section{Introduction}
+
+The \chipname{} contains a true random number generator, which generates 32-bit random numbers that can be used for cryptographical operations, among other things.
+
+\section{Features}
+
+The random number generator in \chipname{} generates true random numbers, meaning they are derived from a physical process rather than an algorithm. Each number within the specified range has an equal probability of occurrence.
+
+\section{Functional Description}\label{sec:rng-func-descr}
+
+Every 32-bit value that the system reads from the \hyperref[regdesc:LPPERIRNGSYNCDATAREG]{LPPERI\_RNG\_DATA\_SYNC\_REG} register of the random number generator is a true random number. These true random numbers are generated based on the \textbf{thermal noise} in the system, the \textbf{asynchronous clock mismatch}, and the \textbf{asynchronous counter}.
+
+\begin{itemize}
+    \item \textbf{Thermal noise} comes from the high-speed ADC, or SAR ADC, or both. Whenever the high-speed ADC or SAR ADC is enabled, bit streams will be generated and fed into the random number generator through an XOR logic gate as random seeds.
+    \item RC\_FAST\_CLK is an \textbf{asynchronous clock source} source that can generate metastability in the circuit. This metastability can also be used as a random number seed \hyperref[others:rng-note-clock-seed]{$^2$} to feed into the random number generator.
+    \item \textbf{Asynchronous counters} count using an asynchronous clock source. The asynchronous clock source generates circuit metastability, which can be used as a random number seed to feed into the random number generator. There are two types of asynchronous counters:
+    \begin{itemize}
+        \item On-chip \textbf{\nameref{mod:rtctimer} (RTC\_TIMER)}: The counter directly counts using the on-chip RTC timer. The count value is fed into the random number generator as a random number seed after applying XOR logic.
+        \item \textbf{Ring oscillator (BUF\_CHAIN)}: The counter counts based on the ring oscillator, formed by connecting buffer cells end-to-end. The count value derived from this oscillator is fed into the random number generator as a random number seed after applying XOR logic.
+    \end{itemize}
+    These two types of asynchronous counters can work independently or in combination.
+\end{itemize}
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/25-RNG-noise-source}
+    \caption{Noise Source}
+    \label{fig:rng-noise-source}
+\end{figure}
+
+When there is noise coming from the SAR ADC, the random number generator is fed with a 2-bit entropy in one clock cycle (configurable, normally 66 kHz). Thus, it is advisable to read the \hyperref[regdesc:LPPERIRNGSYNCDATAREG]{LPPERI\_RNG\_DATA\_SYNC\_REG} register at a maximum rate of 66 kHz to obtain the maximum entropy.
+
+When there is noise coming from the high-speed ADC, the random number generator is fed with a 2-bit entropy in one APB clock cycle, which is normally 80 MHz. Thus, it is advisable to read the \hyperref[regdesc:LPPERIRNGSYNCDATAREG]{LPPERI\_RNG\_DATA\_SYNC\_REG}
+register at a maximum rate of 5 MHz to obtain the maximum entropy.
+
+When BUF\_CHAIN is enabled, 1 bit of entropy can be obtained in each RC\_FAST\_CLK cycle.
+
+A data sample of 2 GB, which is read from the random number generator at a rate of 5 MHz with only the high-speed ADC being enabled, has been tested using the Dieharder Random Number Testsuite (version 3.31.1). The sample passed all tests.
+
+
+\section{Programming Procedure}
+
+To use the random number generator, set \hyperref[fielddesc:LPPERIRNGCKEN]{LPPERI\_RNG\_CK\_EN} to enable its clock. The clock is automatically enabled when \nameref{mod:ecdsa} is used, regardless of
+\hyperref[fielddesc:LPPERIRNGCKEN]{LPPERI\_RNG\_CK\_EN}.
+
+When using the random number generator, make sure the entropy source is enabled. Otherwise, pseudo-random numbers will be returned.
+\begin{itemize}
+    \item SAR ADC can be enabled by using the DIG ADC controller. For details, please refer to Chapter \ref{mod:adc} \textit{\nameref{mod:adc}}.
+    \item High-speed ADC is enabled automatically when the Wi-Fi or Bluetooth module is enabled.
+    \item RC\_FAST\_CLK is always enabled
+    \item Asynchronous counters
+        \begin{itemize}
+            \item RTC timer (RTC\_TIMER) is enabled by setting the \hyperref[fielddesc:LPPERIRTCTIMEREN]{LPPERI\_RTC\_TIMER\_EN} field.
+            \item Ring oscillator (BUF\_CHAIN) is enabled by setting the \hyperref[fielddesc:LPPERIRNGSAMPLEENABLE]{LPPERI\_RNG\_SAMPLE\_ENABLE} bit.
+        \end{itemize}
+\end{itemize}
+\newpage
+\begin{tiplisting}\label{others:rng-note-clock-seed}
+\vspace{-2.5em}
+\begin{enumerate}
+    \item When the Wi-Fi module is enabled, the high-speed ADC may produce saturated readings in extreme cases, which reduces entropy. To mitigate this, enable the SAR ADC as an additional noise source for the random number generator.
+    \item Enabling RC\_FAST\_CLK and asynchronous counters increases the RNG entropy. However, to ensure maximum entropy, always enable the SAR ADC or high-speed ADC as well.
+\end{enumerate}
+\end{tiplisting}
+
+When multiple random numbers are required, the value of the \hyperref[regdesc:LPPERIRNGSYNCDATAREG]{LPPERI\_RNG\_DATA\_SYNC\_REG} register can be read continuously. However, when reading the register, ensure that the rate does not exceed the entropy generation rate described in Section \ref{sec:rng-func-descr}. If multiple entropy sources are configured, it is recommended to not exceed the entropy generation rate of the lowest noise source.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{rng-reg-summ}{}
+\section{Register Summary}
+\label{sec:rng-reg-summ}
+
+The addresses in this section are relative to Random Number Generator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\begin{longtable}{ | p{6cm} | p{7.2cm} | p{1.3cm} | p{1cm} | }
+\hline\rowcolor{lightgray}
+\textbf{Name} & \textbf{Description} &  \textbf{Address} & \textbf{Access} \\ \hline
+\endhead
+\hyperref[regdesc:LPPERIRNGCFGREG]{LPPERI\_RNG\_CFG\_REG} & RNG configuration register & 0x0024 & varies \\ \hline
+\hyperref[regdesc:LPPERIRNGSYNCDATAREG]{LPPERI\_RNG\_DATA\_SYNC\_REG} & RNG result synchronization register & 0x0028 & RO \\ \hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to Random Number Generator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\begin{register}{H}{LPPERI\_RNG\_CFG\_REG}{0x0024}\label{regdesc:LPPERIRNGCFGREG}
+\regfield{(reserved)}{20}{12}{00000000000000000000}%
+\regfield{LPPERI\_RTC\_TIMER\_EN}{2}{10}{11}%
+\regfield{(reserved)}{9}{1}{000000000}%
+\regfield{LPPERI\_RNG\_SAMPLE\_ENABLE}{1}{0}{{0}}%
+\reglabel{Reset}\regnewline%
+\begin{regdesc}\begin{reglist}
+\label{fielddesc:LPPERIRNGSAMPLEENABLE}\item [LPPERI\_RNG\_SAMPLE\_ENABLE] Configures whether to enable BUF\_CHAIN.\\0: Disable\\ 1: Enable\\  (R/W)
+\label{fielddesc:LPPERIRTCTIMEREN}\item [LPPERI\_RTC\_TIMER\_EN] Configures whether to enable the RTC timer before CRC.\\
+0: Disable\\
+1: Enable\\ (R/W)
+\label{fielddesc:LPPERIRNGSAMPLECNT}\item [LPPERI\_RNG\_SAMPLE\_CNT] Represents the count value of BUF\_CHAIN. (RO)
+\end{reglist}\end{regdesc}
+\end{register}
+
+
+\begin{register}{H}{LPPERI\_RNG\_DATA\_SYNC\_REG}{0x0028}\label{regdesc:LPPERIRNGSYNCDATAREG}
+\regfield{LPPERI\_RND\_SYNC\_DATA}{32}{0}{00000000000000000000000000000000}%
+\reglabel{Reset}\regnewline%
+\begin{regdesc}\begin{reglist}
+\label{fielddesc:LPPERIRNDSYNCDATA}\item [LPPERI\_RND\_SYNC\_DATA] Represents the RNG synchronization result. (RO)
+\end{reglist}\end{regdesc}
+\end{register}
+
+\end{document}

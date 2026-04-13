@@ -1,0 +1,284 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./05-EFUSE}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{efuse}{}
+\chapter{eFuse 控制器 (EFUSE)}
+\label{mod:efuse}
+\section{概述}
+
+ESP32 中有多个 eFuse，其中存储着系统参数。作为 一种非易失性存储单位，
+eFuse 的 bit 一旦被烧写为 1，不能恢复为 0。
+eFuse 控制器按照软件操作完成对 eFuse 中各个系统参数中的各个 bit 的烧写。
+
+这些系统参数有些可以通过 eFuse 控制器被软件读取，有些直接由硬件模块使用。
+
+\section{主要特性}
+\begin{itemize}
+    \item 33 个系统参数
+    \item 烧写保护（可选）
+    \item 软件读取保护（可选）
+\end{itemize}
+
+\section{功能描述}
+
+\subsection{结构}\label{20.3.1}
+eFuse中存储了 33 个系统参数，各个系统参数的位宽不同，其名称与位宽如表 \ref{table:System_Parameter} 所示。
+其中，efuse\_wr\_disable、efuse\_rd\_disable、coding\_scheme、BLK3\_part\_reserve 这 4 个系统参数与 eFuse 控制器直接相关。
+
+\input{\modulefiles/tables/System_Parameter_cn.tex}
+
+\subsubsection{系统参数 efuse\_wr\_disable}
+
+系统参数 efuse\_wr\_disable 决定所有的系统参数是否处于烧写保护状态。作为一个系统参数，efuse\_wr\_disable 也决定其本身是否处于烧写保护状态。
+
+若某个系统参数未处于烧写保护状态，则此系统参数未被烧写的 bit 能够从 0 被烧写成 1。
+其已被烧写的 bit 已经为 1，且不可更改。
+若某个系统参数处于烧写保护状态，则此系统参数的每一个 bit 都无法再被更改。
+其未被烧写的 bit 永远为 0，已被烧写的 bit 永远为 1。
+
+每个系统参数的烧写保护状态对应 efuse\_wr\_disable 的一个 bit。
+当某个系统参数对应的 bit 为 0 时，表示此系统参数未处于烧写保护状态。当某个系统参数对应的 bit 为 1 时，表示此系统参数处于烧写保护状态。
+如果某个系统参数已经处于烧写保护状态，则将永远处于此状态。表 \ref{table:System_Parameter} 描述了各个系统参数的烧写保护状态具体由 efuse\_wr\_disable 的哪个 bit 决定。
+
+\subsubsection{系统参数 efuse\_rd\_disable}
+
+33 个系统参数中有 27 个不受软件读取保护状态的约束，这 27 个系统参数即表 \ref{table:System_Parameter} 中
+“efuse\_rd\_disable 软件读取保护” 一列中，对应值为“-”的系统参数。
+这些系统参数在任何时候都可通过 eFuse 控制器由软件读取，其中有部分同时也由硬件模块使用。
+
+其余的 6 个系统参数在未处于软件读取保护状态时，既可以被软件读取也可以被硬件模块使用。
+当它们处于软件读取保护状态时，只能被硬件模块使用。
+
+表 \ref{table:System_Parameter} 中的“ efuse\_rd\_disable 软件读取保护”一列
+描述了这 6 个系统参数的软件读取保护状态具体由 \\efuse\_rd\_disable 的哪个 bit 决定。
+系统参数 efuse\_rd\_disable 中的某个 bit 为 0，表示此 bit 管理的系统参数未处于软件读取保护状态。
+若系统参数 efuse\_rd\_disable 中的某个 bit 为 1，表示此 bit 管理的系统参数处于软件读取保护状态。
+如果某个系统参数已处于软件读取保护状态，则将永远处于此状态。
+
+\subsubsection{系统参数 coding\_scheme}
+
+如表 \ref{table:System_Parameter} 所示，系统参数 BLOCK1、BLOCK2、BLOCK3 的位宽是变化的。
+它们的位宽由另一个系统参数 \\coding\_scheme 决定。
+虽然 BLOCK1、BLOCK2、BLOCK3 的位宽是变化的，但这 3 个系统参数在 eFuse 中占用的 bit 数始终不变。
+这 3 个系统参数与它们在 eFuse 中的存储值之间存在着编码映射关系。具体参见表 \ref{table:BLOCKN_Encode}。
+
+\begin{table}[H]
+    \centering
+    \caption{BLOCK1/2/3 编码}
+    \label{table:BLOCKN_Encode}
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \rowcolor{lightgray}
+        coding\_scheme[1:0] & BLOCK1/2/3 位宽& 编码方式 & eFuse 中的 bit 数 \\
+        \hline
+        00/11 & 256 & \hyperlink{None}{非编码} & 256 \\
+        \hline
+        01 & 192 & \hyperlink{frac_3_4}{3/4 编码} & 256 \\
+        \hline
+        10 & 128 & \hyperlink{Repeat}{重复编码} & 256 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+以下对三种编码方式进行解释，其中，
+\begin{itemize}
+\item \begin{math}BLOCKN\end{math} 表示系统参数 BLOCK1、BLOCK2 或 BLOCK3。
+\item \begin{math}BLOCKN[255:0]\end{math}、\begin{math}BLOCKN[191:0]\end{math}、\begin{math}BLOCKN[127:0]\end{math} 分别表示三种编码方式下这几个系统参数的各个 bit。
+\item  \begin{math}{}^{\mathrm{e}}\mathrm{BLOCKN}[255\!:\!0]\end{math} 表示这几个系统参数经过编码之后的各个bit，即在 eFuse 中的各个 bit。
+\end{itemize}
+
+\input{\modulefiles/efusecontroller_codingscheme_cn.tex}
+
+
+\hypertarget{BLK3_part_reserve}{\subsubsection{系统参数 BLK3\_part\_reserve}}\label{BLK3}
+
+系统参数 coding\_scheme、BLOCK1、BLOCK2、BLOCK3
+受系统参数 BLK3\_part\_reserve 约束。
+
+当BLK3\_part\_reserve 为 0 时，coding\_scheme、BLOCK1、BLOCK2、BLOCK3 可以是允许的任意值。
+
+当BLK3\_part\_reserve 为 1 时，coding\_scheme、BLOCK1、BLOCK2、BLOCK3必然被固定为 3/4 编码。
+另外此时
+\begin{math}\mathrm{BLOCK3}[143\!:\!96]\end{math}
+即
+$^{\mathrm{e}}\mathrm{BLOCK3}[191\!:\!128]$
+不允许使用。
+
+\subsection{烧写系统参数}
+
+\hypertarget{program_BLOCKN}{}
+烧写变长系统参数 BLOCK1、BLOCK2、BLOCK3 不同于烧写定长系统参数。
+\textbf{我们并不直接烧写系统参数 BLOCK1、BLOCK2、BLOCK3 本身，
+而是烧写其编码之后的值 \begin{math}{}^{\mathrm{e}}\mathrm{BLOCKN}[255\!:\!0]\end{math}，
+这个值的位宽始终是 256。}
+而烧写定长系统参数则是直接烧写系统参数本身。
+
+30 个定长系统参数的每一个 bit 与 3 个变长系统参数编码之后的每一个 bit 都分别对应一个烧写寄存器 bit，
+对应关系如表 \ref{table:Program_Register} 所示。
+烧写系统参数的时候需要使用到这些寄存器 bit。
+
+\subfile{\modulefiles/Program_Register_cn}
+
+烧写系统参数的流程如下:
+
+\begin{enumerate}
+    \item 配置寄存器 EFUSE\_CLK的EFUSE\_CLK\_SEL0 位、EFUSE\_CLK\_SEL1 位与寄存器 EFUSE\_DAC\_CONF的EFUSE\_DAC\_CLK\_DIV 位。
+    \item 将需要烧写的 bit 对应的寄存器 bit 置 1。
+    \item 对寄存器 EFUSE\_CONF 写入 0x5A5A。
+    \item 对寄存器 EFUSE\_CMD 写入 0x2。
+    \item 轮询寄存器 EFUSE\_CMD 直到其为 0x0，或者等待烧写完成中断产生。
+    \item 对寄存器 EFUSE\_CONF 写入 0x5AA5。
+    \item 对寄存器 EFUSE\_CMD 写入 0x1。
+    \item 轮询寄存器 EFUSE\_CMD 直到其为 0x0，或者等待读取完成中断产生。
+    \item 将已烧写了的 bit 对应的寄存器 bit 置 0。
+
+\end{enumerate}
+
+如表 \ref{table:Timing_Configure} 所示，寄存器 EFUSE\_CLK的EFUSE\_CLK\_SEL0 位、EFUSE\_CLK\_SEL1 位与
+寄存器 EFUSE\_DAC\_CONF 的 EFUSE\_DAC\_CLK\_DIV 位的
+配置值是以当前 APB\_CLK 的频率为依据的。
+
+\begin{table}[H]
+    \centering
+    \caption{时序配置}
+    \label{table:Timing_Configure}
+    \begin{tabular}[h]{ |p{3.5cm}|p{4cm}|p{2cm}|p{2cm}|p{2cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{3}{c|}{APB\_CLK 频率} \\ \cline{3-5}
+        \rowcolor{lightgray}
+       \multirow{-2}{*}{寄存器}          &        \multirow{-2}{*}{对应寄存器位的配置值}           & 26 MHz      & 40 MHz     & 80 MHz     \\ \hline
+        \multirow{2}*{EFUSE\_CLK} & EFUSE\_CLK\_SEL0[7:0] & 250 & 160 & 80\\\cline{2-5}
+        & EFUSE\_CLK\_SEL1[7:0] & 255 & 255 & 128 \\\hline
+        EFUSE\_DAC\_CONF & EFUSE\_DAC\_CLK\_DIV[7:0] & 52 & 80 & 100 \\\hline
+    \end{tabular}
+\end{table}
+
+
+以下两种方法可以识别烧写/读取完成中断的产生：
+
+方法一：
+\begin{enumerate}
+    \item 轮询寄存器 EFUSE\_INT\_RAW 的 bit 1/0，直到 bit 1/0 为 1，表示烧写/读取完成中断产生。
+    \item 将寄存器 EFUSE\_INT\_CLR 的 bit 1/0 置 1 以清除烧写/读取完成中断。
+\end{enumerate}
+
+方法二：
+\begin{enumerate}
+    \item 将寄存器 EFUSE\_INT\_ENA 的 bit 1/0 置 1，使 eFuse 控制器能够发出 烧写/读取完成中断。
+    \item 配置 Interrupt Matrix 使 CPU 能够响应 EFUSE\_INT 中断。
+    \item 烧写/读取完成中断产生。
+    \item 查询寄存器 EFUSE\_INT\_ST 的 bit 1/0 以判断烧写/读取完成中断产生。
+    \item 对寄存器 EFUSE\_INT\_CLR 的 bit 1/0 置 1 以清烧写/读取完成中断。
+\end{enumerate}
+烧写不同的系统参数，甚至是同一个系统参数中的不同 bit 都可以在多次烧写中分别完成。
+但我们建议尽量减少烧写次数，即某个系统参数中的所有需要烧写的 bit 都在一次烧写中完成。
+并且当 efuse\_wr\_disable 的某个 bit 管理的所有系统参数都烧写之后，
+就立即烧写 efuse\_wr\_disable 的此 bit。
+甚至可以在同一次烧写中既烧写 efuse\_wr\_disable 的某个 bit 管理的所有系统参数，
+同时也烧写 efuse\_wr\_disable 的此 bit。
+\textbf{另外，严禁对已经烧写了的 bit 重复烧写。}
+
+\subsection{软件读取系统参数}
+
+30 个定长系统参数的每一个 bit 与 3 个变长系统参数本身的每一个 bit 都分别对应一个软件读取寄存器 bit，
+对应关系如表 \ref{table:Software_Read_Register} 所示。
+通过软件读取这些寄存器即可获知系统参数的值。
+\hypertarget{software_read_BLOCKN}{}
+系统参数 BLOCK1、BLOCK2、BLOCK3 的位宽是不定的。
+虽然如表 \ref{table:Software_Read_Register} 所示，这 3 个参数各自对应 256 个寄存器 bit，
+但是在 3/4 编码和重复编码模式下，这 256 个寄存器 bit 中的有部分是无效的。
+在非编码模式下，\begin{math}BLOCKN[255:0]\end{math} 的每一个 bit 对应的寄存器 bit 都是有用的。
+在 3/4 编码模式下，只有 \begin{math}BLOCKN[191:0]\end{math} 对应的寄存器 bit 是有用的。
+在重复编码模式下，只有 \begin{math}BLOCKN[127:0]\end{math} 对应的寄存器 bit 有用。
+在不同编码方式下，软件从无效的寄存器 bit 中读出的值无意义。
+\textbf{软件从有用的寄存器 bit 读出的值是系统参数 BLOCK1、BLOCK2、BLOCK3 本身，不是这几个系统参数编码之后的值。}
+
+\subfile{\modulefiles/Software_Read_Register_cn}
+
+\subsection{硬件模块使用系统参数}
+硬件模块使用系统参数是通过电路连接实现的，软件无法干预这个过程。硬件模块使用的都是系统参数本身。\textbf{对于 BLOCK1、BLOCK2、BLOCK3 而言，硬件模块使用的是解码之后的值，不是它们编码之后的值。}
+
+\subsection{中断}
+\begin{itemize}
+\item \label{int:EFUSEPGMDONEINT}EFUSE\_PGM\_DONE\_INT：当 eFuse 烧写完成后，此中断被触发。
+\item \label{int:EFUSEREADDONEINT}EFUSE\_READ\_DONE\_INT：当 eFuse 读取完成后，此中断被触发。
+\end{itemize}
+
+\newpage
+\hypertarget{efuse-reg-summ}{}
+\section{寄存器列表}
+本小节的所有地址均为相对于 eFuse 控制器基地址的地址偏移量（相对地址），具体基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。
+
+\subfile{\modulefiles/efuse_reg_summary_cn}\label{15.4}
+
+\clearpage
+\section{寄存器}
+本小节的所有地址均为相对于 eFuse 控制器基地址的地址偏移量（相对地址），具体基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。
+\subfile{\modulefiles/efuse_reg_cn}
+\end{document}

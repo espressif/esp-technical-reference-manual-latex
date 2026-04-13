@@ -1,0 +1,291 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-H2/10-INTMTRX}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{intmtrx}{}
+\chapter{中断矩阵 (INTMTX)}
+\label{mod:intmtrx}
+
+\section{概述}
+
+\chipname{} 中断矩阵将任一或多个外部中断源映射到 ESP-RISC-V CPU 的任一外部中断上。
+\chipname{} 有 65 个外部中断源，但 CPU 只支持 28 个外部中断。因此，将这些外部中断源映射至 CPU 中断必须使用中断矩阵。
+
+\begin{tiplisting}
+本章节只涉及将外部中断源映射到 CPU 中断，关于中断配置、中断向量表、中断服务程序推荐处理机制请参考章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} >  \ref{sec:riscvcpu-int-ctrl}\textit{\nameref{sec:riscvcpu-int-ctrl}}。
+\end{tiplisting}
+\vspace{-1em}
+\section{\chipname{} 中断术语}\label{sec:intmtx-int-terminology}
+
+下列有关中断的术语是在《\chipname{} 技术参考手册》的语境下定义的，旨在帮助读者更好地理解本文档。
+
+\subsection{中断}
+
+中断指的是在特定事件或条件下，CPU 中止当前执行去处理优先级更高的任务。中断机制使 CPU 能够迅速响应特定的事件。
+
+《\chipname{} 技术参考手册》里涉及的“中断”是个广义的概念，可以泛指中断信号或中断源。
+
+\subsection{中断信号/中断源}
+
+中断信号和中断源只是定义的角度不同，实际意思相同。
+
+从外设的角度来看，中断信号是由外设的内部中断源产生的，并发送到中断矩阵。
+
+从中断矩阵的角度来看，它接收来自外设发送的中断信号，并将其视为中断源。然后，中断矩阵将 CPU 外部中断信号发送到 CPU。
+
+从 CPU 的角度来看，来自中断矩阵的中断信号又变成中断源，与核心本地中断源一起发送给 CPU 中断控制器。
+
+\subsection{\chipname{} 中断流}
+
+图 \ref{fig:interrupt-term} 所示为 \chipname{} 的中断流。
+
+\begin{figure}[H]
+\centering \includegraphics[width=1\textwidth]{\modulefiles/figures/ESP32-H2-interrupt-terms_cn.eps}
+\caption{\chipname{} 的中断流}\label{fig:interrupt-term}
+\end{figure}
+
+
+\section{特性}
+
+\chipname{} 的中断矩阵模块具有如下特性：
+
+\begin{itemize}
+    \item 接收 65 个外部中断源作为输入
+    \item 生成 28 个 CPU 的外部中断作为输出
+    \item 支持查询外部中断源当前的中断状态
+    \item 支持将多个中断源映射到单个 CPU 中断（即共享中断）
+\end{itemize}
+
+\section{结构概览}
+
+中断矩阵的结构如图 \ref{fig:interrupt-matrix-structure} 所示。
+
+用户通过 \hyperref[sec:intmtrx-reg-summ]{中断矩阵寄存器} 配置外部中断源和 CPU 中断的映射关系。图 \ref{fig:interrupt-matrix-structure} 中的中断矩阵控制器负责映射，并将每个外部中断源的中断状态给到中断矩阵寄存器里的中断状态寄存器。
+
+\begin{figure}[H]
+    \centering
+    {\includegraphics[width=0.6\textwidth]{\modulefiles/figures/ESP32-H2-interrupt_cn.eps}}
+    \caption{中断矩阵结构图}
+    \label{fig:interrupt-matrix-structure}
+\end{figure}
+
+\section{功能描述}
+
+\subsection{外部中断源}
+
+\chipname{} 共有 65 个外部中断源。表 \ref{tab:peripheral-interrupt-config-status-source} 列出了所有外部中断源及其对应的中断源映射寄存器与中断状态寄存器。
+
+
+\begin{itemize}
+    \item ``No."：表示外部中断源序号，范围：0 \verb+~+ 64
+    \item ``章节"：详细描述外部中断源的章节
+    \item ``中断源"：外部中断源名称
+    \item ``中断源映射寄存器"：用于将外部中断源分配至 CPU 外部中断
+    \item ``中断状态寄存器"：用于读取中断源的中断状态
+    \begin{itemize}
+        \item ``中断状态寄存器 - 位"：表示在中断状态寄存器中的比特位置，用于记录相应中断源的状态
+        \item ``中断状态寄存器 - 名称"：表示中断状态寄存器的名称
+    \end{itemize}
+\end{itemize}
+
+
+\clearpage
+\newgeometry{top=2cm,bottom=2cm,left=1.5cm,right=1.5cm}
+\begin{landscape}
+
+\input{10-INTMTRX/tables/10-INTMTRX-peri-int-config-status-source__CN}
+\end{landscape}
+\restoregeometry
+\clearpage
+
+\subsection{CPU 中断}
+
+\chipname{} 采用非 RISC-V 标准规范中断机制。CPU 共有 32 个中断号 (0 \verb+~+ 31)，其中 0、3、4、7 号中断仅在 CPU 内部使用，其余 28 个中断 (中断号为 1、2、5、6、8 \verb+~+ 31) 可供中断矩阵使用。每个中断：
+\begin{itemize}
+    \item 优先级可设置为 1 \verb+~+ 15（数字越大优先级越高）；
+    \item 可配置为电平触发或者边沿触发；
+    \item 可通过设置中断阈值屏蔽低优先级的中断。
+\end{itemize}
+
+\begin{tiplisting}
+CPU 中断的具体功能及配置流程见章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} >  \ref{sec:riscvcpu-int-ctrl}\textit{\nameref{sec:riscvcpu-int-ctrl}}。CPU 中断的配置寄存器请见本章节的 \ref{sec:intpri-reg-summ} \textit{\nameref{sec:intpri-reg-summ}}。
+\end{tiplisting}
+\vspace{-1em}
+
+
+
+
+
+
+\subsection{分配外部中断源至 CPU 外部中断}
+
+在本小节中，我们将使用以下术语描述中断矩阵相关操作：
+
+\begin{itemize}
+
+\item \regindex{SOURCE}：代表某个外部中断源，详见表 \ref{tab:peripheral-interrupt-config-status-source}。
+\item \hyperref[INTMTXCORE0SOURCEINTRMAPREG]{INTMTX\_CORE0\_\regindex{SOURCE}\_INTR\_MAP\_REG}：\regindex{SOURCE} 的中断源映射寄存器。
+\item Num\_P：CPU 中断编号，范围：1、2、5、6、8 \verb+~+ 31。
+\item Interrupt\_P：表示中断号为 Num\_P 的 CPU 中断。
+
+\end{itemize}
+
+\subsubsection{分配一个外部中断源 SOURCE 至 CPU 外部中断}
+
+将 \regindex{SOURCE} 对应的寄存器 INTMTX\_CORE0\_\regindex{SOURCE}\_INTR\_MAP\_REG 配成 Num\_P，即可将该中断源分配至序号为 Num\_P 的 CPU 中断 (Interrupt\_P)。
+
+\subsubsection{分配多个外部中断源 SOURCE 至 CPU 外部中断}
+
+将各个中断源对应的寄存器 INTMTX\_CORE0\_\regindex{SOURCE}\_INTR\_MAP\_REG 均配置成相同的 Num\_P，即可将多个 \regindex{SOURCE} 分配至同一 CPU 外部中断 Interrupt\_P。上述任一外设中断均会触发 CPU 外部中断 Interrupt\_P。待中断触发后，CPU 需查询中断状态寄存器，判断产生中断的外设。 更多信息，见章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} >  \ref{sec:riscvcpu-int-ctrl}\textit{\nameref{sec:riscvcpu-int-ctrl}}。
+\subsubsection{关闭 CPU 外部中断源 SOURCE}
+
+将中断源对应的寄存器 INTMTX\_CORE0\_\regindex{SOURCE}\_INTR\_MAP\_REG 配置成 0，即可关闭外部中断源。
+
+
+
+\subsection{查询外部中断源 SOURCE 当前的中断状态}
+
+配置开启 \regindex{SOURCE} 后，读取寄存器 \hyperref[regdesc:INTMTXCORE0INTSTATUS0REG]{INTMTX\_CORE0\_INT\_STATUS\_\regindex{n}\_REG}（只读）中特定位的值可以获取 \regindex{SOURCE} 当前的中断状态。寄存器 \hyperref[regdesc:INTMTXCORE0INTSTATUS0REG]{INTMTX\_CORE0\_INT\_STATUS\_\regindex{n}\_REG} 与 \regindex{SOURCE} 的对应关系如表 \ref{tab:peripheral-interrupt-config-status-source} 所示。
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{intmtrx-reg-summ}{}
+\begin{landscape}
+\section{寄存器列表}
+
+\subsection{中断矩阵寄存器列表}
+\label{sec:intmtrx-reg-summ}
+
+本小节的所有地址均为相对于中断矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/intmtx-summary__CN}
+\subsection{中断优先级寄存器列表}
+\label{sec:intpri-reg-summ}
+
+本小节的所有地址均为相对于中断优先级基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/10-INTPRI-reg-summ__CN}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+\subsection{中断矩阵寄存器}
+
+本小节的所有地址均为相对于中断矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+\subfile{\modulefiles/intmtx-reg__CN}
+
+\subsection{中断优先级寄存器}
+\label{sec:intpri-reg}
+
+本小节的所有地址均为相对于中断优先级基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/10-INTPRI-reg__CN}
+
+\end{document}

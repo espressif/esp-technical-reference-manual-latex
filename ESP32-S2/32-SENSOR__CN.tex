@@ -1,0 +1,641 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./32-SENSOR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\raggedbottom
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sensor}{}
+\chapter{片上传感器与模拟信号处理}
+\label{mod:sensor}
+
+
+\section{概述}
+
+ESP32-S2 搭载了以下片上传感器和模拟信号处理设备：
+
+\begin{itemize}
+    \item 温度传感器：用于测量 ESP32-S2 芯片内部温度。
+    \item 两个 12 位*逐次逼近型模数转换器 (SAR ADC)：支持 20 个通道的模拟信号检测。系统专门内置了 5 个 ADC 专用控制器，可在转换模拟输入信号时支持高性能与低功耗两种模式。
+    \item 两个 8 位独立数模转换器 (DAC)：用于生成模拟信号，支持余弦波输出模式。
+\end{itemize}
+\begin{tiplisting}
+芯片版本 v0.0 中的 SAR ADC 精度为 13 位。更多关于芯片版本的信息，详见 \href{https://espressif.com/sites/default/files/documentation/esp32-s2\_errata\_cn.pdf}{ESP32-S2 系列芯片勘误表}。
+\end{tiplisting}
+
+
+\section{逐次逼近型模拟数字转换器}\label{ssec:saradc}
+
+\subsection{概述}
+
+ESP32-S2 内置了两个 12 位的逐次逼近型模拟数字转换器，可测量最多来自 20 个管脚的模拟信号以及 vdd33 等内部信号。SAR ADC 由五个专用控制器控制：
+
+\begin{itemize}
+    \item 2 个 DIG ADC 控制器：DIG ADC1 CTRL 和 DIG ADC2 CTRL，支持高性能多通道扫描和 DMA 连续转换。
+    \item 2 个 RTC ADC 控制器：RTC ADC1 CTRL 和 RTC ADC2 CTRL，支持在低功耗模式下工作和单次转换。
+    \item 1 个 功率检测和峰值监测控制器：PWDET/PKDET CTRL，此控制器仅供 Wi-Fi 使用（内部使用）。
+\end{itemize}
+
+SAR ADC 的结构概图见图 \ref{figure:sar adc overview}。
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{\modulefiles/figures/saradc.eps}}
+    \caption{SAR ADC 概图}
+    \label{figure:sar adc overview}
+\end{figure}
+
+\subsection{主要特性}
+\begin{itemize}
+\item 两个 SAR ADC 独立工作，支持同时采样与转换
+\item 支持 12 位采样分辨率，其中：
+\item 支持采集最多 20 个管脚上的模拟电压
+\item 可配置通道采样时间
+\item RTC ADC 控制器：
+    \begin{itemize}
+        \item 支持单次转换
+        \item 支持在低功耗模式下工作，如 Deep-sleep
+        \item 可由 ULP 协处理器配置
+    \end{itemize}
+
+\item DIG ADC 控制器：
+    \begin{itemize}
+        \item 支持单次转换和连续转换模式
+        \item 支持多通道扫描工作模式
+        \item 支持自定义扫描通道顺序
+        \item 支持硬件 IIR 滤波器，滤波系数可配
+        \item 支持阈值监控，大于或小于设置阈值产生中断
+    \end{itemize}
+\item PWDET/PKDET 控制器，仅供 Wi-Fi 使用（内部使用）：
+    \begin{itemize}
+        \item 功率检测
+        \item 内部电压检测
+    \end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+本章中提到的 ULP 协处理器特指 ULP-FSM。
+\end{tiplisting}
+\vspace{-1em}
+
+各控制器的应用场景如表 \ref{table:sar adc controllers} 所示。
+
+\begin{longtable}[c]{|p{4cm}|c|c|c|c|c|}
+    \caption{ADC 控制器}
+    \label{table:sar adc controllers}
+    \\\hline
+    \rowcolor{lightgray}
+    功能 & RTC ADC1  & RTC ADC2  & DIG ADC1 & DIG ADC2  & PWDET \\
+        \hline
+        \endfirsthead
+        \hline
+        \rowcolor{lightgray}
+    Feature & RTC ADC1  & RTC ADC2  & DIG ADC1 & DIG ADC2  & PWDET \\
+        \hline
+        \endhead
+        \endfoot
+    控制 DAC               & Y & - & - & - & - \\\hline
+    Deep-sleep 模式        & Y & Y & - & - & - \\\hline
+    ULP 协处理器控制       & Y & Y & - & - & - \\\hline
+    vdd33 检测              & - & Y & - & Y & - \\\hline
+    PWDET/PKDET 检测       & - & - & - & - & Y \\\hline
+    DMA 连续转换           & - & - & Y & Y & - \\\hline
+    \\\hline
+\end{longtable}
+
+\subsection{功能描述}
+
+SAR ADC 的主要元件与连接情况见图 \ref{figure:sar adc functional overview}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/saradc_mux.pdf}}
+    \caption{SAR ADC 的功能概况}
+    \label{figure:sar adc functional overview}
+\end{figure}
+
+\subsubsection{输入信号}
+
+SAR ADC 需首先通过内部多路器选择待测量的模拟管脚或内部信号，然后才能采样模拟信号。表 \ref{table:adc inputs} 列出了所有可能需要经过 SAR ADC1/2 处理的模拟信号。
+
+\begin{longtable}{ |p{3cm}|p{1.5cm}|p{2cm}| }
+    \caption{SAR ADC 的信号输入}
+    \label{table:adc inputs}
+    \\\hline
+    \rowcolor{lightgray}
+    信号名称 & 通道  & ADC 选择 \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    信号名称 & 通道  & ADC 选择 \\\hline
+    \endhead
+    \hline
+    \endfoot
+    GPIO1       &  0  & \multirow{9}{*}{SAR ADC1} \\ \cline{1-2}
+    GPIO2       &  1  & \\ \cline{1-2}
+    GPIO3       &  2  & \\ \cline{1-2}
+    GPIO4       &  3  & \\ \cline{1-2}
+    GPIO5       &  4  & \\ \cline{1-2}
+    GPIO6       &  5  & \\ \cline{1-2}
+    GPIO7       &  6  & \\ \cline{1-2}
+    GPIO8       &  7  & \\ \cline{1-2}
+    GPIO9       &  8  & \\ \cline{1-2}
+    GPIO10      &  9  & \multirow{13}{*}{SAR ADC2} \\ \cline{1-3}
+    GPIO11      &  0  & \\ \cline{1-2}
+    GPIO12      &  1  & \\ \cline{1-2}
+    GPIO13      &  2  & \\ \cline{1-2}
+    GPIO14      &  3  & \\ \cline{1-2}
+    GPIO15      &  4  & \\ \cline{1-2}
+    GPIO16      &  5  & \\ \cline{1-2}
+    GPIO17      &  6  & \\ \cline{1-2}
+    GPIO18      &  7  & \\ \cline{1-2}
+    GPIO19      &  8  & \\ \cline{1-2}
+    GPIO20      &  9  & \\ \cline{1-2}
+    pa\_pkdet1    &  n/a  & \\ \cline{1-2}
+    pa\_pkdet2    &  n/a  & \\ \cline{1-2}
+    vdd33         &  n/a  &
+\end{longtable}
+
+\subsubsection{ADC 转换和衰减}
+
+SAR ADC 转换（或采样）模拟信号时，转换分辨率（12 位）电压范围为 0 mV \verb+~+ \(V_{ref}\)。其中，\(V_{ref}\) 为 SAR ADC 内部参考电压，出厂设定为 1100 mV。因此，转换结果 (data) 可以使用以下公式转换成模拟电压输出 \(V_{data}\)：
+
+\(V_{data} = \frac{V_{ref}}{k}\times{\frac{data}{4095}}\)
+
+其中 \(k\) 为衰减对应的系数。
+
+如需转换大于 \(V_{ref}\) 的电压，信号输入 SAR ADC 前可进行衰减。支持的衰减等级包括：
+
+\begin{itemize}
+    \item 0 dB (k≈100\%)
+    \item 2.5 dB (k≈75\%)
+    \item 6 dB (k≈50\%)
+    \item 12 dB (k≈25\%)
+\end{itemize}
+
+\subsection{RTC ADC 控制器}
+\label{subsubsec:rtc-adc-controllers}
+
+RTC ADC 控制器由 RTC 电源域供电，因此允许 SAR ADC 在低频状态下提供最小功耗的 ADC 测量。RTC ADC 控制器的具体功能概况见图 \ref{figure:sar adc ctrl}。
+
+\begin{figure}[!ht]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/saradc_rtc_ctrl.eps}}
+    \caption{RTC ADC 控制器功能概况}
+    \label{figure:sar adc ctrl}
+\end{figure}
+
+软件及 ULP 协处理器 (ULP-FSM) 均可触发 RTC ADC 控制器开始转换，用户可配置寄存器 \hyperref[fielddesc:SENSMEAS1STARTFORCE]{SENS\_MEAS\regindex{n}\_START\_FORCE} 选择具体的触发方式。
+
+置位 \hyperref[fielddesc:SENSMEAS1STARTSAR]{SENS\_MEAS\regindex{n}\_START\_SAR}，则由软件触发 RTC ADC 控制器开始转换。转换结束，\hyperref[fielddesc:SENSMEAS1DONESAR]{SENS\_MEAS\regindex{n}\_DONE\_SAR} 被置位，转换结果存入 \hyperref[fielddesc:SENSMEAS1DATASAR]{SENS\_MEAS\regindex{n}\_DATA\_SAR}。
+
+ULP 协处理器内置了 ADC 指令，可控制 ADC 开始转换。因此，在多数场景下，RTC ADC 控制器与 ULP 协处理器经常协同工作。例如：
+
+\begin{itemize}
+    \item 在 Deep-sleep 模式下，RTC ADC 控制器周期性监控通道时，ULP 协处理器是触发 ADC 采样的唯一触发源。ULP 协处理器可通过配置 RTC 寄存器触发 ADC 采样。
+    \item 可按一定顺序对通道进行连续扫描。尽管 RTC ADC 控制器无法支持连续扫描，但协处理器可协助实现按照一定顺序连续扫描通道。
+\end{itemize}
+
+
+\subsection{DIG ADC 控制器}
+与 RTC ADC 控制器相比，DIG ADC 控制器的性能和吞吐均实现了一定优化，具备以下特点：
+\begin{itemize}
+    \item 高性能：时钟更快，采样速率实现了大幅提升
+    \item 最高支持 12 位采样分辨率
+    \item 支持多种通道扫描模式：扫描模式可配置为单通道模式、双通道模式或交替模式。每个 SAR ADC 的测量规则可见样式表。
+    \item 扫描可由软件或 DIG ADC 专用的定时器发起，通过配置寄存器 \hyperref[fielddesc:APBSARADCSTARTFORCE]{APB\_SARADC\_START\_FORCE} 选择发起方式。
+    注意：DIG ADC 的定时器通过 \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET} 配置触发周期，配置 \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} 使能定时器。
+    \item 采样数据通过 DMA 转存至内存。
+    \item 扫描完成即产生中断。
+\end{itemize}
+
+\subsubsection{DIG ADC 控制器的工作流程}
+\begin{tiplisting}
+由于无法通过直接访问发起一次性 SAR ADC 转换，因此我们将在本章节中不使用“开始转换”这一术语。每次转换由 DIG ADC 控制器根据样式表自动发起。因此，我们使用“开始扫描”替代“开始转换”，表示 DIG ADC 将根据样式表扫描一系列通道。
+\end{tiplisting}
+
+图 \ref{figure:dig adc overview} 展示了 DIG ADC 控制器的工作原理。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/saradc_dma}
+    \caption{DIG ADC 控制器概况}
+    \label{figure:dig adc overview}
+\end{figure}
+
+测量规则描述了 ADC 采样一个通道，或衰减采样值需遵守的规则。每个 DIG ADC 控制器有一个样式表，每个样式表定义了 16 条规则。扫描开始时，控制器逐条读取其样式表中的规则。对于每个控制器而言，每个扫描序列最多拥有 16 条不同规则。
+
+样式表寄存器的长度为 8 位，共包括 3 个字段，分别存储了通道和衰减信息，具体见表 \ref{table:pattern table register}。
+
+\begin{table}[H]
+    \caption{样式表寄存器的字段信息}
+    \label{table:pattern table register}
+    \centering
+    \begin{tabular}[c]{|p{5cm}|p{5cm}|p{5cm}|}
+        \hline
+        \rowcolor{lightgray}
+        \multicolumn{3}{|c|}{样式表寄存器[7:0]} \\
+        \hline
+        ch\_sel[3:0] & null & atten[1:0] \\
+        \hline
+        扫描通道 & reserved & 衰减 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+用户可在 \hyperref[fielddesc:APBSARADCWORKMODE]{APB\_SARADC\_WORK\_MODE} 中配置扫描模式，定义两个 DIG ADC 控制器的工作方式，包括两个控制器各自完全独立工作，或交替工作，或同步工作：
+
+\begin{itemize}
+    \item 单通道模式：SAR ADC1 和 SAR ADC2 各自按照自己的样式表独立进行工作。
+    \item 双通道模式：SAR ADC1 和 SAR ADC2 同时进行采样，即两个 DIG ADC 控制器同步逐条读取各自样式表。
+    \item 交替模式：SAR ADC1 和 SAR ADC2 交替采样，即两个 DIG ADC 控制器交替逐条读取各自样式表。
+\end{itemize}
+
+ADC 最终向 DMA 传递 16 位数据，包括 12/11 位的 ADC 转换结果，及一些因扫描模式不同而有所差别的相关信息，具体为：
+
+\begin{itemize}
+    \item 单通道模式：仅增加 4 位通道选择信息。
+    \item 双通道模式或交替模式：增加 4 位通道选择信息，及 1 位 SAR ADC 选择信息。
+\end{itemize}
+
+每种扫描模式均有其对应的数据格式，即\uppercase\expandafter{\romannumeral1}型和 \uppercase\expandafter{\romannumeral2} 型。有关这两种数据格式的具体描述，请见表 \ref{table:type i dma data format} 和表 \ref{table:type ii dma data format}。
+
+\begin{table}[H]
+    \caption{\uppercase\expandafter{\romannumeral1}型 DMA 数据格式}
+    \label{table:type i dma data format}
+    \centering
+    \begin{tabular}[c]{|p{7.5cm}|p{7.5cm}|}
+        \hline
+        \rowcolor{lightgray}
+        \multicolumn{2}{|c|}{\textbf{\uppercase\expandafter{\romannumeral1}型} DMA 数据格式[15:0]} \\
+        \hline
+        ch\_sel[3:0] & data[11:0] \\
+        \hline
+        通道 & SAR ADC 信息 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \caption{\uppercase\expandafter{\romannumeral2} 型 DMA 数据格式}
+    \label{table:type ii dma data format}
+    \centering
+    \begin{tabular}[c]{|p{4.85cm}|p{4.85cm}|p{4.85cm}|}
+        \hline
+        \rowcolor{lightgray}
+        \multicolumn{3}{|c|}{\textbf{\uppercase\expandafter{\romannumeral2} 型} DMA 数据格式[15:0]} \\
+        \hline
+        sar\_sel & ch\_sel[3:0] & data[10:0] \\
+        \hline
+        {SAR ADC\textcolor{red}{\it{n}}}（\regindex{n} = 1 或 2） & 通道 & SAR ADC 信息 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+DIG ADC 支持的分辨率最高为 12 位，其中 \uppercase\expandafter{\romannumeral1}型数据格式最高支持 12 位分辨率，\uppercase\expandafter{\romannumeral2} 型数据格式最高支持 11 位分辨率。
+
+\subsubsection{DMA}
+
+DIG ADC 控制器允许通过 SPI3 的 DMA 实现直接内存访问，由 DIG ADC 专用定时器产生触发信号。因此，SPI3 DMA 已经在使用时，则 DIG ADC 控制器不可用。用户可通过软件配置 \hyperref[fielddesc:APBSARADCAPBADCTRANS]{APB\_SARADC\_APB\_ADC\_TRANS} 将 DMA 的数据通路切换到 DIG ADC。关于 DMA 的具体配置，参考 SPI3 的 DMA 控制。
+
+\subsubsection{ADC 滤波器}
+
+DIG ADC 控制器支持滤波功能，对ADC 采样数据进行滤波。滤波公式如下所示：
+
+\[data_{cur} = \frac{(k-1)data_{prev}}{k}+\frac{data_{in}}{k}-0.5\]
+
+\begin{itemize}
+    \item \(data_{cur}\) 为滤波后数据
+    \item \(data_{in}\) 为 ADC 采样值
+    \item \(data_{prev}\) 为上次滤波数据
+    \item \(k\) 为滤波系数
+\end{itemize}
+
+配置滤波器时，先使用寄存器 \hyperref[fielddesc:APBSARADCADC1FILTERFACTOR]{APB\_SARADC\_ADC\regindex{n}\_FILTER\_FACTOR} 设置滤波系数，然后置位 \hyperref[fielddesc:APBSARADCADC1FILTEREN]{APB\_SARADC\_ADC\regindex{n}\_FILTER\_EN} 使能滤波器。两个 DIG ADC 控制器均可使用滤波器，但滤波器需使用到之前的滤波数据 \(data_{prev}\)，因此，如果使用滤波器，每个 DIG ADC 控制器仅可扫描一个通道。这样滤波器才可以避免将不同通道的数据混合到一起。
+
+\subsubsection{阈值监控}
+每个 DIG ADC 控制器均设有一个阈值监控器，当 ADC 采样值大于（或小于）设定的阈值，则触发中断。
+\begin{itemize}
+    \item 配置寄存器 \hyperref[fielddesc:APBSARADCADC1THRESEN]{APB\_SARADC\_ADC\regindex{n}\_THRES\_EN} 使能阈值监控功能；
+    \item 配置寄存器 \hyperref[fielddesc:APBSARADCADC1THRES]{APB\_SARADC\_ADC\regindex{n}\_THRES} 设置阈值；
+    \item 配置寄存器 \hyperref[fielddesc:APBSARADCADC1THRESMODE]{APB\_SARADC\_ADC\regindex{n}\_THRES\_MODE} 配置判定条件：
+    \begin{itemize}
+        \item 0: ADC\_DATA < \hyperref[fielddesc:APBSARADCADC1THRES]{APB\_SARADC\_ADC\regindex{n}\_THRES}，产生监控中断；
+        \item 1: ADC\_DATA >= \hyperref[fielddesc:APBSARADCADC1THRES]{APB\_SARADC\_ADC\regindex{n}\_THRES}，产生监控中断。
+    \end{itemize}
+\end{itemize}
+注意：
+    阈值监控会分别监控 SAR ADC1 或者 SAR ADC2 所有选择通道的 ADC 数值。
+
+\subsection{SAR ADC2 仲裁器}
+
+SAR ADC2 可选三种控制器：RTC ADC2 CTRL、DIG ADC2 CTRL 和 PWDET/PKDET CTRL。为防止出现冲突，同时提升 SAR ADC2 的使用效率，ESP32-S2 提供了 SAR ADC2 的访问仲裁。仲裁器有公平仲裁和固定优先级仲裁两种模式可供选择。
+
+\begin{itemize}
+    \item 公平仲裁模式，即循环优先级仲裁。清零寄存器 \hyperref[regdesc:APBSARADCAPBADCARBCTRLREG]{APB\_SARADC\_ARB\_CTRL\_REG} 的 \hyperref[fielddesc:APBSARADCADCARBFIXPRIORITY]{APB\_SARADC\_ADC\_ARB\_FIX\_PRIORITY} 位即可进入公平仲裁模式。
+    \item 固定优先级仲裁模式下，配置寄存器 \hyperref[regdesc:APBSARADCAPBADCARBCTRLREG]{APB\_SARADC\_ARB\_CTRL\_REG} 的 \hyperref[fielddesc:APBSARADCADCARBRTCPRIORITY]{APB\_SARADC\_ADC\_ARB\_RTC\_PRIORITY} 位 (RTC ADC2 CTRL)、\hyperref[fielddesc:APBSARADCADCARBAPBPRIORITY]{APB\_SARADC\_ADC\_ARB\_APB\_PRIORITY} 位 (DIG ADC2 CTRL) 和 \hyperref[fielddesc:APBSARADCADCARBWIFIPRIORITY]{APB\_SARADC\_ADC\_ARB\_WIFI\_PRIORITY} 位 (PWDET/PKDET CTRL)
+   可分别配置对应控制器的优先级。值越大，优先级越高。
+\end{itemize}
+
+
+仲裁器规定，无论低优先级控制器是否已开始转换数据，高优先级控制器均可随时开始自己的数据转换。如果 ADC 已经接受低优先级控制器的转换请求，开始转换数据，但高优先级控制器也需要转换数据，则可以中断或终止低优先级控制器的数据转换，开始高优先级控制器的数据转换。如果已经有高优先级控制器正在进行数据转换，而低优先级控制器则无法启动数据转换。
+
+转换中断或转换启动失败返回的转换数据无效，因此在返回的转换结果中增加数据标记位，表示转换是否有效。
+
+\begin{itemize}
+    \item RTC ADC2 CTRL 的数据标记位为 \hyperref[fielddesc:SENSMEAS2DATASAR]{SENS\_MEAS2\_DATA\_SAR} 的高两位
+    \begin{itemize}
+        \item 2'b10：数据转换中断
+        \item 2'b01：数据转换启动失败
+        \item 2'b00：转换数据有效
+    \end{itemize}
+    \item DIG ADC2 CTRL 的数据标记位为 DMA 数据类型的 ch\_sel[3:0] 位
+    \begin{itemize}
+        \item 4'b1111：数据转换中断
+        \item 4'b1110：数据转换启动失败
+        \item 对应的通道号：转换数据有效
+    \end{itemize}
+    \item PWDET/PKDET CTRL 的数据标记位为采样结果的高两位
+
+    \begin{itemize}
+        \item 2'b10：数据转换中断
+        \item 2'b01：数据转换启动失败
+        \item 2'b00：转换数据有效
+    \end{itemize}
+\end{itemize}
+除了上述两种模式以外，用户可以通过配置 \hyperref[fielddesc:APBSARADCADCARBGRANTFORCE]{APB\_SARADC\_ADC\_ARB\_GRANT\_FORCE} 屏蔽仲裁器，配置 \hyperref[fielddesc:APBSARADCADCARBRTCFORCE]{APB\_SARADC\_ADC\_ARB\_RTC\_FORCE}、\hyperref[fielddesc:APBSARADCADCARBWIFIFORCE]{APB\_SARADC\_ADC\_ARB\_WIFI\_FORCE}、\hyperref[fielddesc:APBSARADCADCARBAPBFORCE]{APB\_SARADC\_ADC\_ARB\_APB\_FORCE} 决定授权控制器。\\
+
+注意：
+\begin{itemize}
+    \item 屏蔽仲裁器时，只能有一个 APB\_SARADC\_ADC\_ARB\_XXX\_FORCE 位配置为 1。
+    \item 仲裁器的工作时钟为 APB\_CLK，当 APB\_CLK 时钟降低到8 MHz 及以下时，必须屏蔽仲裁器。
+    \item 进入睡眠时，需要配置寄存器 \hyperref[regdesc:SENSSARMEAS2MUXREG]{SENS\_SAR\_MEAS2\_MUX\_REG} 的 \hyperref[fielddesc:SENSSAR2RTCFORCE]{SENS\_SAR2\_RTC\_FORCE} 位为1，屏蔽仲裁器以及除 RTC 控制器以外的所有控制器信号。
+\end{itemize}
+
+
+\section{数字模拟转换器}
+\label{ssec:dac}
+
+\subsection{简介}
+ESP32S-S2 内置两个 8 位独立数模转换器 (DAC)，共两路输出信号。支持余弦波输出模式。
+\subsection{主要特性}
+
+DAC的主要特性包括：
+\begin{itemize}
+    \item 2 个 8 位 DAC 转换器
+    \item 支持两个通道独立或同步转换
+    \item 支持 VDD3P3\_RTC\_IO 管脚输入电压参考
+    \item 支持生成余弦波
+    \item 支持 DMA 功能
+    \item 可由 ULP 协处理器通过控制寄存器来实现完全控制，详见章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}。
+\end{itemize}
+
+
+
+\subsection{DAC 转换}
+
+双通道 DAC 的 2 个 8 位通道可实现独立配置，每个通道的输出模拟电压计算方式见下：
+$$\mathrm{DAC\textcolor{red}{\it{n}}\_OUT = VDD3P3\_RTC\_IO \cdot PDAC\textcolor{red}{\it{n}}\_DAC / 255}$$
+\begin{itemize}
+    \item VDD3P3\_RTC\_IO 代表 VDD3P3\_RTC\_IO 引脚的电压（通常为 3.3 V）。
+    \item PDAC\textcolor{red}{\it{n}}\_DAC 表示待转换成模拟电压的数字量，可来源于：\hyperref[ssec:cosine gen]{余弦波形生成器}、寄存器 \hyperref[fielddesc:RTCIOPDAC1XPDDAC]{RTCIO\_PAD\_DAC\regindex{n}\_REG} 和 DMA。
+\end{itemize}
+
+可通过寄存器 \hyperref[fielddesc:RTCIOPDAC1XPDDAC]{RTCIO\_PDAC\regindex{n}\_XPD\_DAC} 决定转换是否开始，软件或 SAR ADC FSM 控制转换流程，具体请见图 \ref{figure:dac mux}。
+
+\begin{figure}[!ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/dac.pdf}}
+    \caption{DAC 的功能概况}
+    \label{figure:dac mux}
+\end{figure}
+
+\subsection{余弦波形生成器}
+\label{ssec:cosine gen}
+
+余弦波形生成器可用于生成余弦波形/正弦波形，具体工作流程可见图 \ref{figure:cw gen}。
+
+余弦波形生成器的特点包括：
+\begin{itemize}
+    \item 频率可调节\\
+    余弦波的频率可通过寄存器 \hyperref[fielddesc:SENSSWFSTEP]{SENS\_SW\_FSTEP} 调节：
+    $$\mathrm{freq = dig\_clk\_rtc\_freq \cdot \hyperref[fielddesc:SENSSWFSTEP]{SENS\_SW\_FSTEP}/65535}$$
+    通常，dig\_clk\_rtc 的频率为 8 MHz。
+    \item 振幅可调节\\
+    可通过寄存器 \hyperref[fielddesc:SENSDACSCALE1]{SENS\_DAC\_SCALE\regindex{n}} 设置波形振幅，调整为 1、1/2、1/4 或 1/8 倍。
+    \item 直流偏移\\
+    寄存器 \hyperref[fielddesc:SENSDACDC1]{SENS\_DAC\_DC\regindex{n}} 可能引入一些直流偏移，导致结果饱和。
+    \item 相位移动\\
+    可通过寄存器 \hyperref[fielddesc:SENSDACINV1]{SENS\_DAC\_INV\regindex{n}} 增加 0° 或 180° 相位偏移。
+    \begin{itemize}
+       \item{2 : 0°}
+       \item{3 : 180°}
+    \end{itemize}
+\end{itemize}
+
+\begin{figure}[!ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/dac2.eps}}
+    \caption{余弦波形生成器的工作流程}
+    \label{figure:cw gen}
+\end{figure}
+
+\subsection{支持 DMA}
+
+双通道 DAC 的直接内存存取(DMA)控制器可对 2 个 DAC 通道的输出进行设置。通过配置 \hyperref[fielddesc:SENSDACDIGFORCE]{SENS\_DAC\_DIG\_FORCE}，以及置位 \hyperref[regdesc:APBSARADCAPBDACCTRLREG]{APB\_SARADC\_APB\_DAC\_CTRL\_REG} 的 \hyperref[fielddesc:APBSARADCAPBDACTRANS]{APB\_SARADC\_APB\_DAC\_TRANS}，DIG\_SARADC\_CLK 可连接至 DAC CLK，SPI3\_DMA\_OUT 可连接至 DAC\_DATA 实现直接内存访问。
+
+更多信息，请见章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+\section{温度传感器}\label{ssec:tsensor}
+\subsection{概述}
+ESP32-S2 搭载了温度传感器可以实时监测温度。
+\subsection{主要特性}
+温度传感器的主要特性包括：
+\begin{itemize}
+    \item 支持在低功耗状态下，通过 ULP 协处理器实时监控
+    \item 支持软件和 ULP 触发
+    \item 可根据使用环境配置温度偏移，提高测试精度
+    \item 测量范围可调节
+\end{itemize}
+
+\subsection{操作步骤}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/tsensor_struct.pdf}
+    \caption{温度传感器结构}
+    \label{figure:tsensor_struct}
+\end{figure}
+如图 \ref{figure:tsensor_struct} 所示，温度传感器的触发方式分为软件启动和 ULP-FSM 启动：
+\begin{itemize}
+   \item 软件启动，即由 CPU 或 ULP-RISC-V 通过配置寄存器启动：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:SENSTSENSPOWERUPFORCE]{SENS\_TSENS\_POWER\_UP\_FORCE}、\hyperref[fielddesc:SENSTSENSPOWERUP]{SENS\_TSENS\_POWER\_UP} 使能温度传感器；
+        \item 置位 \hyperref[fielddesc:SENSTSENSCLKGATEEN]{SENS\_TSENS\_CLKGATE\_EN} 使能温度传感器时钟；
+        \item 等待一段时间后（输出值会随着测量时间的增加而逐渐线性逼近真实的温度值），配置 \hyperref[fielddesc:SENSTSENSDUMPOUT]{SENS\_TSENS\_DUMP\_OUT}；
+
+        \item 等待 \hyperref[fielddesc:SENSTSENSREADY]{SENS\_TSENS\_READY}，读取 \hyperref[fielddesc:SENSTSENSOUT]{SENS\_TSENS\_OUT} 获取转换结果。
+    \end{itemize}
+    \item ULP-FSM 启动：
+    \begin{itemize}
+        \item 清空 \hyperref[fielddesc:SENSTSENSPOWERUPFORCE]{SENS\_TSENS\_POWER\_UP\_FORCE}；
+        \item ULP-FSM 内置高度集成的温度采集指令，所以只需要执行该指令即可完成温度采样，详见章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}。
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{温度转换}
+
+温度传感器的输出值需要使用转换公式转换成实际的温度值(°C)。转换公式如下： \\
+~
+\begin{centering}
+        T(°C) = 0.4386 * VALUE – 27.88 * offset – 20.52\\
+\end{centering}
+~\\
+其中 VALUE 即温度传感器的输出值，offset 由温度偏移决定。 温度传感器在不同的实际使用环境（测量温度范围）下，温度偏移不同，见表 \ref{tab:sensor-dac}。
+
+\begin{longtable}[c]{|p{4cm}|p{4cm}|}
+    \caption{温度传感器的温度偏移}
+    \label{tab:sensor-dac}
+    \\\hline
+    \rowcolor{lightgray}
+    测量范围 (°C)  & 温度偏移 (°C) \\\hline
+    50 \verb+~+ 125 & -2 \\\hline
+    20 \verb+~+ 100 & -1 \\\hline
+    -10 \verb+~+ 80 & 0 \\\hline
+    -30 \verb+~+ 50 & 1 \\\hline
+    -40 \verb+~+ 20 & 2 \\\hline
+\end{longtable}
+\section{中断}
+
+\begin{itemize}
+   \item \label{interreupt:SARADCTHRESINT1}APB\_SARADC\_ADC1\_THRES\_INT：阈值监控中断，SAR ADC1 的 ADC\_DATA 满足阈值监控的判定条件即触发此中断；
+    \item \label{interreupt:SARADCTHRESINT2}APB\_SARADC\_ADC2\_THRES\_INT：阈值监控中断，SAR ADC2 的 ADC\_DATA 满足阈值监控的判定条件即触发此中断；
+   \item \label{interreupt:SARADCDONEINT1}APB\_SARADC\_ADC1\_DONE\_INT：SAR ADC1 完成一次转换，即触发此中断；
+   \item \label{interreupt:SARADCDONEINT2}APB\_SARADC\_ADC2\_DONE\_INT：SAR ADC2 完成一次转换，即触发此中断。
+\end{itemize}
+更多中断信息，请参考章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}中的 ULP-RISC-V 中断部分。
+
+
+\section{基地址}\label{base_address_on_chip_sensor}
+用户可以通过两个不同的寄存器基地址访问本章节所述寄存器，如表 \ref{table:base_addr_new} 所示。更多信息，请访问章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+\begin{longtable}[c]{|l|l|c|}
+\caption{片上传感器基地址}
+\label{table:base_addr_new}
+\\\hline
+\rowcolor{lightgray}
+    模块 &   访问总线      & 基地址\\\hline
+    \multirow{2}*{SENSOR (RTC\_PERI)}&  PeriBUS1     & \hexprefix{}3F408800      \\\cline{2-3}
+    & PeriBUS2       & \hexprefix{}60008800 \\\hline
+    \multirow{2}*{SENSOR (DIGITAL)}&  PeriBUS1     & \hexprefix{}3F440000      \\\cline{2-3}
+    & PeriBUS2       & \hexprefix{}60040000 \\\hline
+\end{longtable}
+
+其中：
+\begin{itemize}
+    \item SENSOR (RTC\_PERI) 处于 RTC\_PERI 电源域下，如果 RTC\_PERI 的电源域（见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}）掉电，寄存器值将会被复位。
+    \item SENSOR (DIG\_PERI) 处于数字系统的电源域下，如果数字系统的电源域（见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}）掉电，寄存器值将会被复位。
+\end{itemize}
+
+\hypertarget{sensor-reg-summ}{}
+\section{寄存器列表}
+
+
+表中的地址为相对于基地址的地址偏移量（相对地址）。请参考章节 \ref{base_address_on_chip_sensor} 获取基地址相关信息。
+
+
+\subsection{SENSOR (RTC\_PERI) 寄存器列表}
+\subfile{\modulefiles/sensor_rtc_peri_reg_summary__CN.tex}
+
+\subsection{SENSOR (DIG\_PERI) 寄存器列表}
+\subfile{\modulefiles/apb_saradc_reg_summary__CN.tex}
+
+\newpage
+\section{寄存器}
+\label{section:registers}
+
+\subsection{SENSOR (RTC\_PERI) 寄存器}
+\subfile{\modulefiles/sensor_rtc_peri_reg__CN.tex}
+
+\subsection{SENSOR (DIG\_PERI) 寄存器}
+\subfile{\modulefiles/apb_saradc_reg__CN.tex}
+
+
+\end{document}

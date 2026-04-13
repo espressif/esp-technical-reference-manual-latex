@@ -1,0 +1,184 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./31-RMT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{rmt}{}
+\chapter{红外遥控 (RMT)}
+\label{mod:rmt}
+
+\section{概述}
+
+RMT（红外遥控）是一个红外发送和接收控制器，可通过软件编解码多种红外协议。RMT 模块可以实现将模块内置 RAM 中的脉冲编码转换为信号输出，或检测模块的输入信号转换为脉冲编码存入 RAM 中。此外，RMT 模块可以选择是否对输出信号进行载波调制，也可以选择是否对输入信号进行滤波处理。
+
+
+\section{功能描述}
+\subsection{RMT 架构}
+
+RMT 共有四个通道，可独立用于信号发送或接收，编码为 0 \verb+~+ 3，每个通道有一组功能相同的寄存器。为了方便叙述，以 \regindex{n} 表示各个通道。通道 0 默认从 block 0 读取发送数据或向 block 0 中存入接收数据；通道 1 默认从 block 1 读取发送数据或向 block 1 中存入接收数据，以此类推，如下图所示。
+
+每个通道内部都有各自的一个时钟分频器，一个计数器，一个发射器和一个接收器。注意，同一个通道的发射器和接收器不可同时工作。四个通道共享一块 256 x 32 位的 RAM。
+
+\begin{figure}[H]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/31-RMT-architecture-20211014.eps}
+\centering
+\caption{RMT 结构框图} \label{Figure:RMT2-1}
+\end{figure}
+
+\begin{figure}[H]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/31-RMT-channels-20211014.eps}
+\centering
+\caption{RMT 通道} \label{fig:rmt-channels}
+\end{figure}
+
+\subsection{RMT RAM}
+\begin{figure}[htb!]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/rmt_data_structure.eps}
+\centering
+\caption{RAM中脉冲编码结构} \label{Figure:RMT2-2}
+\end{figure}
+RAM 中脉冲编码结构如图 \ref{Figure:RMT2-2} 所示。每个脉冲编码为 16 位，由 level 与 period 两部分组成。其中 level 表示输入或输出信号的逻辑电平值（0 或 1），period 表示该电平信号持续的时钟（图\ref{Figure:RMT2-1} clk\_div）周期数。Period 为 0 是传输结束标志。
+
+RAM 按照 64 x 32 位分成四个 block。默认情况下每个通道只能使用一个 block（固定为通道 0 使用 block 0，通道 1 使用 block 1，以此类推）。当通道 \regindex{n} 单次发送或接收的脉冲编码数大于一个 block 时，可以进行乒乓操作，或者通过配置 \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} 寄存器，允许该通道占用多个 block。当设置 \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} > 1 时，通道 \regindex{n} 将占用 block (\regindex{n}) \verb+~+ block (\regindex{n} + \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} -1) 的存储空间。通道 \regindex{n} +1 \verb+~+ \regindex{n} + \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} - 1 因为对应的 RAM block 被占用而无法使用。注意，每个通道使用 RAM 的空间是根据地址从低到高进行映射的，因此通道 0 可以通过置位 \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} 寄存器来使用通道 1、 2、 3 的 RAM 空间，但是通道 3 不能使用通道 0、 1 或 2 的 RAM 空间。
+
+RAM 可被 APB 总线及通道的发射器或接收器访问，为了防止发射器和接收器访问 RAM 时发生冲突，用户可以通过配置 \hyperref[fielddesc:RMTREGMEMOWNERCHN]{RMT\_MEM\_OWNER\_CH\regindex{n}} 来决定当前 RAM 的使用权。当通道的发射器或接收器发生越权访问时会产生 \hyperref[fielddesc:RMTREGMEMOWNERERRCHN]{RMT\_MEM\_OWNER\_ERR\_CH\regindex{n}} 标志信号。
+
+当 RMT 模块不工作时，可以通过配置 \hyperref[fielddesc:RMTREGMEMFORCEPD]{RMT\_MEM\_FORCE\_PD} 寄存器使 RAM 工作于低功耗模式。
+
+\subsection{时钟}
+用户可以通过配置 \hyperref[fielddesc:RMTREGREFALWAYSONCHN]{RMT\_REF\_ALWAYS\_ON\_CH\regindex{n}} 选择时钟分频器的驱动时钟：APB\_CLK 或者 REF\_TICK， 请参考\hyperref[mod:resclk]{复位和时钟}章节。\hyperref[fielddesc:RMTREGDIVCNTCHN]{RMT\_DIV\_CNT\_CH\regindex{n}} 寄存器可以配置分频器的分频系数，除 0 表示 256 分频外，其他分频数等同于寄存器 \hyperref[fielddesc:RMTREGDIVCNTCHN]{RMT\_DIV\_CNT\_CH\regindex{n}} 的值。时钟分频器可以通过配置 \hyperref[fielddesc:RMTREGREFCNTRSTCHN]{RMT\_REF\_CNT\_RST\_CH\regindex{n}} 进行复位。时钟分频器的分频时钟可供计数器使用。
+
+\subsection{发射器}
+当 \hyperref[fielddesc:RMTREGTXSTARTCHN]{RMT\_TX\_START\_CH\regindex{n}} 置为 1 时，通道 \regindex{n} 的发射器开始从通道对应 RAM block 的起始地址，按照地址从低到高依次读取脉冲编码进行发送。当遇到结束标志（period 等于 0）时，发射器将结束发送返回空闲状态，并产生 \hyperref[int:RMTCHnTXENDINT]{RMT\_CH\regindex{n}\_TX\_END\_INT} 中断。配置 \hyperref[fielddesc:RMTREGTXSTOPCHN]{RMT\_TX\_STOP\_CH\regindex{n}} 寄存器可以立刻停止发送并进入空闲状态。发射器空闲状态发送的电平由结束标志中的 level 段或者是 \hyperref[fielddesc:RMTREGIDLEOUTLVCHN]{RMT\_IDLE\_OUT\_LV\_CH\regindex{n}} 寄存器决定。用户可以配置 \hyperref[fielddesc:RMTREGIDLEOUTENCHN]{RMT\_IDLE\_OUT\_EN\_CH\regindex{n}} 寄存器来选择这两种方式。
+
+当发送的脉冲编码较多时，可通过置位 \hyperref[fielddesc:RMTREGMEMTXWRAPEN]{RMT\_MEM\_TX\_WRAP\_EN} 寄存器使能乒乓操作。在乒乓操作模式下，发射器会循环从通道对应的 RAM 区域取出脉冲编码进行发送，直到遇到结束标识为止。例如，当 \hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} = 1 时，发射器将从 64 * \regindex{n} 地址开始发送，然后对应 RAM 的地址递增。发完 (64 * (\regindex{n} +1) - 1) 地址的数据后，下次继续从 64 * \regindex{n} 地址开始递增发送数据，依此类推，遇到结束标识时停止发送。\hyperref[fielddesc:RMTREGMEMSIZECHN]{RMT\_MEM\_SIZE\_CH\regindex{n}} > 1 的情形下，乒乓操作同样适用。
+
+每当发射器发送的脉冲编码数大于等于 \hyperref[fielddesc:RMTREGTXLIMCHN]{RMT\_TX\_LIM\_CH\regindex{n}} 时，会产生 \hyperref[int:RMTCHnTXTHREVENTINT]{RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT} 中断。在乒乓模式下，可以设置 \hyperref[fielddesc:RMTREGTXLIMCHN]{RMT\_TX\_LIM\_CH\regindex{n}} 为每个通道对应 RAM 空间的一半或几分之一。软件在检测到 \hyperref[int:RMTCHnTXTHREVENTINT]{RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT} 中断之后，可以更新已使用过的 RAM 区域的脉冲编码，从而实现乒乓操作。
+
+此外，发射器还可以对输出信号进行载波调制，置位 \hyperref[fielddesc:RMTREGCARRIERENCHN]{RMT\_CARRIER\_EN\_CH\regindex{n}} 可以使能该功能。载波的波形可配置。一个载波周期中高电平持续时间为 ( \hyperref[fielddesc:RMTREGCARRIERHIGHCHN]{RMT\_CARRIER\_HIGH\_CH\regindex{n}} +1) 个 APB\_CLK 或者 REF\_TICK 时钟周期，低电平持续的时间为 (\hyperref[fielddesc:RMTREGCARRIERLOWCHN]{RMT\_CARRIER\_LOW\_CH\regindex{n}} +1) 个 APB\_CLK 或者 REF\_TICK 时钟周期。置位 \hyperref[fielddesc:RMTREGCARRIEROUTLVCHN]{RMT\_CARRIER\_OUT\_LV\_CH\regindex{n}} 时在输出信号高电平上加载波信号，清零 \hyperref[fielddesc:RMTREGCARRIEROUTLVCHN]{RMT\_CARRIER\_OUT\_LV\_CH\regindex{n}} 时在输出信号低电平上加载波信号。同时，在进行载波调制时，载波可以一直加载在输出信号上，也可以仅加载在有效的脉冲编码（RAM 中的数据）上。通过配置 \hyperref[fielddesc:RMTREGCARRIEREFFENCHN]{RMT\_CARRIER\_EFF\_EN\_CH\regindex{n}} 寄存器，可以选择这两种模式。
+
+置位 \hyperref[fielddesc:RMTREGTXCONTIMODECHN]{RMT\_TX\_CONTI\_MODE\_CH\regindex{n}} 寄存器可以使能发射器的持续发送功能。置位该寄存器后，发射器会循环发送 RAM 中的脉冲编码。配置 \hyperref[fielddesc:RMTREGTXLOOPCNTENCHN]{RMT\_TX\_LOOP\_CNT\_EN\_CH\regindex{n}} 后发射器会记录循环发送的次数。当该次数达到 \hyperref[fielddesc:RMTREGTXLOOPNUMCHN]{RMT\_TX\_LOOP\_NUM\_CH\regindex{n}} 设定的值时，会产生 \hyperref[int:RMTCHnTXLOOPINT]{RMT\_CH\regindex{n}\_TX\_LOOP\_INT} 中断。
+
+置位 \hyperref[fielddesc:RMTREGTXSIMEN]{RMT\_TX\_SIM\_EN} 可以使能发射器多个通道同步发送的功能，此时多个通道会同时启动发送。\hyperref[fielddesc:RMTREGTXSIMCHN]{RMT\_TX\_SIM\_CH\regindex{n}} 用于选择同步发送的通道。
+
+\subsection{接收器}
+\hyperref[fielddesc:RMTREGRXENCHN]{RMT\_RX\_EN\_CH\regindex{n}} 置为 1 时接收器开始工作。接收器会检测信号电平及其持续的时钟周期数，将其按照脉冲编码的格式存入 RAM 中。当信号在一个电平下持续的时钟周期数超过 \hyperref[fielddesc:RMTREGIDLETHRESCHN]{RMT\_IDLE\_THRES\_CH\regindex{n}} 时，接收器结束接收过程，返回空闲状态，并产生 \hyperref[int:RMTCHnRXENDINT]{RMT\_CH\regindex{n}\_RX\_END\_INT} 中断。
+
+每个通道都可以通过置位 \hyperref[fielddesc:RMTREGRXFILTERENCHN]{RMT\_RX\_FILTER\_EN\_CH\regindex{n}} 使能 接收器对输入信号进行滤波的功能。滤波器的功能为连续采样输入信号，如果输入信号在连续 RMT\_RX\_FILTER \_THRES\_CH\regindex{n} 个 APB  时钟周期内保持不变，则输入信号有效，否则输入信号无效。只有有效的输入信号才能通过滤波器。因此，滤波器会滤除脉冲宽度小于 \hyperref[fielddesc:RMTREGRXFILTERTHRESCHN]{RMT\_RX\_FILTER\_THRES\_CH\regindex{n}} 个 APB 时钟周期的线路毛刺。
+
+\subsection{中断}
+\begin{itemize}
+\item \label{int:RMTCHnERRINT}RMT\_CH\regindex{n}\_ERR\_INT：当通道 \regindex{n}  发生读写数据不正确，或内存空满错误时，即触发此中断。
+\item \label{int:RMTCHnTXTHREVENTINT}RMT\_CH\regindex{n}\_TX\_THR\_EVENT\_INT：发射器每发送 \hyperref[regdesc:RMTCHNTXLIMREG]{RMT\_CH\regindex{n}\_TX\_LIM\_REG} 的数据，即触发一次此中断。
+\item \label{int:RMTCHnTXENDINT}RMT\_CH\regindex{n}\_TX\_END\_INT：当发射器停止发送信号时,即触发此中断。
+\item \label{int:RMTCHnRXENDINT}RMT\_CH\regindex{n}\_RX\_END\_INT：当接收器停止接收信号时,即触发此中断。
+\item \label{int:RMTCHnTXLOOPINT}RMT\_CH\regindex{n}\_TX\_LOOP\_INT：发射器处于循环发送模式时，当循环次数达到 \hyperref[fielddesc:RMTREGTXLOOPNUMCHN]{RMT\_TX\_LOOP\_NUM\_CH\regindex{n}} 的值后，会产生此中断。
+\end{itemize}
+
+\section{基地址} \label{RMT_BASE_ADDRESS}
+用户可以通过两个不同的寄存器基地址访问 RMT，如表 \ref{table:rmt_base_address} 所示。更多信息，请访问章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+\begin{longtable}[c]{|l|C{2.5cm}|}
+       \caption{RMT 基地址}
+		\label{table:rmt_base_address} \\
+	    \hline
+        \rowcolor{lightgray}
+        访问总线 & 基地址 \\
+        \hline
+        PeriBUS1 & \hexprefix{}3F416000 \\
+        \hline
+        PeriBUS2 & \hexprefix{}60016000 \\
+        \hline
+\end{longtable}
+
+\hypertarget{rmt-reg-summ}{}
+\section{寄存器列表}
+
+请注意，下表中的地址都是相对于 RMT 基地址的地址偏移量（相对地址）。更多有关 RMT 基地址的信息，请前往第 \ref{RMT_BASE_ADDRESS} 节。
+
+\input{\modulefiles/rmt-reg_summary__CN.tex}
+
+\section{寄存器}
+
+\input{\modulefiles/rmt-reg__CN.tex}
+
+\end{document}

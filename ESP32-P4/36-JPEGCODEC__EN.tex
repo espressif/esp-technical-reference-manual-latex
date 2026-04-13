@@ -1,0 +1,1078 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./36-JPEGCODEC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{jpegcodec}{}
+\chapter{JPEG Codec}
+\label{mod:jpegcodec}
+\chipname{}'s JPEG codec is an image codec, which is based on the JPEG baseline standard, for compressing (encoding) and decompressing (decoding) images to reduce the bandwidth required to transmit images or the space required to store images, making it possible to process large-resolution images. The image encoding process mainly includes discrete cosine transform (DCT), zigzag scanning, quantization, and Huffman coding. The image decoding process, which is the inverse operation of the encoding process, mainly includes Huffman decoding, inverse quantization, inverse zigzag scanning, and inverse discrete cosine transform (IDCT).
+
+\section{Terminology}
+\begin{longtable}[c]{ R{4cm} p{12cm} }
+\textbf{MCU} & Minimum coded unit. The basic unit of codec processing \\
+\textbf{baseline} & A particular sequential DCT-based encoding and decoding process specified in the standard, which is required for all DCT-based decoding processes \\
+\textbf{image} & A set of two-dimensional arrays of integer data \\
+\textbf{component} & One of the two-dimensional arrays that comprise an image \\
+\textbf{data unit} & An 8 × 8 block of pixels of one component \\
+\textbf{marker} & A two-byte code in which the first byte is hexadecimal FF (0xFF) and the second byte is a value between 1 and hexadecimal FE (0xFE). It is served to identify the various structural parts of the compressed data formats \\
+\textbf{restart marker} & Used to isolate coded data segments and for application-specific uses, such as decoder re-synchronization and error recovery \\
+\textbf{restart interval} & The integer number of MCUs processed between two restart markers \\
+\textbf{scan} & A single pass through the data for one or more of the components in an image \\
+\end{longtable}
+
+Figure \ref{fig:jpeg-bs} shows the schematic diagram of JPEG bitstream format. In this diagram, the dashed lines mark the structural composition of the corresponding parts of the bitstream, and the orange blocks indicate the marker codes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/jpeg-bs}
+    \caption{JPEG Bitstream Format}
+    \label{fig:jpeg-bs}
+\end{figure}
+
+The marker code assignments are shown in Table \ref{tab:marker_code_assign}.
+\begin{longtable}{ | L{4cm} | L{2cm} | L{8cm} |}
+\caption{Marker Code Assignments} \label{tab:marker_code_assign}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Code Assignment} & \textbf{Marker}  &  \textbf{Description}\\ \hline
+0xFFC0  &  SOF0 &  Start of frame (Baseline DCT) \\ \hline
+0xFFC4  &  DHT  &  Define Huffman table(s) \\ \hline
+0xFFDm  &  RSTm &  Restart with modulo 8 count ``m" \\ \hline
+0xFFD8  &  SOI  &  Start of image \\ \hline
+0xFFD9  &  EOI  &  End of image \\ \hline
+0xFFDA  &  SOS  &  Start of scan \\ \hline
+0xFFDB  &  DQT  &  Define quantization table(s) \\ \hline
+0xFFDD  &  DRI  &  Define restart interval \\ \hline
+0xFFEn  &  APPn &  Reserved for application segments, ``n" is 0 to F \\ \hline
+0xFFFE  &  COM  &  Comment \\ \hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+The JPEG codec is based on the JPEG baseline standard, which specifies that an encoding process is completed through one or more scans. An scan contains one or more MCUs. MCU is the sequence of data units defined by the sampling factors of the image components in the scan, which means MCU of different image formats contains different sequence of data units, as shown in Table \ref{tab:data_unit_of_mcu}.
+
+
+\begin{ThreePartTable}
+\begin{longtable}{ | l | l | l | l |}
+\caption{The Number of Data Units in the MCU of Different Image Format} \label{tab:data_unit_of_mcu}
+\\\hline
+
+\rowcolor{lightgray}
+ & \multicolumn{3}{c}{\textbf{MCU\tnote{1}}} \\\cline{2-4}
+
+\rowcolor{lightgray}
+\multirow{-2}*{\textbf{Image Format}}  & \textbf{Luminance Component Y }  &  \textbf{Chrominance Component U}  &  \textbf{Chrominance Component V}\\ \hline
+
+YUV444  &  1 x 1 &  1 x 1 &  1 x 1  \\ \hline
+YUV422  &  2 x 1 &  1 x 1 &  1 x 1  \\ \hline
+YUV420  &  2 x 2 &  1 x 1 &  1 x 1  \\ \hline
+GRAY    &  1 x 1 &  none  &  none  \\ \hline
+\end{longtable}
+
+\begin{tablenotes}
+\item[1] The MCU of each image format is represented by the number of data units in the horizontal direction x the number of data units in the vertical direction of each component.
+\end{tablenotes}
+
+\end{ThreePartTable}
+
+At a time, the JPEG codec can only be configured as an encoder or a decoder, that is, it cannot work as an encoder and a decoder at the same time.
+\begin{itemize}
+    \item When used as an encoder, it obtains the image to be compressed through 2D DMA and sends the encoded bitstream to the 2D DMA.
+    \item When used as a decoder, it obtains the coded bitstream through 2D DMA and sends the decoded image to 2D DMA.
+\end{itemize}
+
+The workflow of JPEG codec is shown in Figure \ref{fig:jpeg-sys-connect}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/jpeg-sys-connect}
+    \caption{JPEG codec system connection block diagram}
+    \label{fig:jpeg-sys-connect}
+\end{figure}
+
+The function clock of the JPEG codec is SYS\_CLK.
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:jpegcodec-features}
+
+When used as an encoder, the JPEG codec has the following features:
+\begin{itemize}
+    \item integrated discrete cosine transform algorithm
+    \item integrated canonical Huffman coding
+    \item RGB888, RGB565, YUV422 and GRAY as original input image formats
+    \item conversion of RGB888 and RGB565 into YUV444, YUV422 or YUV420 (the only formats supported by impression) for image compression
+    \item 4 x configurable quantization coefficient tables with 8-bit or 16-bit precision
+    \item performance:
+    \begin{itemize}
+        \item still image compression: up to 4K resolution
+        \item dynamic image compression: up to 1080P@40fps,720P@70fps (excluding header encoding time)
+    \end{itemize}
+    \item automatically added stuffed zero byte
+    \item automatically added EOI marker
+\end{itemize}
+
+When used as a decoder, the JPEG codec has the following features:
+\begin{itemize}
+    \item integrated inverse discrete cosine transform algorithm
+    \item integrated  Huffman decoding
+    \item supported image formats for compressed bitstream decoding: YUV444, YUV422, YUV420, and GRAY.
+    \item 4 x configurable quantization coefficient tables with 8-bit or 16-bit precision
+    \item 2 x DC and 2 x AC Huffman tables
+    \item supports image decoding of any resolution. However, the resolution of output decoded image differs from the format of the input image:
+    \begin{itemize}
+        \item YUV444, GRAY: both the horizontal and vertical resolutions of the output decoded image are multiples of 8, i.e., 150 × 150 images with an output resolution of 152 × 152
+        \item YUV422: the horizontal resolution of the output decoded image is the multiples of 16 and the vertical resolution is multiples of 8, i.e., 150 × 150 images with an output resolution of 160 × 152
+        \item YUV420: both the horizontal and vertical resolutions of the output decoded image are multiples of 16, i.e., 150 × 150 images with an output resolution of 160 × 160
+    \end{itemize}
+    \item performance:
+    \begin{itemize}
+        \item still image decoding: up to 4K resolution
+        \item dynamic image decoding: up to 1080P@40fps,720P@70fps (excluding header parsing time)
+    \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:jpegcodec-arch-overview}
+
+When the JPEG codec is configured as an encoder, its architecture is shown in Figure \ref{fig:jpeg-enc-arc}.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/jpeg-enc-arc}
+    \caption{JPEG encoder architecture}
+    \label{fig:jpeg-enc-arc}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{rgb2ycrcb} implements the color space conversion, and converts the original image into an image format supported by the codec for compressing.
+    \item \textbf{dct\_idct} implements two-dimensional DCT transformation of data units.
+    \item \textbf{zigzag} performs zigzag scanning and sorting on the DCT transformed data units.
+    \item \textbf{quant\_table} stores the quantization coefficient table delivered by the software.
+    \item \textbf{quantizer} quantifies the zigzag sorted data units based on the quantization coefficient table stored in \textbf{quant\_table}.
+    \item \textbf{huffman\_encoder} performs Huffman encoding on the quantized result of the data units.
+    \item \textbf{packer} packs the Huffman-encoded data into groups of 32 bits, and outputs the final encoded bitstream.
+\end{itemize}
+
+When the JPEG codec is configured as a decoder, its architecture is shown in figure \ref{fig:jpeg-dec-arc}.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/jpeg-dec-arc}
+    \caption{JPEG decoder architecture}
+    \label{fig:jpeg-dec-arc}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{header\_dec} implements bitstream extraction and marker SOS and EOI parsing, and controls the decoding process.
+    \item \textbf{huffman\_decoder} stores the Huffman table delivered by the software, and implements Huffman decoding of the bitstream.
+    \item \textbf{quant\_table} stores the quantization coefficient table delivered by the software.
+    \item \textbf{dequantizer} dequantizes the Huffman decoded data based on the quantization coefficient table stored in \textbf{quant\_table}.
+    \item \textbf{dezigzag} implements reverse zigzag scanning and sorting on the dequantized data units, and combines them into dequantized data units
+    \item \textbf{dct\_idct} implements the two-dimensional inverse DCT transformation of the dequantized data units, and outputs the final decoded data units.
+\end{itemize}
+
+Since the JPEG codec cannot be used as an encoder and decoder at the same time, the encoder and decoder share the \textbf{quant\_table} and \textbf{dct\_idct} modules to save hardware resources.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:jpegcodec-func-descr}
+
+The JPEG Codec can be configured to work as an encoder or a decoder.
+
+\subsection{JPEG Encoder}
+\label{sec:jpegcodec-enc-mode}
+
+\subsubsection{Pause}
+\label{sec:jpegcodec-enc-pause}
+
+The JPEG encoder can be paused during the operation for other higher priority tasks. This feature is controlled by register field \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN}.
+
+\begin{itemize}
+    \item Set \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN} to 1, the JPEG encoder will no longer output the bitstream to the 2D DMA RX channel.
+    \item Set \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN} back to 0, the JPEG encoder will be resumed, and output the bitstream normally.
+\end{itemize}
+
+\subsubsection{Color Space Conversion}
+\label{sec:jpegcodec-enc-csc}
+
+According to the standard, the image formats supported by the JPEG encoder are YUV444, YUV422, YUV420, and GRAY. However, \chipname{}'s JPEG encoder has integrated a color space conversion function to convert RGB888 and RGB565 formats into the above-mentioned image formats supported by the encoder before encoding. In this way, the range of supported image formats is expanded.
+
+The color space conversion formulas for converting RGB to YUV are:
+\begin{center}
+$Y = (0.299 * R) + (0.587 * G) + (0.114 * B)$ \\
+$U = (-0.1687 * R) + (-0.3313 * G) + (0.5 * B) + 128$ \\
+$V = (0.5 * R) + (-0.4187 * G) + (-0.0813 * B) + 128$ \\
+\end{center}
+
+\tagged{ESP32-P4-latest}{
+    YUV formats only support downsampling. For example, YUV444 can remain unchanged or be downsampled to YUV422 or YUV420, and YUV422 can remain unchanged or be downsampled to YUV420.
+}
+
+The image format before conversion is represented by its format as well as pixel order. Table \ref{tab:csc_result} demonstrates the representations of the supported image formats for color space conversion:
+
+\begin{table}[H]
+    \centering
+    \caption{Supported Image Formats for Color Space Conversion}
+    \label{tab:csc_result}
+    \begin{threeparttable}
+
+    \untagged{ESP32-P4-latest}{
+        \begin{tabular}{ | c | c | c | c |}
+        \hline
+            \rowcolor{lightgray}
+            \textbf{\hyperref[fielddesc:JPEGCOLORSPACE]{JPEG\_COLOR\_SPACE}} & \textbf{Format\tnote{1}}                  & \textbf{\hyperref[fielddesc:JPEGPIXELREV]{JPEG\_PIXEL\_REV}} & \textbf{Pixel Order} \\ \hline
+            \multirow{2}{*}{0} & \multirow{2}{*}{RGB888} & 0                & RGB         \\ \cline{3-4}
+                            &                         & 1                & BGR         \\ \hline
+            \multirow{2}{*}{1} & \multirow{2}{*}{YUV422\tnote{2}} & 0                & YUYV        \\ \cline{3-4}
+                            &                         & 1                & UYVY        \\ \hline
+            \multirow{2}{*}{2} & \multirow{2}{*}{RGB565}  & 0                & RGB         \\ \cline{3-4}
+                            &                         & 1                & BGR         \\ \hline
+            3                  & GRAY\tnote{2}                    & N/A      & YYY         \\ \hline
+        \end{tabular}
+    }
+
+    \tagged{ESP32-P4-latest}{
+        \begin{tabular}{ | C{3.5cm} | C{2.5cm} | C{3.5cm} | C{1.5cm} | C{2.5cm} | C{1.5cm} | }
+        \hline
+            \rowcolor{lightgray}
+            \textbf{\hyperref[fielddesc:JPEGEXTDCOLORSPACEEN]{\makecell{JPEG\_EXTD\_\\COLOR\_SPACE\_EN}}} &
+            \textbf{\hyperref[fielddesc:JPEGCOLORSPACE]{\makecell{JPEG\_\\COLOR\_SPACE}}} &
+            \textbf{\hyperref[fielddesc:JPEGEXTDCOLORSPACE]{\makecell{JPEG\_EXTD\_\\COLOR\_SPACE}}} &
+            \textbf{Format\tnote{1}} &
+            \textbf{\hyperref[fielddesc:JPEGPIXELREV]{\makecell{JPEG\_\\PIXEL\_REV}}} &
+            \textbf{Pixel Order} \\ \hline
+
+            \multirow{7}{*}{0} & \multirow{2}{*}{0} & \multirow{7}{*}{N/A} & \multirow{2}{*}{RGB888} & 0                & RGB         \\ \cline{5-6}
+                            &                    &                      &                              & 1                & BGR         \\ \cline{2-2}\cline{4-6}
+                            & \multirow{2}{*}{1} &                      & \multirow{2}{*}{YUV422\tnote{2}} & 0                & YUYV        \\ \cline{5-6}
+                            &                    &                      &                                       & 1                & UYVY        \\ \cline{2-2}\cline{4-6}
+                            & \multirow{2}{*}{2} &                      & \multirow{2}{*}{RGB565}  & 0                & RGB         \\ \cline{5-6}
+                            &                    &                      &                              & 1                & BGR         \\ \cline{2-2}\cline{4-6}
+                            & 3                  &                      & GRAY\tnote{2}                    & N/A              & YYY         \\ \hline
+            \multirow{4}{*}{1} & \multirow{4}{*}{N/A} & \multirow{2}{*}{0} & \multirow{2}{*}{YUV444} & 0                & YUV         \\ \cline{5-6}
+                            &                    &                      &                         & 1                & VUY         \\ \cline{3-6}
+                            &                    &   1                  & YUV420\tnote{2}         & N/A              & YYU/YYV\tnote{3} \\ \hline
+        \end{tabular}
+    }
+
+    \begin{tablenotes}
+        \item[1] The image formats can be converted into other formats supported by the encoder via configuring register field \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL}:
+        \begin{itemize}
+            \item 0: YUV444
+            \item 1: YUV422
+            \item 2: YUV420
+        \end{itemize}
+        \untagged{ESP32-P4-latest}{
+            \item[2] Image formats YUV422 and GRAY will not be converted, regardless of the value of \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL}.
+        }
+        \tagged{ESP32-P4-latest}{
+            \item[2] Image format conversion is limited:
+            \begin{itemize}
+                \item YUV422: can only remain unchanged or be downsampled to YUV420. Setting \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} to 0 has no effect.
+                \item YUV420 or GRAY: will not be converted, regardless of the value of \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL}.
+            \end{itemize}
+            \item[3] The pixel arrangement alternates between rows: odd-numbered rows use the YYU pattern, and even-numbered rows use the YYV pattern.
+        }
+    \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+
+\subsubsection{Configurable Quantization Coefficient Table}
+\label{sec:jpegcodec-enc-qnr}
+
+\chipname{} JEPG encoder has implemented four 8 x 8 quantization coefficient tables in its hardware, which allows 64 software-configurable coefficient values per table.
+
+The precision of each quantization table is configurable via \hyperref[fielddesc:JPEGQNRPRECISION]{JPEG\_QNR\_PRECISION}:
+\begin{itemize}
+    \item 0: low 8-bit effective
+    \item 1: low 16-bit effective
+\end{itemize}
+
+The coefficient values for each table can be configured in FIFO mode or non-FIFO mode depending on the value of \hyperref[fielddesc:JPEGQNRFIFOEN]{JPEG\_QNR\_FIFO\_EN}:
+\begin{itemize}
+    \item 0: non-FIFO mode, in which each coefficient is written to a specific address
+    \item 1: FIFO mode, in which all coefficients are written to the same address
+\end{itemize}
+
+\begin{longtable}{ | r | r | r | r | r | r | r | r | }
+\caption{Position Number of Coefficients in a Quantization Coefficient Table (Example)} \label{tab:example_qnr}
+\\ \hline
+ $_{0}$ & $_{1}$ & $_{2}$ & $_{3}$ & $_{4}$ & $_{5}$ & $_{6}$ & $_{7}$ \\ \hline
+ $_{8}$ & $_{9}$ & $_{10}$ & $_{11}$ & $_{12}$ & $_{13}$ & $_{14}$ & $_{15}$ \\ \hline
+ \multicolumn{8}{c}{...} \\ \hline
+ $_{56}$ & $_{57}$ & $_{58}$ & $_{59}$ & $_{60}$ & $_{61}$ & $_{62}$ & $_{63}$ \\ \hline
+\end{longtable}
+
+In different modes, the configuration of the quantization coefficient table is different. Note, \regindex{n} (\regindex{n} = 0, 1, 2, 3) indicates the number of each quantization coefficient table:
+\begin{itemize}
+    \item non-FIFO mode: each quantization coefficient in a specific position of a quantization coefficient table \regindex{n} must be written to a specific address, which is (JPEG codec base address + \regindex{n} * 0x100 + \regindex{quantization coefficient position number} * 0x4), in which the \regindex{quantization coefficient position number} can be 0, 1, 2, ..., 63 (see Table \ref{tab:example_qnr}). In this mode, since each coefficient is written to a specific address, configuring the 64 quantization coefficients in sequence is not required.
+    \item FIFO mode: all 64 quantization coefficients of the quantization table \regindex{n} are written to the same address, which is \hyperref[regdesc:JPEGT0QNRREG]{JPEG\_T\regindex{n}QNR\_REG}. In this mode, since all coefficients are written to the same address, configuring the 64 quantization coefficients one by one in sequence is required. Afterwards, the hardware will automatically store these 64 quantization coefficients in sequence as shown in Table \ref{tab:example_qnr}.
+\end{itemize}
+
+If there are less than 4 quantization tables, the corresponding quantization table will not be written.
+
+To use a specific quantization coefficient table \regindex{n} for the luminance component or the chrominance component, just set the corresponding register fields to \regindex{n}:
+\begin{itemize}
+    \item luminance component: \hyperref[fielddesc:JPEGLQNRTBLSEL]{JPEG\_LQNR\_TBL\_SEL}
+    \item chrominance component: \hyperref[fielddesc:JPEGCQNRTBLSEL]{JPEG\_CQNR\_TBL\_SEL}
+\end{itemize}
+
+The JPEG baseline standard recommended 8-bit precision quantization coefficient tables for the luminance component and the chrominance component are shown in Table \ref{tab:luminance_qnr} and Table \ref{tab:chrominance_qnr}.
+
+
+\begin{longtable}{ | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | }
+\caption{Recommended 8-bit Precision Quantization Coefficient Table for the Luminance Component} \label{tab:luminance_qnr}
+\\ \hline
+ 16 & 11 & 10 & 16 & 24 & 40 & 51 & 61 \\ \hline
+ 12 & 12 & 14 & 19 & 26 & 58 & 60 & 55 \\ \hline
+ 14 & 13 & 16 & 24 & 40 & 57 & 69 & 56 \\ \hline
+ 14 & 17 & 22 & 29 & 51 & 87 & 80 & 62 \\ \hline
+ 18 & 22 & 37 & 56 & 68 & 109 & 103 & 77 \\ \hline
+ 24 & 35 & 55 & 64 & 81 & 104 & 113 & 92 \\ \hline
+ 49 & 64 & 78 & 87 & 103 & 121 & 120 & 101 \\ \hline
+ 72 & 92 & 95 & 98 & 112 & 100 & 103 & 99 \\ \hline
+\end{longtable}
+
+\begin{longtable}{ | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | }
+\caption{Recommended 8-bit Precision Quantization Coefficient Table for the Chrominance Component} \label{tab:chrominance_qnr}
+\\ \hline
+ 17 & 18 & 24 & 47 & 99 & 99 & 99 & 99 \\ \hline
+ 18 & 21 & 26 & 66 & 99 & 99 & 99 & 99 \\ \hline
+ 24 & 26 & 56 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 47 & 66 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+\end{longtable}
+
+More information can be found in \href{https://www.itu.int/rec/T-REC-T.81}{ITU T.81 Recommendation}. Adjusting the quantization table can change the compression ratio (the ratio between the uncompressed image size and compressed image size) and the quality of encoded images (the larger the quantization coefficient, the greater the compression ratio and the worse the image quality).
+
+\subsubsection{Stuffed Zero Byte}
+\label{sec:jpegcodec-enc-zero_byte}
+
+As required in the JPEG baseline standard to avoid any marker within a Huffman-coded segment, any 0xFF byte generated by the Huffman coding should be followed by a ``stuffed" zero byte.
+
+JPEG encoder has implemented a mechanism to automatically add this ``stuffed" 0x00 byte after each 0xFF byte in the Huffman-coded segment of bitstream.
+
+Users can configure whether to add 0x00 byte after each 0xFF byte via \hyperref[fielddesc:JPEGFFCHECKEN]{JPEG\_FF\_CHECK\_EN}:
+\begin{itemize}
+    \item 0: not add
+    \item 1: add (by default)
+\end{itemize}
+
+\subsubsection{EOI Marker}
+\label{sec:jpegcodec-enc-eoi}
+
+The end of Image (EOI) marker is used to mark the end of the bitstream of a compressed image. The EOI marker code is 0xFFD9.
+
+JPEG encoder has implemented a mechanism to automatically add the EOI marker at the end of the bitstream.
+
+Users can configure whether to add EOF marker via \hyperref[fielddesc:JPEGTAILEREN]{JPEG\_TAILER\_EN}:
+\begin{itemize}
+    \item 0: not add
+    \item 1: add
+\end{itemize}
+
+\subsection{JPEG Decoder}
+\label{sec:jpegcodec-dec-mode}
+
+The information in the bitstream must be parsed by the software, then sent to the hardware through the APB configuration bus. Note that the hardware does not support parsing any marker segments, except the SOS, RST and EOI marker segments.
+
+\subsubsection{Multiple Chrominance Components}
+\label{sec:jpegcodec-dec-color_components}
+
+The frame header contains information about the number of chrominance components of the image, the ID of each component, and the sampling factors in the horizontal and vertical directions of each component.
+
+JPEG decoder's software must parse such information and pass it to respective registers \hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}, \hyperref[regdesc:JPEGC0REG]{JPEG\_C\regindex{n}\_ID}, \hyperref[fielddesc:JPEGC0xFACTOR]{JPEG\_C\regindex{n}\_X\_FACTOR}, and \hyperref[fielddesc:JPEGC0YFACTOR]{JPEG\_C\regindex{n}\_Y\_FACTOR}. Here, \regindex{n} can be 0, 1, 2, indicating that up to 3 chrominance components are supported by hardware. Note that if less than 3 components are involved, just do not configure the rest of the registers.
+
+According to the value of register \hyperref[regdesc:JPEGC0REG]{JPEG\_C\regindex{n}\_ID} of each chrominance component, the hardware will check whether it is consistent with the ID in the scan header information. The sampling factor indicates the number of data units of this component that an MCU contains in both the horizontal and vertical directions. So according to the value of register \hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}, \hyperref[fielddesc:JPEGC0xFACTOR]{JPEG\_C\regindex{n}\_X\_FACTOR} and \hyperref[fielddesc:JPEGC0YFACTOR]{JPEG\_C\regindex{n}\_Y\_FACTOR}, the hardware can obtain the proportional relationship of chrominance components, that is, the format of the image to be decoded. See Table \ref{tab:color_xy_factor}.
+
+\begin{longtable}{ | c | c | c | }
+\caption{Sampling Factor and Image Format} \label{tab:color_xy_factor}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{\hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}} & \textbf{JPEG\_C\regindex{n}\_X/Y\_FACTOR}  &  \textbf{Format of the Image to be Decoded}\\ \hline
+ 0 & - & invalid \\ \hline
+\multirow{2}{*}{1} & C0\_X\_FACTOR is 1 & \multirow{2}{*}{GRAY} \\
+  & C0\_Y\_FACTOR is 1 &  \\ \hline
+ 2 & - & invalid \\ \hline
+\multirow{18}{*}{3} & C0\_X\_FACTOR is 1 & \multirow{6}{*}{YUV444} \\
+  & C0\_Y\_FACTOR is 1 &  \\
+  & C1\_X\_FACTOR is 1 &  \\
+  & C1\_Y\_FACTOR is 1 &  \\
+  & C2\_X\_FACTOR is 1 &  \\
+  & C2\_Y\_FACTOR is 1 &  \\ \cline{2-3}
+  & C0\_X\_FACTOR is 2 & \multirow{6}{*}{YUV422} \\
+  & C0\_Y\_FACTOR is 1 &  \\
+  & C1\_X\_FACTOR is 1 &  \\
+  & C1\_Y\_FACTOR is 1 &  \\
+  & C2\_X\_FACTOR is 1 &  \\
+  & C2\_Y\_FACTOR is 1 &  \\ \cline{2-3}
+  & C0\_X\_FACTOR is 2 & \multirow{6}{*}{YUV420} \\
+  & C0\_Y\_FACTOR is 2 &  \\
+  & C1\_X\_FACTOR is 1 &  \\
+  & C1\_Y\_FACTOR is 1 &  \\
+  & C2\_X\_FACTOR is 1 &  \\
+  & C2\_Y\_FACTOR is 1 &  \\ \hline
+\end{longtable}
+
+Regardless of the format of the image to be decoded, the decoder only supports one scan, which contains all components. After decoding, the image will be sent to 2D DMA, so please refer to Chapter \ref{mod:2ddma} \textit{\nameref{mod:2ddma}} for the layout of the decoded image in each format.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsubsection{Parsing RST Marker}
+\label{sec:jpegcodec-dec-rst_marker}
+
+The bitstream may have a restart (RST) marker in the scan segment. The RST marker code is 0xFFD\regindex{x} (\regindex{x} = 0, 1, ..., 7).
+
+JPEG decoder's hardware can parse RST markers and check whether the actual number of MCUs between two RST markers is the same as the restart interval defined in the DRI segment of the Tables/Miscellaneous segment.
+
+Firstly, the software parses the DRI segment and pass the defined restart interval to register \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL}. Then, the hardware will check whether the subsequent bitstream has an RST marker every time \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} MCUs are decoded.
+
+Configuring \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} to 0 indicates the bitstream does not contain any RST marker. In this case, the hardware will not check RST markers.
+
+\subsubsection{Configurable Quantization Coefficient Table}
+\label{sec:jpegcodec-dec-qnr}
+
+\chipname{} JPEG decoder also supports 4 configurable quantization coefficient tables. Since the JPEG codec cannot be used as an encoder and decoder at the same time, decoder can share the same four configurable quantization coefficient tables with the encoder to save hardware resources.
+
+Therefore, the configuration of decoder's quantization coefficient tables is similar to that of the encoder (see Section \ref{sec:jpegcodec-enc-qnr}) with some exceptions described below:
+\begin{itemize}
+    \item The software needs to parse the DQT segment in the Tables/Miscellaneous segment to obtain the quantization coefficient tables of the decoder. The recommended quantization coefficient tables are the same as the encoder shown in Table \ref{tab:luminance_qnr} and Table \ref{tab:chrominance_qnr}.
+    \item The precision of the quantization table\regindex{n} is configured via higher 4 bits of register \hyperref[regdesc:JPEGDQTINFOREG]{JPEG\_T\regindex{n}\_DQT\_INFO}:
+    \begin{itemize}
+        \item 0: low 8-bit effective
+        \item 1: low 16-bit effective
+    \end{itemize}
+    The precision is also obtained from the DQT segment in the Tables/Miscellaneous segment.
+    \item For each chrominance component, a different quantization coefficient table can be selected. The lower 4 bits of register \hyperref[regdesc:JPEGDQTINFOREG]{JPEG\_T\regindex{n}\_DQT\_INFO} specify the ID of each quantization coefficient table, and each chrominance component selects the quantization coefficient table whose ID is the value of register \hyperref[fielddesc:JPEGC0DQTTBLSEL]{JPEG\_C\regindex{n}\_DQT\_TBL\_SEL}. The ID of each quantization coefficient table is also obtained from the DQT segment in the Tables/Miscellaneous segment.
+\end{itemize}
+
+\subsubsection{Configurable Huffman Table}
+\label{sec:jpegcodec-dec-huffman}
+
+\chipname{} supports up to 2 DC Huffman tables and 2 AC Huffman tables. Users can configure as many Huffman tables as needed within the limits.
+
+Each Huffman table can be established with three types of information, which can be obtained from the DHT segment in the Tables/Miscellaneous segment:
+\begin{itemize}
+    \item the number of codeword with a codeword length of 1 to 16 bits,
+    \item the symbols corresponding to the decoded codeword
+    \begin{itemize}
+        \item DC table: up to 16 symbols
+        \item AC table: up to 256 symbols
+    \end{itemize}
+    \item the minimum codeword with a codeword length of 1 to 16 bits.
+\end{itemize}
+
+Both of the DC and AC Huffman tables can be configured in a FIFO fashion or a non-FIFO fashion depending on the value of \hyperref[fielddesc:JPEGDHTFIFOEN]{JPEG\_DHT\_FIFO\_EN}:
+\begin{itemize}
+    \item 0: non-FIFO mode
+    \item 1: FIFO mode
+\end{itemize}
+
+In different modes, the configuration of the Huffman table is different. Here is the configuration of DC tables\regindex{n} (\regindex{n} = 0, 1):
+\begin{itemize}
+    \item non-FIFO mode: each piece in different type of information used to establish the DC\regindex{n} Huffman table must be written to a specific address.
+    \begin{itemize}
+        \item the number of codeword with a codeword length of 1 to 16 bits: JPEG codec base address + 0x500 + \regindex{n} * 0x80 + (\regindex{codeword length} - 1) * 0x4, in which \regindex{codeword length} = 1, 2, ..., 16.
+        \item the symbols corresponding to the decoded codeword: JPEG codec base address + 0x600 + \regindex{n} * 0x40 + \regindex{symbol number} * 0x4, in which \regindex{symbol number} = 0, 1, ..., 15.
+        \item the minimum codeword with a codeword length of 1 to 16 bits: JPEG codec base address + 0xF00 + \regindex{n} * 0x80 + (\regindex{codeword length} - 1) * 0x4, in which \regindex{codeword length} = 1, 2, ..., 16.
+    \end{itemize}
+    In this mode, since each piece of different type of information is written to a specific address, configuring each piece of information in sequence is not required.
+    \item FIFO mode: all pieces of the same type of information used to establish the DC\regindex{n} Huffman table must be written to the same address, respectively.
+    \begin{itemize}
+        \item the number of codeword with a codeword length of 1 to 16 bits: \hyperref[regdesc:JPEGDHTTOTLENDC0REG]{JPEG\_DHT\_TOTLEN\_DC\regindex{n}\_REG}.
+        \item all symbols corresponding to the decoded codeword (DC table has up to 16 symbols): \hyperref[regdesc:JPEGDHTVALDC0REG]{JPEG\_DHT\_VAL\_DC\regindex{n}\_REG}.
+        \item the minimum codeword with a codeword length of 1 to 16 bits:  \hyperref[regdesc:JPEGDHTCODEMINDC0REG]{JPEG\_DHT\_CODEMIN\_DC\regindex{n}\_REG}.
+    \end{itemize}
+    In this mode, since all pieces of the same type of information are written to the same address, configuring each piece of same type of information one by one in sequence is required. Afterwards, the hardware will automatically store such information in sequence.
+\end{itemize}
+
+The configuration of AC\regindex{n} (\regindex{n} = 0, 1) tables is very similar to that of the DC\regindex{n} (\regindex{n} = 0, 1) tables. Here below is the configuration of AC\regindex{n} (\regindex{n} = 0, 1) tables:
+
+\begin{itemize}
+    \item non-FIFO mode: each piece in different type of information used to establish the AC\regindex{n} Huffman table must be written to a specific address.
+    \begin{itemize}
+        \item the number of codeword with a codeword length of 1 to 16 bits: JPEG codec base address + 0x540 + \regindex{n} * 0x80 + (\regindex{codeword length} - 1) * 0x4, in which \regindex{codeword length} = 1, 2, ..., 16.
+        \item the symbols corresponding to the decoded codeword: JPEG codec base address + 0x680 + \regindex{n} * 0x400 + \regindex{symbol number} * 0x4, in which \regindex{symbol number} = 0, 1, ..., 256.
+        \item the minimum codeword with a codeword length of 1 to 16 bits: JPEG codec base address + 0xF40 + \regindex{n} * 0x80 + (\regindex{codeword length} - 1) * 0x4, in which \regindex{codeword length} = 1, 2, ..., 16.
+    \end{itemize}
+    In this mode, since each piece of different type of information is written to a specific address, configuring each piece of information in sequence is not required.
+    \item FIFO mode: all pieces of the same type of information used to establish the AC\regindex{n} Huffman table must be written to the same address, respectively.
+    \begin{itemize}
+        \item the number of codeword with a codeword length of 1 to 16 bits: \hyperref[regdesc:JPEGDHTTOTLENAC0REG]{JPEG\_DHT\_TOTLEN\_AC\regindex{n}\_REG}.
+        \item all symbols corresponding to the decoded codeword (AC table has up to 256 symbols): \hyperref[regdesc:JPEGDHTVALAC0REG]{JPEG\_DHT\_VAL\_AC\regindex{n}\_REG}.
+        \item the minimum codeword with a codeword length of 1 to 16 bits:  \hyperref[regdesc:JPEGDHTCODEMINAC0REG]{JPEG\_DHT\_CODEMIN\_AC\regindex{n}\_REG}.
+    \end{itemize}
+    In this mode, since all pieces of the same type of information are written to the same address, configuring each piece of same type of information one by one in sequence is required. Afterwards, the hardware will automatically store such information in sequence.
+\end{itemize}
+
+For the minimum codeword with a codeword length of 1 to 16 bits, it should be moved left to the high bit of the 16-bit configuration data. If a codeword length does not exist, the configuration value is 0xFFFF. For example, if a minimum codeword is 0x7C, the 16-bit configuration data should be 0x7C00.
+
+The JPEG baseline standard recommended DC and AC Huffman tables can be found in \href{https://www.itu.int/rec/T-REC-T.81}{ITU T.81 Recommendation}.
+
+The software can obtain the IDs of DC\regindex{n} and AC\regindex{n} Huffman tables by parsing the DHT segment in the Tables/Miscellaneous segment, then pass these ID to the corresponding register \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_DC\regindex{n}\_DHT\_ID} and \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_AC\regindex{n}\_DHT\_ID}.
+
+The hardware will automatically use the DC\regindex{n} and AC\regindex{n} Huffman tables with the same ID from \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_DC\regindex{n}\_DHT\_ID} and \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_AC\regindex{n}\_DHT\_ID}.
+
+\subsubsection{Timeout Detection}
+
+Additionally, timeout detection is supported when the JPEG codec is working as a decoder. The hardware triggers the timeout interrupt JPEG\_DECODE\_TIMEOUT\_INT:
+\begin{itemize}
+    \item when the decoder stops reading the bitstream for more than ($ 2 ^ {\hyperref[fielddesc:JPEGDECODETIMEOUTTHRES]{JPEG\_DECODE\_TIMEOUT\_THRES}} - 1 $) clock cycles,
+    \item or when the number of clock cycles consumed for decoding an image exceeds the value of ($ 2 ^ {\hyperref[fielddesc:JPEGDECODETIMEOUTTHRES]{JPEG\_DECODE\_TIMEOUT\_THRES}} - 1 $)
+\end{itemize}
+
+In this case, the decoder will be reset depending on the configuration of \hyperref[fielddesc:JPEGDECODETIMEOUTTASKSEL]{JPEG\_DECODE\_TIMEOUT\_TASK\_SEL}:
+\begin{itemize}
+    \item 0: the hardware will not perform any operation, and the software is required to configure the \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} or \hyperref[fielddesc:JPEGFSMRST]{JPEG\_FSM\_RST} to perform a reset operation.
+    \item 1: the hardware will automatically reset the decoder to exit the timeout state and enter the initial state.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s JPEG Codec can generate the JPEG\_INTR interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+Interrupt signal JPEG\_INTR can be generated by the following internal interrupt sources:
+\begin{itemize}
+\item JPEG\_DONE\_INT: Triggered when a frame of image encoding or decoding ends.
+\item JPEG\_RLE\_PARALLEL\_ERR\_INT: Triggered when a run-length encoding error occurs.
+\item JPEG\_CID\_ERR\_INT: Triggered when the decoded component ID is different from the component ID configured by the software.
+\item JPEG\_C\_DHT\_DC\_ID\_ERR\_INT: Triggered when the decoded DC Huffman table ID of each component is not the software configured DC0 Huffman table ID or DC1 Huffman table ID.
+\item JPEG\_C\_DHT\_AC\_ID\_ERR\_INT: Triggered when the decoded AC Huffman table ID of each component is not the software configured AC0 Huffman table ID or AC1 Huffman table ID.
+\item JPEG\_C\_DQT\_ID\_ERR\_INT: Triggered when the decoded quantization table ID of each component is different from the software configured quantization table ID.
+\item JPEG\_RST\_UXP\_ERR\_INT: Triggered when the \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} configured by the software is 0 but the RST marker is parsed by the decoder.
+\item JPEG\_RST\_CHECK\_NONE\_ERR\_INT: Triggered when the \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} configured by the software is non-0 but the RST marker cannot be parsed by the decoder.
+\item JPEG\_RST\_CHECK\_POS\_ERR\_INT: Triggered when the MCU number between two parsed RST markers is not equal to the \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} configured by the software.
+\item JPEG\_OUT\_EOF\_INT: Triggered when the EOF marker is read from the TX channel of 2D DMA.
+\item JPEG\_SR\_COLOR\_MODE\_ERR\_INT: This interrupt is invalid.
+\item JPEG\_DCT\_DONE\_INT: Triggered when the DCT or IDCT calculation of one data unit is completed.
+\item JPEG\_BS\_LAST\_BLOCK\_EOF\_INT: Triggered when the encoding of the last data unit is completed.
+\item JPEG\_SCAN\_CHECK\_NONE\_ERR\_INT: Triggered when an image frame has multiple scans to be decoded and the SOS marker is not parsed within (\hyperref[fielddesc:JPEGSOSCHECKBYTENUM]{JPEG\_SOS\_CHECK\_BYTE\_NUM} + 1) bytes in any scan header information.
+\item JPEG\_SCAN\_CHECK\_POS\_ERR\_INT: Triggered when the position of the scan header information parsed by the decoder is wrong.
+\item JPEG\_UXP\_DET\_INT: Triggered when the marker parsed by the decoder is not supported by the hardware.
+\item JPEG\_EN\_FRAME\_EOF\_ERR\_INT: Triggered when the number of data units to be encoded read from 2D DMA is less than the number of data units calculated based on the image resolution configured by the software.
+\item JPEG\_EN\_FRAME\_EOF\_LACK\_INT: Triggered when a frame of image to be encoded is completely read from 2D DMA but the EOF marker is not read.
+\item JPEG\_DE\_FRAME\_EOF\_ERR\_INT: Triggered when the number of data units obtained after decoding a frame of image is different from the number of data units calculated based on the image resolution configured by the software.
+\item JPEG\_DE\_FRAME\_EOF\_LACK\_INT: Triggered when the bitstream of a image is completely read from 2D DMA but the EOF marker or EOI marker is not read.
+\item JPEG\_SOS\_UNMATCH\_ERR\_INT: Triggered when the number of components in the scan header information parsed by the decoder is 0 or the header length in the scan header information parsed by the decoder does not match the actual header length.
+\item JPEG\_MARKER\_ERR\_FST\_SCAN\_INT: Triggered when there is an error in the first scan header information parsed by the decoder. The errors include errors triggering JPEG\_CID\_ERR\_INT, errors triggering JPEG\_C\_DHT\_DC\_ID\_ERR\_INT, errors triggering JPEG\_C\_DHT\_AC\_ID\_ERR\_INT, errors triggering JPEG\_C\_DQT\_ID\_ERR\_INT and errors triggering JPEG\_SOS\_UNMATCH\_ERR\_INT.
+\item JPEG\_MARKER\_ERR\_OTHER\_SCAN\_INT: Triggered when there is an error in the non-first scan header information parsed by the decoder. The error type is the same as the errors that trigger JPEG\_MARKER\_ERR\_FST\_SCAN\_INT.
+\item JPEG\_UNDET\_INT: Triggered when the bitstream of an image is completely read from 2D DMA but the SOS marker is not read.
+\item JPEG\_DECODE\_TIMEOUT\_INT: Triggered when the decoder is timeout. Section \ref{sec:jpegcodec-dec-prog} describes how this interrupt will occur.
+\end{itemize}
+
+The above interrupt sources can only be triggered when the interrupt enable register \regindex{interrupt\_source\_name}\_ENA is set to 1. Write 1 to \regindex{interrupt\_source\_name}\_CLR will clear the interrupt.
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:jpegcodec-reg-summ} \textit{\nameref{sec:jpegcodec-reg-summ}}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:jpegcodec-prog-procedures}
+
+\subsection{JPEG Encoder}
+\label{sec:jpegcodec-enc-prog}
+
+When the JPEG codec is working as an encoder, the configuration process is:
+\begin{enumerate}
+    \item Activate the JPEG codec:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTJPEGSYSCLKEN]{HP\_SYS\_CLKRST\_JPEG\_SYS\_CLK\_EN} to 1 to enable the JPEG codec clock;
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTRSTENJPEG]{HP\_SYS\_CLKRST\_RST\_EN\_JPEG} to 0 to release the JPEG codec system level reset.
+    \end{itemize}
+    \item Configure the JPEG codec:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} to 1 to reset the JPEG codec, and then set \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} to 0 to release the JPEG codec reset.
+        \item Set \hyperref[fielddesc:JPEGMODE]{JPEG\_MODE} to 0 to configure the JPEG codec to be used as an encoder.
+        \item Select the original image format by configuring the following registers:
+        \begin{itemize}
+            \item Format:
+                \begin{itemize}
+                    \item \hyperref[fielddesc:JPEGCOLORSPACE]{JPEG\_COLOR\_SPACE}
+                    \tagged{ESP32-P4-latest}{
+                        \item \hyperref[fielddesc:JPEGEXTDCOLORSPACEEN]{JPEG\_EXTD\_COLOR\_SPACE\_EN}
+                        \item \hyperref[fielddesc:JPEGEXTDCOLORSPACE]{JPEG\_EXTD\_COLOR\_SPACE}
+                    }
+                \end{itemize}
+            \item Pixel order: \hyperref[fielddesc:JPEGPIXELREV]{JPEG\_PIXEL\_REV}
+        \end{itemize}
+        See details in Table \ref{tab:csc_result}.
+        \item Select whether to add the EOI marker (0xFFD9) at the end of the bitstream by configuring \hyperref[fielddesc:JPEGTAILEREN]{JPEG\_TAILER\_EN}:
+        \begin{itemize}
+            \item 0: disable
+            \item 1: enable
+        \end{itemize}
+        \item Select the image format to be compressed by configuring \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL}:
+                \begin{itemize}
+                    \item 0: YUV444
+                    \item 1: YUV422
+                    \item 2: YUV420
+                \end{itemize}
+        Note that this register is valid only when the original image format is RGB\tagged{ESP32-P4-latest}{, YUV444, or YUV422}. See details in Table \ref{tab:csc_result}.
+        \item Configure \hyperref[fielddesc:JPEGHA]{JPEG\_HA} as the original image width and \hyperref[fielddesc:JPEGVA]{JPEG\_VA} as the original image height.
+        \item Configure the quantization coefficient table by following the instructions in Section \ref{sec:jpegcodec-enc-qnr}.
+    \end{itemize}
+    \item Configure 2D DMA (For detailed instructions or introduction to related concepts, please refer to Chapter \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}.)
+    \begin{enumerate}
+        \item Configure the linked list of 2D DMA TX channel.
+        \begin{itemize}
+            \item Set 2DEN to 1 to enable 2D function.
+            \item Configure the Buffer address pointer as the starting address where the original image is stored.
+            \item Configure pbyte to select the number of bytes of one pixel of the original image.
+            \item Configure HA as the width of the original image and VA as the height of the original image.
+            \item Configure hb as the number of pixels in the horizontal direction of an image block and vb as the number of pixels in the vertical direction of an image block.
+            \item Configure mod as 1, which means continuous reading of image blocks of hb × vb size.
+            \item Configure (X, Y) as the coordinate of the first pixel in the starting image block. Among them, according to the original image format and the format of the image to be compressed, there are restrictions on hb and vb, as shown in the table \ref{tab:en_hb_vb}:
+
+                \untagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG Encoder hb and vb Configuration} \label{tab:en_hb_vb}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{Format of Original Image} & \textbf{Format of the Image to be Compressed}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+
+                    RGB  &  YUV444 &  Multiples of 8 &  Multiples of 8  \\ \hline
+                    RGB  &  YUV422 &  Multiples of 16 &  Multiples of 8  \\ \hline
+                    RGB  &  YUV420 &  Multiples of 16 &  Multiples of 16  \\ \hline
+                    YUV422  &  YUV422 &  Multiples of 16 &  Multiples of 8  \\ \hline
+                    GRAY  &  GRAY &  Multiples of 8 &  Multiples of 8  \\ \hline
+
+                    \end{longtable}
+                }
+
+                \tagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG Encoder hb and vb Configuration} \label{tab:en_hb_vb}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{Format of Original Image} & \textbf{Format of the Image to be Compressed}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+
+                    \multirow{3}{*}{RGB/YUV444} &  YUV444 &  Multiples of 8 &  Multiples of 8  \\ \cline{2-4}
+                        &  YUV422 &  Multiples of 16 &  Multiples of 8  \\ \cline{2-4}
+                        &  YUV420 &  Multiples of 16 &  Multiples of 16  \\ \hline
+                    \multirow{2}{*}{YUV422}  &  YUV422 &  Multiples of 16 &  Multiples of 8  \\ \cline{2-4}
+                        &  YUV420 &  Multiples of 16 &  16  \\ \hline
+                    YUV420  &  YUV420 &  Multiples of 16 &  16  \\ \hline
+                    GRAY    &  GRAY   &  Multiples of 8  &  Multiples of 8  \\ \hline
+
+                    \end{longtable}
+                }
+        \end{itemize}
+        \item Configure the linked list of the 2D DMA RX channel:
+        \begin{itemize}
+            \item Set 2DEN to 0 to enable 1D function.
+            \item Configure the Buffer address pointer as the starting address where the encoded bitstream will be stored.
+            \item Configure size as the number of bytes in the space to store the encoded bitstream.
+            \item configure mod as 0, which means one-time reading of image blocks of hb × vb size.
+        \end{itemize}
+        \item Connect 2D DMA channels to JPEG codec:
+        \begin{itemize}
+            \item Connect the TX channel\regindex{n} to the JPEG codec by configuring \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} to 0;
+            \item Connect the RX channel\regindex{n} to the JPEG codec by configuring \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} to 0.
+        \end{itemize}
+        \item Reset 2D DMA channels:
+        \begin{itemize}
+            \item 2D DMA TX channel\regindex{n}: Set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} to 1 to reset 2D DMA TX channel\regindex{n}, then set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} to 0 to release the reset of 2D DMA TX channel\regindex{n}.
+            \item 2D DMA RX channel\regindex{n}: Set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} to 1 to reset 2D DMA RX channel\regindex{n}, then set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} to 0 to release the reset of 2D DMA RX channel\regindex{n}.
+        \end{itemize}
+        \item Select the burst length of 2D DMA channels:
+        \begin{itemize}
+            \item Configure \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}} to select the burst length of 2D DMA TX channel\regindex{n}.
+            \item Configure \hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}} to select the burst length of 2D DMA RX channel\regindex{n}.
+        \end{itemize}
+        \item Select the 2D DMA output image block size by configuring \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} according to the format of original image and the format of the image to be compressed. See details in Table \ref{tab:en_block_size}:
+            \begin{itemize}
+                \item 0: 8x8
+                \item 1: 16x8
+                \item 2: 16x16
+            \end{itemize}
+
+            \untagged{ESP32-P4-latest}{
+                \begin{longtable}{ | c | c | c | }
+                \caption{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} Configuration} \label{tab:en_block_size}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{Format of Original Image} & \textbf{Format of the Image to be Compressed}  &  \textbf{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+
+                RGB  &  YUV444 &  0 \\ \hline
+                RGB  &  YUV422 &  1 \\ \hline
+                RGB  &  YUV420 &  2 \\ \hline
+                YUV422  &  YUV422 &  1 \\ \hline
+                GRAY  &  GRAY &  0 \\ \hline
+
+                \end{longtable}
+            }
+
+            \tagged{ESP32-P4-latest}{
+                \begin{longtable}{ | c | c | c | }
+                \caption{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} Configuration} \label{tab:en_block_size}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{Format of Original Image} & \textbf{Format of the Image to be Compressed}  &  \textbf{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+
+                \multirow{3}{*}{RGB/YUV444}  &  YUV444 &  0 \\ \cline{2-3}
+                    &  YUV422 &  1 \\ \cline{2-3}
+                    &  YUV420 &  2 \\ \hline
+                \multirow{2}{*}{YUV422}  &  YUV422 &  1 \\ \cline{2-3}
+                    &  YUV420 &  2 \\ \hline
+                YUV420  &  YUV420 &  2 \\ \hline
+                GRAY    &  GRAY   &  0 \\ \hline
+
+                \end{longtable}
+            }
+        \item Enable the reorder function to improve bandwidth utilization by setting \hyperref[fielddesc:DMA2DOUTREORDERENCHN]{DMA2D\_OUT\_REORDER\_EN\_CH0} to 1. Note that, this function is only available for 2D DMA TX channel0, not for any other TX channels.
+        \item Configure 2D DMA channel linked list address:
+        \begin{itemize}
+            \item 2D DMA TX channel: \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}}
+            \item 2D DMA RX channel: \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}}
+        \end{itemize}
+    \end{enumerate}
+    \item Enable interrupt sources:
+    \begin{itemize}
+        \item \hyperref[regdesc:DMA2DOUTINTENACHNREG]{DMA2D\_OUT\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:DMA2DININTENACHNREG]{DMA2D\_IN\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:JPEGINTENAREG]{JPEG\_INT\_ENA\_REG}
+    \end{itemize}
+    \item Start the transmission of 2D DMA channels:
+    \begin{itemize}
+        \item 2D DMA TX channel: set \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} to 1 and then to 0
+        \item 2D DMA RX channel: set \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} to 1 and then to 0
+    \end{itemize}
+    \item Start the JPEG codec encoding by setting the \hyperref[fielddesc:JPEGJPEGSTART]{JPEG\_JPEG\_START} field.
+    \item Wait till DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT becomes 1, indicating that the encoded bitstream has been completely written to the memory.
+\end{enumerate}
+
+
+\subsection{JPEG Decoder}
+
+\label{sec:jpegcodec-dec-prog}
+When the JPEG codec is working as a decoder, the configuration process is:
+\begin{enumerate}
+    \item Activate the JPEG codec:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTJPEGSYSCLKEN]{HP\_SYS\_CLKRST\_JPEG\_SYS\_CLK\_EN} to 1 to enable the JPEG codec clock
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTRSTENJPEG]{HP\_SYS\_CLKRST\_RST\_EN\_JPEG} to 0 to release the JPEG codec system level reset.
+    \end{itemize}
+    \item Configure the JPEG codec:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} to 1 to reset the JPEG codec, and then set \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} to 0 to release the JPEG codec reset.
+        \item Set \hyperref[fielddesc:JPEGMODE]{JPEG\_MODE} to 1 to configure the JPEG codec to be used as a decoder.
+        \item Enable the RST marker check following the instructions in Section \ref{sec:jpegcodec-dec-rst_marker}, if required.
+        \item Configure the quantization coefficient tables by following the instructions in Section \ref{sec:jpegcodec-dec-qnr}.
+        \item Configure the Huffman tables by following the instructions in Section \ref{sec:jpegcodec-dec-huffman}.
+        \item Configure the width and height of the decoded image:
+        \begin{itemize}
+            \item Width: write width of the decoded image to \hyperref[fielddesc:JPEGHA]{JPEG\_HA}.
+            \item Height: write the height of the decoded image to \hyperref[fielddesc:JPEGVA]{JPEG\_VA}.
+            \item According to different decoded image formats, \hyperref[fielddesc:JPEGHA]{JPEG\_HA} and \hyperref[fielddesc:JPEGVA]{JPEG\_VA} must meet the requirements of Table \ref{tab:de_jpeg_ha_va}.
+
+                \untagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG Decoder \hyperref[fielddesc:JPEGHA]{JPEG\_HA} and \hyperref[fielddesc:JPEGVA]{JPEG\_VA} Configuration} \label{tab:de_jpeg_ha_va}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{Format of Decoded Image} & \textbf{\hyperref[fielddesc:JPEGHA]{JPEG\_HA}} & \textbf{\hyperref[fielddesc:JPEGVA]{JPEG\_VA}}\\ \hline
+
+                    YUV444 & Multiples of 8 & Multiples of 8 \\ \hline
+                    YUV422 & Multiples of 16 & Multiples of 8 \\ \hline
+                    YUV420 & Multiples of 16 & Multiples of 16 \\ \hline
+                    GRAY & Multiples of 8 & Multiples of 8 \\ \hline
+
+                    \end{longtable}
+                }
+                \tagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG Decoder \hyperref[fielddesc:JPEGHA]{JPEG\_HA} and \hyperref[fielddesc:JPEGVA]{JPEG\_VA} Configuration} \label{tab:de_jpeg_ha_va}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{Format of Decoded Image} & \textbf{\hyperref[fielddesc:JPEGHA]{JPEG\_HA}} & \textbf{\hyperref[fielddesc:JPEGVA]{JPEG\_VA}}\\ \hline
+
+                    YUV444 &  Multiples of 8 &  8  \\ \hline
+                    YUV422 &  Multiples of 16 &  8  \\ \hline
+                    YUV420 &  Multiples of 16 &  16  \\ \hline
+                    GRAY &  Multiples of 8 &  8  \\ \hline
+
+                \end{longtable}
+                }
+        \end{itemize}
+    \end{itemize}
+    \item Configure 2D DMA (For detailed instructions or introduction to related concepts, please refer to Chapter \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}.)
+    \begin{enumerate}
+        \item Configure the linked list of the 2D DMA TX channel.
+        \begin{itemize}
+            \item Set 2DEN to 0 to enable the 1D function.
+            \item Configure the Buffer address pointer as the starting address where the bitstream to be decoded is stored.
+            \item Configure the length and size as the number of bytes in the space to store the bitstream to be decoded.
+            \item configure mod as 0, which means one-time reading of image blocks of hb x vb size.
+        \end{itemize}
+        \item Configure the linked list of 2D DMA RX channel.
+        \begin{itemize}
+            \item Set 2DEN to 1 to enable 2D function.
+            \item Configure the Buffer address pointer as the starting address where the decoded image will be stored.
+            \item Configure pbyte to select the number of bytes of one pixel of the image which is decoded and has undergone 2D DMA color space conversion.
+            \item Configure HA as the width of the output decoded image, configure VA as the height of the output decoded image, configure hb as the number of pixels in the horizontal direction of an image block, configure vb as the number of pixels in the vertical direction of an image block.
+            \item Configure mod as 1, which means continuous reading of image blocks of hb × vb size.
+            \item Configure (X, Y) as the coordinates of the first pixel in the starting image block. Among them, according to the decoded image format, there are restrictions on hb and vb, as shown in the table \ref{tab:de_hb_vb}:
+        \begin{longtable}{ | L{4cm} | L{3cm} | L{3cm} | }
+        \caption{JPEG Decoder hb and vb Configuration} \label{tab:de_hb_vb}
+        \\ \hline
+        \rowcolor{lightgray}
+        \textbf{Decoded image format}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+        YUV444 &  Multiples of 8 &  Multiples of 8  \\ \hline
+        YUV422 &  Multiples of 16 &  Multiples of 8  \\ \hline
+        YUV420 &  Multiples of 16 &  Multiples of 16  \\ \hline
+        GRAY &  Multiples of 8 &  Multiples of 8  \\ \hline
+        \end{longtable}
+        \end{itemize}
+        \item Connect 2D DMA channels to JPEG codec:
+        \begin{itemize}
+            \item Connect the TX channel\regindex{n} to the JPEG codec by configuring \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} to 0;
+            \item Connect the RX channel\regindex{n} to the JPEG codec by configuring \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} to 0.
+        \end{itemize}
+        \item Reset 2D DMA channels:
+        \begin{itemize}
+            \item 2D DMA TX channel\regindex{n}: set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} to 1 to reset 2D DMA TX channel\regindex{n}, then set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} to 0 to release the reset of 2D DMA TX channel\regindex{n}.
+            \item 2D DMA RX channel\regindex{n}: set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} to 1 to reset 2D DMA RX channel\regindex{n}, then set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} to 0 to release the reset of 2D DMA RX channel\regindex{n}.
+        \end{itemize}
+        \item Select the burst length of 2D DMA channels:
+        \begin{itemize}
+            \item Configure \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}} to select the burst length of 2D DMA TX channel\regindex{n}
+            \item Configure \hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}} to select the burst length of 2D DMA RX channel\regindex{n}
+        \end{itemize}
+        \item Select 2D DMA receive image block size by configuring \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} according to the format of the decoded image. See details in Table \ref{tab:de_block_size}:
+        \begin{itemize}
+            \item 0: 8x8
+            \item 1: 16x8
+            \item 2: 16x16
+        \end{itemize}
+        \begin{longtable}{ | c | c | }
+        \caption{\hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} Configuration} \label{tab:de_block_size}
+        \\ \hline
+        \rowcolor{lightgray}
+        \textbf{Format of Decoded Image} & \textbf{\hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+        YUV444 &   0\\ \hline
+        YUV422 &   1\\ \hline
+        YUV420 &   2\\ \hline
+        GRAY &    0\\ \hline
+        \end{longtable}
+        \item Enable the reorder function to improve bandwidth utilization by setting set \hyperref[fielddesc:DMA2DINREORDERENCHN]{DMA2D\_IN\_REORDER\_EN\_CH0} to 1. Note that, this function is only available for 2D DMA RX channel0, not for any other RX channels.
+        \item Select whether to scramble the pixel order of the decoded image before 2D DMA color space conversion by configuring \hyperref[fielddesc:DMA2DINSCRAMBLESELPRECHN]{DMA2D\_IN\_SCRAMBLE\_SEL\_PRE\_CH0}:
+        \begin{itemize}
+            \item 0: BYTE2-1-0
+            \item 1: BYTE2-0-1
+            \item 2: BYTE1-0-2
+            \item 3: BYTE1-2-0
+            \item 4: BYTE0-2-1
+            \item 5: BYTE0-1-2
+        \end{itemize}
+        Configuring \hyperref[fielddesc:DMA2DINSCRAMBLESELPRECHN]{DMA2D\_IN\_SCRAMBLE\_SEL\_PRE\_CH0} to 5 means swapping the pixel order, for example, swapping YUV444 output by the JPEG decoder to VUY444. Note that, this function is only available for 2D DMA RX channel0, not for any other RX channels.
+        \item Select the color conversion methods by configuring \hyperref[fielddesc:DMA2DINCOLORINPUTSELCHN]{DMA2D\_IN\_COLOR\_INPUT\_SEL\_CH0}, \hyperref[fielddesc:DMA2DINCOLOR3BPROCENCHN]{DMA2D\_IN\_COLOR\_3B\_PROC\_EN\_CH0}, and \hyperref[fielddesc:DMA2DINCOLOROUTPUTSELCHN]{DMA2D\_IN\_COLOR\_OUTPUT\_SEL\_CH0}. See details in Table \ref{tab:de_csc}:
+
+            \begin{longtable}{ | l | c | c | c | }
+            \caption{2D DMA Color Space Conversion Configuration} \label{tab:de_csc}
+            \\ \hline
+            \rowcolor{lightgray}
+            \textbf{Color Space Conversion Method} & \textbf{INPUT\_SEL\_CH0}  &  \textbf{3B\_PROC\_EN\_CH0} &  \textbf{OUTPUT\_SEL\_CH0}  \\ \hline
+            YUV420 -> RGB &  0  &  1  &  1 \\ \hline
+            YUV422 -> RGB &  0  &  1  &  1 \\ \hline
+            YUV444 -> RGB &  2  &  1  &  1 \\ \hline
+            YUV444 (only reverse the pixel order) &  2  &  0  &  1 \\ \hline
+            No color space conversion &  7  &  N/A  &  N/A \\ \hline
+            \end{longtable}
+        Note that, this function is only available for 2D DMA RX channel0, not for any other RX channels.
+        \item Configure parameters required for the color space conversion formula, including \hyperref[fielddesc:DMA2DINCOLORPARAMH0CHN]{DMA2D\_IN\_COLOR\_PARAM\_H0\_CH0}, \hyperref[fielddesc:DMA2DINCOLORPARAMH1CHN]{DMA2D\_IN\_COLOR\_PARAM\_H1\_CH0}, \hyperref[fielddesc:DMA2DINCOLORPARAMM0CHN]{DMA2D\_IN\_COLOR\_PARAM\_M0\_CH0}, \hyperref[fielddesc:DMA2DINCOLORPARAMM1CHN]{DMA2D\_IN\_COLOR\_PARAM\_M1\_CH0}, \hyperref[fielddesc:DMA2DINCOLORPARAML0CHN]{DMA2D\_IN\_COLOR\_PARAM\_L0\_CH0}, and \hyperref[fielddesc:DMA2DINCOLORPARAML1CHN]{DMA2D\_IN\_COLOR\_PARAM\_L1\_CH0}. Note that, this function is only available for 2D DMA RX channel0, not for any other RX channels.
+        \item Select whether to reverse the pixel order of the image after 2D DMA color space conversion by configuring \hyperref[fielddesc:DMA2DINSCRAMBLESELPOSTCHN]{DMA2D\_IN\_SCRAMBLE\_SEL\_POST\_CH0}:
+        \begin{itemize}
+            \item 0: BYTE2-1-0
+            \item 1: BYTE2-0-1
+            \item 2: BYTE1-0-2
+            \item 3: BYTE1-2-0
+            \item 4: BYTE0-2-1
+            \item 5: BYTE0-1-2
+        \end{itemize}
+        Configuration of 5 means reversing the pixel order, for example, reversing the RGB after 2D DMA color space conversion to BGR. Note that, this function is only available for 2D DMA RX channel0, not for any other RX channels.
+        \item Configure \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} as the 2D DMA TX channel linked list address, configure \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} as the 2D DMA RX channel linked list address.
+    \end{enumerate}
+    \item Enable interrupt sources:
+    \begin{itemize}
+        \item \hyperref[regdesc:DMA2DOUTINTENACHNREG]{DMA2D\_OUT\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:DMA2DININTENACHNREG]{DMA2D\_IN\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:JPEGINTENAREG]{JPEG\_INT\_ENA\_REG}
+    \end{itemize}
+    \item Start the transmission of 2D DMA channels:
+    \begin{itemize}
+        \item 2D DMA TX channel\regindex{n}: set \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} to 1 and then to 0
+        \item 2D DMA RX channel\regindex{n}: set \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} to 1 and then to 0
+    \end{itemize}
+    \item Start JPEG codec decoding by setting the \hyperref[fielddesc:JPEGJPEGSTART]{JPEG\_JPEG\_START} field.
+    \item Wait till DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT becomes 1, indicating that the decoded image has been completely written to the memory.
+\end{enumerate}
+
+\subsection{Reset}
+Users can \textbf{reset} JPEG codec entirely or partially, depending on the actual scenarios, at any time during the encoding or decoding process:
+\begin{itemize}
+    \item The entire JPEG codec, including all the RAMs and FIFOs as well as all the state machines: set \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} to 1. In this case, the register configuration value will not be reset.
+    \item Only all the RAMs and FIFOs inside the JPEG codec, for example, changing the quantization coefficient tables or Huffman tables: set \hyperref[fielddesc:JPEGFIFORST]{JPEG\_FIFO\_RST} to 1.
+    \item Only all the state machines inside the JPEG codec, for example, only stop the current encoding or decoding process: set \hyperref[fielddesc:JPEGFSMRST]{JPEG\_FSM\_RST} to 1.
+\end{itemize}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{jpegcodec-reg-summ}{}
+\section{Register Summary}
+\label{sec:jpegcodec-reg-summ}
+
+
+
+
+The addresses in this section are relative to JEPG Codec base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/36-JPEGCODEC-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+
+\section{Registers}
+
+The addresses in this section are relative to the JEPG Codec base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/36-JPEGCODEC-reg__EN}
+\end{document}

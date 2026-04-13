@@ -1,0 +1,159 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./08-INTMTRX}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{intmtrx}{}
+\chapter{中断矩阵 (INTERRUPT)}
+\label{mod:intmtrx}
+
+
+\section{概述}
+
+ESP32 中断矩阵将任一外部中断源单独分配到每个 CPU 的任一外部中断上。
+这提供了强大的灵活性，能适应不同的应用需求。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 接受 71 个外部中断源作为输入
+    \item 为两个 CPU 分别生成 26 个外部中断（总共 52 个）作为输出
+    \item 屏蔽 CPU 的 NMI 类型中断
+    \item 查询外部中断源当前的中断状态
+\end{itemize}
+
+中断矩阵的结构如图 \ref{figure:InterruptMatrixStructure} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-INTMTRX/figures/InterruptMatrixStructure.eps}}
+    \caption{中断矩阵结构图}
+    \label{figure:InterruptMatrixStructure}
+\end{figure}
+
+
+\section{功能描述}
+
+\subsection{外部中断源}
+
+ESP32 总共有 71 个外部中断源。
+表 \ref{table:PeripheralInterruptConfigStatusSource} 列出了所有外部中断源。
+ESP32 中的 71 个外部中断源中有 67 个可以分配给两个 CPU。
+其余的 4 个外部中断源只能分配给特定的 CPU，每个 CPU 2 个。
+GPIO\_INTERRUPT\_PRO 和 GPIO\_INTERRUPT\_PRO\_NMI 只可以分配给 PRO\_CPU，
+GPIO\_INTERRUPT\_APP 和 GPIO\_INTERRUPT\_APP\_NMI 只可以分配给 APP\_CPU。
+因此，PRO\_CPU 与 APP\_CPU 各可以分配到 69 个外部中断源。
+
+\input{./08-INTMTRX/tables/PeripheralInterruptConfigStatusSource_cn.tex}
+
+
+\subsection{CPU 中断}
+
+两个 CPU（PRO\_CPU 和 APP\_CPU）各有 32 个中断，其中 26 个为外部中断。
+表 \ref{table:CPUInterrupt} 列出了每个 CPU 所有的中断。
+
+\input{./08-INTMTRX/tables/CPUInterrupt_cn.tex}
+
+
+\subsection{分配外部中断源至 CPU 外部中断}
+
+在本小节中：
+\begin{itemize}
+
+\item 记号 Source\_X 代表某个外部中断源。
+\item 记号 PRO\_X\_MAP\_REG（或 APP\_X\_MAP\_REG）表示 PRO\_CPU（或 APP\_CPU）的某个外部中断配置寄存器，且此外部中断配置寄存器与外部中断源 Source\_X 相对应。即表 \ref{table:PeripheralInterruptConfigStatusSource} 中“PRO\_CPU（APP\_CPU）- Peripheral Interrupt Configuration Register”一列中与“Peripheral Interrupt Source - Name”一列中的某个外部中断源处于同一行的寄存器。
+\item 记号 Interrupt\_P 表示 CPU 中断序号为 Num\_P 的外部中断，Num\_P 的取值范围为 0 \verb+~+ 5、8 \verb+~+ 10、12 \verb+~+ 14、17 \verb+~+ 28、30 \verb+~+ 31。
+\item 记号 Interrupt\_I 表示 CPU 中断序号为 Num\_I 的内部中断，Num\_I 的取值范围为 6、7、11、15、16、29。
+\end{itemize}
+借助以上术语，可以这样描述中断矩阵控制器操作：
+\begin{itemize}
+\item \textbf{将外部中断源 Source\_X 分配到 CPU（PRO\_CPU 或 APP\_CPU）}\\
+将寄存器 PRO\_X\_MAP\_REG（APP\_X\_MAP\_REG）配成 Num\_P。Num\_P 可以取任意 CPU 外部中断值。CPU 中断可以被多个外设共享（见下文）。
+
+\item \textbf{关闭 CPU（PRO\_CPU 或 APP\_CPU）外部中断源 Source\_X}\\
+将寄存器 PRO\_X\_MAP\_REG（APP\_X\_MAP\_REG）配成任意 Num\_I。由于任何被配成 Num\_I 的中断都没有连接到 2 个 CPU 上，选择特定内部中断值不会造成影响。
+
+\item \textbf{将多个外部中断源 Source\_X\textcolor{red}{\it{n}} ORed 分配到 PRO\_CPU（APP\_CPU）的外部中断}\\
+将各个寄存器 PRO\_X\textcolor{red}{\it{n}}\_MAP\_REG (APP\_X\textcolor{red}{\it{n}}\_MAP\_REG) 都配成同样的 Num\_P。这些外设中断都会触发 CPU Interrupt\_P。
+\end{itemize}
+
+\subsection{屏蔽 CPU 的 NMI 类型中断}
+
+中断矩阵能够根据信号 PRO\_CPU NMI Interrupt Mask（或 APP\_CPU NMI Interrupt Mask）暂时屏蔽所有被分配到 PRO\_CPU（或 APP\_CPU）的外部中断源的 NMI 中断。
+信号 PRO\_CPU NMI Interrupt Mask 和 APP\_CPU NMI Interrupt Mask 分别来自外设 PID Controller。
+
+
+\subsection{查询外部中断源当前的中断状态}
+
+读寄存器 PRO\_INTR\_STATUS\_REG\_\textcolor{red}{\it{n}}（APP\_INTR\_STATUS\_REG\_\textcolor{red}{\it{n}}）中的特定 Bit 值就可以获知外部中断源当前的中断状态。
+寄存器 PRO\_INTR\_STATUS\_REG\_\textcolor{red}{\it{n}}（APP\_INTR\_STATUS\_REG\_\textcolor{red}{\it{n}}）与外部中断源的对应关系如表 \ref{table:PeripheralInterruptConfigStatusSource} 所示。
+
+\section{寄存器}
+
+中断矩阵寄存器是 DPort 寄存器子模块的一部分，在章节 \ref{mod:dportreg} \textit{\nameref{mod:dportreg}} 的 \textit{\nameref{sec:dport-reg-summ}} 小节中有详细描述。
+
+\end{document}

@@ -1,0 +1,803 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./06-VDMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{vdma}{}
+
+\chapter{VDMA Controller (VDMA)}
+\label{mod:vdma}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+DMA (Direct Memory Access) enables direct access to system memory or peripherals without CPU involvement. The VDMA controller on \chipname{} is a general-purpose DMA that performs high-speed data transfer from memory to memory, from memory to peripheral, and from peripheral to memory. The VDMA complies with the AXI3 protocol and includes two AXI master interfaces. This design allows users to select between the two interfaces for data transfer dynamically.
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Terminology}
+
+The following terms are defined in the context of the VDMA controller on \chipname{}:
+
+\begin{itemize}
+    \item \textbf{AXI}: Advanced eXtensible Interface, a part of AMBA 3 (Advanced Microcontroller Bus Architecture) specification, designed to facilitate high bandwidth and low latency communication between memory and peripheral, and between memory and memory.
+
+
+    \item \textbf{Peripheral}: A system component that has a handshake interface with VDMA, as listed in Table \ref{tab:VDMA-hw-hs}.
+
+    \item \textbf{Memory}: A system component that is always ready for DMA transfer, which means there is no handshaking interface between VDMA and memory. The memory that supports VDMA data transfer includes HP L2MEM, external flash, and external RAM.
+
+    \item \textbf{Source}: Source memory or peripheral from which VDMA reads data via the AXI interface. VDMA then stores data in channel FIFO.
+
+    \item \textbf{Source transfer}: Transfer from the source to VDMA.
+
+    \item \textbf{Destination}: Destination peripheral or memory to which VDMA writes the data stored in channel FIFO.
+
+    \item \textbf{Destination transfer}: Transfer from VDMA to the destination.
+
+    \item \textbf{Channel}: Data path between source and destination.
+
+    \item \textbf{Master interface}: Refers to the two AXI master interfaces of VDMA.
+
+    \item \textbf{Slave interface}: The APB3 slave interface for programming registers.
+
+    \item \textbf{Handshaking interface}: The handshaking interface performs a handshake between VDMA and the source or destination peripheral. The handshaking interface requests, acknowledges, and controls an VDMA transfer.
+
+    \item \textbf{Flow controller}: The flow controller defines the length of a DMA block transfer and terminates the transfer. The flow controller can be VDMA, a source peripheral, or a destination peripheral, but it cannot be memory.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+
+VDMA supports the following features:
+
+\begin{itemize}
+    \item Four channels for unidirectional data transfer from source to destination
+    \item Two AXI master interfaces
+    \item Handshake with MIPI DSI (Display Serial Interface) and ISP (Image Signal Processor)
+    \item Memory-to-memory, ISP-to-memory, and MIPI DSI-to-memory transfer types
+    \item Multiple levels of DMA transfer hierarchy
+    \item Configurable transfer type, transfer length, and transfer size for each channel
+    \item Single-block transfer
+    \item Multi-block transfer based on contiguous address, automatic reloading register configuration, shadow registers, and linked lists
+    \item Independent configuration of multi-block transfer type for source transfer and destination transfer
+    \item Channel disabling without data loss
+    \item Channel suspension, resume, and abortion
+    \item Configurable priorities among arbitration channels
+    \item Flow control using VDMA or peripherals
+    \item Programmable mapping between peripherals and channels
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:vdma-arch-overview}
+
+Figure \ref{fig:VDMA-arch} shows the architecture of VDMA and its connection with other system components.
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=\linewidth]{\modulefiles/figures/VDMA-diagram.pdf}
+     \caption{VDMA Architecture}
+     \label{fig:VDMA-arch}
+ \end{figure}
+
+It can be seen from the figure that:
+\begin{itemize}
+    \item The CPU accesses VDMA registers via the APB3 slave interface.
+    \item VDMA has four channels (Channel 1 to Channel 4). Each channel has a data FIFO with a depth of 64 and a width of 64 bits.
+    \item VDMA has two AXI master interfaces (Master 1 and Master 2).
+        \begin{itemize}
+            \item Master 1 can access ISP, MIPI DSI, and memory, as blue arrows indicate.
+            \item Master 2 can only access memory, as red arrows indicate.
+            \item Master 1 and Master 2 each have an arbiter that arbitrates read and write requests on all channels.
+        \end{itemize}
+    \item VDMA has three hardware handshaking interfaces. Table \ref{tab:VDMA-hw-hs} shows the mapping between the handshaking interfaces and peripherals.
+\end{itemize}
+
+\begin{longtable}{ | p{6.8cm} | p{5.2cm} | }
+\caption{Hardware Handshaking Interface and Peripherals Mapping Table}
+\label{tab:VDMA-hw-hs} \\
+\hline
+\rowcolor{lightgray}
+\textbf{Handshaking Interface Number} & \textbf{Peripheral} \\ \hline
+0 & MIPI DSI  \\ \hline
+1 & ISP (ISP-to-memory) \\ \hline
+2 & ISP (memory-to-ISP) \\ \hline
+\end{longtable}
+
+For more information about ISP and MIPI DSI, please refer to Chapter \ref{mod:isp} \textit{\nameref{mod:isp}} and Chapter \ref{mod:mipidsi} \textit{\nameref{mod:mipidsi}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Functional Description}
+
+This section provides a detailed description of the key features and operations of the module.
+
+\subsection{Transfer Hierarchy}
+
+Transfers are organized into a maximum of four levels: DMA transfer level, block transfer level, transaction level, and AXI transfer level.
+
+Figure \ref{fig:VDMA-hier-non-mem} shows four transfer levels between VDMA and peripherals.
+
+Figure \ref{fig:VDMA-hier-mem} shows three transfer levels between VDMA and memory. There is no transaction level because memory is assumed to be always ready for data transfer.
+
+The following descriptions of DMA, block, and AXI transfers apply to the transfer between VDMA and memory, VDMA and peripherals. \textbf{The description of the transaction level applies only to transfers between VDMA and peripherals.}
+
+\begin{itemize}
+    \item \textbf{DMA transfer}: Software defines the number of blocks in a DMA transfer. Once a DMA transfer has finished, VDMA disables the channel and generates an interrupt. The channel can then be reprogrammed for a new DMA transfer. A DMA transfer can consist of either a single-block or a multi-block transfer.
+
+    \item \textbf{Block transfer}: A block transfer moves a specified data block through the VDMA. The flow controller controls the block length. There are two types of block transfer: single-block transfer and multi-block transfer. As shown in Figure \ref{fig:VDMA-hier-non-mem}, a block transfer may consist of multiple transactions.
+
+    \item \textbf{Transaction}: A peripheral request may trigger either a single or burst transaction, corresponding to an AXI single transfer or multiple AXI burst transfers, respectively.
+
+        \begin{itemize}
+            \item Single transaction: The length of a single transaction is always 1, in the unit of \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH}.
+
+            \item Burst transaction: The length of a burst transaction is programmed into the VDMA through \hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE} for the source or \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE} for the destination. The burst length typically relates to the FIFO sizes in the source or destination peripherals. For more information, please refer to the chapter on each peripheral.
+        \end{itemize}
+    \item \textbf{AXI transfer}: Refers to the AXI protocol transfer, which is divided into AXI single transfer and AXI burst transfer.
+\end{itemize}
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=\linewidth]{\modulefiles/figures/VDMA-Hier-Non-Mem.pdf}
+     \caption{VDMA Transfer Hierarchy for Peripherals}
+     \label{fig:VDMA-hier-non-mem}
+ \end{figure}
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=0.9\linewidth]{\modulefiles/figures/VDMA-Hier-Mem.pdf}
+     \caption{VDMA Transfer Hierarchy for Memory}
+     \label{fig:VDMA-hier-mem}
+ \end{figure}
+
+\subsection{Arbitration Scheme}
+
+The arbitration mechanism arbitrates read and write requests for all channels.
+
+VDMA uses a priority and fair-among-equals arbitration mechanism. The priority for each channel is defined in the channel configuration register \hyperref[regdesc:DMACCHNCFG1REG]{DMAC\_CH\regindex{n}\_CFG1\_REG}.
+
+A priority of 3 is the highest, while 0 is the lowest. Multiple channels can share the same priority level.
+
+The arbitration mechanism works as
+follows:
+
+\begin{itemize}
+    \item The arbitration mechanism determines which request client to grant the authorization signal based on the priority of the request. The request with the highest priority will be granted access to the channel.
+
+    \item When two or more requests have the same priority, request clients will gain access randomly.
+\end{itemize}
+
+\subsubsection{Read Arbiter}
+
+The read arbiter arbitrates read requests, including:
+
+\begin{itemize}
+    \item VDMA's read requests to obtain data or status from the source
+    \item VDMA's read requests to obtain status from the destination
+    \item VDMA's read requests to obtain LLI descriptors
+\end{itemize}
+
+The block diagram of the read arbiter is shown in Figure \ref{fig:VDMA-read-arb}:
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=1.0\linewidth]{\modulefiles/figures/VDMA-Read-Arb.pdf}
+     \caption{VDMA Read Arbiter}
+     \label{fig:VDMA-read-arb}
+ \end{figure}
+
+Read requests to obtain linked list descriptors will be granted the highest priority, regardless of the channels' priority settings.
+
+\subsubsection{Write Arbiter}
+
+The write arbiter arbitrates write requests, including:
+
+\begin{itemize}
+    \item Destination Data Write Request
+    \item LLI Descriptor Write-Back Request
+\end{itemize}
+
+The block diagram of the write arbiter is shown in Figure \ref{fig:VDMA-write-arb}:
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=1.0\linewidth]{\modulefiles/figures/VDMA-Write-Arb.pdf}
+     \caption{VDMA Write Arbiter}
+     \label{fig:VDMA-write-arb}
+\end{figure}
+
+Within the same channel, Destination Data Write Request has higher priority than LLI Descriptor Write-Back Request. If different channels have the same priority, then Data Write Requests have the highest priority.
+
+\subsection{Handshaking Interface}
+
+A peripheral uses a handshaking interface to inform VDMA that it is ready to transmit or receive data via AXI bus. The operation of the handshaking interface depends on whether the flow controller is the peripheral or VDMA.
+
+VDMA performs a single transaction or a burst transaction per handshake. In some cases, a block transfer cannot be completed using only burst transactions. This situation typically occurs when the block size is not a multiple of the burst transaction length. In this case, the block transfer uses burst transactions until the remaining size of the block is less than the amount of data in the burst transaction. At this point, a single transaction is used to complete the block transfer.
+
+A source's burst transaction size is determined by \hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE}. A destination's burst transaction size is determined by \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE}. The transaction size also corresponds to the burst transaction size used for handshaking. The value of \hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE} or \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE} should match the peripheral configuration. For detailed information, please refer to the chapter on related peripherals.
+
+VDMA has three hardware handshaking interfaces with MIPI DSI, ISP (ISP-to-memory), and ISP (memory-to-ISP). For the mapping relationship please see Table \ref{tab:VDMA-hw-hs}.
+
+\subsection{Transfer Control}
+
+Transfer control logic facilitates the data transfer from a source to a destination. Data from the source is temporarily stored in the channel FIFO before being sent to the destination. If source and destination peripherals use different transfer sizes, VDMA will pack and unpack the data to fit the FIFO configuration.
+
+For a specific DMA transfer, the transfer type and flow control configurations are determined by \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC}.
+
+\subsubsection{Single-Block Transfer}
+
+If a DMA transfer consists of a single block, the software can set \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to 0 to enable contiguous-address-based single-block transfer. In this case, VDMA disables the channel once the block transfer of size \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS} is completed.
+
+\begin{tiplisting}
+    Single-block transfer is a special case of multi-block transfer, and there is no strict distinction between the two. In this chapter, single-block transfer refers to the transfer consisting of only one block, while multi-block transfer refers to the transfer consisting of at least two blocks.
+\end{tiplisting}
+
+\subsubsection{Multi-Block Transfer}
+
+If a DMA transfer consists of multiple blocks, the software can configure \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to choose a multi-block transfer type. There are four types of multi-block transfers, depending on how the transfer control registers (\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0/1\_REG}) are updated:
+
+\begin{enumerate}
+    \item \textbf{Contiguous address}
+    \item \textbf{Auto reloading}: Register values reload from initial values
+    \item \textbf{Shadow register}: Register values load from shadow registers
+    \item \textbf{Linked list} Register values load from the next linked list (LLI)
+\end{enumerate}
+
+Table \ref{tab:VDMA-reg-upd-methd} lists all the cases of register update methods for multi-block transfer.
+\clearpage
+\begin{small}
+\begin{longtable}{ | L{2.3cm} |L{2.3cm}| L{1.8cm} | L{1.8cm} | L{2.2cm} | L{1.8cm} | L{2cm} | }
+
+\caption{Register Update Methods for Multi-Block Transfer}
+
+\label{tab:VDMA-reg-upd-methd} \\
+\hline
+\rowcolor{lightgray}
+
+\multicolumn{2}{|c|}{\textbf{\hyperref[regdesc:DMACCHNCFG0REG]{DMAC\_CH\regindex{n}\_CFG0\_REG}}} & \multicolumn{4}{|c|}{\textbf{Registers Update Method}} & \\ \cline{1-6}
+\rowcolor{lightgray}
+
+\textbf{\hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{\makecell[l]{DMAC\_CH\regindex{n}\_\\SRC\_MULTBLK\_\\TYPE}}} & \textbf{\hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{\makecell[l]{DMAC\_CH\regindex{n}\_\\DST\_MULTBLK\_\\TYPE}}} & \textbf{\hyperref[regdesc:DMACCHNSAR0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\SAR0\_REG}}} & \textbf{\hyperref[regdesc:DMACCHNDAR0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\DAR0\_REG}}} & \textbf{\hyperref[regdesc:DMACCHNCTL0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\CTL0\_REG}}/\hyperref[regdesc:DMACCHNCTL1REG]{CTL1\_REG}} & \textbf{\hyperref[fielddesc:DMACCHNBLOCKTS]{\makecell[l]{DMAC\_CH\regindex{n}\_\\BLOCK\_TS}}} & \textbf{Comment} \\ \hline
+00 & 00 & Contiguous address & Contiguous address & No update & No update & Single block or last block of multi-block  \\ \hline
+00 & 01 & Contiguous address & Reload from initial value & Reload from initial value & Reload from initial value & -  \\ \hline
+00 & 10 & Contiguous address & Load from shadow register & Load from shadow register & Load from shadow register & -  \\ \hline
+01 & 00 & Reload from initial value & Contiguous address & Reload from initial value & Reload from initial value & -  \\ \hline
+01 & 01 & Reload from initial value & Reload from initial value & Reload from initial value & Reload from initial value & -  \\ \hline
+01 & 10 & Reload from initial value & Load from shadow register & Load from shadow register & Load from shadow register & -  \\ \hline
+10 & 00 & Load from shadow register & Contiguous address & Load from shadow register & Load from shadow register & -  \\ \hline
+10 & 01 & Load from shadow register & Reload from initial value & Load from shadow register & Load from shadow register & -  \\ \hline
+10 & 10 & Load from shadow register & Load from shadow register & Load from shadow register & Load from shadow register & -  \\ \hline
+00 & 11 & Contiguous address & Load from next LLI & Load from next LLI & Load from next LLI & -  \\ \hline
+01 & 11 & Reload from initial value & Load from next LLI & Load from next LLI & Load from next LLI & -  \\ \hline
+11 & 00 & Load from next LLI & Contiguous address & Load from next LLI & Load from next LLI & -  \\ \hline
+11 & 01 & Load from next LLI & Reload from initial value & Load from next LLI & Load from next LLI & -  \\ \hline
+11 & 11 & Load from next LLI & Load from next LLI & Load from next LLI & Load from next LLI & -  \\ \hline
+10 & 11 & - & - & - & - & Invalid. Interrupt* is generated.  \\ \hline
+11 & 10 & - & - & - & - & Invalid. Interrupt* is generated.   \\ \hline
+
+\end{longtable}
+\end{small}
+\vspace{-1em}
+*Note: The interrupt is \hyperref[int:DMACCHNSLVIFMULTIBLKTYPEERRINT]{DMAC\_CH\regindex{n}\_SLVIF\_MULTIBLKTYPE\_ERR\_INT}.
+
+\subparagraph{Contiguous Address}
+
+In this scenario, the address for each subsequent block continues from the end of the preceding block. To achieve this contiguity, configure \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} or \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to 0 for the source address or destination address to remain continuous across the blocks.
+
+In the case of multi-block transfer, the values of \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} cannot both be selected as contiguous addresses, meaning they cannot both be configured to 0 at the same time. If both are configured to 0 during a multi-block transfer, then the current block will be considered as the last block.
+
+During a multi-block transfer, if \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG} need to have contiguous addresses between blocks, you can indirectly achieve this functionality using linked-list or shadow-register-based multi-block transfer.
+
+
+\begin{tiplisting}
+    If you have enabled contiguous-address-based multi-block transfer (i.e., \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} or \\ \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} is 0), ensure there are at least two blocks in the DMA transfer. Otherwise, it will result in unpredictable behavior.
+\end{tiplisting}
+
+\subparagraph{Auto Reloading}
+
+In this scenario, \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG} are reloaded with their initial values at the end of each block. VDMA does not proceed to the next block transfer until software clears the corresponding channel’s block transfer complete interrupt by writing 1 to \hyperref[fielddesc:DMACCHNCLEARSRCTRANSCOMPINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_SRC\_TRANSCOMP\_INTSTAT} and \hyperref[fielddesc:DMACCHNCLEARDSTTRANSCOMPINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_DST\_TRANSCOMP\_INTSTAT}.
+
+\begin{tiplisting}
+    If you have enabled auto-reloading-based multi-block transfer, please ensure there are at least two blocks in the DMA transfer. Otherwise, it will result in unpredictable behavior.
+\end{tiplisting}
+
+\subparagraph{Shadow Register}
+
+In this scenario, \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} synchronize with their corresponding shadow registers when each block finishes. The values of the shadow registers are then used for the subsequent block.
+
+Software writes the block configurations to the corresponding shadow registers. VDMA copies the shadow register contents to \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}  before starting the subsequent block transfer.
+
+Read operations to the \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} always return the
+data corresponding to the current block transfer, not the shadow register contents that correspond to the next block.
+
+\hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} indicates whether the shadow register contents are valid (1) or not (0). If this bit reads as 0 during a shadow register fetch phase, VDMA discards the shadow register contents and generates a \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt. VDMA waits until the software writes 1 to \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ}, indicating that the shadow registers are available. After this, VDMA attempts to read the shadow registers again and continues with the next block transfer.
+
+\begin{tiplisting}
+    In a shadow-register-based multi-block transfer, the values in \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \\\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} correspond to the current transfer configurations. When software writes to these registers, it is actually writing to the corresponding shadow registers.
+\end{tiplisting}
+
+\subparagraph{Linked List}
+
+In this scenario, VDMA retrieves a block descriptor for a specific block from memory to update \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}, \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}, and then initiates the block transfer. This process is called LLI (Linked List Item) update. The block chaining feature of VDMA uses the linked list pointer register \hyperref[fielddesc:DMACCHNLOC0]{DMAC\_CH\regindex{n}\_LOC0} to store the address of the next linked list item in memory, thereby achieving seamless continuity of data transfer.
+
+Figure \ref{fig:VDMA-lli} shows the VDMA linked list item:
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}[bitwidth=1.2em, boxformatting={\centering\small}, leftcurly=., leftcurlyspace=0pt]{32}
+        \bitheader[bitformatting={\scriptsize}]{0,31} \\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_LLP\_STATUS[63:32]}\\
+        \bitbox{32}{CHn\_LLP\_STATUS[31:0]}\\
+        \bitbox{32}{Write Back for CHn\_DSTAT}\\
+        \bitbox{32}{Write Back for CHn\_SSTAT}\\
+        \bitbox{32}{CHn\_CTL1[31:0]}\\
+        \bitbox{32}{CHn\_CTL0[31:0]}\\
+        \bitbox{32}{Reserved}\\
+            \bitbox{26}{CHn\_LLP0[31:6]} & \bitbox{6}{Reserved[5:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_BLOCK\_TS[31:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_DAR[31:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_SAR[31:0]}
+    \end{bytefield}
+    \caption{VDMA Linked List Item (Descriptor)}
+    \label{fig:VDMA-lli}
+\end{figure}
+
+
+VDMA can dynamically extend linked lists, which means you do not need to pre-create the entire linked list in system memory. To enable this feature, set \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} to 1. If the linked list item is the last one, then also configure \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} to 1.
+
+\hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} indicates whether the linked list item fetched from memory is valid (1) or not (0). If the LLI is invalid, VDMA discards the LLI and generates a \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt. This interrupt causes VDMA to halt the corresponding channel and wait until the software writes 1 to \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} to indicate that the LLI is available. After this, VDMA will attempt to read the LLI again.
+
+\begin{tiplisting}
+    For pre-fetched LLIs, if \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} is 0, then the \\\hyperref[fielddesc:DMACCHNSHADOWREGORLLIINVALIDERRINTSTAT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} interrupt will not be generated. VDMA re-attempts to fetch the LLI again after completing the current block transfer and generates a\\ \hyperref[fielddesc:DMACCHNSHADOWREGORLLIINVALIDERRINTSTAT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} interrupt only if \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} still reads as 0.
+\end{tiplisting}
+
+The following fields in LLI are prepared by software:
+
+\begin{itemize}
+    \item CH\regindex{n}\_SAR: The field definition is the same as \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}
+    \item CH\regindex{n}\_DAR: The field definition is the same as \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}
+    \item CH\regindex{n}\_BLOCK\_TS: The field definition is the same as \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}
+    \item CH\regindex{n}\_LLP0[31:6]: The field definition is the same as \hyperref[regdesc:DMACCHNLLP0REG]{DMAC\_CH\regindex{n}\_LLP0\_REG}[31:6]
+    \item CH\regindex{n}\_CTL0: The field definition is the same as \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}
+    \item CH\regindex{n}\_CTL1: The field definition is the same as \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}
+\end{itemize}
+
+If the status write-back option is enabled, VDMA writes back CH\regindex{n}\_CTL0, CH\regindex{n}\_CTL1, CH\regindex{n}\_LLP\_STATUS, CH\regindex{n}\_SSTAT, and CH\regindex{n}\_DSTAT information to the location defined for this field, which is from address [CH\regindex{n}\_LLP] + 0x20 to [CH\regindex{n}\_LLP] + 0x34. The write-back of CH\regindex{n}\_SSTAT and CH\regindex{n}\_DSTAT can be independently enabled or disabled by programming \hyperref[fielddesc:DMACCHNSRCSTATEN]{DMAC\_CH\regindex{n}\_SRC\_STAT\_EN} and \hyperref[fielddesc:DMACCHNDSTSTATEN]{DMAC\_CH\regindex{n}\_DST\_STAT\_EN}.
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item If CH\regindex{n}\_SSTAT and CH\regindex{n}\_DSTAT write-back is not enabled, do not use PSRAM to store LLI.
+
+    \item \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} will be 0 after the LLI write-back operation.
+\end{itemize}
+
+\end{tiplisting}
+
+Figure \ref{fig:VDMA-llp} shows CH\regindex{n}\_LLP\_STATUS write-back field of LLI:
+
+\begin{figure}[H]
+
+    \begin{bytefield}[bitwidth=0.75em, bitheight=3em, boxformatting={\centering\small}, leftcurly=., leftcurlyspace=0pt]{64}
+        \bitheader[bitformatting={\scriptsize}]{0,63} \\
+        \bitbox{2}{\textbf{*}} & \bitbox{15}{Reserved[61:47]} & \bitbox{15}{Data Left in Channel FIFO (CHn\_Status[46:32])} & \bitbox{10}{Reserved[31:22]} & \bitbox{22}{Completed Block Transfer Size (CHn\_Status[21:0])}
+    \end{bytefield}
+\textit{Note:} \textbf{*} denotes Status Indication (CHn\_IntStatus[1:0])
+    \caption{CH\regindex{n}\_LLP\_STATUS Write-Back Field of LLI}
+    \label{fig:VDMA-llp}
+\end{figure}
+
+CH\regindex{n}\_LLP\_STATUS[63] and CH\regindex{n}\_LLP\_STATUS[62] indicate DMA\_TFR\_DONE and BLOCK\_TFR\_DONE status respectively. These two fields are the last to be updated during LLI write-back. Software should ensure that BLOCK\_TFR\_DONE bit is set to 1 before using CH\regindex{n}\_SSTAT and CH\regindex{n}\_DSTAT information. DMA\_TFR\_DONE and BLOCK\_TFR\_DONE bits will be set to 1 after transferring the last block.
+
+CH\regindex{n}\_STATUS[21:0] corresponds to \hyperref[regdesc:DMACCHNSTATUS0REG]{DMAC\_CH\regindex{n}\_CMPLTD\_BLK\_TFR\_SIZE}, and CH\regindex{n}\_STATUS[46:32] corresponds to \hyperref[regdesc:DMACCHNSTATUS1REG]{DMAC\_CH\regindex{n}\_DATA\_LEFT\_IN\_FIFO[14:0]}.
+
+\subparagraph{Suspension of Transfers Between Blocks}
+
+At the end of every block transfer, a block transfer completion interrupt \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} is generated if:
+
+\begin{itemize}
+    \item Global interrupt is enabled (\hyperref[fielddesc:DMACINTEN]{DMAC\_INT\_EN} = 1)
+    \item The channel block transfer completion interrupt is enabled (\hyperref[fielddesc:DMACCHNENABLEBLOCKTFRDONEINTSTAT] {DMAC\_CH\regindex{n}\_ENABLE\_BLOCK\_TFR\_DONE\_INTSTAT} = 1, \hyperref[fielddesc:DMACCHNENABLEBLOCKTFRDONEINTSIGNAL]{DMAC\_CH\regindex{n}\_ENABLE\_BLOCK\_TFR\_DONE\_INTSIGNAL} = 1, \hyperref[fielddesc:DMACCHNIOCBLKTFR]{DMAC\_CH\regindex{n}\_IOC\_BLKTFR} = 1)
+\end{itemize}
+
+For contiguous-address and auto-reloading-based multi-block transfers (neither source nor destination peripheral uses shadow-register or linked-list-based multi-block transfers), the DMA transfer automatically stalls after the \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} interrupt is generated. VDMA does not proceed to the next block transfer until software writes 1 to \hyperref[fielddesc:DMACCHNCLEARBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_BLOCK\_TFR\_DONE\_INTSTAT} to clear the interrupt.
+
+Channel suspension between blocks ensures that the block transfer done ISR (Interrupt Service Routine) of the next-to-last block is serviced before the final block transfer starts. This ensures that the ISR has cleared \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} before the final block transfer is completed.
+
+\subparagraph{End of Multi-Block Transfers}
+
+If either source or destination peripheral uses shadow-register or linked-list-based multi-block transfers, then \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST] {DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} indicates whether the current block is the last in the transfer. If this bit is 1, VDMA recognizes that the current block is the final block in the transfer and completes the DMA transfer operation at the end of the current block transfer.
+
+For contiguous-address and auto-reloading-based multi-block transfers (when neither source nor destination peripheral uses shadow-register or linked-list-based multi-block transfers), if the corresponding multi-block type selection fields \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and/or \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} are 0 at the end of a block transfer, VDMA understands that the previous block was the final block in the transfer and completes the DMA transfer operation.
+
+\subsection{Flow Controller}
+
+The flow controller determines the length of the DMA block transfer. The flow controller can be VDMA, the source peripheral, or the destination peripheral; memory cannot serve as a flow controller.
+
+If the block length is known before enabling the channel, configure VDMA as the flow controller. If the block length is unknown before enabling the channel, use the source or destination peripheral as the flow controller to determine when to terminate the DMA block transfer.
+
+\subsection{Channel Suspend and Resume}
+
+Software can suspend and resume a channel during DMA transfer. To suspend a channel during DMA transfer:
+
+\begin{enumerate}
+    \item Software writes 1 to \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP}.
+    \item VDMA halts all transfers from the source, after completing all AXI transfers initiated from the source.
+
+    \item VDMA sets \hyperref[int:DMACCHNCHSRCSUSPENDEDINT]{DMAC\_CH\regindex{n}\_CH\_SRC\_SUSPENDED\_INT} to 1 to indicate that source transfer is suspended.
+
+    \item VDMA transfers all the data in channel FIFO to the destination. If \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} and \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} is 1, there may still be data in the channel FIFO, but not enough to form a single transfer of \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH}. The remaining data in the channel FIFO will be transferred to the destination if the channel is resumed.
+
+    \item VDMA sets \hyperref[int:DMACCHNCHSUSPENDEDINT]{DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INT} to 1 to indicate that the channel is suspended.
+\end{enumerate}
+
+After a channel suspend, software can resume the channel by setting \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} to 0. Then, VDMA resumes the DMA transfer from the point where it was suspended.
+
+\subsection{Channel Disable}
+
+Under normal operation, software enables a channel by writing 1 to \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN}, and VDMA clears \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} after channel transfer completion.
+Software can disable a channel before a transfer completes.
+
+\subsubsection{Disabling a Suspended Channel Before Transfer Completion}
+
+To disable a suspended channel before transfer completion:
+
+\begin{itemize}
+    \item Write 0 to \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} after \hyperref[fielddesc:DMACCHNCHSUSPENDEDINTSTAT]{DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INTSTAT} is set to 1. If \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} and \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} is 1, there may still be data in the channel FIFO, but not enough to form a single transfer of \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH}.
+    In this case, once the channel is disabled, the remaining data in the channel FIFO is not transferred to the destination peripheral and is lost.
+    \item VDMA sets \hyperref[fielddesc:DMACCHNCHDISABLEDINTSTAT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INTSTAT} to 1 to indicate that the channel is disabled and generates an interrupt.
+\end{itemize}
+
+\subsubsection{Disabling a Non-suspended Channel Before Transfer Completion}
+
+To disable a non-suspended channel before transfer completion:
+
+\begin{itemize}
+    \item Software writes 0 to \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} during DMA transfer.
+    \item VDMA halts all transfers from the source, after completing all AXI transfers initiated on the source.
+    \item VDMA transfers all the data in the channel FIFO to the destination. When \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} and \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} is 0, there may still be data in the channel FIFO, but not enough to form a single transfer of \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH}.
+    In this scenario, once the channel is disabled, the remaining data in the channel FIFO is not transferred to the destination peripheral and is lost.
+    \item VDMA sets \hyperref[fielddesc:DMACCHNCHDISABLEDINTSTAT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INTSTAT} to 1 to indicate that the channel is disabled and generates an interrupt.
+\end{itemize}
+
+\begin{tiplisting}
+    Once software initiates a channel disable procedure by writing 0 to \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN}, before \hyperref[int:DMACCHNCHDISABLEDINT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT} is set to 1, you cannot re-enable the channel by writing 1 to \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN}. VDMA will ignore this write operation.
+\end{tiplisting}
+
+\subsection{Low-Power Technique}
+
+VDMA implements a low-power technique that intelligently monitors idle periods across multiple DMA channels, the slave bus interface, and AXI master interface channels in various scenarios. By detecting inactivity, this feature can turn off the clock for these modules, significantly reducing overall power consumption.
+
+When activity is detected, the logic quickly restores the clocks to these modules, ensuring that performance remains uncompromised.
+
+Configure \hyperref[regdesc:DMACLOWPOWERCFG0REG]{DMAC\_LOWPOWER\_CFG0\_REG} to enable the low-power feature and manage the low-power counters.
+
+\subsubsection{Low-Power Technique for DMA Channels}
+
+DMA channels occupy a significant portion of the chip area in the VDMA module, resulting in higher power consumption compared to other components. Therefore, optimizing power usage in this module is essential.
+
+The low-power technique for DMA channels employs a \textbf{DMA channel low-power state machine} to monitor activities. When the state machine detects a low-power condition, it activates a \textbf{DMA channel low-power delay counter}. This counter runs until it expires. Once the counter expires, the DMA channels enter a low-power state by gating the AXI\_DMAC\_CORE\_CLK.
+
+The DMA channels will remain in this low-power state until any activity is detected. If activity is detected while the delay counter is still running, the counter is reset and paused until the low-power condition is detected again.
+
+\subsubsection{Low-Power Technique for Slave Bus Interface}
+
+The slave bus interface unit (SBIU) accesses the internal registers of VDMA via the APB3 slave interface. The low-power technique can optimize the power consumption in SBIU.
+
+The low-power technique for the slave bus interface employs a \textbf{SBIU state machine} to monitor activities. When a low-power condition is detected (i.e., when there are no ongoing APB reads or writes and the SBIU state machine is idle), the \textbf{SBIU low power delay counter} is activated. Once the delay counter expires, SBIU enters the low-power state by gating PCLK or AXI\_DMAC\_CORE\_CLK (based on the clock mode configuration).
+
+SBIU remains in the low-power state until an active read or write transaction is detected on the slave bus interface. If an active transaction is detected while the SBIU low-power delay counter running, the delay counter is reset and paused until the low-power condition is detected again.
+
+If a read or write transaction occurs while SBIU is in a low-power state, the low-power logic immediately exits the low-power state by un-gating PCLK or AXI\_DMAC\_CORE\_CLK.
+
+\subsubsection{Low-Power Technique for AXI Master Interface Channels}
+
+The AXI master interface module implements the AXI bus to transfer data between memory and peripheral.
+
+Whenever a low-power condition is detected on the AXI master interface channels, the \textbf{AXI master interface channel low-power delay counter} starts. The AXI low-power logic waits until the delay counter expires. After the delay counter expires, the AXI master interface channel enters the low-power state by gating the clock of AXI master interface and AXI\_DMAC\_CORE\_CLK. It remains in this state until any activity is detected. If an activity is detected while the AXI master interface channel low-power delay counter is running, the delay counter is reset and paused until the low-power condition is detected again.
+
+\subsubsection{Global Low-Power Technique}
+
+The global low-power technique implements the low-power option based on the idle condition of the DMA channel, slave bus interface, and AXI master interface channels. If all the mentioned modules indicate that the VDMA is idle, the \textbf{global low-power delay counter} is activated.
+
+The global low-power logic waits until the low-power delay counter expires. After the counter expires, VDMA enters the low-power state by gating the clocks of all modules. It remains in the low-power state until any activity is detected on any of the modules. If an activity is detected while the global low-power delay counter is running, the global delay counter is reset and paused until the low-power condition is again detected.
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s VDMA can generate the interrupt signal AXI\_DMAC\_INTR that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+The interrupt signal is generated by the internal interrupt sources from VDMA.
+
+\begin{itemize}
+    \item Common interrupts:
+    \begin{itemize}
+        \item \label{int:DMACSLVIFUNDEFINEDREGDECERRINT}DMAC\_SLVIF\_UNDEFINEDREG\_DEC\_ERR\_INT: Slave interface undefined register decode error interrupt
+        \item \label{int:DMACSLVIFCOMMONREGRD2WOERRINT}DMAC\_SLVIF\_COMMONREG\_RD2WO\_ERR\_INT: Slave interface common register read to write-only error interrupt
+        \item \label{int:DMACSLVIFCOMMONREGWR2ROERRINT}DMAC\_SLVIF\_COMMONREG\_WR2RO\_ERR\_INT: Slave interface common register write to read-only error Interrupt
+        \item \label{int:DMACSLVIFCOMMONREGDECERRINT}DMAC\_SLVIF\_COMMONREG\_DEC\_ERR\_INT: Slave interface common register decode error interrupt
+    \end{itemize}
+
+    \item Channel interrupts (\regindex{n} = 1 \verb+~+ 4):
+
+    \begin{itemize}
+        \item \label{int:DMACCHNCHABORTEDINT}DMAC\_CH\regindex{n}\_CH\_ABORTED\_INT: Channel aborted interrupt
+        \item \label{int:DMACCHNCHDISABLEDINT}DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT: Channel disabled interrupt
+        \item \label{int:DMACCHNCHSUSPENDEDINT}DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INT: Channel suspended interrupt
+        \item \label{int:DMACCHNCHSRCSUSPENDEDINT}DMAC\_CH\regindex{n}\_CH\_SRC\_SUSPENDED\_INT: Channel source suspended interrupt
+        \item \label{int:DMACCHNSLVIFSHADOWREGWRONVALIDERRINT}DMAC\_CH\regindex{n}\_SLVIF\_SHADOWREG\_WRON\_VALID\_ERR\_INT: Shadow register write on valid error interrupt
+        \item \label{int:DMACCHNSLVIFWRONCHENERRINT}DMAC\_CH\regindex{n}\_SLVIF\_WRONCHEN\_ERR\_INT: Slave interface write on enabled channel error interrupt
+        \item \label{int:DMACCHNSLVIFRD2RWOERRINT}DMAC\_CH\regindex{n}\_SLVIF\_RD2RWO\_ERR\_INT: Slave interface read to write-only error interrupt
+        \item \label{int:DMACCHNSLVIFWR2ROERRINT}DMAC\_CH\regindex{n}\_SLVIF\_WR2RO\_ERR\_INT: Slave interface write to read-only error interrupt
+        \item \label{int:DMACCHNSLVIFDECERRINT}DMAC\_CH\regindex{n}\_SLVIF\_DEC\_ERR\_INT: Slave interface decode error interrupt
+        \item \label{int:DMACCHNSLVIFMULTIBLKTYPEERRINT}DMAC\_CH\regindex{n}\_SLVIF\_MULTIBLKTYPE\_ERR\_INT: Slave interface multi-block type error interrupt
+        \item \label{int:DMACCHNSHADOWREGORLLIINVALIDERRINT}DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT: Shadow register or LLI invalid error interrupt
+        \item \label{int:DMACCHNLLIWRSLVERRINT}DMAC\_CH\regindex{n}\_LLI\_WR\_SLV\_ERR\_INT: LLI write slave error interrupt
+        \item \label{int:DMACCHNLLIRDSLVERRINT}DMAC\_CH\regindex{n}\_LLI\_RD\_SLV\_ERR\_INT: LLI read slave error interrupt
+        \item \label{int:DMACCHNLLIWRDECERRINT}DMAC\_CH\regindex{n}\_LLI\_WR\_DEC\_ERR\_INT: LLI write decode error interrupt
+        \item \label{int:DMACCHNLLIRDDECERRINT}DMAC\_CH\regindex{n}\_LLI\_RD\_DEC\_ERR\_INT: LLI read decode error interrupt
+        \item \label{int:DMACCHNDSTSLVERRINT}DMAC\_CH\regindex{n}\_DST\_SLV\_ERR\_INT: Destination slave error interrupt
+        \item \label{int:DMACCHNSRCSLVERRINT}DMAC\_CH\regindex{n}\_SRC\_SLV\_ERR\_INT: Source slave error interrupt
+        \item \label{int:DMACCHNDSTDECERRINT}DMAC\_CH\regindex{n}\_DST\_DEC\_ERR\_INT: Destination decode error interrupt
+        \item \label{int:DMACCHNSRCDECERRINT}DMAC\_CH\regindex{n}\_SRC\_DEC\_ERR\_INT: Source decode error interrupt
+        \item \label{int:DMACCHNDSTTRANSCOMPINT}DMAC\_CH\regindex{n}\_DST\_TRANSCOMP\_INT: Destination transfer completed interrupt
+        \item \label{int:DMACCHNSRCTRANSCOMPINT}DMAC\_CH\regindex{n}\_SRC\_TRANSCOMP\_INT: Source transfer completed interrupt
+        \item \label{int:DMACCHNDMATFRDONEINT}DMAC\_CH\regindex{n}\_DMA\_TFR\_DONE\_INT: DMA transfer done interrupt
+        \item \label{int:DMACCHNBLOCKTFRDONEINT}DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT: Block transfer done interrupt
+    \end{itemize}
+\end{itemize}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:vdma-prog-procedures}
+
+This section outlines the programming steps for different types of transfers.
+
+\subsection{Common Programming Procedures}
+
+The following two steps are common and should be performed before other programming procedures.
+
+\begin{enumerate}
+    \item  Set \hyperref[fielddesc:HPSYSCLKRSTGDMASYSCLKEN]{HP\_SYS\_CLKRST\_GDMA\_SYS\_CLK\_EN} to 1 to enable VDMA bus clock.
+    \item Configure \hyperref[regdesc:TEEDMAGDMACHNWPMSREG]{TEE\_DMA\_GDMA\_CH\regindex{n}\_W\_PMS} and \hyperref[regdesc:TEEDMAGDMACHNRPMSREG]{TEE\_DMA\_GDMA\_CH\regindex{n}\_R\_PMS} to define the access permission of VDMA. For more details please refer to Chapter \ref{mod:permctrl} \textit{\nameref{mod:permctrl}}.
+\end{enumerate}
+
+\subsection{Programming Procedures for Shadow-Register-Based Multi-Block Transfer}
+
+\begin{enumerate}
+    \item Read \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to select an available (unused) channel.
+
+    \item Configure \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and/or \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to 2 to enable shadow-register-based multi-block transfer for source transfer and/or destination transfer.
+
+
+    \item Configure \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} for the first block. VDMA loads the configured values to the corresponding shadow registers.
+
+    {\bfseries Notice:} The \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} field in \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} must be the last one to be set to 1.
+
+    \item Set \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to 1 to enable the corresponding channel.
+
+    \item VDMA initiates the DMA block transfer operation based on the configurations.
+
+        \begin{itemize}
+        \item The block transfer might start immediately or after the handshaking request, depending on \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC}. Specifically,
+
+            \begin{itemize}
+                \item When the source is memory, the source transfer starts immediately; when the destination is memory, the destination transfer starts immediately.
+
+                \item When the source is a peripheral, obtaining data from the source requires waiting for a handshake with the source. When the destination is a peripheral, writing data to the destination requires waiting for a handshake with the destination.
+            \end{itemize}
+
+        \item VDMA checks \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} and if it is seen as 0, VDMA waits until software writes 1 to \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} to indicate valid shadow registers availability. Then VDMA re-attempts shadow register fetch operation. In this case, VDMA may generate a \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt.
+
+        \item VDMA checks \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} and if it is seen as 1, VDMA copies the shadow register contents to the registers used for executing the DMA block transfer (i.e., \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}) and clears \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID}.
+
+            \begin{itemize}
+            \item If VDMA sees \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} as 1, it understands that the current block is the final block in the transfer and completes the DMA transfer operation at the end of current block transfer.
+            \item If VDMA sees \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} as 0, it understands that there are one or more blocks to be transferred and checks \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} again at the end of current block transfer.
+        \end{itemize}
+    \end{itemize}
+
+    \item Software waits \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} to be cleared to 0.
+
+    \item Configure \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} for the next block. If the next block is the last block, set \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} to 1.
+
+    {\bfseries Notice:} \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} must be the lase to be set to 1.
+
+    \item Software waits for a \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} interrupt or polls \hyperref[fielddesc:DMACCHNBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INTSTAT} until it reads as 1 and goes back to Step 6.
+
+\end{enumerate}
+
+\begin{tiplisting}
+In cases where a \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt is generated, follow the recommended flow to resume transfer:
+
+\begin{itemize}
+    \item Configure \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \\\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} for the next block.
+
+    \item Set \hyperref[fielddesc:DMACCHNCLEARSHADOWREGORLLIINVALIDERRINTSTAT] {DMAC\_CH\regindex{n}\_CLEAR\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} to 1 to clear the interrupt.
+
+    \item Set \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} to 1 to request for resuming block transfer.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Programming Procedures for Linked-List-Based Multi-Block Transfer}
+
+\begin{enumerate}
+    \item Reads \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to select an available (unused) channel.
+
+    \item Configure \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and/or \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to 3 to enable linked-list-based transfer for source transfer and/or destination transfer.
+
+    \item Configure \hyperref[regdesc:DMACCHNLLP0REG]{DMAC\_CH\regindex{n}\_LLP0\_REG} to define the base address of the first linked list item and the master interface on which the linked list item is available.
+
+    \item Create one or more linked list items in the system memory. You can create the entire linked list item in advance or dynamically extend it using \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} and \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} fields of the LLI. Follow the steps below to dynamically extend the linked list.
+    \begin{itemize}
+        \item During the DMA transfer process, when the linked list is not ready, configure \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} in the linked list to 0 and wait until the linked list is prepared. Then set \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} to 1 to extend the linked list.
+        \item When it is time to end the DMA transfer, set \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} of the last linked list to 1 to indicate the end of the transfer.
+    \end{itemize}
+
+    \item Set \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to 1 to enable the channel.
+
+\begin{tiplisting}
+You can swap the sequence of Step 4 and Step 5. However, if Step 5 is performed before Step 4, or if the linked list item for the next block transfer is not
+available in system memory during the multi-block transfer (i.e., \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} of the fetched LLI is 0), VDMA may generate a\\ \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt.
+\end{tiplisting}
+
+    \item VDMA initiates the DMA block transfer operation based on the configurations. The block transfer might start immediately or after the handshaking request, depending on \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC}. VDMA copies the linked list contents to the registers used for executing the DMA block transfer (i.e., \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}) and initiates the DMA block transfer.
+
+    \item During the linked list fetch phase:
+        \begin{itemize}
+        \item If VDMA reads \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} as 1, it understands that the current block is the final block in the transfer and completes the DMA transfer operation at the end of the current block transfer.
+
+        \item If VDMA reads \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} as 0, it understands that there are one or more blocks to be transferred and goes to Step 6.
+
+        \item If VDMA reads \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} as 0, it may generate a \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} interrupt. VDMA waits until software writes 1 to \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} to indicate valid LLI availability before re-attempting the LLI read operation.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Programming Procedures for Single-Block Transfer}
+
+\begin{enumerate}
+    \item Read \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to choose a free (unused) channel.
+    \item Configure \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} and \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} to 0 to enable contiguous-address-based single-block transfer.
+    \item Configure \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} and/or \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}, \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}, \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}, and \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} for the block.
+    \item Set \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} to 1 to enable the channel.
+
+    \item Software waits for the \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} interrupt or polls \hyperref[fielddesc:DMACCHNBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INTSTAT} until it is 1.
+\end{enumerate}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{VDMA-reg-summ}{}
+\section{Register Summary}
+\label{sec:VDMA-reg-summ}
+
+The addresses in this section are relative to the VDMA base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/06-VDMA-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to the VDMA base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/06-VDMA-reg__EN}
+
+\end{document}

@@ -1,0 +1,353 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+\setcounter{secnumdepth}{4}
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./21-EXTMEMENCR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{External Memory Encryption and Decryption (XTS\_AES)}
+\label{mod:extmemencr}
+\hypertarget{extmemencr}{}
+
+\section{Overview}
+
+The ESP32-S2 SoC implements an External Memory Encryption and Decryption module that secures users' application code and data stored in the external memory (flash and external RAM). The encryption and decryption algorithm complies with the XTS-AES standard specified in \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}. Users can store proprietary firmware and sensitive data (for example credentials for gaining access to a private network) to the external flash, and general data to the external RAM.
+
+\section{Features}
+
+\begin{itemize}
+    \item General XTS-AES algorithm, compliant with IEEE Std 1619-2007
+    \item Software-based manual encryption
+    \item High-speed hardware auto encryption
+    \item High-speed hardware auto decryption
+    \item Encryption and decryption functions jointly determined by register configuration, eFuse parameters, and boot mode
+\end{itemize}
+
+
+\section{Functional Description}
+The External Memory Encryption and Decryption module consists of three blocks, namely the Manual Encryption block, Auto Encryption block, and Auto Decryption block. The module architecture is shown in Figure \ref{figure:ExternalMemoryEncryptionDecryptionStructure}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/External_Memory_cryptography_20191104}
+    \caption{Architecture of the External Memory Encryption and Decryption Module }
+    \label{figure:ExternalMemoryEncryptionDecryptionStructure}
+\end{figure}
+
+The Manual Encryption block can encrypt instructions and data which will then be written to the external flash as ciphertext through SPI1. 
+
+When the CPU writes the external RAM through cache, the Auto Encryption block automatically encrypts the data first, and the data is written to the external RAM as ciphertext.
+
+When the CPU reads the external flash or RAM through cache, the Auto Decryption block automatically decrypts the ciphertext to retrieve instructions and data.
+
+In the peripheral System Register, four bits in the SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG register are relevant to external memory encryption and decryption:
+\begin{itemize}
+    \item \hyperref[fielddesc:SYSTEMENABLEDOWNLOADMANUALENCRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_MANUAL\_ENCRYPT}
+    \item \hyperref[fielddesc:SYSTEMENABLEDOWNLOADG0CBDECRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_G0CB\_DECRYPT}
+    \item \hyperref[fielddesc:SYSTEMENABLEDOWNLOADDBENCRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_DB\_ENCRYPT}
+    \item \hyperref[fielddesc:SYSTEMENABLESPIMANUALENCRYPT]{SYSTEM\_ENABLE\_SPI\_MANUAL\_ENCRYPT}
+\end{itemize}
+
+The External Memory Encryption and Decryption module fetches two parameters from the peripheral eFuse Controller. These parameters are: \hyperref[fielddesc:EFUSEDISDOWNLOADMANUALENCRYPT]{EFUSE\_DIS\_DOWNLOAD\_MANUAL\_ENCRYPT} and \hyperref[fielddesc:EFUSESPIBOOTCRYPTCNT]{EFUSE\_SPI\_BOOT\_CRYPT\_CNT}.
+
+
+\subsection{XTS Algorithm} \label{XTS algorithm standard}
+The manual encryption, auto encryption, and auto decryption operations use the same algorithm, i.e., XTS algorithm. In real-life implementation, the XTS algorithm is characterized by ``data unit" of 1024 bits. The ``data unit" is defined in the
+\textit{XTS-AES Tweakable Block Cipher} standard, section \textit{XTS-AES encryption procedure}. More information on the XTS-AES algorithm can be found in \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}.
+
+\subsection{Key} \label{XTS Key}
+
+The Manual Encryption block, Auto Encryption block, and Auto Decryption block share the same key to perform XTS algorithm. The key is provided by the eFuse hardware and protected from user access.
+
+The key can be either 256 bits or 512 bits long. The key is determined by the content in one or two eFuse blocks from BLOCK4 \verb+~+ BLOCK9. For easy description, define:
+\begin{itemize}
+    \item Block$_A$, which refers to the block that has the key purpose set to EFUSE\_KEY\_PURPOSE\_XTS\_AES\_256\_KEY\_1. Block$_A$ contains 256-bit \begin{math}Key_{A}\end{math}.
+
+    \item Block$_B$, which refers to the block that has the key purpose set to EFUSE\_KEY\_PURPOSE\_XTS\_AES\_256\_KEY\_2. Block$_B$ contains 256-bit \begin{math}Key_{B}\end{math}.
+
+    \item Block$_C$, which refers to the block that has the key purpose set to EFUSE\_KEY\_PURPOSE\_XTS\_AES\_128\_KEY. Block$_C$ contains 256-bit \begin{math}Key_{C}\end{math}.
+\end{itemize}
+
+Table \ref{table:ExternalMemoryEncryptionDecryptionKeyPossibility} shows how the \begin{math}Key\end{math} is generated, depending on whether Block$_A$, Block$_B$, and Block$_C$ exists or not.
+
+\begin{longtable}[c]{ |c|c|c|c|c| }
+\caption{Key}
+\label{table:ExternalMemoryEncryptionDecryptionKeyPossibility}
+\\\hline
+\rowcolor{lightgray}
+Block$_A$   &   Block$_B$   &   Block$_C$   &   \begin{math}Key\end{math}          &   \begin{math}Key\end{math} Length (bit)
+\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+Block$_A$   &   Block$_B$   &   Block$_C$   &   \begin{math}Key\end{math}    &   \begin{math}Key\end{math} Length (bit)
+\\\hline
+\endhead
+\endfoot
+Yes         &   Yes         &  Don't care       &   \begin{math}Key_{A} || Key_{B}\end{math}    &   512 \\\hline
+Yes         &   No          &   Don't care     &   \begin{math}Key_{A} || 0^{256}\end{math}    &   512 \\\hline
+No          &   Yes         &   Don't care      &   \begin{math}0^{256} || Key_{B}\end{math}    &   512 \\\hline
+No          &   No          &   Yes         &   \begin{math}           Key_{C}\end{math}    &   256 \\\hline
+No          &   No          &   No          &   \begin{math}           0^{256}\end{math}    &   256 \\\hline
+\end{longtable}
+\vspace{-1em}
+``Yes" indicates that the block exists; ``No" indicates that the block does not exist; ``\begin{math}0^{256}\end{math}" indicates a bit string that consists of 256-bit zeros; ``\begin{math}||\end{math}" is a bonding operator for joining one key string to another.
+
+
+For more information on setting of key purposes, please refer to Chapter \ref{mod:efuse} \textit{\nameref{mod:efuse}}.
+
+\subsection{Target Memory Space} \label{object space}
+The target memory space refers to a continuous address space in the external memory where the encrypted result is stored. The target memory space can be uniquely determined by three relevant parameters: \begin{math}type\end{math}, \begin{math}size\end{math}, and \begin{math}base\_addr\end{math}. They are defined as follows:
+
+\begin{itemize}
+    \item \begin{math}type\end{math}: the type of the external memory, either flash or external RAM. Value 0 indicates flash, 1 indicates external RAM.
+    \item \begin{math}size\end{math}: the size of the target memory space, in unit of bytes. One single encryption operation supports either 16, 32, or 64 bytes of data.
+    \item \begin{math}base\_addr\end{math}: the base address of the target memory space. It is a physical address aligned to \begin{math}size\end{math}, i.e., \begin{math} base\_addr \% size == 0 \end{math}.
+\end{itemize}
+
+Assume encrypted 16 bytes written to address \hexprefix{}130 \verb+~+ \hexprefix{}13F in the external flash, then, the target memory space is \hexprefix{}130 \verb+~+ \hexprefix{}13F, \begin{math}type\end{math} is 0 (flash), \begin{math}size\end{math} is 16 (bytes), and \begin{math}base\_addr\end{math} \hexprefix{}130.
+
+The encryption of any length (must be multiples of 16 bytes) of data can be completed separately in multiple operations. Each operation can have individual target memory space and the relevant parameters.
+
+For auto encryption and auto decryption, these parameters are automatically defined by hardware. For manual encryption, these parameters should be configured manually by users.
+
+
+\subsection{Data Padding} \label{XTS data rule}
+For auto encryption and auto decryption, data padding is automatically completed by hardware. For manual encryption, data padding should be completed manually by users. The Manual Encryption block is equipped with 16 registers, i.e., XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG (\textcolor{red}{\it{n}}: 0-15), that are dedicated to data padding and can store up to 512 bits of plaintext at a time.
+
+Actually, the Manual Encryption block does not care where the plaintext comes from, but only where the ciphertext is to be stored. Because of the strict correspondence between plaintext and ciphertext, in order to better describe how the plaintext is stored in the register heap, it is assumed that the plaintext is stored in the target memory space in the first place and replaced by ciphertext after encryption. Therefore, the following description no longer has the concept of ``plaintext", but uses ``target memory space" instead. However, users should note that the plaintext can come from anywhere, and that they should understand how the plaintext is stored in the register heap.
+
+{\bfseries How mapping works between target memory space and registers:}
+
+Assume a word is stored in \begin{math} address\end{math}, define \begin{math} offset = address \% 64 \end{math}, \textcolor{red}{\it{$n$}} =  \begin{math} \frac{offset}{4} \end{math}, then the word will be stored in register XTS\_AES\_PLAIN\_\textcolor{red}{\it{$n$}}\_REG.
+
+For example, if the \begin{math}size\end{math} of the target memory space is 64, then all the 16 registers will be used for data storage. The mapping between \begin{math} offset\end{math} and registers is shown in Table \ref{table:ManualEncryptionDataPadding}.
+
+\begin{longtable}[c]
+{ |c|p{4.5cm} |c|p{4.5cm}|}
+\caption{Mapping Between Offsets and Registers}
+\label{table:ManualEncryptionDataPadding}\\
+\hline
+\rowcolor{lightgray}
+\begin{math} offset\end{math}&  Register  & \begin{math} offset\end{math} &  Register \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\begin{math} offset\end{math}&  Register  & \begin{math} offset\end{math} &  Register \\\hline
+\endhead
+\endfoot
+\hexprefix{}00 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_0\_REG} & \hexprefix{}20 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_8\_REG} \\\hline
+\hexprefix{}04 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_1\_REG} & \hexprefix{}24 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_9\_REG} \\\hline
+\hexprefix{}08 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_2\_REG} & \hexprefix{}28 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_10\_REG} \\\hline
+\hexprefix{}0C & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_3\_REG} & \hexprefix{}2C & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_11\_REG} \\\hline
+\hexprefix{}10 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_4\_REG} & \hexprefix{}30 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_12\_REG} \\\hline
+\hexprefix{}14 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_5\_REG} & \hexprefix{}34 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_13\_REG} \\\hline
+\hexprefix{}18 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_6\_REG} & \hexprefix{}38 & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_14\_REG} \\\hline
+\hexprefix{}1C & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_7\_REG} & \hexprefix{}3C & \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_15\_REG} \\\hline
+\end{longtable}
+
+\subsection{Manual Encryption Block}
+
+The Manual Encryption block is a peripheral module. It is equipped with registers that can be accessed by the CPU directly. Registers embedded in this block, System registers, eFuse parameters, and boot mode jointly configure and control this block. Please note that currently the Manual Encryption block can only encrypt flash.
+
+The manual encryption requires software participation. The steps are as follows:
+
+\begin{enumerate}
+
+    \item \label{first step in xts}
+        Configure XTS\_AES:
+    \begin{itemize}
+        \item Set \hyperref[regdesc:XTSAESDESTINATIONREG]{XTS\_AES\_DESTINATION\_REG} register to \begin{math}type\end{math} = 0.
+        \item Set \hyperref[regdesc:XTSAESPHYSICALADDRESSREG]{XTS\_AES\_PHYSICAL\_ADDRESS\_REG} register to \begin{math}base\_addr\end{math}.
+        \item Set \hyperref[regdesc:XTSAESLINESIZEREG]{XTS\_AES\_LINESIZE\_REG} register to \begin{math}\frac{size}{32}. \end{math}
+    \end{itemize}
+    For definitions of \begin{math}type\end{math}, \begin{math}base\_addr\end{math}, \begin{math}size\end{math}, please refer to Section \ref{object space}.
+
+    \item Fill registers XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG (\textcolor{red}{\it{n}}: 0-15) in with plaintext (refer to Section \ref{XTS data rule}). Registers that are not used can be written into any value.
+
+    \item Poll \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} until it reads 0 that indicates the Manual Encryption block is idle.
+
+    \item Activate encryption by writing 1 to \hyperref[regdesc:XTSAESTRIGGERREG]{XTS\_AES\_TRIGGER\_REG} register.
+
+    \item \label{Wait for calculation done in xts}
+        Wait for the encryption to complete. Poll register \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} until it reads 2.\\
+Steps 1 \verb+~+ 5 complete the encryption operation, where \begin{math}Key\end{math} is used.
+
+    \item \label{release access permission}
+        Grant SPI1 access to the encrypted result by writing 1 to \hyperref[regdesc:XTSAESRELEASEREG]{XTS\_AES\_RELEASE\_REG} register.  \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} will read 3 afterwards.
+
+    \item \label{invoke spi and wait until done}
+        Call SPI1 and write the encrypted result to the external flash.
+
+    \item \label{destroy ciphertext result and return to idle}
+        Destroy the encrypted result by writing 1 to \hyperref[regdesc:XTSAESDESTROYREG]{XTS\_AES\_DESTROY\_REG}.  \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} register will read 0 afterwards.
+
+\end{enumerate}
+Repeat the steps above to complete multiple encryption operations.
+
+
+\textbf{The Manual Encryption block is operational only with granted permission.} The operating conditions are:
+
+\begin{itemize}
+
+    \item In SPI Boot mode\\
+If bit \hyperref[fielddesc:SYSTEMENABLESPIMANUALENCRYPT]{SYSTEM\_ENABLE\_SPI\_MANUAL\_ENCRYPT} in register\\ SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG is 1, the Manual Encryption block is granted permission. Otherwise, it is not operational.
+
+    \item In Download Boot mode\\
+If bit \hyperref[fielddesc:SYSTEMENABLEDOWNLOADMANUALENCRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_MANUAL\_ENCRYPT} in register\\ SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG is 1 and the eFuse parameter\\ \hyperref[fielddesc:EFUSEDISDOWNLOADMANUALENCRYPT]{EFUSE\_DIS\_DOWNLOAD\_MANUAL\_ENCRYPT} is 0, the Manual Encryption block is granted permission. Otherwise, it is not operational.
+
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item Even though the CPU can skip cache and get the encrypted result directly by reading the external memory, users can by no means access \begin{math}Key\end{math}.
+
+\item The Manual Encryption block needs to call the AES accelerator to perform encryption. Therefore, users cannot access AES accelerator during the process.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Auto Encryption Block}
+The Auto Encryption block is not a conventional peripheral, and is not equipped with registers. Therefore, the CPU cannot directly access this block. The System Register, eFuse parameters, and boot mode jointly control this block.
+
+\textbf{The Auto Encryption block is operational only with granted permission.} The operating conditions are:
+
+\begin{itemize}
+    \item In SPI Boot mode\\
+If the 3-bit parameter SPI\_BOOT\_CRYPT\_CNT has 1 or 3 bits set to 1, then the Auto Encryption block is granted permission. Otherwise, it is not operational.
+
+    \item In Download Boot mode\\
+If bit \hyperref[fielddesc:SYSTEMENABLEDOWNLOADDBENCRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_DB\_ENCRYPT} in register\\ SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG is 1, the Auto Encryption block is granted permission. Otherwise, it is not operational.
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+
+\item When the Auto Encryption block is operational, the CPU will read data from the external RAM via the cache. The Auto Encryption block automatically encrypts the data and writes it to the external RAM. The entire encryption process does not need software participation and is transparent to the cache. Users cannot access the encryption \begin{math}Key\end{math}.
+
+\item When the Auto Encryption block is not operational, it will ignore the CPU's request to access cache and do not process the data. Therefore, data will be written to the external RAM as plaintext.
+
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Auto Decryption Block}
+The Auto Decryption block is not a conventional peripheral, and is not equipped with registers. Therefore, the CPU cannot directly access this block. The System Register, eFuse parameters, and boot mode jointly control and configure this block.
+
+\textbf{The Auto Decryption block is operational only with granted permission.} The operating conditions are:
+
+\begin{itemize}
+    \item In SPI Boot mode\\
+If the 3-bit parameter SPI\_BOOT\_CRYPT\_CNT has 1 or 3 bits set to 1, then the Auto Decryption block is granted permission. Otherwise, it is not operational.
+
+    \item In Download Boot mode\\
+If bit \hyperref[fielddesc:SYSTEMENABLEDOWNLOADG0CBDECRYPT]{SYSTEM\_ENABLE\_DOWNLOAD\_G0CB\_DECRYPT} in register\\ SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG is 1, the Auto Decryption block is granted permission. Otherwise, it is not operational.
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item When the Auto Decryption block is operational, the CPU will read instructions and data from the external memory via cache. The Auto Decryption block automatically decrypts and retrieves the instructions and data. The entire decryption process does not need software participation and is transparent to the cache. Users cannot access the decryption \begin{math}Key\end{math}.
+
+\item When the Auto Decryption block is not operational, it does not have any effect on the contents stored in the external memory, be they encrypted or unencrypted. What the CPU reads via cache is the original information stored in the external memory.
+
+\end{itemize}
+\end{tiplisting}
+
+\section{Base Address}\label{section:ManEnBaseaddress}
+
+Users can access the Manual Encryption block with two base addresses, which can be seen in the following table. For more information about accessing peripherals from different buses please see Chapter \ref{mod:sysmem}: \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{Manual Encryption Block Base Address}\label{table:XTSENTRY}
+\\\hline
+\rowcolor{lightgray}
+Bus to Access Peripheral      & Base Address\\
+    \hline
+PeriBUS1      & \hexprefix{}3F43A000      \\
+    \hline
+PeriBUS2    & \hexprefix{}6003A000      \\
+    \hline
+\end{longtable}
+
+\hypertarget{extmemencr-reg-summ}{}
+\section{Register Summary}
+
+The addresses in the following table are relative to the Manual Encryption block's base addresses provided in Section \ref{section:ManEnBaseaddress}.
+
+\subfile{\modulefiles/xts_aes_summary__EN}
+\section{Registers}
+\subfile{\modulefiles/xts_aes_reg__EN}
+
+
+\end{document}

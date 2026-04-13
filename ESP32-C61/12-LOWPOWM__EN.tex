@@ -1,0 +1,733 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./12-LOWPOWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{lowpowm}{}
+\chapter{Low-Power Management}\label{mod:lowpowm}
+
+\section{Overview}
+
+\chipname{} features an advanced low-power management system that can optimize the chip's power consumption while maintaining its high performance.
+
+The low-power management system employs various power-saving techniques such as sleep modes, dynamic voltage and frequency scaling, and peripheral power gating to minimize the chip's power consumption.
+
+The power management unit (PMU) is a hardware component that is the core part of the low-power management system and is responsible for powering up and down different power domains of the chip, to achieve the best balance among chip performance, power consumption, and wake-up latency.
+
+\section{Terminology}
+
+The following terms related to low-power management are defined in the context of the \textit{\chipname{} Technical Reference Manual}
+to help readers better understand this document:
+
+\begin{longtable}[c]{ R{6cm} p{10cm} }
+\textbf{Low-power management} & Refers to the whole system that manages the chip's power consumption. \\
+\textbf{Power management unit (PMU)} & Refers to the specific hardware module that controls power up and down for the power domains, clocks, and power-related logic. \\
+\textbf{Power domain} & Refers to the smallest unit that can be independently powered up or down. A power domain can contain one or multiple modules within the chip. \\
+\textbf{PMU states} & Refers to four states of the PMU's state machine. Users can configure the clock gating and power gating of a power domain in each of the four states.\\
+\textbf{Power modes} & Refers to the five preset power modes that power up different domains for typical application scenarios.\\
+\end{longtable}
+
+\section{Feature List}
+
+The PMU has the following features:
+
+\begin{itemize}
+    \item Supports four configurable PMU states. Software can flexibly configure them according to specific needs.
+        \begin{itemize}
+        \item HP\_ACTIVE
+        \item HP\_MODEM
+        \item HP\_SLEEP
+        \item LP\_SLEEP
+        \end{itemize}
+    \item Supports five preset power modes that suit various typical usage scenarios:
+    \begin{itemize}
+        \item Active
+        \item Modem-sleep
+        \item Light-sleep0
+        \item Light-sleep1
+        \item Deep-sleep
+    \end{itemize}
+    \item 10 always-on (AON) registers
+    \item Programmable retention DMA to backup and restore the states of the CPU and peripherals when the chip switches between PMU states
+    \item Supports a power controller that controls the power and clocks depending on the power modes
+\end{itemize}
+
+\section{Functional Description}
+
+\chipname{}'s low-power management involves the following components:
+
+\begin{itemize}
+    \item \textbf{Power scheme}: includes power regulators, digital power domains, and analog power domains, etc.
+
+    \item \textbf{PMU controller}: controls the power up and down of the power domains, clocks, etc. This is the core of PMU.
+
+    \item \textbf{One RTC timer}
+
+    \item \textbf{10 always-on registers (\hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE0\_REG} $\sim$ \hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE9\_REG})}: These registers are always powered up and are not affected by any low-power modes, thus can be used for storing data that cannot be lost.
+
+    \item \textbf{Eight LP GPIO pins (GPIO0 $\sim$ GPIO7)}: These pins are always powered up and are not affected by any low-power modes, which makes them suitable for working as wake-up sources when the chip is in low-power modes. These pins can also work as regular GPIOs. For more information about the LP GPIOs, please refer to Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+    \item \textbf{320 KB HP SRAM}: The 320 KB SRAM is accessible to CPU. It works under the CPU clock.
+
+    \item \textbf{Brownout detector}: It monitors the power of the supply voltage pins, ensuring stable chip operation and preventing the SoC from potential malfunction if subject to glitches or under voltage.
+\end{itemize}
+
+The following sections provide a detailed description of the components mentioned above.
+
+\subsection{Power Scheme}
+
+Figure \ref{fig:lowpowm-power-structure} shows the power scheme of \chipname{} that mainly includes:
+
+\begin{itemize}
+    \item Two sets of regulators
+    \item Analog power domains
+    \item Digital power domains
+\end{itemize}
+
+\begin{figure}[H]
+    \centering   \includegraphics[width=1\textwidth]{\modulefiles/figures/power-scheme-power-struct.png}
+     \textcolor{black}{\textbf{––>}}: Control signals
+     \textcolor{red}{\textbf{––}}: Power lines
+    \caption{\chipname{} Power Scheme}
+    \label{fig:lowpowm-power-structure}
+\end{figure}
+
+\subsubsection{Regulators}\label{sec:lowpowm-regulators}
+
+As shown in Figure \ref{fig:lowpowm-power-structure}, the analog part of \chipname{} contains two sets of regulators that regulate the power supply to different power domains. The two regulators are:
+
+\begin{itemize}
+    \item One set of HP system regulators:
+    \begin{itemize}
+        \item one main HP regulator
+        \item two secondary HP regulators powering the HP memory and HP logic circuits respectively.
+    \end{itemize}
+        They are used for regulating the power supply to high-performance modules and feature high drive strength, high power consumption, and regulated output power.
+    \item One set of LP system regulators:
+    \begin{itemize}
+        \item one main LP regulator
+        \item one secondary LP regulator
+    \end{itemize}
+        They are used for regulating the power supply to low-power modules, and also feature regulated output power.
+\end{itemize}
+
+\subsubsection{Digital Power Domains}\label{sec:lowpowm_digital_domain}
+
+\chipname{} has digital power domains in the HP system and LP system as listed below.
+
+\begin{itemize}
+    \item The HP system contains the following digital power domains:
+    \begin{itemize}
+        \item \textbf{CPU}: includes the CPU and its supporting peripherals (such as TRACE) in the HP system.
+        \item \textbf{Modem}: consists of wireless MAC, baseband and respective peripheral controllers.
+        \item \textbf{Internal SRAMx}: As shown in Figure \ref{fig:lowpowm-power-structure}, each of SRAM0/1/2 has an independent power switch, while SRAM3 is directly connected to the regulator without a power switch.
+        \item \textbf{Modem Power}: includes modules that control the operating of the wireless section.
+        \item \textbf{Peripherals+ROM}: includes ROM, HP peripherals, and all other modules in the HP system that are not mentioned above.
+    \end{itemize}
+    \item The LP system contains the following digital power domains:
+    \begin{itemize}
+        \item \textbf{LPSYS\_OFF}: includes LP peripherals APB bus, and lpperi clk.
+        \item \textbf{LPSYS}: includes all modules in the LP system except for LPSYS\_OFF, such as LP always-on peripherals (e.g., RTC timer) and PMU controller. This power domain has the highest priority among all power domains and remains powered on unless the chip is completely powered down.
+    \end{itemize}
+\end{itemize}
+
+Power domains in the HP system and LP system are powered by HP system regulators and LP system regulators respectively. There is an independent power switch between the regulators and each power domain, enabling up/down control of the digital power domain. With the exception of LPSYS — which remains always-on and thus does not require power gating — power control for the digital power domains can be achieved.
+
+\subsubsection{Analog Power Domains}
+
+As Figure \ref{fig:lowpowm-power-structure} shows, \chipname{} contains the following analog power domains, among which PLL belongs to the HP system while the other domains belong to the LP system:
+
+\begin{itemize}
+    \item External Main Clock
+    \item Fast RC Oscillator
+    \item PLL
+    \item RF circuit
+\end{itemize}
+
+\subsection{PMU}
+
+The PMU of \chipname{} controls power consumption-related components of each power domain, such as power and clock. PMU consists of the following major parts:
+
+\begin{itemize}
+    \item \textbf{PMU main state machine}: records and switches the PMU states.
+    \item \textbf{Sleep/wake-up controller}: sends sleep or wake-up requests to the PMU main state machine.
+    \item \textbf{Power controllers}: control the power and clock signals depending on the power modes of the chip. The power controllers include:
+        \begin{itemize}
+            \item \textbf{Digital power controller}: powers up or down the digital power domains.
+            \item \textbf{Analog power controller}: enables the analog modules, such as the regulators, analog clocks, etc.
+            \item \textbf{Clock controller}: manages the clock gating of peripherals and selects analog clock sources for digital clocks.
+            \item \textbf{Data backup controller}: controls the data backup and restore process when the chip switches between PMU states.
+            \item \textbf{System controller}: controls some system-level modules, such as suspending watchdog functionality or handling backups in sleep mode (when the CPU in the HP system is unavailable).
+        \end{itemize}
+\end{itemize}
+
+The PMU workflow involves the sleep/wake-up controller sending sleep or wake-up requests to the PMU main state machine, which then generates power gating, clock gating, and reset signals. The power controllers and clock controller will then power up or down different power domains and clocks based on the signals generated by the PMU main state machine, allowing the chip to enter or exit different low-power modes. The PMU workflow is shown in Figure \ref{fig:lowpowm-workflow}.
+
+\begin{figure}[H]
+    \centering    \includegraphics[width=1.1\textwidth]{\modulefiles/figures/12-LOWPOWM_Workflow.pdf}        \caption{PMU Workflow}\label{fig:lowpowm-workflow}
+\end{figure}
+
+
+The following sections describe the main parts of PMU.
+
+\subsubsection{PMU Main State Machine}
+
+The PMU main state machine can receive sleep and wake-up signals, change the state of power and clock through the power controllers, thereby switching PMU states, and achieving a balance between performance and power consumption of the chip.
+
+The PMU main state machine supports four PMU states and two transition states.
+
+Each PMU state is controlled by different sleep and wake-up signals, supporting software customization of power and clocks. These four PMU states allow the software to expand power modes for various application scenarios. The four PMU states are:
+
+\begin{itemize}
+    \item HP\_ACTIVE: PMU state where the circuits on the chip are powered up to a maximum, supporting the HP system and LP system operation.
+    \item HP\_MODEM: PMU state where Modem (wireless MAC and baseband) can operate independently of the CPU.
+    \item HP\_SLEEP: PMU state where the HP system is in sleep, supporting the operation of LP system.
+    \item LP\_SLEEP: PMU state where HP system and LP peripherals are in sleep, while the always-on circuits remain operational.
+\end{itemize}
+
+Two transition states indicate that the PMU is waiting for the system to switch to a different power mode. For example, during the period of ``waiting for the configured clock gating to take effect and the output clock to stabilize."
+
+\begin{itemize}
+    \item HP\_SWITCH: An intermediate state when the HP system switches between HP\_ACTIVE, HP\_MODEM, and HP\_SLEEP. The hardware completes the control transition of various controllers in this state.
+    \item LP\_SWITCH: An intermediate state when the LP system switches between HP\_SLEEP and LP\_SLEEP. The hardware completes the control transition of various controllers in this state.
+\end{itemize}
+
+\begin{tiplisting}
+    Referring to \textit{\href{https://www.espressif.com/sites/default/files/documentation/esp32-c61_datasheet_cn.pdf}{\chipname{} Datasheet}} > \textit{Functional Block Diagram}
+    The division of HP and LP system is as follows:
+    \begin{itemize}
+    \item LP system (peripherals): modules that are marked as ``optional in Deep-sleep" in the Functional Block Diagram, such as LP IO.
+    \item LP system (always-on circuits): modules that are marked as ``All modes" and ``optional in Deep-sleep" in the Functional Block Diagram, such as PMU, RTC Watchdog Timer, Super Watchdog.
+    \item HP system: modules that are marked as ``Active and Modem-sleep" in the Functional Block Diagram.
+    \end{itemize}
+\end{tiplisting}
+
+HP\_ACTIVE, HP\_MODEM, HP\_SLEEP are the states of the HP system, while LP\_SLEEP is the state of the LP system.
+
+\begin{itemize}
+    \item If a module belongs to the HP system, its power up/down can be configured in the HP\_ACTIVE, HP\_MODEM and HP\_SLEEP states, but not in the LP\_SLEEP state. In the LP\_SLEEP state, it will reuse the HP\_SLEEP state.
+    \item If a module belongs to the LP system, its power up/down can be configured in the HP\_SLEEP and LP\_SLEEP states. In the HP\_ACTIVE and HP\_MODEM states, it will reuse the HP\_SLEEP configuration.
+\end{itemize}
+
+Take the CPU as an example: CPU belongs to the HP system, so it can be configured to power up/down in the HP\_ACTIVE, HP\_MODEM and HP\_SLEEP states through the following registers and reuses the HP\_SLEEP configuration in LP\_SLEEP.
+
+\begin{itemize}
+    \item HP\_ACTIVE: \hyperref[fielddesc:PMUHPACTIVEPDHPCPUPDEN]{PMU\_HP\_ACTIVE\_PD\_HP\_CPU\_PD\_EN}
+    \item HP\_MODEM: \hyperref[fielddesc:PMUHPMODEMPDHPCPUPDEN]{PMU\_HP\_MODEM\_PD\_HP\_CPU\_PD\_EN}
+    \item HP\_SLEEP: \hyperref[fielddesc:PMUHPSLEEPPDHPCPUPDEN]{PMU\_HP\_SLEEP\_PD\_HP\_CPU\_PD\_EN}
+\end{itemize}
+
+Similarly, users can define other power domains' power up and down in different PMU states. For specific registers, please refer to Section \ref{sec:lowpowm-reg-summ}.
+
+\begin{tiplisting}
+In the following text, all such registers will be collectively referred to as PMU\_\regindex{PMUSTATE}\_PD\_\regindex{POWERDOMAIN}\_PD\_EN, where, unless specified otherwise:
+\begin{itemize}
+\item \regindex{PMUSTATE} represents HP\_ACTIVE, HP\_MODEM, HP\_SLEEP and LP\_SLEEP.
+\item \regindex{POWERDOMAIN} represents TOP, HP\_AON, HP\_CPU, HP\_WIFI, HP\_MEM and LP\_PERI.
+\end{itemize}
+
+All such registers are linked to a representative of the same type for reference. For example, \\
+\hyperref[fielddesc:PMUHPACTIVEPDTOPPDEN]{PMU\_\regindex{PMUSTATE}\_PD\_\regindex{POWERDOMAIN}\_PD\_EN}
+will be linked to
+\hyperref[fielddesc:PMUHPACTIVEPDTOPPDEN]{PMU\_\regindex{HP\_ACTIVE}\_PD\_\regindex{TOP}\_PD\_EN}.
+\end{tiplisting}
+
+Once the configuration is done, PMU will use various controllers to make these configurations effective, as described in the sections below.
+
+\subsubsection{Sleep/Wake-up Controller}
+
+The sleep/wake-up controller is responsible for initiating sleep and wake-up requests to the PMU main state machine. \chipname{} supports multiple wake-up sources to wake the CPU from different power modes that can be enabled through \hyperref[fielddesc:PMUWAKEUPENA]{PMU\_WAKEUP\_ENA}.
+
+\begin{table}[H]
+    \centering
+    \caption{Wake-up Sources}
+    \label{tab:lowpowm-wakeup-source}
+    \begin{threeparttable}
+    \begin{tabular}{| r | l | c | c |}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:PMUWAKEUPENA]{PMU\_WAKEUP\_ENA}} & \textbf{Wake-up Sources} &  \textbf{Light-sleep} & \textbf{Deep-sleep}  \\\hline
+    0x4 & GPIO\tnote{1} & Y & Y \\\hline
+    0x8 & Wi-Fi beacon  & Y & N \\\hline
+    0x10 & RTC Timer  & Y & Y \\\hline
+    0x20 & Wi-Fi\tnote{2} & Y & – \\\hline
+    0x40 & UART0\tnote{3} & Y & – \\\hline
+    0x80 & UART1\tnote{3} & Y & – \\\hline
+    0x100 & SDIO & Y & – \\\hline
+    0x400 & Bluetooth & Y & – \\\hline
+    \end{tabular}
+
+\begin{tablenotes}
+    \item[1] In Deep-sleep mode, only the LP GPIOs can work as wake-up sources.
+    \item[2] To wake up the chip with Wi-Fi, the chip switches between Active, Modem-sleep, and Light-sleep modes. The RF module is woken up at predetermined intervals by timers to keep Wi-Fi connectivity and communication.
+    \item[3] A wake-up is triggered when the number of RX pulses received exceeds the threshold set in \hyperref[fielddesc:UARTACTIVETHRESHOLD]{UART\_ACTIVE\_THRESHOLD}. For details, please refer to Chapter \ref{mod:uart} \textit{\nameref{mod:uart}}.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+\chipname{} provides a hardware mechanism that can reject sleep, meaning if some peripherals are in an uninterruptible working state and the CPU tries to sleep, the peripherals will send a wake-up signal to prevent the CPU from sleeping, thus ensuring the peripherals work normally.
+
+The wake-up sources in Table \ref{tab:lowpowm-wakeup-source} can all be configured as events to reject sleep. Users can configure the following registers to implement sleep rejection. The configuration values of \hyperref[fielddesc:PMUSLEEPREJECTENA]{PMU\_SLEEP\_REJECT\_ENA} and \hyperref[fielddesc:PMUREJECTCAUSE]{PMU\_REJECT\_CAUSE} and the corresponding wake-up sources are the same as shown in Table \ref{tab:lowpowm-wakeup-source}.
+
+\begin{itemize}
+    \item Enable sleep rejection feature:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:PMUSLPREJECTEN]{PMU\_SLP\_REJECT\_EN} to 1 to enable the sleep rejection feature.
+        \item Configure \hyperref[fielddesc:PMUSLEEPREJECTENA]{PMU\_SLEEP\_REJECT\_ENA} to enable the sleep rejection signal source.
+    \end{itemize}
+    \item Read \hyperref[fielddesc:PMUREJECTCAUSE]{PMU\_REJECT\_CAUSE} for the source of sleep rejection event.
+\end{itemize}
+
+\subsubsection{Analog Power Controller}\label{sec:lowpowm_analog_power_controller}
+
+The analog power controller controls the power up and down of the analog circuits (including voltage regulators, high-speed clocks, and slow-speed clocks) in PMU states.
+
+The configuration of the regulators is as follows:
+
+\begin{itemize}
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEHPREGULATORXPD](PMU\_\regindex{PMUSTATE}\_HP\_REGULATOR\_XPD) or \hyperref[fielddesc:PMUHPSLEEPLPREGULATORXPD](PMU\_\regindex{PMUSTATE}\_LP\_REGULATOR\_XPD) to enable or disable the output voltage of the HP/LP regulators in the target PMU state. Turning off the LP regulators is not recommended, as it may cause the PMU itself to power down, resulting in chip malfunction.
+\end{itemize}
+
+The configuration of the high-speed clocks (XTAL\_CLK and PLL\_CLK) is as follows:
+
+\begin{itemize}
+    \item XTAL\_CLK: Configure \hyperref[fielddesc:PMUHPSLEEPXPDXTAL]{PMU\_HP\_SLEEP\_XPD\_XTAL} to 1 to enable XTAL\_CLK when the chip switches PMU state to HP\_SLEEP.
+
+    Note: To avoid the instability in XTAL\_CLK during startup, users have the option to configure \hyperref[fielddesc:PMUWAITXTLSTABLE]{PMU\_WAIT\_XTL\_STABLE} to delay the gate opening for XTAL\_CLK. This delay ensures that the gate opening is enabled after\hyperref[fielddesc:PMUWAITXTLSTABLE]{PMU\_WAIT\_XTL\_STABLE} cycles in CLK\_DYN\_FAST\_CLK following the power-up of XTL\_CLK.
+
+    \item PLL\_CLK: PMU can enable PLL\_CLK in different PMU states by configuring \hyperref[fielddesc:PMUHPACTIVEXPDBBPLL]{PMU\_\regindex{PMUSTATE}\_XPD\_BBPLL} to 1. For example, configuring \hyperref[fielddesc:PMUHPACTIVEXPDBBPLL]{PMU\_HP\_ACTIVE\_XPD\_BBPLL} to 1 will enable the PLL\_CLK clock when the chip is in HP\_ACTIVE state.
+
+    Note:
+    \begin{itemize}
+        \item Before enabling PLL\_CLK, please ensure that XTAL\_CLK is stable.
+        \item To avoid the instability in PLL\_CLK during startup, users have the option to configure \hyperref[fielddesc:PMUWAITPLLSTABLE]{PMU\_WAIT\_PLL\_STABLE} to delay the gate opening for PLL\_CLK. This delay ensures that the gate opening is enabled after \hyperref[fielddesc:PMUWAITPLLSTABLE]{PMU\_WAIT\_PLL\_STABLE} cycles in CLK\_DYN\_FAST\_CLK following the power-up of PLL\_CLK.
+    \end{itemize}
+\end{itemize}
+
+Slow-speed clocks include:
+
+\begin{itemize}
+\item RC\_FAST\_CLK
+\item XTAL32K\_CLK
+\item RC32K\_CLK
+\item SOSC\_CLK
+\end{itemize}
+
+These slow-speed clocks operate with low power. The power up and down of these clocks in different PMU states is configured via different registers. Take RC\_FAST\_CLK as an example:
+
+\begin{itemize}
+    \item HP\_ACTIVE, HP\_MODEM and HP\_SLEEP: \hyperref[fielddesc:PMUHPSLEEPXPDFOSCCLK]{PMU\_HP\_SLEEP\_XPD\_FOSC\_CLK}
+    \item LP\_SLEEP: \hyperref[fielddesc:PMULPSLEEPXPDFOSCCLK]{PMU\_LP\_SLEEP\_XPD\_FOSC\_CLK}
+\end{itemize}
+
+\subsubsection{Digital Power Controller}
+
+The digital power controller controls the power up and down of digital power domains in different PMU states. Unlike the analog power controller, the digital power controller does not directly control the regulator but instead controls the power switch connected to the regulator to power up and down the digital power domains.
+
+Among the digital power domains, the LPSYS\_OFF domain can only be powered up and down during the PMU state switch between HP\_SLEEP and LP\_SLEEP PMU, while the other power domains can be powered up and down during the PMU states switch among HP\_SLEEP, HP\_ACTIVE, and HP\_MODEM.
+
+When the chip switches between PMU states, if the power configuration of a power domain in the current PMU state does not match the power configuration it is about to switch to, then the power up-down process will be activated.
+
+Take the power up-to-down process of the CPU power domain as an example. Configure \hyperref[fielddesc:PMUHPMODEMPDHPCPUPDEN]{PMU\_HP\_MODEM\_PD\_HP\_CPU\_PD\_EN}:
+\begin{itemize}
+    \item 0: indicates that the CPU power domain is powered up in the HP\_MODEM state.
+    \item 1: indicates that the CPU power domain is powered down in the HP\_MODEM state.
+\end{itemize}
+
+PMU will perform the following configurations:
+
+\begin{itemize}
+\item Enable the digital isolation unit to ensure that the powered-down modules do not output unstable voltage levels to the powered-up modules. When a power domain loses power, the output of this module will be clamped to a fixed value.
+
+\item Enable reset. When the CPU power domain loses power, its global reset signal is set to a reset state, which persists for a period after the CPU power domain is re-powered. This mechanism guarantees a reset-to-release process for the CPU power domain during power-up, effectively mitigating any instability caused by power up-down transitions.
+\end{itemize}
+
+The following will explain the power up and down of each digital power domain:
+
+\begin{itemize}
+    \item Internal SRAMx
+
+    The Internal SRAMx power domain and ``ROM + Peripherals" power domain share the same control register \hyperref[fielddesc:PMUHPACTIVEPDTOPPDEN]{PMU\_\regindex{PMUSTATE}\_PD\_TOP\_PD\_EN}. The \hyperref[fielddesc:PMUPDHPMEM0PDMASK]{PMU\_PD\_HP\_MEM\regindex{x}\_PD\_MASK} (\regindex{x}=0,1,2) configures whether Internal SRAMx will power on/off simultaneously with the HPTOP power domain:
+
+    \begin{itemize}
+        \item 0: powers on/off simultaneously with the ``ROM + Peripherals" power domain.
+        \item 1: does not power on/off simultaneously with the ``ROM + Peripherals" power domain. In this case, users can configure \hyperref[fielddesc:PMUPDHPMEM0PDMASK]{PMU\_PD\_HP\_MEM\regindex{x}\_PD\_MASK} (\regindex{x}=0,1,2) to keep Internal SRAMx powered on even when the ``ROM + Peripherals" power domain is powered off.
+    \end{itemize}
+
+    \item Modem Power
+
+    Modem Power is connected to the HP system regulator through a power switch. The power up and down of Modem Power in different PMU state is determined by \hyperref[fielddesc:PMUHPACTIVEPDHPAONPDEN]{PMU\_\regindex{PMUSTATE}\_PD\_HP\_AON\_PD\_EN} (\regindex{PMUSTATE}=HP\_ACTIVE/HP\_MODEM/HP\_SLEEP). From Figure \ref{fig:lowpowm-power-structure}, it can be seen that if any of the CPU, Modem, or ``ROM + Peripherals" power domains needs to be powered up, the Modem Power domain must also be powered up. Such a design meets functional requirements.
+
+    \item ``ROM + Peripherals", Modem and CPU
+
+    Each of the three power domains can be powered up and down in different PMU states using register \hyperref[fielddesc:PMUHPACTIVEPDHPCPUPDEN]{PMU\_\regindex{POWERDOMAIN}\_PD\_\regindex{PMUSTATE}\_PD\_EN}(\regindex{POWERDOMAIN}=TOP/HP\_WIFI/HP\_CPU) respectively.
+
+    When the ``ROM + Peripherals" domain is powered down, the following features are configurable:
+        \begin{itemize}
+        \item Powering down the ``ROM + Peripherals" domain may cause instability in GPIOs. This can be addressed by maintaining the state of the GPIOs (excluding eight LP GPIOs) through PMU. For example, configuring \hyperref[fielddesc:PMUHPSLEEPHPPADHOLDALL]{PMU\_HP\_SLEEP\_HP\_PAD\_HOLD\_ALL} can keep GPIOs in the same state as before ``ROM + Peripherals" was powered down in HP\_SLEEP.
+
+        \item In HP\_ACTIVE, HP\_SLEEP and HP\_MODEM states, the Internal SRAMx domain can be powered down or put into Deep-sleep mode. In Deep-sleep, the memory cannot be read or written to, but data can be retained. Configure \hyperref[fielddesc:PMUHPACTIVEHPMEMDSLP]{PMU\_\regindex{PMUSTATE}\_HP\_MEM\_DSLP} to enable Memory Deep-sleep mode.
+        \end{itemize}
+
+    \item LPSYS\_OFF
+
+    The LPSYS\_OFF power domain remains powered up when the chip is in HP\_ACTIVE and HP\_MODEM states. The power state of LPSYS\_OFF is configurable only in HP\_SLEEP and LP\_SLEEP states via \hyperref[regdesc:PMULPSLEEPLPDIGPOWERREG]{PMU\_LP\_SLEEP\_LP\_DIG\_POWER\_REG} and \hyperref[regdesc:PMUHPSLEEPLPDIGPOWERREG]{PMU\_HP\_SLEEP\_LP\_DIG\_POWER\_REG} respectively. The LPSYS\_OFF power domain has an independent digital power switch, and its power control is not dependent on the power state of other digital power domains.
+
+    \item LP always-on (LPSYS)
+
+    LPSYS includes modules such as the PMU that will not power down unless the chip is completely powered off. Therefore, the power on/off state of this power domain cannot be configured.
+\end{itemize}
+
+\subsubsection{Clock Controller}
+
+The clock controller is mainly used to select, enable and configure high-performance system clocks and low-power system clocks when the chip switches between PMU states.
+
+High-performance system clocks include HP\_ROOT\_CLK and high-performance system peripherals clocks. When the chip switches among HP\_ACTIVE, HP\_MODEM, and HP\_SLEEP states, PMU can switch, power up/down, and divide the frequency of HP\_ROOT\_CLK, as well as power up/down high-performance system peripherals clocks.
+
+\begin{itemize}
+
+\item HP\_ROOT\_CLK can be controlled as follows:
+
+    \begin{itemize}
+    \item Configure \hyperref[fielddesc:PMUHPACTIVESYSCLKSLPSEL]{PMU\_\regindex{PMUSTATE}\_SYS\_CLK\_SLP\_SEL} to 1 to indicate that when the chip enters the corresponding PMU state, the clock source is controlled by PMU.
+
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEICGSYSCLOCKEN]{PMU\_\regindex{PMUSTATE}\_ICG\_SYS\_CLOCK\_EN} to 0 to disable HP\_ROOT\_CLK in the corresponding PMU state.
+
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEDIGSYSCLKSEL]{PMU\_\regindex{PMUSTATE}\_DIG\_SYS\_CLK\_SEL} to select the clock source after the chip enters the corresponding PMU state. For details, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}} > Table \ref{tab:resclk-cpu-clk-src}.
+    \end{itemize}
+
+\item High-performance system peripheral clocks can be controlled as follows:
+
+    \begin{itemize}
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEICGSLPSEL]{PMU\_\regindex{PMUSTATE}\_ICG\_SLP\_SEL} to 1 so that the clock gating in the target state will be controlled by PMU. Configure this register to 0 so that the clock gating is controlled by PCR registers.
+
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEDIGICGFUNCEN]{PMU\_\regindex{PMUSTATE}\_DIG\_ICG\_FUNC\_EN} to power up/down the function clock in the target PMU state. For detailed configuration please see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}} > Table \ref{tab:clk_pmu_func}.
+
+    \item Configure \hyperref[fielddesc:PMUHPACTIVEDIGICGAPBEN]{PMU\_\regindex{PMUSTATE}\_DIG\_ICG\_APB\_EN} to power up/down the APB clock in the target PMU state. For detailed configuration please see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}} > Table \ref{tab:clk_pmu_apb}.
+    \end{itemize}
+
+\end{itemize}
+
+LP system clocks are mainly used in the low-power system and include the following four clocks:
+
+    \begin{itemize}
+    \item LP\_SLOW\_CLK
+    \item LP\_FAST\_CLK
+    \item LP\_DYN\_SLOW\_CLK
+    \item LP\_DYN\_FAST\_CLK
+    \end{itemize}
+
+The clock frequencies of LP\_DYN\_FAST\_CLK and LP\_DYN\_SLOW\_CLK are controlled by hardware as follows, depending on the PMU state (and cannot be changed by the user):
+
+    \begin{itemize}
+    \item LP\_SLEEP: The frequency of LP\_DYN\_FAST\_CLK and LP\_DYN\_SLOW\_CLK is the same as LP\_SLOW\_CLK.
+    \item HP\_ACTIVE, HP\_MODEM, HP\_SLEEP:
+    \begin{itemize}
+        \item The LP\_DYN\_FAST\_CLK frequency is the same as LP\_FAST\_CLK.
+        \item LP\_DYN\_SLOW\_CLK is clk\_root\_slow\_gated, which is generated from LP\_DYN\_FAST\_CLK through a clock gate. The enable signal of the clock gate is controlled by the rising edge of LP\_DYN\_SLOW\_CLK after being synchronized through a double flip-flop.
+    \end{itemize}
+    \end{itemize}
+
+\subsubsection{Backup Controller}
+
+\chipname{} has a Retention DMA module, which is in the ``ROM + Peripherals" power domain, that can transfer data between memory and peripherals when the chip switches between PMU states, so that the data is backed up when the power domain is powered down and restored when the power domain is powered up again.
+
+Data transfer is implemented via REGDMA. PMU only generates relevant control signals. It is important to note that the data transfer control registers are directional, as unlike other control registers, these control behaviors are determined by both the original PMU state and the target PMU state.
+
+Take the HP\_SLEEP target PMU state as an example, the control registers for transitioning from HP\_ACTIVE to HP\_SLEEP and from HP\_MODEM to HP\_SLEEP are different. The possible PMU state switches are listed below, collectively represented by \regindex{PMUSTATE\_TRANS} in the register names:
+
+\begin{itemize}
+    \item HP\_SLEEP2ACTIVE
+    \item HP\_SLEEP2MODEM
+    \item HP\_MODEM2ACTIVE
+    \item HP\_MODEM2SLEEP
+    \item HP\_ACTIVE2SLEEP
+\end{itemize}
+
+All such registers are linked to a representative of the same type for reference. For example, \\
+\hyperref[fielddesc:PMUHPSLEEP2ACTIVEBACKUPEN]{PMU\_\regindex{PMUSTATE\_TRANS}\_BACKUP\_EN}
+will be linked to
+\hyperref[fielddesc:PMUHPSLEEP2ACTIVEBACKUPEN]{PMU\_HP\_SLEEP2ACTIVE\_BACKUP\_EN}.
+
+The following will introduce how PMU controls the Retention DMA:
+
+\begin{itemize}
+    \item Enable data transfer: Configure \hyperref[fielddesc:PMUHPSLEEP2ACTIVEBACKUPEN]{PMU\_\regindex{PMUSTATE\_TRANS}\_BACKUP\_EN} to 1 to enable data transfer when the corresponding PMU state switch is performed.
+    \item Enable corresponding clocks: Before data transfer starts, configure \hyperref[fielddesc:PMUHPMODEM2ACTIVEBACKUPCLKSEL]{PMU\_\regindex{PMUSTATE\_TRANS}\_BACKUP\_CLK\_SEL} to select the clock source of the Retention DMA, and configure \hyperref[fielddesc:PMUHPACTIVEBACKUPICGFUNCEN]{PMU\_\regindex{PMUSTATE}\_BACKUP\_ICG\_FUNC\_EN} to enable the clock.
+
+    After the data transfer is completed, the value of \hyperref[fielddesc:PMUHPACTIVEBACKUPICGFUNCEN]{PMU\_\regindex{PMUSTATE}\_BACKUP\_ICG\_FUNC\_EN} is determined by the configuration of \hyperref[fielddesc:PMUHPACTIVEDIGICGFUNCEN]{PMU\_\regindex{PMUSTATE}\_DIG\_ICG\_FUNC\_EN} in the target PMU state.
+
+    \item Configure data transfer direction: Configure the highest bit of \hyperref[fielddesc:PMUHPMODEM2ACTIVEBACKUPMODEMCLKCODE]{PMU\_\regindex{PMUSTATE\_TRANS}\_BACKUP\_MODE}:
+    \begin{itemize}
+        \item 1: From peripheral to memory
+        \item 0: From memory to peripheral
+    \end{itemize}
+    \item Select linked list pointer: Configure the lower two bits of \hyperref[fielddesc:PMUHPMODEM2ACTIVEBACKUPMODEMCLKCODE]{PMU\_\regindex{PMUSTATE\_TRANS}\_BACKUP\_MODE} to select the linked list pointer, specifically:
+        \begin{itemize}
+            \item 0: \hyperref[fielddesc:PAULINKADDR0]{PAU\_LINK\_ADDR\_0}
+            \item 1: \hyperref[fielddesc:PAULINKADDR1]{PAU\_LINK\_ADDR\_1}
+            \item 2: \hyperref[fielddesc:PAULINKADDR2]{PAU\_LINK\_ADDR\_2}
+            \item 3: \hyperref[fielddesc:PAULINKADDR3]{PAU\_LINK\_ADDR\_3}
+        \end{itemize}
+\end{itemize}
+
+\subsubsection{System Controller}
+
+The system controller controls some functional modules when the chip switches PMU states, to achieve stable and low-power chip performance. Specifically, the system controller supports:
+
+\begin{itemize}
+    \item Pausing the watchdog function: Configuring \hyperref[fielddesc:PMUHPACTIVEDIGPAUSEWDT]{PMU\_\regindex{PMUSTATE}\_DIG\_PAUSE\_WDT} to 1 can disable the RTC watchdog timer (RWDT) function when the chip switches to the corresponding target PMU state. Note that if this register is configured to 0 in any sleep mode, the watchdog function is not disabled, and RWDT will reset as the CPU does not feed the watchdog.
+
+    \item Switching GPIO to sleep mode, where the configuration of the GPIO holds. Consider a GPIO pin working in low-drive mode as an input and a wake-up pin. Setting \hyperref[fielddesc:PMUHPACTIVEHPPADHOLDALL]{PMU\_\regindex{PMUSTATE}\_HP\_PAD\_HOLD\_ALL} to 1 can latch the current configuration of the GPIO pin as the sleep configuration when the chip transitions to the corresponding PMU state. For more information about GPIO's hold function, please refer to Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} > Section \ref{sec:pad-hold}.
+
+    \item Disabling UART wake-up function: Configuring \hyperref[fielddesc:PMUHPACTIVEUARTWAKEUPEN]{PMU\_\regindex{PMUSTATE}\_UART\_WAKEUP\_EN} to 0 can disable the four UART wake-up modes in the corresponding PMU state. For more information on UART wake-up modes, please refer to Chapter \ref{mod:uart} \textit{\nameref{mod:uart}}.
+
+    \item Pausing CPU: Setting \hyperref[fielddesc:PMUHPACTIVEDIGCPUSTALL]{PMU\_\regindex{PMUSTATE}\_DIG\_CPU\_STALL} to 1 can suspend the CPU in the corresponding PMU state.
+\end{itemize}
+
+\subsection{RTC Timer}
+
+\chipname{}'s low-power management system features an RTC timer. The 48-bit RTC timer is a real-time counter that logs time when certain events occur, working at  LP\_DYN\_FAST\_CLK. For the trigger conditions for the RTC timer, see Table \ref{tab:lowpowm-Update-RTC-TIMER-VALUE}.
+
+\begin{longtable}[c]{|p{6cm}|p{9cm}|}
+    \caption{Trigger Conditions for the RTC Timer} \label{tab:lowpowm-Update-RTC-TIMER-VALUE}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Triggering Conditions} & \textbf{Description} \\
+    \hline
+    \hyperref[fielddesc:RTCTIMERMAINTIMERXTALOFF]{RTC\_TIMER\_MAIN\_TIMER\_XTAL\_OFF} & Triggered when PMU powers up or down the 40 MHz crystal.\\
+    \hline
+    \multirow{2}{*}{\hyperref[fielddesc:RTCTIMERMAINTIMERSYSSTALL]{RTC\_TIMER\_MAIN\_TIMER\_SYS\_STALL}} & Triggered when the CPU enters or exits the stall state. This is to ensure the system timer is continuous in time. \\
+    \hline
+    \hyperref[fielddesc:RTCTIMERMAINTIMERSYSRST]{RTC\_TIMER\_MAIN\_TIMER\_SYS\_RST} & Triggered upon system reset.\\
+    \hline
+
+    \multirow{2}{*}{\hyperref[fielddesc:RTCTIMERMAINTIMERUPDATE]{RTC\_TIMER\_MAIN\_TIMER\_UPDATE}} & Triggered when \hyperref[fielddesc:RTCTIMERMAINTIMERUPDATE]{RTC\_TIMER\_MAIN\_TIMER\_UPDATE} is configured by the CPU (e.g., users).\\
+    \hline
+\end{longtable}
+
+The RTC timer updates two groups of registers upon any new trigger.
+
+\begin{itemize}
+    \item Register group 0 records the count value of the RTC timer under the current trigger, with the counting unit being LP\_DYN\_SLOW\_CLK.
+    \begin{itemize}
+        \item \hyperref[fielddesc:RTCTIMERMAINTIMERTARHIGH0]{RTC\_TIMER\_MAIN\_TIMER\_TAR\_HIGH0}
+        \item \hyperref[fielddesc:RTCTIMERMAINTIMERTARLOW0]{RTC\_TIMER\_MAIN\_TIMER\_TAR\_LOW0}
+    \end{itemize}
+    \item Register group 1 records the count value of the RTC timer under the previous trigger, with the counting unit being LP\_DYN\_SLOW\_CLK.
+    \begin{itemize}
+    \item \hyperref[fielddesc:RTCTIMERMAINTIMERTARHIGH1]{RTC\_TIMER\_MAIN\_TIMER\_TAR\_HIGH1}
+    \item \hyperref[fielddesc:RTCTIMERMAINTIMERTARLOW1]{RTC\_TIMER\_MAIN\_TIMER\_TAR\_LOW1}
+    \end{itemize}
+\end{itemize}
+
+Each time there is a new trigger, the record from the previous trigger will be moved from register group 0 to register group 1 (the record in register group 1 will be overwritten), and the record of the current trigger will be stored in register group 0. Therefore, the RTC timer can record up to two trigger values simultaneously.
+
+It is worth noting that any reset or sleep state other than the chip's power-up reset will not stop or reset the RTC timer, which is in the LPSYS power domain. Additionally, the RTC timer can also be used as a wake-up source (see Table \ref{tab:lowpowm-wakeup-source}).
+
+\section{Power Modes}
+
+\chipname{} has four configurable PMU states. Based on the four PMU states, five power modes have been defined for the most commonly seen application scenarios. For the details, please see Table \ref{tab:lowpowm-predefined-power-modes}.
+
+\begin{table}[H]
+\small
+    \centering
+    \caption{Preset Power Modes}
+    \label{tab:lowpowm-predefined-power-modes}
+    \begin{threeparttable}
+    \begin{tabular}{|l|l|l|l|l|l|l|l|L{1cm}|L{1cm}|}
+    \hline
+        \rowcolor{lightgray}
+        & \multicolumn{9}{c|}{\textbf{Power Domain}} \\\cline{2-10}
+        \rowcolor{lightgray}
+        \multirow{-1}{*}{\textbf{Power Modes}} & \textbf{LPSYS} & \textbf{LPSYS\_OFF} & \textbf{\makecell{ROM + \\Peripherals}} & \textbf{Modem} & \textbf{CPU} & \textbf{\makecell{RC\_FAST\_CLK}} & \textbf{\makecell{XTAL\_CLK}} & \textbf{PLL} & \textbf{\makecell{RF\\ circuit}} \\\hline
+        Active      & ON   & ON  & ON  & ON   & ON   & ON  & ON  & ON  & ON  \\\hline
+        Modem-sleep      & ON   & ON  & ON  & ON   & OFF   & ON  & ON  & ON/OFF  & OFF  \\\hline
+        Light-sleep0      & ON   & ON  & ON  & ON/OFF   & OFF   & ON  & ON/OFF  & ON/OFF  & ON/OFF  \\\hline
+        Light-sleep1      & ON   & ON/OFF  & ON/OFF  & ON/OFF   & OFF   & ON/OFF  & ON/OFF  & ON/OFF  & ON/OFF  \\\hline
+        Deep-sleep      & ON   & OFF  & OFF  & OFF   & OFF   & OFF  & OFF  & OFF  & OFF  \\\hline
+    \end{tabular}
+    \end{threeparttable}
+\end{table}
+
+\begin{tiplisting}
+\vspace{-2em}
+\label{other:lowpowm-predefined-modes-notes}
+\begin{enumerate}
+    \item \textit{\href{https://www.espressif.com/sites/default/files/documentation/esp32-c61_datasheet_cn.pdf}{\chipname{} Datasheet}} > Section \textit{Current Consumption}.
+    \item For supported wake-up sources, please refer to Table \ref{tab:lowpowm-wakeup-source}.
+\end{enumerate}
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Event Task Matrix Feature}
+\label{sec:lowpowm-etm-func}
+
+The low-power management system on \chipname{} supports the Event Task Matrix (ETM) function, which allows the low-power management system's ETM tasks to be triggered by any peripherals' ETM events, or the low-power management system's ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to the low-power management system. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+
+The low-power management system can receive the following ETM tasks:
+
+\begin{itemize}
+\item PMU\_ETM\_SLEEP\_REQ: Triggers PMU's sleep process.
+\end{itemize}
+
+The low-power management system can generate the following ETM events:
+
+\begin{itemize}
+\item PMU\_ETM\_SLEEP\_WAKEUP: Indicates that PMU is woken up to the HP\_ACTIVE state.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s low-power management system can generate the following interrupt signals:
+
+\begin{itemize}
+    \item PMU\_HP\_INTR
+    \item PMU\_LP\_INTR
+\end{itemize}
+
+Among these interrupt signals, PMU\_HP\_INTR is sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+The interrupt signals are generated by the internal interrupt sources of each module, specifically:
+
+PMU\_HP\_INTR:
+
+\begin{itemize}
+\item \label{int:PMUSOCWAKEUPINT}PMU\_SOC\_WAKEUP\_INT: Triggered when the chip is woken up to the HP\_ACTIVE state.
+\item \label{int:PMUSOCSLEEPREJECTINT}PMU\_SOC\_SLEEP\_REJECT\_INT: Triggered when a sleep-rejection source rejects a sleep request.
+
+
+\item \label{int:PMUSDIOIDLEINT}PMU\_SDIO\_IDLE\_INT: Triggered when SDIO is in idle state.
+\end{itemize}
+
+PMU\_LP\_INT:
+
+\begin{itemize}
+\item \label{int:PMUACTIVESWITCHSLEEPSTARTINT}PMU\_ACTIVE\_SWITCH\_SLEEP\_START\_INT: Triggered when the PMU state starts to switch from HP\_ACTIVE to HP\_SLEEP.
+\item \label{int:PMUMODEMSWITCHSLEEPSTARTINT}PMU\_MODEM\_SWITCH\_SLEEP\_START\_INT: Triggered when the PMU state starts to switch from HP\_MODEM to HP\_SLEEP.
+\item \label{int:PMUSLEEPSWITCHMODEMSTARTINT}PMU\_SLEEP\_SWITCH\_MODEM\_START\_INT: Triggered when the PMU state starts to switch from HP\_SLEEP to HP\_MODEM.
+\item \label{int:PMUSLEEPSWITCHACTIVESTARTINT}PMU\_SLEEP\_SWITCH\_ACTIVE\_START\_INT: Triggered when the PMU state starts to switch from HP\_SLEEP to HP\_ACTIVE.
+\item \label{int:PMUMODEMSWITCHACTIVESTARTINT}PMU\_MODEM\_SWITCH\_ACTIVE\_START\_INT: Triggered when the PMU state starts to switch from HP\_MODEM to HP\_ACTIVE.
+\item \label{int:PMUACTIVESWITCHSLEEPENDINT}PMU\_ACTIVE\_SWITCH\_SLEEP\_END\_INT: Triggered when the PMU state has switched from HP\_ACTIVE to HP\_SLEEP.
+\item \label{int:PMUMODEMSWITCHSLEEPENDINT}PMU\_MODEM\_SWITCH\_SLEEP\_END\_INT: Triggered when the PMU state has switched from  HP\_MODEM to HP\_SLEEP.
+\item \label{int:PMUSLEEPSWITCHMODEMENDINT}PMU\_SLEEP\_SWITCH\_MODEM\_END\_INT: Triggered when the PMU state has switched from  HP\_SLEEP to HP\_MODEM.
+\item \label{int:PMUSLEEPSWITCHACTIVEENDINT}PMU\_SLEEP\_SWITCH\_ACTIVE\_END\_INT: Triggered when the PMU state has switched from HP\_SLEEP to HP\_ACTIVE.
+\item \label{int:PMUMODEMSWITCHACTIVEENDINT}PMU\_MODEM\_SWITCH\_ACTIVE\_END\_INT: Triggered when the PMU state has switched from HP\_MODEM to HP\_ACTIVE.
+\end{itemize}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:lowpowm-reg-summ} \textit{\nameref{sec:lowpowm-reg-summ}}.
+
+\newpage
+\section{Register Summary}\hypertarget{lowpowm-reg-summ}{}\label{sec:lowpowm-reg-summ}
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subsection{PMU Register Summary}
+The addresses in this section are relative to the PMU base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/12-LOWPOWM-PMU-reg-summ__EN}
+
+
+\subsection{PAU Register Summary}
+
+The addresses in this section below are relative to the PAU base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/12-LOWPOWM-PAU-reg-summ__EN}
+
+
+\newpage
+\section{Registers}
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subsection{PMU Registers}
+The addresses in this section are relative to the PMU base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/12-LOWPOWM-PMU-reg__EN}
+
+\subsection{PAU Registers}
+The addresses in this section below are relative to the PAU base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/12-LOWPOWM-PAU-reg__EN}
+\end{document}

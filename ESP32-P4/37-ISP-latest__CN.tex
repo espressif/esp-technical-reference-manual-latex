@@ -1,0 +1,1094 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./37-ISP}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{isp}{}
+\chapter{图像信号处理器 (ISP)}
+\label{mod:isp}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+\chipseries{} 包含一个图像信号处理器(ISP)，该模块由多种图像处理算法组成，以流水线方式处理图像数据。
+
+ISP 可以从片外 DVP 摄像头接口、MIPI-CSI 摄像头接口或者系统存储器获取图像数据，处理完成后的数据经过 VDMA 再存储到系统存储器内。
+
+ISP 的 SoC 架构如图 \ref{fig:isp-soc-arch} 所示，ISP 必须与其他模块协同工作以完成图像数据的读写：
+\begin{itemize}
+    \item 输出图像时，ISP使用 CSI\_Bridge 将数据转为 AXI 接口，并通过 VDMA 控制器将输出的图像存储到系统存储器。了解 VDMA 的更多信息，详见章节 \ref{mod:vdma} \textit{\nameref{mod:vdma}}
+    \item 当输入图像来自系统存储器，ISP 必须通过 VDMA 获取图像数据
+    \item 当输入图像来自片外 MIPI-CSI 摄像头接口，
+    \begin{itemize}
+        \item ISP 必须通过 CSI HOST 获取图像数据，详见章节 \ref{mod:mipicsi} \textit{\nameref{mod:mipicsi}}
+        \item 可经过 CSI\_CM 进行 8-bit 或 16-bit 翻转，或 RGB888、RGB565、YUV422 颜色通道调整，或 RGB888 下采样到 RGB565，或 YUV422 下采样到 YUV420
+    \end{itemize}
+    \item 当输入图像来自片外 DVP 摄像头接口，ISP 数据直接从 DVP IO 输入，详见章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/isp_soc_arch_eco5.pdf}
+    \caption{\chipseries{} ISP SoC 架构}
+    \label{fig:isp-soc-arch}
+\end{figure}
+
+\section{术语}
+
+\begin{longtable}[c]{ r l }
+     \textbf{MIPI-CSI} & 符合 MIPI 规范摄像头的高速串行接口 \\
+     \textbf{Image Interface} & CSI HOST 的输出接口 \\
+                  & 根据数据位宽分为 Image Interface 32 和 Image Interface 64 \\
+     \textbf{DVP} & 视频并行接口，一般由 vsync、hsync、de、data 信号组成 \\
+     \textbf{RAW} & 图像传感器直出的未经处理的数据，一般可分为 R、Gr、Gb、B 四个通道 \\
+                  & 根据数据位宽会分为 RAW8、RAW10、RAW12 等 \\
+     \textbf{RGB} & 由红、绿、蓝三色构成的彩色图像格式 \\
+                  & 根据每种颜色的位宽分为 RGB888、RGB565 等 \\
+     \textbf{YUV} & 由亮度、色度构成的彩色图像格式 \\
+                  & 根据数据排列方式分为 YUV444、YUV422、YUV420 等 \\
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+\section{主要特性}
+
+ISP 具有以下特性：
+
+\begin{itemize}
+    \item 最大分辨率： 1920 x 1080
+    \item 支持三个数据输入源：MIPI-CSI、DVP、VDMA
+    \item 输入格式支持：RAW8、RAW10、RAW12
+    \item 输出格式支持：RAW8、RGB888、RGB565、YUV422、YUV420
+    \item 流水线功能：
+        \begin{itemize}
+        \item 黑电平矫正 (BLC)
+        \item 坏点矫正 (DPC)
+        \item 拜耳域降噪 (BF)
+        \item 镜头阴影矫正 (LSC)
+        \item 去马赛克
+        \item 白平衡增益 (WBG)
+        \item 颜色矫正矩阵 (CCM)
+        \item gamma 矫正
+        \item RGB 转 YUV (RGB2YUV)
+        \item 锐化 (sharpen)
+        \item 亮度、对比度、饱和度、色相调节 (COLOR)
+        \item YUV 范围调整
+        \item YUV 转 RGB (YUV2RGB)
+        \item 裁剪 (CROP)
+        \item 自动曝光统计 (AE)
+        \item 自动对焦统计 (AF)
+        \item 自动白平衡统计 (AWB)
+        \item 直方图统计 (HIST)
+        \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{系统架构}
+\label{sec:isp-arch-overview}
+
+图 \ref{fig:isp-arch} 为 ISP 架构图，主要包括 ISP\_Header、ISP\_Pipeline、ISP\_Tail、CSI\_Bridge 四部分。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/isp_arch_eco5.pdf}
+    \caption{ISP IP 架构}
+    \label{fig:isp-arch}
+\end{figure}
+
+\begin{itemize}
+    \item ISP\_Header 根据配置从不同输入源选择数据并进行缓存，之后再按统一格式发送给 ISP\_Pipeline。
+    \item ISP\_Pipeline 是 ISP 主要部分，所有图像处理算法均在此实现。
+    \item ISP\_Tail 包括两路输入：MIPI-CSI 以及 ISP\_Pipeline。当 ISP 关闭时，MIPI-CSI 的 Image Interface 32 数据通过 ISP\_Tail 进行数据格式转换，转为 Image Interface 64 数据输出到 CSI\_Bridge；当 ISP 打开时，ISP\_Pipeline 的输出会在 ISP\_Tail 进行数据裁剪、数据格式转换，转为 Image Interface 64 再输出到 CSI\_Bridge。
+    \item CSI\_Bridge 为 ISP 最终输出端口，该部分通过 VDMA 将 ISP 输出图像搬运到系统存储器。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:isp-func-descr}
+
+\subsection{ISP\_Header}
+ISP\_Header 是 ISP 的输入级，主要功能包括：
+
+\begin{itemize}
+    \item 根据 \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} 配置选择图像数据作为输入源
+    \item 缓存图像数据，根据配置的输入图像数据类型以及尺寸转为 ISP\_Pipeline 所需格式
+    \begin{itemize}
+        \item MIPI-CSI 输入时，直接通过 \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 设置输入类型
+        \item DVP 输入时，\hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 设置为 0，再通过 \hyperref[fielddesc:ISPCAMDATATYPE]{ISP\_CAM\_DATA\_TYPE} 设置对应数据类型
+        \item VDMA 输入时，通过 \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 设置输入类型，同时 \hyperref[fielddesc:ISPDMADATATYPE]{ISP\_DMA\_DATA\_TYPE} 也要进行对应配置
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{ISP\_Pipeline}
+\label{sec:isp_pipeline}
+ISP\_Pipeline 为 ISP 主体部分，包含了所有算法处理模块。每一个算法模块均可通过 \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG} 对应位使能或禁用，且除了和颜色空间转换相关的模块外（去马赛克、RGB 转 YUV、YUV 转 RGB），其余模块的开关均支持动态开关，无需关闭 ISP 再重新配置。同时每一个算法模块开启后，均有一个帧结束中断源，能够在每一帧图像处理结束后触发中断。
+
+\subsubsection{黑电平矫正 (BLC)}
+\label{sec:isp_blc}
+本模块用于对输入像素做黑电平扣除。通过 \hyperref[fielddesc:ISPBLCR0VALUE]{ISP\_BLC\_R\textcolor{red}{x}\_VALUE} 配置对应 Bayer 通道需要扣除的黑电平值。扣除黑电平值后像素范围将会缩减，可通过 \hyperref[fielddesc:ISPBLCR0STRETCH]{ISP\_BLC\_R\textcolor{red}{x}\_STRETCH} 配置是否将像素范围重新拉伸到 0\textasciitilde255。
+
+一共 4 个 Bayer 通道，位置和通道编号对应如下：
+\begin{itemize}
+    \item R0 对应左上位置通道
+    \item R1 对应右上位置通道
+    \item R2 对应左下位置通道
+    \item R3 对应右下位置通道
+\end{itemize}
+
+\subsubsection{坏点矫正 (DPC)}
+\label{sec:isp_dpc}
+本模块用于去除输入图像的坏点。DPC 包括动态矫正和静态矫正，分别通过 \hyperref[fielddesc:ISPSTAEN]{ISP\_STA\_EN} 和 \hyperref[fielddesc:ISPDYNEN]{ISP\_DYN\_EN} 控制，两者可同时使能。
+
+动态矫正根据输入像素内容自动判断坏点，并用中值进行替换。动态矫正支持以下两种坏点判断算法：
+\begin{itemize}
+    \item 算法 0：统计当前像素周围 8 个像素的最小值 min8 以及最大值 max8。如果当前像素大于 max8 + \hyperref[fielddesc:ISPDPCTHRESHOLDH]{ISP\_DPC\_THRESHOLD\_H}，或者小于 min8 - \hyperref[fielddesc:ISPDPCTHRESHOLDL]{ISP\_DPC\_THRESHOLD\_L}，则认为该像素为坏点。
+    \item 算法 1：设当前像素为 pix，计算周围 8 个像素的均值 est，差的绝对值 dif = |est − pix|。令 avg = (sum(8 个邻点) + 8*pix) / 16，检测分两步：
+    \begin{itemize}
+        \item 第一步，选择周围 8 个像素最大值max8，若 pix <  max8 * \hyperref[fielddesc:ISPDPCTHRESHOLDH]{ISP\_DPC\_THRESHOLD\_H} 且 pix > max8 * \hyperref[fielddesc:ISPDPCTHRESHOLDL]{ISP\_DPC\_THRESHOLD\_L}，则认为非坏点，否则进入下一步
+        \item 第二步，若满足以下任一条件则认为是坏点
+        \begin{itemize}
+            \item $\textit{dif} > \textit{avg} \times$ \hyperref[fielddesc:ISPDPCFACTORDARK]{ISP\_DPC\_FACTOR\_DARK} and $\textit{est} \ge \textit{pix}$
+            \item $\textit{dif} > (255 - \textit{avg}) \times$ \hyperref[fielddesc:ISPDPCFACTORBRIG]{ISP\_DPC\_FACTOR\_BRIG} and $\textit{est} < \textit{pix}$
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
+
+静态矫正通过初始化坏点坐标查找表（LUT）实现，LUT 存储的坏点坐标对应像素会被中值替换。坏点坐标需要通过静态标定获取，该功能不能和静态/动态矫正同时使能。
+
+标定步骤如下：
+\begin{itemize}
+    \item 黑图坏点标定
+        \begin{itemize}
+            \item 配置 \hyperref[fielddesc:ISPDPCBLACKEN]{ISP\_DPC\_BLACK\_EN} = 1
+            \item 配置 \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 1
+            \item 配置 \hyperref[fielddesc:ISPDPCEN]{ISP\_DPC\_EN} = 1
+            \item 输入黑图，等待完成
+            \item 配置 \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 0
+            \item 软件通过 LUT 寄存器读取所有黑图坏点坐标
+        \end{itemize}
+    \item 白图坏点标定
+        \begin{itemize}
+            \item 配置 \hyperref[fielddesc:ISPDPCBLACKEN]{ISP\_DPC\_BLACK\_EN} = 0
+            \item 配置 \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 1
+            \item 配置 \hyperref[fielddesc:ISPDPCEN]{ISP\_DPC\_EN} = 1
+            \item 输入白图，等待完成
+            \item 配置 \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 0
+            \item 软件通过 LUT 寄存器读取所有白图坏点坐标
+        \end{itemize}
+    \item 软件将得到的黑图坏点坐标和白图坏点坐标合并，去除重复坐标，并写回 LUT
+\end{itemize}
+
+LUT 读写流程可参考小节 \ref{sec:isp_lsc}。其中，配置 \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM} = 1 可选择 DPC 坏点坐标 LUT，该 LUT 深度为 512，即最多存储 512 个坏点。
+
+\subsubsection{拜耳域降噪 (BF)}
+\label{sec:isp_bf}
+本模块用于对输入图像在拜耳域进行降噪处理。通过 \hyperref[fielddesc:ISPSIGMA]{ISP\_SIGMA} 可以调整降噪强度，通过 \hyperref[fielddesc:ISPGAUTEMPLATE00]{ISP\_GAU\_TEMPLATE\textcolor{red}{xx}} 能够改变降噪模板微调处理效果。
+
+\subsubsection{镜头阴影矫正 (LSC)}
+\label{sec:isp_lsc}
+本模块用于在拜耳域进行镜头阴影矫正。本模块对 R、Gr、Gb、B 四个通道进行独立矫正，每个通道都按照 32 x 32 进行窗口划分（相当于对整幅图像按照 64 x 64 划分），每个通道的矫正系数存储在查找表 (LUT) 内。
+
+在启动该模块前，需要先进行标定，获取 LUT 矫正系数。具体表现为，在环境光线均匀场景下拍摄一张白色图像，将图像每个通道也按照 32 x 32 网格进行划分，取图像亮度中心亮度作为参考亮度，并由此计算每个网格顶点处的亮度增益。对于右、下方超出图像范围的网格，可计算图像边界点的增益，再根据上一个点的增益按照线性关系计算下一个网格边界增益值。之后按照从左到右、从上到下的顺序将增益存储到 LUT 完成初始化。
+
+以 1920 x 1080 分辨率图像为例，此时每一个通道的分辨率则为 960 x 540。所有通道均按 32 x 32 的网格进行划分，水平方向可划分 30 个网格，垂直方向可划分 17 个网格。假定图像亮度中心就在图像几何中心，可取坐标 (480， 270) 附近像素的亮度平均值作为参考亮度 ref\_lum。接下来，按照从左往右、从上往下的顺序，依次取每个网格顶点的实际像素亮度 act\_lum，通过公式 $gain = ref\_lum / act\_lum$ 获取矫正系数，并按顺序存入 LUT。
+
+对于超出图像的网格，比如垂直方向最后一个网格的垂直坐标为 543，超过实际最大垂直坐标 539。此时可取坐标 511 的矫正系数 gain\_0 和坐标 539 的矫正系数 gain\_1，按照坐标比例 $gain = gain\_0 + (gain\_1 - gain\_0) / (539 - 511) * (543 - 511)$ 得到 543 的增益。
+
+LSC 有两个 LUT，分别用于存储 Gb、B 和 R、Gr 通道的增益。LUT 深度为 560，根据图像分辨率计算得到的每个通道的增益系数数量不得超过该值。增益为 10 位定点数（高 2 位为整数位，低 8 位为小数位），存储顺序如表 \ref{tab:lsc_lut_order} 所示。LUT 可通过寄存器进行访问：
+\begin{itemize}
+    \item 写操作会将 \hyperref[regdesc:ISPLUTWDATAREG]{ISP\_LUT\_WDATA\_REG} 中的数据写入 LUT。
+    \item 读操作会将从 LUT 读取的数据存入 \hyperref[regdesc:ISPLUTRDATAREG]{ISP\_LUT\_RDATA\_REG}。
+    \item 通过 \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG} 发起 LUT 操作命令，每次写该寄存器都会发起一次 LUT 读写命令，因此该寄存器所有域需同时写入。其中：\\
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPLUTCMD]{ISP\_LUT\_CMD}：0 为读操作，1 为写操作
+        \item \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM}：置 0 选择 LSC LUT
+        \item \hyperref[fielddesc:ISPLUTADDR]{ISP\_LUT\_ADDR}：配置访问的 LUT 地址，其中第 [11:10] 位为 0 时选择 LUT\_Gb\_B，第 [11:10] 位为 1 时选择 LUT\_R\_Gr
+    \end{itemize}
+\end{itemize}
+
+\begin{longtable}[c]{ |p{5cm}|p{3cm}|p{3cm}| }
+    \caption{LSC LUT 增益存储顺序}
+    \label{tab:lsc_lut_order}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{LUT sel} & \textbf{bit [19:10]} & \textbf{bit [9:0]} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{LUT sel} & \textbf{bit [19:10]} & \textbf{bit [9:0]} \\\hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    %\insertTableNotes
+    \endlastfoot
+
+        LUT\_Gb\_B & Gb & B \\\hline
+        LUT\_R\_Gr & R & Gr \\\hline
+
+\end{longtable}
+
+LSC 开启前，还需配置 \hyperref[fielddesc:ISPLSCXTABLESIZE]{ISP\_LSC\_XTABLESIZE} 设置水平方向矫正系数的数量。该值由公式 $ISP\_LSC\_XTABLESIZE = fix((line\_width -1)/2/32) + 2$ 得到，其中 $fix()$ 为取整操作。比如，输入 RAW 图像水平宽度为 1920，则 $ISP\_LSC\_XTABLESIZE = fix((1920-1)/2/32)+2 = 29+2 = 31$。
+
+
+\subsubsection{去马赛克}
+\label{sec:isp_demosaic}
+去马赛克用于将拜耳图像转为 RGB888 图像。使用 \hyperref[fielddesc:ISPDEMOSAICGRADRATIO]{ISP\_DEMOSAIC\_GRAD\_RATIO} 可以对转换效果进行微调，该寄存器域为 2 位整数，4 位小数，默认值为 1.0。
+
+\subsubsection{白平衡增益 (WBG)}
+\label{sec:isp_wbg}
+本模块用于图像白平衡调整，原理是对应颜色通道的像素值乘以 \hyperref[fielddesc:ISPWBGR]{ISP\_WBG\_\textcolor{red}{R/B/G}} 增益系数。每个增益系数整数部分为 4 bit，小数部分为 8 bit。
+
+\subsubsection{颜色矫正矩阵 (CCM)}
+\label{sec:isp_ccm}
+CCM 为图像像素的矫正矩阵，可对图像中每一个 RGB888 像素进行一定程度的调整，包括白平衡的调整也会用到该模块。模块的输出 R'、G'、B' 和输入 R、G、B 关系如下矩阵所示，其中，RR、RG、RB、GR、GG、GB、BR、BG、BB 可通过 \hyperref[fielddesc:ISPCCMRR]{ISP\_CCM\_\textcolor{red}{xx}} 配置，每一个参数均为 13 位定点数。其中第 [12] 位为符号位，第 [11:0] 位为数值的绝对值，[11:8] 为整数部分，[7:0] 为小数部分。
+
+\begin{equation}
+    \left[\begin{array}{c}
+        R' \\
+        G' \\
+        B'
+    \end{array}\right] = \left[\begin{array}{ccc}
+        RR & RG & RB \\
+        GR & GG & GB \\
+        BR & BG & BB
+    \end{array}\right]\times\left[\begin{array}{c}
+        R \\
+        G \\
+        B
+    \end{array}\right]
+\end{equation}
+
+
+\subsubsection{gamma 矫正}
+\label{sec:isp_gamma}
+本模块用于调整图像的 gamma 曲线。用户需要在使能 gamma 之前配置好 gamma 曲线。可通过寄存器实现 gamma 曲线配置，R、G、B 通道均有一个独立曲线，每个曲线有 16 个采样点。其中，X 分量为输入值，通过 \hyperref[fielddesc:ISPGAMMARX00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_X\textcolor{red}{n}}（n 为 00 至 0F）间接获得；Y 分量为输出值，可直接通过 \hyperref[fielddesc:ISPGAMMARY00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_Y\textcolor{red}{n}}（n 为 00－0F）设置。配置完成后，通过向 \hyperref[fielddesc:ISPGAMMAUPDATE]{ISP\_GAMMA\_UPDATE} 写 1 生效。gamma 曲线示意如图 \ref{figure:isp_gamma_curve} 所示。
+
+对于 X 分量，以 R 通道为例，需要满足以下条件：
+$$X(n) - X(n-1) = 2^{ISP\_GAMMA\_R\_X(n)}$$
+$$sum(2^{ISP\_GAMMA\_R\_X(n)})=256, n = 00 \textasciitilde 0F$$
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/isp_gamma_curve_eco5.pdf}
+    \caption{gamma 曲线示意}
+    \label{figure:isp_gamma_curve}
+\end{figure}
+
+
+\subsubsection{RGB 转 YUV (RGB2YUV)}
+\label{sec:isp_rgb2yuv}
+RGB2YUV 将 RGB888 像素转为 full range 的 YUV422 格式，转换协议可通过 \hyperref[fielddesc:ISPYUVMODE]{ISP\_YUV\_MODE} 配置。
+
+
+\subsubsection{锐化 (sharpen)}
+\label{sec:isp_sharpen}
+该模块用于对图像进行锐化。该模块通过寄存器 \hyperref[fielddesc:ISPSHARPFILTERCOE00]{ISP\_SHARP\_FILTER\_COE\textcolor{red}{xx}} 配置的低通滤波器模板（如均值模板、高斯模板）分离图像的低频、高频分量图像。对于低频分量不做处理，对于高频分量图像，其每一个像素作如下处理以实现锐化：
+\begin{itemize}
+    \item 低于 \hyperref[fielddesc:ISPSHARPTHRESHOLDLOW]{ISP\_SHARP\_THRESHOLD\_LOW}，将对应高频像素置 0。
+    \item 高于 \hyperref[fielddesc:ISPSHARPTHRESHOLDLOW]{ISP\_SHARP\_THRESHOLD\_LOW} 但低于 \hyperref[fielddesc:ISPSHARPTHRESHOLDHIGH]{ISP\_SHARP\_THRESHOLD\_HIGH}，将对应高频像素乘以系数 \hyperref[fielddesc:ISPSHARPAMOUNTLOW]{ISP\_SHARP\_AMOUNT\_LOW}。
+    \item 高于 \hyperref[fielddesc:ISPSHARPTHRESHOLDHIGH]{ISP\_SHARP\_THRESHOLD\_HIGH}，将对应高频像素乘以系数 \hyperref[fielddesc:ISPSHARPAMOUNTHIGH]{ISP\_SHARP\_AMOUNT\_HIGH}。
+\end{itemize}
+
+每一帧图像结束后，可通过读取 \hyperref[fielddesc:ISPSHARPGRADIENTMAX]{ISP\_SHARP\_GRADIENT\_MAX} 获得该帧图像高频分量像素的最大值，以此可作为下一帧图像的配置参考。
+
+
+\subsubsection{对比度／色相／饱和度／亮度 (COLOR)}
+本模块用于调整图像的对比度、饱和度、色相和亮度。其中，对比度、饱和度、亮度通过 \hyperref[fielddesc:ISPCOLORCONTRAST]{ISP\_COLOR\_CONTRAST}、\hyperref[fielddesc:ISPCOLORSATURATION]{ISP\_COLOR\_SATURATION}、\hyperref[fielddesc:ISPCOLORBRIGHTNESS]{ISP\_COLOR\_BRIGHTNESS} 进行调整，色相通过将 \hyperref[fielddesc:ISPCOLORHUEH]{ISP\_COLOR\_HUE\_H} 和 \hyperref[fielddesc:ISPCOLORHUE]{ISP\_COLOR\_HUE} 组合成一个 9-bit 寄存器进行调整。
+
+
+\subsubsection{YUV 范围调整及 YUV 转 RGB (YUV2RGB)}
+\label{sec:isp_yuv2rgb}
+YUV\_Limit 将 full range YUV422 转为 limit range YUV422。该模块只有在 RGB2YUV 开启、YUV2RGB 关闭、且 \hyperref[fielddesc:ISPYUVRANGE]{ISP\_YUV\_RANGE} 为 1 的情况下才会打开。此时 ISP 的输出类型为 YUV422 或 YUV420。
+
+YUV2RGB 将 full range 的 YUV422 像素转为 RGB888 格式，转换协议可通过 \hyperref[fielddesc:ISPYUVMODE]{ISP\_YUV\_MODE} 配置。
+
+\begin{tiplisting}
+    对于 full range YUV，Y、U、V 通道范围均为 0 到 255。\\
+    对于 limit range YUV，Y 通道范围为 16 到 235，U、V 通道范围为 16 到 240。
+\end{tiplisting}
+
+
+\subsubsection{裁剪 (CROP)}
+\label{sec:isp_crop}
+CROP 用于图像裁剪，通过 \hyperref[fielddesc:ISPCROPXSTART]{ISP\_CROP\_X\_START}、\hyperref[fielddesc:ISPCROPXEND]{ISP\_CROP\_X\_END}、\hyperref[fielddesc:ISPCROPYSTART]{ISP\_CROP\_Y\_START}、\hyperref[fielddesc:ISPCROPYEND]{ISP\_CROP\_Y\_END} 分别配置 X、Y 方向的裁剪起始、结束坐标。起始坐标必须为偶数，结束坐标必须为奇数。
+
+
+\subsubsection{自动曝光统计 (AE)}
+
+AE 使用 25 个统计子窗口进行图像亮度统计，所有子窗口可以组成一个 5 x 5 的统计窗口，窗口尺寸通过寄存器 \hyperref[regdesc:ISPAEBXREG]{ISP\_AE\_\textcolor{red}{BX/BY}\_REG} 设置，子窗口编号如图 \ref{figure:isp_subwin} 所示。每一个子窗口的 8 位平均亮度可以通过 \hyperref[fielddesc:ISPAEB00MEAN]{ISP\_AE\_B\textcolor{red}{xx}\_MEAN} 读取，用户可以根据该统计结果实现摄像头的自动曝光算法。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/isp_subwin.pdf}
+    \caption{子窗口编号示意图}
+    \label{figure:isp_subwin}
+\end{figure}
+
+AE 有两个数据采样点，分别为 \hyperref[sec:isp_demosaic]{demosaic} 的输出和 \hyperref[sec:isp_gamma]{gamma} 的输出，可通过 \hyperref[fielddesc:ISPAESELECT]{ISP\_AE\_SELECT} 进行配置。
+
+AE 还包括一个简易的亮度监测模块，用户可自行选择使用该模块的硬件监测或使用软件实现监测。该模块每隔 \hyperref[fielddesc:ISPAEMONITORPERIOD]{ISP\_AE\_MONITO\_RPERIOD} 帧数会统计一次所有子窗口亮度均值。当统计结果不在 \hyperref[fielddesc:ISPAEMONITORTL]{ISP\_AE\_MONITOR\_\textcolor{red}{TH/TL}} 设置的阈值内，就会触发 AE 亮度监测的中断。该亮度监测模块不支持各个子窗口设置不同权重，因此若要实现不同权重监测（如高光优先策略），需要软件定时触发手动统计并处理统计数据。
+
+
+\subsubsection{自动对焦统计 (AF)}
+
+AF 用于统计当前图像下统计窗口内的亮度、清晰度信息，采样点位于 \hyperref[sec:isp_sharpen]{sharpen} 的输出。AF 有 3 个独立的统计窗口，每个统计窗口的大小、位置均可通过 \hyperref[regdesc:ISPAFHSCALEAREG]{ISP\_AF\_\textcolor{red}{H/V}SCALE\_\textcolor{red}{A/B/C}\_REG} 配置。模块支持自动统计和手动触发统计。每个窗口的亮度、清晰度统计结果可以通过 \hyperref[fielddesc:ISPAFLUMA]{ISP\_AF\_LUM\textcolor{red}{A/B/C}}、\hyperref[fielddesc:ISPAFSUMA]{ISP\_AF\_SUM\textcolor{red}{A/B/C}} 获取，用户可以根据窗口的统计结果实现摄像头的自动对焦算法。
+
+AF 还包括一个对焦场景监测模块，用户可自行选择使用该模块的硬件监测或使用软件实现监测。该模块以当前所有统计窗口亮度、清晰度的累加值变化作为判据，每 \hyperref[fielddesc:ISPAFENVPERIOD]{ISP\_AF\_ENV\_PERIOD} 帧数进行一次统计。当连续两次统计的亮度、清晰度与基准值相差大于阈值，则触发对焦场景变化的中断，需要重新对焦。基准值在每完成一次自动统计或手动触发统计后会自动更新，阈值的设置有三种方案：
+\begin{itemize}
+    \item 直接通过 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} 和 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} 分别设置亮度、清晰度阈值
+    \item 当 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} 为 0 时，使用对应的清晰度基准值乘以 \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD}（4 位小数） 作为清晰度阈值
+    \item 当 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} 为 0 时，使用对应的亮度基准值乘以 \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD}（4 位小数） 作为亮度阈值
+\end{itemize}
+
+
+\subsubsection{自动白平衡统计 (AWB)}
+
+AWB 用于统计所设置的窗口下白点的白平衡信息。其中，窗口坐标可通过 \hyperref[regdesc:ISPAWBHSCALEREG]{ISP\_AWB\_\textcolor{red}{H/V}SCALE\_REG} 设置；白点通过亮度上下限 \hyperref[fielddesc:ISPAWBMAXLUM]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_LUM}、$R/G$ 上下限 \hyperref[fielddesc:ISPAWBMAXRG]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_RG}、$B/G$ 上下限 \hyperref[fielddesc:ISPAWBMAXBG]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_BG} 进行筛选。
+
+统计结果包括白点数量以及所有白点的 R、G、B 分量累加值，可分别通过 \hyperref[fielddesc:ISPAWB0WHITECNT]{ISP\_AWB0\_WHITE\_CNT}、\hyperref[fielddesc:ISPAWB0ACCR]{ISP\_AWB0\_ACC\_\textcolor{red}{R/G/B}} 获取，用户可以根据统计结果实现摄像头的自动白平衡算法。
+
+此外，AWB 还支持在窗口内设置 5 x 5 子窗口，通过 \hyperref[fielddesc:ISPAWBXSTART]{ISP\_AWB\_X\_START}、\hyperref[fielddesc:ISPAWBXBSIZE]{ISP\_AWB\_X\_BSIZE}、\hyperref[fielddesc:ISPAWBYSTART]{ISP\_AWB\_Y\_START}、\hyperref[fielddesc:ISPAWBYBSIZE]{ISP\_AWB\_Y\_BSIZE} 配置。子窗范围不能超过主窗口范围，如图 \ref{figure:isp_awb_subwin} 所示。统计结果会写入 AWB LUT 内，通过配置 \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM} = 2 访问，具体流程可参考小节 \ref{sec:isp_lsc}。统计结果按子窗从左往右、从上往下的顺序写入，每一个子窗结果占用 4 个地址，从低地址到高地址分别为白点数量、白点 R 通道累加值、白点 G 通道累加值、白点 B 通道累加值。
+
+AWB 有两个数据采样点，分别为 \hyperref[sec:isp_demosaic]{Demosaic} 的输出和 \hyperref[sec:isp_ccm]{CCM} 的输出，可通过 \hyperref[fielddesc:ISPAWBSAMPLE]{ISP\_AWB\_SAMPLE} 进行配置。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/isp_awb_subwin.pdf}
+    \caption{AWB 窗口示意图}
+    \label{figure:isp_awb_subwin}
+\end{figure}
+
+
+\subsubsection{直方图统计 (HIST)}
+HIST 也用于统计图像的亮度信息。该模块可设置一个统计窗口，统计窗口可分为 5 x 5 子窗口，子窗口编号和 AE 类似，通过寄存器 \hyperref[regdesc:ISPHISTOFFSREG]{ISP\_HIST\_OFFS\_REG} 和 \hyperref[regdesc:ISPHISTSIZEREG]{ISP\_HIST\_SIZE\_REG} 配置。每个子窗口权重均可通过 \hyperref[fielddesc:ISPHISTWEIGHT00]{ISP\_HIST\_WEIGHT\_\textcolor{red}{xx}} 独立配置。
+
+统计结果会按照一个 16 区间的直方图输出。直方图的横坐标通过 \hyperref[fielddesc:ISPHISTSEG01]{ISP\_HIST\_SEG\_\textcolor{red}{x\_x}} 设置，最终统计结果通过 \hyperref[fielddesc:ISPHISTBIN0]{ISP\_HIST\_BIN\_\textcolor{red}{x}} 获取。
+
+HIST 三个数据采样点分别为 \hyperref[sec:isp_bf]{BF}、\hyperref[sec:isp_demosaic]{去马赛克}、\hyperref[sec:isp_rgb2yuv]{RGB2YUV}，对应 RAW、RGB、YUV 数据采样点，可通过 \hyperref[fielddesc:ISPHISTMODE]{ISP\_HIST\_MODE} 进行配置。当采样点选择 RGB 时，可通过 \hyperref[fielddesc:ISPHISTCOEFFR]{ISP\_HIST\_COEFF\_\textcolor{red}{R/G/B}} 配置 RGB 加权系数。
+
+\subsection{ISP\_Tail}
+ISP\_Tail 为后处理部分，其输入数据有两个输入源。两路输入最终都以 Image Interface 64 格式输出到 CSI\_Bridge。
+
+当 ISP 关闭时，ISP\_Tail 接收来自 MIPI CSI HOST 的 Image Interface 32 数据，将其转为 Image Interface 64 并输出到 CSI\_Bridge。输入的 Image Interface 32 数据可以通过
+\hyperref[fielddesc:ISPBYTEENDIANORDER]{ISP\_BYTE\_ENDIAN\_ORDER} 调整字节顺序。
+
+当 ISP 打开时，ISP\_Tail 接收来自 ISP\_Pipeline 的数据，并进行进一步处理输出到 CSI\_Bridge。这些处理包括：
+\begin{itemize}
+    \item 根据寄存器配置，将 RGB888 转为 RGB565
+    \item 根据寄存器配置，将 YUV422 转为 YUV420
+    \item 将 ISP\_Pipeline 的数据转为 Image Interface 64 格式
+\end{itemize}
+
+
+\subsection{时序控制}
+对于存在矩阵操作的模块，需要缓存多行数据再开始操作。其中，图像的最后几行数据缓存，需要模块产生输出时序来推出。通过 \hyperref[fielddesc:ISPBFTAILPIXENPULSETH]{ISP\_\textcolor{red}{BF/DEMOSAIC/SHARP}\_TAIL\_PIXEN\_PULSE\_\textcolor{red}{TH/TL}} 可以控制此时的输出时序，防止速度太快使后续的 CSI\_Bridge 缓存溢出。该寄存器设置过大时可能会打乱正常数据时序，请谨慎操作。其中 TH 必须要小于 \hyperref[fielddesc:ISPHADRNUM]{ISP\_HADR\_NUM}-1，推荐将 \hyperref[fielddesc:ISPBFTAILPIXENPULSETH]{ISP\_\textcolor{red}{BF/DEMOSAIC/SHARP}\_TAIL\_PIXEN\_PULSE\_\textcolor{red}{TH/TL}} 设置为小于等于 8。
+
+
+\subsection{影子寄存器}
+ISP 部分模块支持影子寄存器，具体模块如下：
+\begin{itemize}
+    \item BLC
+    \item DPC
+    \item BF
+    \item WBG
+    \item CCM
+    \item GAMMA
+    \item SHARP
+    \item COLOR
+\end{itemize}
+
+其中，GAMMA 的影子寄存器更新方式不可配，需严格按照小节 \ref{sec:isp_gamma} 中的描述操作。其余模块可通过 \hyperref[fielddesc:ISPSHADOWUPDATESEL]{ISP\_SHADOW\_UPDATE\_SEL} 配置影子寄存器更新方式。
+
+
+\subsection{CSI\_CM}
+对于 MIPI CSI 输入，通过配置\hyperref[regdesc:CSIBRIGHOSTCMCTRLREG]{CSI\_BRIG\_HOST\_CM\_CTRL\_REG}，可以借助 CSI\_CM 进行简单的数据转换，包括：
+\begin{itemize}
+    \item 数据高低 8-bit 翻转
+    \item 数据高低 16-bit 翻转
+    \item RGB888 颜色通道顺序调整，行像素量必须为 4 的倍数
+    \item RGB888 下采样到 RGB565，行像素量必须为 4 的倍数
+    \item RGB565 颜色通道顺序调整，行像素量必须为 2 的倍数
+    \item YUV422 颜色通道顺序调整，行像素量必须为 2 的倍数
+    \item YUV422 下采样到 YUV420，行像素量必须为 16 的倍数
+\end{itemize}
+
+该模块结构如图 \ref{fig:isp-csi-cm} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/isp_csi_cm.pdf}
+    \caption{\chipseries{} CSI CM 结构}
+    \label{fig:isp-csi-cm}
+\end{figure}
+
+
+\subsection{CSI\_Bridge}
+CSI\_Bridge 是 ISP 和系统存储器之间的接口，该模块借助 VDMA 将来自 ISP 的数据存储到系统存储器。整幅图像可以作为一个 block 传输，也可以分成多个 block 传输，通过 \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN} 和 \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE} 进行配置。
+
+\begin{itemize}
+    \item \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN} 配置一次 VDMA 传输 burst 长度包含的 64 位数据量。
+    \item \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE} 配置一个 VDMA 块传输包含的 VDMA burst 传输数量。若一帧图像只用一个 block 传输，此时一个 block 内包含 n 个 VDMA burst，则将该寄存器域配置为大于 n 的值。建议配置为最大值 0x1FFF。
+\end{itemize}
+
+\subsection{像素格式及字节排序}
+\subsubsection{输出像素排列格式}
+ISP 使能关闭后，ISP\_Tail 直接接收来自 MIPI CSI HOST 的 Image Interface 32 数据，其数据排列可参考章节 \ref{mod:mipicsi} \textit{\nameref{mod:mipicsi}}。在该情况下，CSI HOST 输出的 Image Interface 32 数据在 ISP\_Tail 和 CSI\_Bridge 可经过两级字节排序，详细可参考 \hyperref[sec:isp_byte_order]{字节排序}
+
+在 ISP 使能之后，经过 ISP\_Pipeline 处理后的输出数据，其排列格式如表 \ref{tab:isp_output_color_space} 所示，并最终按照该格式由 ISP 输出。
+
+\scriptsize
+\begin{longtable}[c]{ |p{2cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}| }
+    \caption{ISP 输出像素排列格式}
+    \label{tab:isp_output_color_space}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Color Mode} & \textbf{Addr + 7} & \textbf{Addr + 6} & \textbf{Addr + 5} & \textbf{Addr + 4} & \textbf{Addr + 3} & \textbf{Addr + 2} & \textbf{Addr + 1} & \textbf{Addr + 0} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{9}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Color Mode} & \textbf{Addr + 7} & \textbf{Addr + 6} & \textbf{Addr + 5} & \textbf{Addr + 4} & \textbf{Addr + 3} & \textbf{Addr + 2} & \textbf{Addr + 1} & \textbf{Addr + 0} \\\hline
+    \endhead
+
+    \multicolumn{9}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+        \textbf{RAW8} & \textbf{RAW7}[7:0] & \textbf{RAW6}[7:0] & \textbf{RAW5}[7:0] & \textbf{RAW4}[7:0] & \textbf{RAW3}[7:0] & \textbf{RAW2}[7:0] & \textbf{RAW1}[7:0] & \textbf{RAW0}[7:0] \\\hline
+        \multirow{3}{*}{\textbf{RGB888}} & \textbf{G2}[7:0] & \textbf{B2}[7:0] & \textbf{R1}[7:0] & \textbf{G1}[7:0] & \textbf{B1}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\cline{2-9}
+        & \textbf{B5}[7:0] & \textbf{R4}[7:0] & \textbf{G4}[7:0] & \textbf{B4}[7:0] & \textbf{R3}[7:0] & \textbf{G3}[7:0] & \textbf{B3}[7:0] & \textbf{R2}[7:0] \\\cline{2-9}
+        & \textbf{R7}[7:0] & \textbf{G7}[7:0] & \textbf{B7}[7:0] & \textbf{R6}[7:0] & \textbf{G6}[7:0] & \textbf{B6}[7:0] & \textbf{R5}[7:0] & \textbf{G5}[7:0] \\\hline
+        \textbf{RGB565} & \textbf{R3}[4:0]\textbf{G3}[5:3] & \textbf{G3}[2:0]\textbf{B3}[4:0] & \textbf{R2}[4:0]\textbf{G2}[5:3] & \textbf{G2}[2:0]\textbf{B2}[4:0]  & \textbf{R1}[4:0]\textbf{G1}[5:3] & \textbf{G1}[2:0]\textbf{B1}[4:0] & \textbf{R0}[4:0]\textbf{G0}[5:3] & \textbf{G0}[2:0]\textbf{B0}[4:0] \\\hline
+        \textbf{YUV422} & \textbf{Y3}[7:0] & \textbf{V2}[7:0] & \textbf{Y2}[7:0] & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{V0}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\（1、3、5...等\\奇数行）}} & \textbf{Y4}[7:0] & \textbf{U4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\cline{2-9}
+        & \textbf{U10}[7:0] & \textbf{Y9}[7:0] & \textbf{Y8}[7:0] & \textbf{U8}[7:0] & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{U6}[7:0] & \textbf{Y5}[7:0] \\\cline{2-9}
+        & \textbf{Y15}[7:0] & \textbf{Y14}[7:0] & \textbf{U14}[7:0] & \textbf{Y13}[7:0] & \textbf{Y12}[7:0] & \textbf{U12}[7:0] & \textbf{Y11}[7:0] & \textbf{Y10}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\（2、4、6...等\\偶数行）}} & \textbf{Y4}[7:0] & \textbf{V4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] & \textbf{V2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\cline{2-9}
+        & \textbf{V10}[7:0] & \textbf{Y9}[7:0] & \textbf{Y8}[7:0] & \textbf{V8}[7:0] & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{V6}[7:0] & \textbf{Y5}[7:0] \\\cline{2-9}
+        & \textbf{Y15}[7:0] & \textbf{Y14}[7:0] & \textbf{V14}[7:0] & \textbf{Y13}[7:0] & \textbf{Y12}[7:0] & \textbf{V12}[7:0] & \textbf{Y11}[7:0] & \textbf{Y10}[7:0] \\\hline
+
+\end{longtable}
+\normalsize
+
+
+\subsubsection{字节排序}
+\label{sec:isp_byte_order}
+CSI\_Bridge 可以通过 \hyperref[fielddesc:CSIBRIGBYTEENDIANORDER]{CSI\_BRIG\_BYTE\_ENDIAN\_ORDER} 对输入的 64 位数据按照字节进行重排。在 ISP\_Tail 内部也可通过 \hyperref[fielddesc:ISPBYTEENDIANORDER]{ISP\_BYTE\_ENDIAN\_ORDER} 对字节顺序进行重排。两者差异如下，作用效果如图 \ref{figure:isp_byte_endian} 所示。
+\begin{itemize}
+    \item ISP\_Tail 的字节排序作用于其 Image Interface 32 输入，将 32 位的输入数据的高低字节进行翻转后，再拼成 64 位数据输出。这个步骤只在 ISP 关闭时起作用，主要用于处理 Image Interface 32 的 YUV422、YUV420 输入类型。
+    \item CSI\_Bridge 的字节排序作用于 64 位的输入数据（即 ISP\_Tail 的输出数据），将其高低字节进行翻转。
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/isp_byte_endian.pdf}
+    \caption{字节顺序}
+    \label{figure:isp_byte_endian}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+
+\chipname{} 的 ISP 可以生成以下中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item isp\_interrupt
+        \item csi\_bridge\_interrupt
+    \end{itemize}
+
+这些中断信号由 ISP 的内部中断源生成。表 \ref{tab:isp-int-sources} 列出了 ISP 的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{5.6cm} | L{5.8cm} | L{3cm} | }
+    \caption{ISP 内部中断源}
+    \label{tab:isp-int-sources}\\ \hline
+
+    \rowcolor{lightgray}
+    \textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+    \endfirsthead
+
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+    ISP\_CROP\_ERR\_INT & 裁剪模块窗口配置错误 & isp\_interrupt \\ \hline
+    ISP\_WBG\_FRAME\_INT & 白平衡增益处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_CROP\_FRAME\_INT & 裁剪处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_HEADER\_IDI\_FRAME\_INT & MIPI-CSI 输入一帧结束。该中断不会受 \hyperref[fielddesc:ISPMIPIDATAEN]{ISP\_MIPI\_DATA\_EN} 开关影响 & isp\_interrupt \\ \hline
+    ISP\_TAIL\_IDI\_FRAME\_INT & ISP\_Tail 输出一帧结束 & isp\_interrupt \\ \hline
+    ISP\_YUV2RGB\_FRAME\_INT & YUV 转 RGB 处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_COLOR\_FRAME\_INT & 对比度／色相／饱和度／亮度处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_SHARP\_FRAME\_INT & 锐化处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_RGB2YUV\_FRAME\_INT & RGB 转 YUV 处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_GAMMA\_FRAME\_INT & gamma 处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_CCM\_FRAME\_INT & 颜色矫正矩阵处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_DEMOSAIC\_FRAME\_INT & Demosaic 处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_BF\_FRAME\_INT & 拜耳域降噪处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_DPC\_FRAME\_INT & 坏点矫正处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_LSC\_FRAME\_INT & 镜头阴影矫正处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_BLC\_FRAME\_INT & 黑电平矫正处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_FRAME\_INT & ISP\_Pipeline 输出一帧结束 & isp\_interrupt \\ \hline
+    ISP\_HIST\_FDONE\_INT & 直方图处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_AWB\_FDONE\_INT & 自动白平衡统计处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_AF\_ENV\_INT & 自动对焦统计监测到对焦场景变化 & isp\_interrupt \\ \hline
+    ISP\_AF\_FDONE\_INT & 自动对焦统计处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_AE\_FRAME\_DONE\_INT & 自动曝光统计处理一帧结束 & isp\_interrupt \\ \hline
+    ISP\_AE\_MONITOR\_INT & 自动曝光统计监测的亮度发生变化 & isp\_interrupt \\ \hline
+    ISP\_GAMMA\_XCOORD\_ERR\_INT & GAMMA 参数设置错误，\hyperref[fielddesc:ISPGAMMARX00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_X\textcolor{red}{00-0F}} 设置的 X 长度和不等于 256 & isp\_interrupt \\ \hline
+    ISP\_DPC\_CHECK\_DONE\_INT & DPC 静态标定一帧结束 & isp\_interrupt \\ \hline
+    ISP\_MIPI\_HNUM\_UNMATCH\_INT & 宽度 HNUM 设置和 MIPI-CSI 实际输入不匹配 & isp\_interrupt \\ \hline
+    ISP\_DATA\_TYPE\_SETTING\_ERR\_INT & DATA\_TYPE 设置错误，和实际不匹配 & isp\_interrupt \\ \hline
+    ISP\_HVNUM\_SETTING\_ERR\_INT & 宽度 HNUM 和 高度 VNUM 设置错误：图像尺寸必须是偶数，且 RAW10 输入时，HNUM 需为 4 的倍数 & isp\_interrupt \\ \hline
+    ISP\_BUF\_FULL\_INT & ISP\_Header 的缓存已满 & isp\_interrupt \\ \hline
+    ISP\_ASYNC\_FIFO\_OVF\_INT & ISP\_Header 的异步 FIFO 溢出 & isp\_interrupt \\ \hline
+    ISP\_DATA\_TYPE\_ERR\_INT & 输入数据使用了非法的 DATA\_TYPE（非 RAW8／RAW10／RAW12） & isp\_interrupt \\ \hline
+    CSI\_BRIG\_DMA\_CFG\_HAS\_          UPDATED\_INT & CSI\_Bridge 的 VDMA 配置已经更新  & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_CSI\_ASYNC\_FIFO\_OVF\_  INT & CSI\_Bridge 异步 FIFO 溢出 & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_CSI\_BUF\_OVERRUN\_INT & CSI\_Bridge 的 缓存溢出 & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_DISCARD\_INT & 发生帧丢弃 & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_VADR\_NUM\_LT\_INT & 配置的 \hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM} 小于实际值 & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_VADR\_NUM\_GT\_INT & 配置的 \hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM} 大于实际值 & csi\_bridge\_interrupt \\\hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:isp-reg-summ} \textit{\nameref{sec:isp-reg-summ}} 以及 \ref{sec:isp-reg-summ} \textit{\nameref{sec:isp-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:isp-prog-procedures}
+
+\subsection{ISP 时钟复位配置}
+\label{sec:isp_clkrst_proc}
+\begin{enumerate}
+    \item 打开 ISP、CSI\_Bridge 模块的总线时钟；
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:HPSYSCLKRSTCSIBRGSYSCLKEN]{HP\_SYS\_CLKRST\_CSI\_BRG\_SYS\_CLK\_EN} 写 1 打开 ISP 和 CSI\_Bridge 时钟
+    \end{itemize}
+    \item 配置 ISP 工作时钟；
+    \begin{itemize}
+        \item 通过 \hyperref[fielddesc:HPSYSCLKRSTISPCLKSRCSEL]{HP\_SYS\_CLKRST\_ISP\_CLK\_SRC\_SEL} 选择工作时钟源
+        \item 通过 \hyperref[fielddesc:HPSYSCLKRSTISPCLKDIVNUM]{HP\_SYS\_CLKRST\_ISP\_CLK\_DIV\_NUM} 配置分频系数
+        \item 向 \hyperref[fielddesc:HPSYSCLKRSTISPCLKEN]{HP\_SYS\_CLKRST\_ISP\_CLK\_EN} 写 1 打开 ISP 工作时钟
+    \end{itemize}
+    \item 复位 ISP、CSI\_Bridge 模块。
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:HPSYSCLKRSTRSTENCSIBRG]{HP\_SYS\_CLKRST\_RST\_EN\_CSI\_BRG} 写 1 再 0 复位 ISP 和 CSI\_Bridge
+    \end{itemize}
+\end{enumerate}
+
+\subsection{CSI\_Bridge 配置}
+\label{sec:isp_csi_bridge_proc}
+\begin{enumerate}
+    \item 通过 \hyperref[fielddesc:CSIBRIGHADRNUM]{CSI\_BRIG\_HADR\_NUM}、\hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM} 配置图像宽度和高度。其中，宽度单位为“64 位”，高度单位为“行”；
+
+    \item 通过 \hyperref[fielddesc:CSIBRIGDATATYPEMIN]{CSI\_BRIG\_DATA\_TYPE\_MIN}、\hyperref[fielddesc:CSIBRIGDATATYPEMAX]{CSI\_BRIG\_DATA\_TYPE\_MAX} 设置 DATA\_TYPE 有效范围；
+
+    \item 通过 \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN} 配置 burst 长度，该配置需要与 VDMA 对应通道的 SRC\_MSIZE（一次 burst 传输长度）以及 SRC\_TR\_WIDTH（数据宽度）匹配。其中，CSI\_Bridge 的数据宽度按照 64 位计算；
+
+    \item 若将一幅图像分为多个 block 传输，通过 \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE} 设置每个 block 最大会分成多少次 VDMA 的 burst；
+
+    \item 向 \hyperref[fielddesc:CSIBRIGCSIBRIGEN]{CSI\_BRIG\_CSI\_BRIG\_EN} 写 1 使能 CSI\_Bridge。
+\end{enumerate}
+
+\subsection{VDMA 配置}
+\label{sec:isp_vdma_proc}
+\begin{enumerate}
+    \item 配置对应通道寄存器；
+    \begin{itemize}
+        \item SRC/DST\_MULTBLK\_TYPE 设置为 3（使用链表配置）
+        \item TT\_FC 设置
+        \begin{itemize}
+            \item 对于 CSI\_Bridge，TT\_FC 设置为 4（从外设搬运到 memory，外设作为流控）
+            \item 对于 memory 输入到 ISP，TT\_FC 设置为 6（从 memory 搬运到外设，外设作为流控）
+        \end{itemize}
+        \item HS\_SEL 设置
+        \begin{itemize}
+            \item 对于 CSI\_Bridge，HS\_SEL\_SRC 设置为 0（外设使用硬件握手），HS\_SEL\_DST 设置为 1（memory 使用软件握手）
+            \item 对于 memory 输入到 ISP，HS\_SEL\_SRC 设置为 1（memory 使用软件握手），HS\_SEL\_DST 设置为 0（外设使用硬件握手）
+        \end{itemize}
+        \item 硬件握手通道设置
+        \begin{itemize}
+            \item 对于 CSI\_Bridge，SRC\_PER 设置为 1
+            \item 对于 memory 输入到 ISP，DST\_PER 设置为 2
+        \end{itemize}
+        \item SRC/DST\_TR\_WIDTH 设置为 3（数据宽度 64）
+    \end{itemize}
+
+    \item 根据寄存器配置设置链表。
+\end{enumerate}
+
+\begin{tiplisting}
+    本章节中的 VDMA 配置只涉及一些关键步骤，详细流程可参考章节 \ref{mod:vdma} \textit{\nameref{mod:vdma}}。\\
+    图像尺寸以及起始地址均需 8 字节对齐。
+\end{tiplisting}
+
+\subsection{ISP 通用配置}
+\label{sec:isp_common_proc}
+\begin{enumerate}
+    \item 通过 \hyperref[fielddesc:ISPHADRNUM]{ISP\_HADR\_NUM}、\hyperref[fielddesc:ISPVADRNUM]{ISP\_VADR\_NUM} 配置输入图像尺寸；
+
+    \item 通过 \hyperref[fielddesc:ISPBAYERMODE]{ISP\_BAYER\_MODE} 配置拜耳图像排列模式；
+
+    \item 通过 \hyperref[fielddesc:ISPOUTTYPE]{ISP\_OUT\_TYPE} 配置 ISP 输出数据格式；
+
+    \item 完成 ISP\_Pipeline 各模块配置，详细可参考 \ref{sec:isp_pipeline} 对应章节；
+
+    \item 通过寄存器 \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG} 各域打开所需 Pipeline 模块的开关。其中，格式转换相关模块（\hyperref[sec:isp_demosaic]{Demosaic}、\hyperref[sec:isp_rgb2yuv]{RGB 转 YUV}、\hyperref[sec:isp_yuv2rgb]{YUV 转 RGB}）必须在 ISP 使能前就打开相应开关，且必须与最终输出格式匹配。
+\end{enumerate}
+
+\subsection{从 MIPI-CSI 获取图像时打开 ISP}
+\begin{enumerate}
+    \item 参考小节 \ref{sec:isp_clkrst_proc} 配置 ISP 和 CSI\_Bridge 时钟复位；
+
+    \item 参考小节 \ref{sec:isp_csi_bridge_proc} 配置 CSI\_Bridge；
+
+    \item 参考小节 \ref{sec:isp_vdma_proc} 配置 VDMA；
+
+    \item 配置 MIPI CSI HOST，详见章节 \ref{mod:mipicsi}；
+
+    \item 参考小节 \ref{sec:isp_common_proc} 配置 ISP 公共配置；
+
+    \item 向 \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} 写 0 选择输入源为 MIPI-CSI；
+
+    \item 通过 \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 配置输入数据类型；
+
+    \item 向 \hyperref[fielddesc:ISPEN]{ISP\_EN} 写 1 使能 ISP；
+
+    \item 向 \hyperref[fielddesc:ISPMIPIDATAEN]{ISP\_MIPI\_DATA\_EN} 写 1 打开 MIPI-CSI 数据开关。
+\end{enumerate}
+
+\subsection{从 DVP 获取图像时打开 ISP}
+\begin{enumerate}
+    \item 参考小节 \ref{sec:isp_clkrst_proc} 配置 ISP 和 CSI\_Bridge 时钟复位；
+
+    \item 参考小节 \ref{sec:isp_csi_bridge_proc} 配置 CSI\_Bridge；
+
+    \item 参考小节 \ref{sec:isp_vdma_proc} 配置 VDMA；
+
+    \item 参考小节 \ref{sec:isp_common_proc} 配置 ISP 公共配置；
+
+    \item 向 \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} 写 1 选择输入源为 DVP；
+
+    \item 通过 \hyperref[fielddesc:ISPCAMDATATYPE]{ISP\_CAM\_DATA\_TYPE} 配置输入数据类型，向 \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 写 0；
+
+    \item 向 \hyperref[fielddesc:ISPEN]{ISP\_EN} 写 1 使能 ISP；
+
+    \item 通过 \hyperref[regdesc:ISPCAMCONFREG]{ISP\_CAM\_CONF\_REG} 配置 DVP 接口数据模式；
+
+    \item 向 \hyperref[fielddesc:ISPCAMRESET]{ISP\_CAM\_RESET} 写 1，等待一段时间再写 0，经过一段时间完成复位 DVP 接口；
+
+    \item 向 \hyperref[fielddesc:ISPCAMUPDATEREG]{ISP\_CAM\_UPDATE\_REG} 写 1；
+
+    \item 向 \hyperref[fielddesc:ISPCAMEN]{ISP\_CAM\_EN} 写 1 使能 DVP 接口；
+
+    \item 等待 \hyperref[fielddesc:ISPCAMUPDATEREG]{ISP\_CAM\_UPDATE\_REG} 自动清零完成初始化。
+\end{enumerate}
+
+
+\subsection{从 VDMA 获取图像时打开 ISP}
+\begin{enumerate}
+    \item 参考小节 \ref{sec:isp_clkrst_proc} 配置 ISP 和 CSI\_Bridge 时钟复位；
+
+    \item 参考小节 \ref{sec:isp_csi_bridge_proc} 配置 CSI\_Bridge；
+
+    \item 参考小节 \ref{sec:isp_vdma_proc} 配置 VDMA；
+
+    \item 参考小节 \ref{sec:isp_common_proc} 配置 ISP 公共配置；
+
+    \item 向 \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} 写 2 选择输入源为 VDMA；
+
+
+    \item 通过 \hyperref[fielddesc:ISPDMADATATYPE]{ISP\_DMA\_DATA\_TYPE}、\hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} 配置输入数据类型；
+
+    \item 通过 \hyperref[fielddesc:ISPDMARAWNUMTOTAL]{ISP\_DMA\_RAW\_NUM\_TOTAL} 配置一帧图像数据量，单位为“64 位”，该值需要等于图像宽度 x 图像高度 x 每个像素位数/64，再向 \hyperref[fielddesc:ISPDMARAWNUMTOTALSET]{ISP\_DMA\_RAW\_NUM\_TOTAL\_SET} 写 1 生效配置；
+
+    \item 通过 \hyperref[fielddesc:ISPDMABURSTLEN]{ISP\_DMA\_BURST\_LEN} 配置 burst 长度，该配置需要与 VDMA 配置一致；
+
+    \item 向 \hyperref[fielddesc:ISPDMAUPDATEREG]{ISP\_DMA\_UPDATE\_REG} 写 1 更新 VDMA 配置，等待一段时间完成更新；
+
+    \item 向 \hyperref[fielddesc:ISPDMAEN]{ISP\_DMA\_EN} 写 1 发送一帧数据。
+\end{enumerate}
+
+\subsection{LSC LUT 配置}
+LSC 可以在 ISP 开启后再进行配置。在打开 LSC 前需要初始化 LSC 的 LUT。
+\begin{enumerate}
+    \item 写 LUT；
+    \begin{itemize}
+        \item 向 \hyperref[regdesc:ISPLUTWDATAREG]{ISP\_LUT\_WDATA\_REG} 写入将要存入 LUT 的数据
+        \item 写 \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG} 发起写操作，将数据写入对应地址
+\end{itemize}
+
+    \item 读 LUT。
+    \begin{itemize}
+        \item 写 \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG} 发起读操作，读取对应地址的数据
+        \item 读 \hyperref[regdesc:ISPLUTRDATAREG]{ISP\_LUT\_RDATA\_REG} 获取读出数据
+    \end{itemize}
+\end{enumerate}
+
+
+
+\subsection{AE 配置}
+AE 可以在 ISP 开启后再进行配置。
+\begin{enumerate}
+    \item 通过 \hyperref[fielddesc:ISPAESELECT]{ISP\_AE\_SELECT} 选择采样点；
+
+    \item 设置统计窗口；
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPAEXSTART]{ISP\_AE\_X\_START} 设置窗口水平方向起始点
+        \item \hyperref[fielddesc:ISPAEXBSIZE]{ISP\_AE\_X\_BSIZE} 设置每一个子窗口水平方向尺寸
+        \item \hyperref[fielddesc:ISPAEYSTART]{ISP\_AE\_Y\_START} 设置窗口垂直方向起始点
+        \item \hyperref[fielddesc:ISPAEYBSIZE]{ISP\_AE\_Y\_BSIZE} 设置每一个子窗口垂直方向尺寸
+        \item \hyperref[fielddesc:ISPAESUBWINPIXNUM]{ISP\_AE\_SUBWIN\_PIXNUM} 设置每一个子窗口包含的像素点个数
+        \item \hyperref[fielddesc:ISPAESUBWINRECIP]{ISP\_AE\_SUBWIN\_RECIP} 设置每一个子窗口包含的像素点个数的倒数，20 位小数
+    \end{itemize}
+
+    \item 设置亮度监测功能；
+    \begin{itemize}
+        \item 若需要打开监测，将 \hyperref[fielddesc:ISPAEMONITORTH]{ISP\_AE\_MONITOR\_TH} 和 \hyperref[fielddesc:ISPAEMONITORTL]{ISP\_AE\_MONITOR\_TL} 设置为非 0
+        \item \hyperref[fielddesc:ISPAEMONITORPERIOD]{ISP\_AE\_MONITOR\_PERIOD} 设置监测统计周期，单位为帧数
+    \end{itemize}
+
+    \item 向 \hyperref[fielddesc:ISPAEEN]{ISP\_AE\_EN} 写 1 打开 AE；
+
+    \item 获取统计结果；
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:ISPAEFRAMEDONEINTCLR]{ISP\_AE\_FRAME\_DONE\_INT\_CLR} 写 1 清空统计完成状态
+        \item 向 \hyperref[fielddesc:ISPAEUPDATE]{ISP\_AE\_UPDATE} 写 1 发起一次统计。每次向该寄存器写 1 都会清空监测功能的帧数计数。推荐在需要手动统计时关闭监测功能，统计完成后再打开，以免未及时读出统计结果时，监测统计结果覆盖掉手动统计结果
+        \item 等待统计完成
+        \begin{itemize}
+            \item 可等待 AE\_FDONE\_INT 导致的 ISP 中断
+            \item 或者查询 \hyperref[fielddesc:ISPAEFRAMEDONEINTRAW]{ISP\_AE\_FRAME\_DONE\_INT\_RAW} 状态
+        \end{itemize}
+        \item 读取 \hyperref[fielddesc:ISPAEB00MEAN]{ISP\_AE\_B\textcolor{red}{xx}\_MEAN} 获得各子窗口统计结果
+    \end{itemize}
+
+    \item 亮度监测处理。
+    \begin{itemize}
+        \item 可等待 AE\_MONITOR\_INT 导致的 ISP 中断
+        \item 或者查询 \hyperref[fielddesc:ISPAEMONITORINTRAW]{ISP\_AE\_MONITOR\_INT\_RAW} 状态
+        \item 触发亮度监测变化后，关闭亮度监测功能，重新进行摄像头曝光，之后再重新打开
+    \end{itemize}
+\end{enumerate}
+
+\subsection{AF 配置}
+AF 可以在 ISP 开启后再进行配置。
+\begin{enumerate}
+    \item 设置 A、B、C 三个统计窗口，每个窗口都不要超过 1024 x 1024；
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPAFLPOINTA]{ISP\_AF\_LPOINT\_\textcolor{red}{A/B/C}} 设置三个窗口的左边界
+        \item \hyperref[fielddesc:ISPAFRPOINTA]{ISP\_AF\_RPOINT\_\textcolor{red}{A/B/C}} 设置三个窗口的右边界
+        \item \hyperref[fielddesc:ISPAFTPOINTA]{ISP\_AF\_TPOINT\_\textcolor{red}{A/B/C}} 设置三个窗口的上边界
+        \item \hyperref[fielddesc:ISPAFBPOINTA]{ISP\_AF\_BPOINT\_\textcolor{red}{A/B/C}} 设置三个窗口的下边界
+    \end{itemize}
+
+    \item 通过 \hyperref[fielddesc:ISPAFTHRESHOLD]{ISP\_AF\_THRESHOLD} 设置清晰度阈值；
+
+    \item 设置对焦场景监测功能；
+    \begin{itemize}
+        \item 若需打开对焦场景监测功能，将监测周期 \hyperref[fielddesc:ISPAFENVPERIOD]{ISP\_AF\_ENV\_PERIOD} 设置为非 0
+        \item 设置阈值有如下两种方式
+        \begin{itemize}
+            \item 若 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} 或 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} 不为 0，则使用对应设置值作为清晰度、亮度的变化阈值
+            \item 若 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} 或 \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} 为 0，则使用最近统计结果的清晰度、亮度乘上 \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD}（4 位小数）作为变化阈值
+        \end{itemize}
+    \end{itemize}
+
+    \item 设置统计触发方式，每一次触发统计完成后都会更新监测的基准值；
+    \begin{itemize}
+        \item 若 \hyperref[fielddesc:ISPAFAUTOUPDATE]{ISP\_AF\_AUTO\_UPDATE} 为 1，则为自动触发，在 AF 使能后每一帧都会进行一次统计。由于每一次统计都会清空一次监测功能的帧数计数，因此此时监测功能会失效
+        \item 若 \hyperref[fielddesc:ISPAFAUTOUPDATE]{ISP\_AF\_AUTO\_UPDATE} 为 0，使用手动触发。监测功能只有在此前提下才有效
+    \end{itemize}
+
+    \item 向 \hyperref[fielddesc:ISPAFEN]{ISP\_AF\_EN} 写 1 使能 AF；
+
+    \item 获取统计结果；
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:ISPAFFDONEINTCLR]{ISP\_AF\_FDONE\_INT\_CLR} 写 1 清空统计完成状态
+        \item 触发统计
+        \begin{itemize}
+            \item 若使用自动触发，每一帧都会进行统计
+            \item 若使用手动统计，向 \hyperref[fielddesc:ISPAFMANUALUPDATE]{ISP\_AF\_MANUAL\_UPDATE} 写 1 触发一次统计
+        \end{itemize}
+        \item 等待统计完成
+        \begin{itemize}
+            \item 可等待 AF\_FDONE\_INT 导致的 ISP 中断
+            \item 或者查询 \hyperref[fielddesc:ISPAFFDONEINTRAW]{ISP\_AF\_FDONE\_INT\_RAW} 状态
+        \end{itemize}
+        \item 读取 \hyperref[fielddesc:ISPAFSUMA]{ISP\_AF\_SUM\textcolor{red}{A/B/C}} 获取清晰度统计结果，读取 \hyperref[fielddesc:ISPAFLUMA]{ISP\_AF\_LUM\textcolor{red}{A/B/C}} 获取亮度统计结果
+    \end{itemize}
+
+    \item 对焦场景监测处理。
+    \begin{itemize}
+        \item 可等待 AF\_ENV\_INT 导致的 ISP 中断
+        \item 或者查询 \hyperref[fielddesc:ISPAFENVINTRAW]{ISP\_AF\_ENV\_INT\_RAW} 状态
+        \item 触发对焦场景监测变化后，关闭监测功能，重新进行摄像头对焦，之后再重新打开
+    \end{itemize}
+\end{enumerate}
+
+\subsection{AWB 配置}
+AWB 可以在 ISP 开启后再进行配置。
+\begin{enumerate}
+    \item 通过 \hyperref[fielddesc:ISPAWBSAMPLE]{ISP\_AWB\_SAMPLE} 选择采样点，向 \hyperref[fielddesc:ISPAWBMODE]{ISP\_AWB\_MODE} 写 1；
+
+    \item 设置统计窗口；
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPAWBLPOINT]{ISP\_AWB\_LPOINT} 设置窗口的左边界
+        \item \hyperref[fielddesc:ISPAWBRPOINT]{ISP\_AWB\_RPOINT} 设置窗口的右边界
+        \item \hyperref[fielddesc:ISPAWBTPOINT]{ISP\_AWB\_TPOINT} 设置窗口的上边界
+        \item \hyperref[fielddesc:ISPAWBBPOINT]{ISP\_AWB\_BPOINT} 设置窗口的下边界
+    \end{itemize}
+
+    \item 设置白点约束；
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPAWBMAXLUM]{ISP\_AWB\_MAX\_LUM} 设置白点亮度上限
+        \item \hyperref[fielddesc:ISPAWBMINLUM]{ISP\_AWB\_MIN\_LUM} 设置白点亮度下限
+        \item \hyperref[fielddesc:ISPAWBMAXRG]{ISP\_AWB\_MAX\_RG} 设置白点 R/G 比值上限，2 位整数，8 位小数
+        \item \hyperref[fielddesc:ISPAWBMINRG]{ISP\_AWB\_MIN\_RG} 设置白点 R/G 比值下限，2 位整数，8 位小数
+        \item \hyperref[fielddesc:ISPAWBMAXBG]{ISP\_AWB\_MAX\_BG} 设置白点 B/G 比值上限，2 位整数，8 位小数
+        \item \hyperref[fielddesc:ISPAWBMINBG]{ISP\_AWB\_MIN\_BG} 设置白点 B/G 比值下限，2 位整数，8 位小数
+    \end{itemize}
+
+    \item 获取统计结果。
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:ISPAWBFDONEINTCLR]{ISP\_AWB\_FDONE\_INT\_CLR} 写 1 清空统计完成状态
+        \item 向 \hyperref[fielddesc:ISPAWBEN]{ISP\_AWB\_EN} 写 0 再写 1 触发统计
+        \item 等待统计完成
+        \begin{itemize}
+            \item 可等待 AWB\_FDONE\_INT 导致的 ISP 中断
+            \item 或者查询 \hyperref[fielddesc:ISPAWBFDONEINTRAW]{ISP\_AWB\_FDONE\_INT\_RAW} 状态
+        \end{itemize}
+        \item 读取 \hyperref[fielddesc:ISPAWB0WHITECNT]{ISP\_AWB0\_WHITE\_CNT} 获取统计窗口内白点数量，读取 \hyperref[fielddesc:ISPAWB0ACCR]{ISP\_AWB0\_ACC\_\textcolor{red}{R/G/B}} 获取统计窗口内白点的 R、G、B 分量累加值
+    \end{itemize}
+\end{enumerate}
+
+\subsection{HIST 配置}
+HIST 可以在 ISP 开启后再进行配置。
+\begin{enumerate}
+    \item 通过 \hyperref[fielddesc:ISPHISTMODE]{ISP\_HIST\_MODE} 选择采样点；
+    \begin{itemize}
+        \item 若采样点设置为 RGB，则通过 \hyperref[fielddesc:ISPHISTCOEFFR]{ISP\_HIST\_COEFF\_\textcolor{red}{R/G/B}} 设置 RGB 权重，8 位小数
+    \end{itemize}
+
+    \item 设置统计窗口；
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPHISTXOFFS]{ISP\_HIST\_X\_OFFS} 设置窗口水平方向起始点
+        \item \hyperref[fielddesc:ISPHISTXSIZE]{ISP\_HIST\_X\_SIZE} 设置每一个子窗口水平方向尺寸
+        \item \hyperref[fielddesc:ISPHISTYOFFS]{ISP\_HIST\_Y\_OFFS} 设置窗口垂直方向起始点
+        \item \hyperref[fielddesc:ISPHISTYSIZE]{ISP\_HIST\_Y\_SIZE} 设置每一个子窗口垂直方向尺寸
+    \end{itemize}
+
+    \item 设置直方图；
+    \begin{itemize}
+        \item 通过 \hyperref[fielddesc:ISPHISTSEG01]{ISP\_HIST\_SEG\_\textcolor{red}{x}\_\textcolor{red}{x}} 设置直方图每一个区间划分
+        \item 通过 \hyperref[fielddesc:ISPHISTWEIGHT00]{ISP\_HIST\_WEIGHT\_\textcolor{red}{xx}} 设置每一个子窗口权重，8 位小数
+    \end{itemize}
+
+    \item 向 \hyperref[fielddesc:ISPHISTEN]{ISP\_HIST\_EN} 写 1 使能 HIST；
+
+    \item 获取统计结果。
+    \begin{itemize}
+        \item 向 \hyperref[fielddesc:ISPHISTFDONEINTCLR]{ISP\_HIST\_FDONE\_INT\_CLR} 写 1 清空统计完成状态
+        \item HIST 使能后，每一帧都会进行统计。等待统计完成
+        \begin{itemize}
+            \item 可等待 HIST\_FDONE\_INT 导致的 ISP 中断
+            \item 或者查询 \hyperref[fielddesc:ISPHISTFDONEINTRAW]{ISP\_HIST\_FDONE\_INT\_RAW} 状态
+        \end{itemize}
+        \item 读取 \hyperref[fielddesc:ISPHISTBIN0]{ISP\_HIST\_BIN\_\textcolor{red}{x}} 获取各区间统计结果
+    \end{itemize}
+\end{enumerate}
+
+\subsection{更新 ISP\_Pipeline 模块配置}
+\begin{enumerate}
+    \item 禁用 \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG} 对应模块；
+    \item 等待模块中断；
+    \item 更新模块配置；
+    \item 重新使能模块。
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{isp-reg-summ}{}
+\section{寄存器列表}
+\label{sec:isp-reg-summ}
+
+\subsection{ISP 寄存器列表}
+
+本小节的所有地址均为相对于 \textbf{ISP} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/37-ISP-reg-summ-latest__CN}
+
+
+\subsection{MIPI CSI\_Bridge 寄存器列表}
+
+本小节的所有地址均为相对于 \textbf{MIPI CSI\_Bridge} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/37-ISP_MIPI_CSI_BRIG-reg_summ-latest__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+\subsection{ISP 寄存器}
+
+本小节的所有地址均为相对于 \textbf{ISP} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subfile{\modulefiles/37-ISP-reg-latest__CN}
+
+
+\subsection{MIPI CSI\_Bridge 寄存器}
+
+本小节的所有地址均为相对于 \textbf{MIPI CSI\_Bridge} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/37-ISP_MIPI_CSI_BRIG-reg-latest__CN}
+
+
+\end{document}

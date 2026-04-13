@@ -1,0 +1,877 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-H2/36-MCPWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{mcpwm}{}
+\chapter{电机控制脉宽调制器 (MCPWM)}
+\label{mod:mcpwm}
+
+
+\section{概述}
+电机控制脉宽调制器 (MCPWM) 外设用于电机和电源控制。该外设提供了 6 个 PWM 输出，可在几种拓扑结构中运行。常见的拓扑结构之一是用一对 PWM 输出来驱动 H 桥以控制电机旋转速度和旋转方向。
+
+MCPWM 外设主要分为五个子模块：PWM 定时器、PWM 操作器、捕获模块、事件矩阵 (Event Task Matrix, ETM) 模块、故障检测模块。PWM 定时器提供参考时序，可以自由运行，或同步到其他定时器或外部源。PWM 操作器包含为一个 PWM 通道生成波形对的所有控制资源。捕获模块用于需要精确定时外部事件的系统。ETM 模块对输入到 MCPWM 的任务做出相应的响应动作，根据不同的运动状态产生相应的事件。故障检测模块用于捕获外部故障，使得系统可以选择做出响应。
+
+\chipname{} 有一个 MCPWM 外设，为 MCPWM0。
+
+\section{主要特性}
+
+MCPWM 外设有一个时钟分频器（预分频器）、三个 PWM 定时器、三个 PWM 操作器、一个捕获模块、一个 ETM 模块和一个故障检测模块。MCPWM的主时钟可以从三个时钟源中任选其一，分别为：PLL\_F96M\_CLK, XTAL\_CLK 和 RC\_FAST\_CLK（通过PCR寄存器的PWM\_CLKM\_SEL字段配置）。图 \ref{fig:mcpwm-overview} 描述了 MCPWM 内的模块和接口上的信号。PWM 定时器用于生成定时参考，PWM 操作器将根据生成的定时参考生成所需的波形。通过配置，任一 PWM 操作器可以使用任一 PWM 定时器的定时参考。不同的 PWM 操作器可以使用相同的 PWM 定时器的定时参考产生 PWM 信号，也可以使用不同的 PWM 定时器的值来生成单独的 PWM 信号。不同的 PWM 定时器可以进行同步。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-overview.eps}
+    \caption{MCPWM 外设概览}
+    \label{fig:mcpwm-overview}
+\end{figure}
+
+以下是图 \ref{fig:mcpwm-overview} 中模块的功能概述：
+
+\begin{itemize}
+    \item PWM 定时器 0、1 和 2：
+        \begin{itemize}
+            \item 每个 PWM 定时器都有一个专用的 8 位时钟预分频器
+            \item PWM 定时器中的 16 位计数器的工作模式包括：递增计数模式，递减计数模式，递增递减循环计数模式
+            \item 硬件/软件同步可以触发 PWM 定时器重载，重载值位于相位寄存器中；同时触发预分频的重启，从而同步定时器的时钟。硬件同步源可以来自任何 GPIO 或任何其他 PWM 定时器的 sync\_out 信号。软件同步源通过向 \hyperref[fielddesc:MCPWMTIMER0SYNCSW]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_SYNC\_SW} 位写入取反值获取。
+        \end{itemize}
+    \item PWM 操作器 0、1 和 2：
+        \begin{itemize} 
+            \item 每个 PWM 操作器有两个 PWM 输出（PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B），可以在对称和非对称配置中独立工作
+            \item 可以通过异步方式更新对 PWM 信号的控制
+            \item 死区时间在上升沿和下降沿可配置，并可分别设置
+            \item 所有事件都可触发 CPU 中断
+            \item 通过高频载波信号调制 PWM 输出，在使用变压器隔离栅极驱动器时可发挥巨大作用
+            \item 周期、时间戳寄存器和其他主要的控制寄存器有影子寄存器，具有灵活的更新方式
+        \end{itemize} 
+    \item 故障检测模块：
+        \begin{itemize} 
+            \item 出现故障时，可选择在逐周期模式或一次性模式下处理
+            \item 故障条件可强制 PWM 输出高或低电平
+        \end{itemize}
+    \item 捕获模块：
+        \begin{itemize}
+            \item 捕获模块的时钟为 MCPWM 的主时钟
+            \item 旋转电机的速度测量
+            \item 位置传感器脉冲之间的间隔时间测量
+            \item 脉冲序列信号的周期和占空比测量
+            \item 从电流/电压传感器的占空比编码信号导出的解码电流或电压振幅
+            \item 3 个独立的捕获通道，各具备一个 32 位的时间戳寄存器
+            \item 输入捕获信号可以预分频，边沿极性可选
+            \item 捕获定时器可以与 PWM 定时器或外部信号同步
+            \item 3 个捕获通道上都可以产生中断
+        \end{itemize}
+    \item ETM 模块：
+        \begin{itemize}
+            \item 根据每个定时器和操作器不同的运行状态，产生不同的事件
+            \item 每个定时器和操作器响应其对应的任务，自动进行相应的操作
+            \item 每个事件和任务都可以独立使能。某个事件不使能时，不产生对应的事件；某个任务不使能时，不响应对应的任务
+        \end{itemize}
+\end{itemize}
+\clearpage
+
+\section{模块}
+\subsection{概述}
+
+本节提供 MCPWM 关键模块的主要配置参数。调整特定参数，例如 PWM 定时器的同步源，请参考章节 \ref{sec:mcpwm-timer-sub}。
+
+\subsubsection{预分频器模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/36-MCPWM-subm-presc.eps}
+    \caption{预分频器模块}
+    \label{fig:mcpwm-subm-presc}
+\end{figure}
+
+配置参数：
+\begin{itemize}
+    \item 对 PWM\_CORE\_CLK 进行分频。
+\end{itemize}
+
+\subsubsection{定时器模块}
+    
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-subm-timer.eps}
+    \caption{定时器模块}
+    \label{fig:mcpwm-subm-timer}
+\end{figure}
+
+配置参数：
+\begin{itemize}
+    \item 配置 PWM 定时器的频率或周期
+    \item 配置定时器的工作模式：
+        \begin{itemize}
+            \item 递增计数模式：用于非对称 PWM 输出
+            \item 递减计数模式：用于非对称 PWM 输出
+            \item 递增递减循环计数模式：用于对称 PWM 输出
+        \end{itemize}
+    \item 配置软件或硬件同步发生时的重载相位，包括值和方向
+    \item 通过硬件或软件同步使 PWM 定时器彼此同步
+    \item 配置 PWM 定时器的同步输入源，共 7 个可选输入源：
+        \begin{itemize}
+            \item 3 个 PWM 定时器的同步输出
+            \item 来自 GPIO 交换矩阵的 3 个同步信号：PWMn\_SYNC0\_IN、PWMn\_SYNC1\_IN、PWMn\_SYNC2\_IN
+            \item 未选择同步输入信号
+        \end{itemize}
+    \item 配置 PWM 定时器的同步输出源，共 4 个可选输出源：
+        \begin{itemize}
+            \item 同步输入信号
+            \item PWM 定时器的值为 0 时生成的事件
+            \item PMW 定时器的值与时钟周期的值相同时生成的事件
+            \item 向 \hyperref[fielddesc:MCPWMTIMER0SYNCSW]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_SYNC\_SW} 位写入取反值时生成的事件
+        \end{itemize}
+    \item 配置周期更新方式
+\end{itemize}
+
+\subsubsection{操作器模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-subm-operator.eps}
+    \caption{操作器模块}
+    \label{fig:mcpwm-subm-operator}
+\end{figure}
+
+表 \ref{tab:mcpwm-param-operator} 列举操作器模块的主要配置参数。
+
+\input{\modulefiles/tables/36-MCPWM-para-operator__CN}
+
+\subsubsection{故障检测模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/36-MCPWM-subm-fault-detect.eps}
+    \caption{故障检测模块}
+    \label{fig:mcpwm-fault-detect}
+\end{figure}
+
+配置参数：
+\begin{itemize}
+    \item 启用生成故障事件，并为每个故障信号配置故障事件生成的极性
+    \item 中断生成故障事件
+\end{itemize}
+
+\subsubsection{捕获模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/36-MCPWM-subm-capture.eps}
+    \caption{捕获模块}
+    \label{fig:mcpwm-fault-capture}
+\end{figure}
+
+配置参数：
+\begin{itemize}    
+    \item 选择捕获模块输入的边沿极性和预分频
+    \item 配置软件触发捕获
+    \item 配置捕获定时器同步触发和同步相位
+    \item 软件同步捕获定时器
+\end{itemize}
+
+\subsubsection{ETM 模块}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/36-MCPWM-subm-etm.eps}
+    \caption{ETM 模块}
+    \label{fig:mcpwm-subm-etm}
+\end{figure}
+
+配置参数：
+\begin{itemize}    
+    \item 独立配置每个事件和任务的使能。某个事件不使能时，不产生对应的事件；某个任务不使能时，不响应对应的任务。
+\end{itemize}
+
+\subsection{PWM 定时器模块}
+\label{sec:mcpwm-timer-sub}
+
+MCPWM 外设有三个 PWM 定时器模块。它们中的任何一个都可以决定三个 PWM 操作器模块中任意一个的必要事件时序。通过使用 GPIO 交换矩阵的同步信号，内置同步逻辑允许该 MCPWM 外设中的多个 PWM 定时器模块作为一个系统协同工作。
+
+\subsubsection{PWM 定时器模块的配置 }
+用户可配置 PWM 定时器模块的以下功能：
+
+\begin{itemize}
+    \item 通过指定 PWM 定时器频率或周期来控制事件发生的频率
+    \item 配置某个 PWM 定时器与其他 PWM 定时器或模块同步
+    \item 使 PWM 定时器与其他 PWM 定时器或模块同相
+    \item 配置定时器计数模式：递增，递减，或递增递减循环计数模式
+    \item 使用预分频器更改 PWM 定时器时钟 (PT\_CLK) 的速率。每个定时器都有自己的预分频器，通过寄存器 \hyperref[regdesc:MCPWMTIMER0CFG0REG]{MCPWM\_TIMER0\_CFG0\_REG} 的 \hyperref[fielddesc:MCPWMTIMER0PRESCALE]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PRESCALE} 配置。PWM 定时器根据该寄存器的设置以较慢的速度递增或递减。当定时器停止后并再次开始计数时，新的\hyperref[fielddesc:MCPWMTIMER0PRESCALE]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PRESCALE} 配置值才会生效。
+\end{itemize}
+
+\subsubsection{PWM 定时器工作模式和定时事件生成}
+
+PWM 定时器有三种工作模式，由 \hyperref[fielddesc:MCPWMTIMER0MOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_MOD} (\textcolor{red}{\it{x}} = 0, 1, 2) 定时器模式字段配置：
+
+\begin{itemize}
+    \item 递增计数模式：\\
+    定时器从零增加到周期字段中配置的值。达到周期值后，PWM 定时器清零，并再次开始递增。PWM 周期 = 周期寄存器中的周期值 + 1。\\
+    说明：周期字段为 \hyperref[fielddesc:MCPWMTIMER0PERIOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD} (\textcolor{red}{\it{x}} = 0, 1, 2)，对应\\ \hyperref[fielddesc:MCPWMTIMER0PERIOD]{MCPWM\_TIMER0\_PERIOD}、\hyperref[fielddesc:MCPWMTIMER1PERIOD]{MCPWM\_TIMER1\_PERIOD}、\hyperref[fielddesc:MCPWMTIMER2PERIOD]{MCPWM\_TIMER2\_PERIOD}。
+    \item 递减计数模式：\\
+    PWM 定时器从周期寄存器中的值开始递减到零。达到零后，将恢复为周期值，并再次开始递减。在这种情况下，PWM 周期 = 周期寄存器中的周期值 + 1。
+    \item 递增-递减循环模式：\\
+    此模式结合了上述两种模式。PWM 定时器从零开始递增，直到达到周期值，再次递减为零。PWM 定时器按照此模式循环递增递减。PWM 周期 = 周期寄存器的周期值 × 2。
+\end{itemize}
+
+图 \ref{fig:mcpwm-up-wf} 至 \ref{fig:mcpwm-ud-su-wf} 显示不同模式下的 PWM 定时器波形，包括同步事件期间的定时器行为。递增计数模式中，同步后永远保持递增计数；递减计数模式中，同步后永远保持递减计数；递增-递减循环模式中，同步后由\\ \hyperref[fielddesc:MCPWMTIMER0PHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PHASE\_DIRECTION} 配置计数方向。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-up-wf.eps}
+    \caption{递增计数模式波形}
+    \label{fig:mcpwm-up-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-down-wf.eps}
+    \caption{递减计数模式波形}
+    \label{fig:mcpwm-d-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-ud-sd-wf.eps}
+    \caption{递增递减循环模式波形，同步事件后递减}
+    \label{fig:mcpwm-ud-sd-wf}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-ud-su-wf.eps}
+    \caption{递增递减循环模式波形，同步事件后递增}
+    \label{fig:mcpwm-ud-su-wf}
+\end{figure}
+
+PWM 定时器运行时，定期自动生成以下定时事件：
+\begin{itemize}
+    \item UTEP：当 PWM 定时器等于周期字段的值 (\hyperref[fielddesc:MCPWMTIMER0PERIOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD}) 且 PWM 定时器递增计数时，生成的定时事件
+    \item UTEZ：当 PWM 定时器等于零且 PWM 定时器递增计数时，生成的定时事件
+    \item DTEP：当 PWM 定时器等于周期字段的值 (\hyperref[fielddesc:MCPWMTIMER0PERIOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD}) 且 PWM 定时器递减时，生成的定时事件
+    \item DTEZ：当 PWM 定时器等于零且 PWM 定时器递减时，生成的定时事件
+\end{itemize}
+
+图 \ref{fig:mcpwm-te-u} 至 \ref{fig:mcpwm-te-ud} 为 U/DTEP 和 U/DTEZ 定时事件的时序波形。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-tep-tez-up.eps}
+    \caption{递增模式中生成的 UTEP 和 UTEZ}
+    \label{fig:mcpwm-te-u}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-tep-tez-down.eps}
+    \caption{递减模式中生成的 DTEP 和 DTEZ}
+    \label{fig:mcpwm-te-d}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-tep-tez-ud.eps}
+    \caption{递增递减模式中生成的 DTEP 和 UTEZ}
+    \label{fig:mcpwm-te-ud}
+\end{figure}
+
+需注意，在递增递减模式下，当定时器递增计数时，定时器范围为 [0，周期值 - 1]；递减计数时，定时器范围为[周期值，1]。也就是说，在该模式下，将定时器同步为 0 时，则不支持递减计数，即 \hyperref[fielddesc:MCPWMTIMER0PHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} 不能为 1；定时器同步为周期值时，也不支持递增计数，即 \hyperref[fielddesc:MCPWMTIMER0PHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} 不能为 0。所以，当定时器同步为 0 时，计数方向只能为递增，即将 \hyperref[fielddesc:MCPWMTIMER0PHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} 配置为 0；定时器同步为周期值时，计数方向只能为递减，即将 \hyperref[fielddesc:MCPWMTIMER0PHASEDIRECTION]{MCPWM\_TIMER\textcolor{red}{\it{n}}\_PHASE\_DIRECTION} 配置为 1。
+
+\subsubsection{PWM 定时器影子寄存器}
+\label{sec:mcpwm-shdw_reg}
+
+PWM 定时器周期寄存器和 PWM 定时器时钟预分频器寄存器配有影子寄存器。影子寄存器能够备份即将写入有效寄存器的值，并在硬件同步的特定时刻写入有效寄存器。有效寄存器和影子寄存器的功能如下：
+\begin{itemize}
+    \item 有效寄存器：直接控制硬件执行的所有操作。
+    \item 影子寄存器：作为临时缓冲区，存储即将写入有效寄存器的值。在用户配置的某个时间点，影子寄存器中的值被写入有效寄存器。在此之前，影子寄存器的内容对受控硬件没有任何直接影响。这有助于防止寄存器由软件异步修改时可能发生的错误硬件操作。影子寄存器和有效寄存器具有相同的存储器地址。软件写入或读取影子寄存器。
+    
+    当定时器开始工作时，时钟预分频器的有效寄存器更新。当 \hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} 置 1 时，可通过以下方式选择更新有效寄存器的时间点：
+    \begin{itemize}
+        \item 将 \hyperref[fielddesc:MCPWMTIMER0PERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD\_UPMETHOD} 置 0，立即更新
+        \item 将 \hyperref[fielddesc:MCPWMTIMER0PERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD\_UPMETHOD} 置 1，当 PWM 定时器值为 0 时，开始更新
+        \item 将 \hyperref[fielddesc:MCPWMTIMER0PERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD\_UPMETHOD} 置 2，当 PWM 定时器同步时，开始更新
+        \item 将 \hyperref[fielddesc:MCPWMTIMER0PERIODUPMETHOD]{MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD\_UPMETHOD} 置 3，当 PWM 定时器值为 0 时或同步时，开始更新
+        \item 软件也可以触发全局强制更新位 \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP}，该位将触发模块中的所有寄存器根据影子寄存器进行更新
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{PWM 定时器同步和锁相}
+PWM 模块采用灵活的同步方法。每个 PWM 定时器都有一个同步输入和一个同步输出。同步输入可以从 GPIO 矩阵的三个同步输出和三个同步信号中选择。同步输出可以在 PWM 定时器等于周期、PWM 定时器等于零或软件同步时，根据同步输入信号生成。因此，PWM 定时器可以通过相位锁定而相连。在同步期间，PWM 定时器时钟预分频器将复位其计数器，以同步 PWM 定时器时钟。
+
+\subsection{PWM 操作器模块}
+PWM 操作器模块具备以下功能：
+\begin{itemize}
+    \item 根据相应 PWM 定时器的定时参考生成 PWM 信号对
+    \item PWM 信号对的每个信号都可以独立设置特定的死区时间
+    \item 可通过配置将载波叠加到 PWM 信号上
+    \item 故障条件下处理响应
+\end{itemize}
+
+图 \ref{fig:mcpwm-operator} 为 PWM 操作器的框图。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-operator}
+    \caption{PWM 操作器的子模块}
+    \label{fig:mcpwm-operator}
+\end{figure}
+
+\subsubsection{PWM 生成器模块}
+\label{sec:mcpwm-gen-submodule}
+\subparagraph{PWM 生成器模块的作用}
+此模块可以生成或导入重要的时序事件，转化为特定操作后，在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 输出处生成所需的波形。
+
+PWM 生成器模块执行以下操作：
+\begin{itemize}
+    \item 基于使用寄存器 A 和 B 配置的时间戳生成定时事件。满足以下条件时发生定时事件：
+    \begin{itemize}
+        \item UTEA：PWM 定时器递增计数并且其值等于寄存器 A
+        \item UTEB：PWM 定时器递增计数并且其值等于寄存器 B
+        \item DTEA：PWM 定时器递减计数并且其值等于寄存器 A
+        \item DTEB：PWM 定时器递减计数并且其值等于寄存器 B
+    \end{itemize}
+    \item 基于故障或同步事件生成 U/DT1、U/DT2 定时事件
+    \begin{itemize}
+        \item UT0：定时器递增计数并且检测到FAULT0事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置0）或检测到FAULT1事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置1）或检测到FAULT2事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置2）或同步（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置3）。
+        \item UT1：定时器递增计数并且检测到FAULT0事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置0）或检测到FAULT1事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置1）或检测到FAULT2事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置2）或同步（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置3）。
+        \item DT0：定时器递减计数并且检测到FAULT0事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置0）或检测到FAULT1事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置1）或检测到FAULT2事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置2）或同步（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T0\_SEL} 置3）。
+        \item DT1：定时器递减计数并且检测到FAULT0事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置0）或检测到FAULT1事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置1）或检测到FAULT2事件（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置2）或同步（字段 \hyperref[fielddesc:MCPWMGEN0T0SEL]{MCPWM\_GEN\textcolor{red}{\it{x}}\_T1\_SEL} 置3）。
+    \end{itemize}
+    \item 当这些定时事件同时发生时管理优先级
+    \item 基于定时事件产生置 1、置 0 和取反操作
+    \item 根据 PWM 生成器模块的配置来控制 PWM 占空比
+    \item 使用影子寄存器处理新的时间戳值，以防止 PWM 波形中的毛刺干扰
+\end{itemize}
+
+\subparagraph{PWM 操作器影子寄存器}
+时间戳寄存器 A 和 B，以及操作配置寄存器 \hyperref[regdesc:MCPWMGEN0AREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_A\_REG} 和 \hyperref[regdesc:MCPWMGEN0BREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_B\_REG} 都有影子寄存器。影子寄存器提供了一种与硬件同步更新寄存器的方法。
+
+当 \hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} 置 1 时，影子寄存器中的值可在某个特定时间写入有效寄存器中。\hyperref[regdesc:MCPWMGEN0AREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_A\_REG} 和 \hyperref[regdesc:MCPWMGEN0BREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_B\_REG} 的更新方式字段为 \hyperref[fielddesc:MCPWMGEN0CFGUPMETHOD]{MCPWM\_GEN\textcolor{red}{\it{x}}\_CFG\_UPMETHOD}。软件也可以触发全局强制更新位 \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP}，该位将触发模块中的所有寄存器根据影子寄存器进行更新。更多关于影子寄存器的描述，请参考章节 \ref{sec:mcpwm-shdw_reg}。
+
+\subparagraph{定时事件}
+表 \ref{tab:mcpwm-gen-in} 概括了所有定时信号和事件。
+
+\input{\modulefiles/tables/36-MCPWM-gen-in-evt__CN}
+ 
+软件强制事件用于在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 的输出上施加非连续或连续的强制电平。此更改是异步完成的。软件强制由寄存器 \hyperref[regdesc:MCPWMGEN0FORCEREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_FORCE\_REG} 控制。
+
+PWM 生成器模块中 T0/T1 的选择和配置独立于故障检测模块中的故障事件的配置。跳闸事件可以不被配置为在故障检测模块中引起跳闸动作，但相同的事件可以由 PWM 生成器用于触发 T0/T1 以控制 PWM 波形。
+
+需要注意的是，当 PWM 定时器处于递增递减循环计数模式时，它将在 TEP 事件后递减，在 TEZ 事件后递增。因此，在此模式下，将出现 DTEP 和 UTEZ，但不会出现 UTEP 和 DTEZ。
+
+PWM 生成器可以同时处理多个事件。事件优先级由硬件决定，详见表 \ref{tab:mcpwm-evt-prio-u} 和表 \ref{tab:mcpwm-evt-prio-d}。优先级从 1（最高）到 7（最低）排列。需要注意的是，TEP 和 TEZ 事件的优先级取决于 PWM 定时器的计数模式。
+
+如果 A 或 B 的值设置为大于周期，则 U/DTEA 和 U/DTEB 将永远不会发生。
+
+\input{\modulefiles/tables/36-MCPWM-evt-prio-u__CN}
+\input{\modulefiles/tables/36-MCPWM-evt-prio-d__CN}
+
+说明：
+\begin{enumerate}
+    \item UTEP 和 UTEZ 不同时发生。当 PWM 定时器处于递增计数模式， UTEP 将始终比 UTEZ 提前一个周期发生，如图 \ref{fig:mcpwm-te-u} 所示。因此，它们对 PWM 信号的作用不会彼此干扰。当 PWM 定时器处于递增递减循环模式时，UTEP 不会发生。
+    \item DTEP 和 DTEZ 不同时发生。当 PWM 定时器处于递减计数模式时，DTEZ 始终比 DTEP 早一个周期发生，如图 \ref{fig:mcpwm-te-d} 所示。因此，它们对 PWM 信号的作用不会彼此干扰。当 PWM 定时器处于递增递减循环模式时，DTEZ 不会发生。
+\end{enumerate}
+
+\subparagraph{PWM 信号生成}
+当某个定时事件发生时，PWM 生成器控制输出 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 的电平。定时事件通过 PWM 定时器计数模式（递增或递减）进一步限定。根据定时器计数方向，模块可以对 PWM 定时器递增或递减计数的阶段执行不同的操作。
+
+可以在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 输出上配置以下操作：
+
+\begin{itemize}
+    \item 置为高电平：将 PWM\textcolor{red}{\it{x}}A 或 PWM\textcolor{red}{\it{x}}B 的输出配置为高电平。
+    \item 置为低电平：通过将 PWM\textcolor{red}{\it{x}}A 或 PWM\textcolor{red}{\it{x}}B 的输出配置为低电平，来清除 PWM\textcolor{red}{\it{x}}A 或 PWM\textcolor{red}{\it{x}}B 的输出。
+    \item 取反：将 PWM\textcolor{red}{\it{x}}A 或 PWM\textcolor{red}{\it{x}}B 的当前输出电平配置为相反的值。如果它当前被拉高，则拉低，或反之。
+    \item 不进行操作：保持 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 输出电平不变。在这种状态下，仍然可以触发中断。
+\end{itemize}
+
+输出上的操作通过寄存器 \hyperref[regdesc:MCPWMGEN0AREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_A\_REG} 和 \hyperref[regdesc:MCPWMGEN0BREG]{MCPWM\_GEN\textcolor{red}{\it{x}}\_B\_REG} 配置。每一次输出的操作都独立配置。此外，根据事件在某个输出上，灵活地执行不同的操作。表 \ref{tab:mcpwm-gen-in} 中列举的任何事件都可以作用于 PWM\textcolor{red}{\it{x}}A 或 PWM\textcolor{red}{\it{x}}B 输出上。关于生成器 0，1 或 2 的寄存器信息，请参考第 \ref{sec:mcpwm-reg-summ} 章。
+
+\subparagraph{常见配置的波形}
+图 \ref{fig:mcpwm-ud-gen-dt} 为 PWM 定时器在递增递减循环计数时生成的对称 PWM 波形。该模式下的直流 0\%-100\% 调制可由以下公式获得：
+
+\begin{center}
+$Duty =  (Period - A) \div Period$
+\end{center}
+
+如果 A 的值等于 PWM 定时器的值，并且 PWM 定时器递增，则 PWM 输出被拉高。如果 A 的值等于 PWM 定时器的值，并且 PWM 定时器递减，则 PWM 输出被拉低。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-ud-gen-dt.eps}
+    \caption{递增递减模式下的对称波形}
+    \label{fig:mcpwm-ud-gen-dt}
+\end{figure}
+\clearpage
+图 \ref{fig:mcpwm-u-gen-0} 至图 \ref{fig:mcpwm-ud-gen-1} 的 PWM 波形描述了常见的 PWM 操作器配置。图中数据说明如下：
+\begin{itemize}
+    \item Period A 和 B 分别表示写入周期寄存器 A 和 B 的值。
+    \item  PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 是 PWM 操作器 \textcolor{red}{\it{x}} 的输出信号。
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-up0.eps}
+    \caption{递增计数模式，单边不对称波形，PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 独立调制 – 高电平}
+    \label{fig:mcpwm-u-gen-0}
+\end{figure}
+
+
+PWM\textcolor{red}{\it{x}}A 的占空比调制由 B 设置，高电平有效，与 B 成正比。\\
+PWM\textcolor{red}{\it{x}}B 的占空比调制由 A 设置，高电平有效，与 A 成正比。
+
+\begin{center}
+    $Period = (MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD + 1 ) \times T_{PT\_CLK}$\\
+\end{center}
+\clearpage
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-up1.eps}
+    \caption{递增计数模式，脉冲位置不对称波形，PWM\textcolor{red}{\it{x}}A 独立调制} 
+    \label{fig:mcpwm-u-gen-1}
+\end{figure}    
+
+脉冲可以在 PWM 波形内（零至周期值之间）的任何地方生成。\\
+PWM\textcolor{red}{\it{x}}A 占空比与 (B – \@ A) 成正比。
+
+\begin{center}
+    $Period = (MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD + 1 ) \times T_{PT\_CLK}$\\
+\end{center}
+
+\clearpage
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-ud0.eps}
+    \caption{递增递减循环计数模式，双沿对称波形，在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 上独立调制 – 高电平有效} 
+    \label{fig:mcpwm-ud-gen-0}
+\end{figure}    
+
+PWM\textcolor{red}{\it{x}}A 的占空比调制由 A 设置，高电平有效，与 A 成正比。\\
+PWM\textcolor{red}{\it{x}}B 的占空比调制由 B 设置，高电平有效，与 B 成正比。\\
+输出 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 可驱动不同开关。
+
+\begin{center}
+    $Period = (2 \times MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD) \times T_{PT\_CLK}$\\
+\end{center}
+
+\clearpage
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-ud1.eps}
+    \caption{递增递减循环计数模式，双沿对称波形，在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 上独立调制 – 互补} 
+    \label{fig:mcpwm-ud-gen-1}
+\end{figure}
+
+PWM\textcolor{red}{\it{x}}A 的占空比调制由 A 设置，高电平有效，与 A 成正比。\\
+PWM\textcolor{red}{\it{x}}B 的占空比调制由 B 设置，高电平有效，与 B 成正比。\\
+ PWM\textcolor{red}{\it{x}}A/B 输出可驱动上/下（互补）开关。\\
+死区 = B – \@ A，边沿位置完全可由软件配置。必要时，可使用死区生成器模块设置其他边沿延迟方式。
+
+\begin{center}
+    $Period = (2 \times MCPWM\_TIMER\textcolor{red}{\it{x}}\_PERIOD) \times T_{PT\_CLK}$\\
+\end{center}
+
+\begin{figure}[ht!]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-utdt.eps}
+    \caption{递增递减循环计数模式，错误或同步事件，在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 上相同调制}
+    \label{fig:mcpwm-utdt-gen}
+\end{figure}
+
+图 \ref{fig:mcpwm-utdt-gen} 为当UT0/1和DT0/1事件产生时的波形。在本例中，T0选择FAULT0 ，T1选择FAULT1。T0和T1所选择的事件可以独立配置，这些事件可以是FAULT0，FAULT1，FAULT2或同步事件。具体配置方法见\ref{sec:mcpwm-gen-submodule}。
+
+\subparagraph{软件强制事件}
+在 PWM 生成器内有 2 种软件强制事件：
+\begin{itemize}
+    \item 非连续即时 (NCI) 软件强制事件：当由软件触发时，这类事件在 PWM 输出上立即生效。强制是不连续的，意味着下一个激活的定时事件能够改变 PWM 输出。
+
+    \item 连续 (CNTU) 软件强制事件：这类事件是连续的。强制 PWM 将持续输出，直到通过软件释放。事件触发器可配置。 这类事件可配置为定时或即时发生。
+\end{itemize}
+
+图 \ref{fig:mcpwm-force-nci} 为 NCI 软件强制事件的一种波形。NCI 用于单独强制 PWM\textcolor{red}{\it{x}}A 输出为低电平，PWM\textcolor{red}{\it{x}}B 不受强制。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-force-nci.eps}
+    \caption{NCI 在 PWM\textcolor{red}{\it{x}}A 输出上软件强制事件示例}
+    \label{fig:mcpwm-force-nci}
+\end{figure} 
+\clearpage
+图 \ref{fig:mcpwm-force-cn} 为 CNTU 软件强制事件的波形。UTEZ 事件被选为 CNTU 软件强制事件的触发器。CNTU 用于单独强制 PWM\textcolor{red}{\it{x}}B 输出为低电平，但 PWM\textcolor{red}{\it{x}}A 不受强制。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-gen-force-cn.eps}
+    \caption{CNTU 在 PWM\textcolor{red}{\it{x}}B 输出上软件强制事件示例}
+    \label{fig:mcpwm-force-cn}
+\end{figure} 
+\clearpage
+
+\subsubsection{死区生成器模块}
+\label{sec:mcpwm-dead-time-gen}
+\subparagraph{死区生成器模块作用}
+章节 \ref{sec:mcpwm-gen-submodule} 介绍了在 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 输出上生成信号的几种方式/事件，包括信号边沿的特定位置。通过改变信号之间的边沿位置以及设置信号的占空比，可获得所需的死区。此外，也可以使用专门的死区生成器模块控制死区。
+
+死区生成器模块的主要功能如下：
+\begin{itemize}
+    \item 根据单个 PWM\textcolor{red}{\it{x}}A 输入的死区生成信号对（PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B）
+    \item 通过在信号边沿增加延迟来生成死区：
+    \begin{itemize}
+        \item 上升沿延迟 (RED) 
+        \item 下降沿延迟 (FED) 
+    \end{itemize}
+    \item 配置信号对为：
+    \begin{itemize}
+        \item 高电平有效互补 (AHC) 
+        \item 低电平有效互补 (ALC) 
+        \item 高电平有效 (AH) 
+        \item 低电平有效 (AL) 
+    \end{itemize}
+    \item 如果死区已经在生成器中配置，死区发生器也可以不进行配置
+
+\end{itemize}
+
+\subparagraph{死区模块生成器影子寄存器}
+
+延迟寄存器 RED 和 FED 的影子寄存器为 \hyperref[regdesc:MCPWMDT0REDCFGREG]{MCPWM\_DT\textcolor{red}{\it{x}}\_RED\_CFG\_REG} 和 \hyperref[regdesc:MCPWMDT0FEDCFGREG]{MCPWM\_DT\textcolor{red}{\it{x}}\_FED\_CFG\_REG}。\\\hyperref[fielddesc:MCPWMGLOBALUPEN]{MCPWM\_GLOBAL\_UP\_EN} 置 1 时，影子寄存器中的值可在某个特定时间写入有效寄存器中。\\\hyperref[regdesc:MCPWMDT0REDCFGREG]{MCPWM\_DT\textcolor{red}{\it{x}}\_RED\_CFG\_REG} 的更新方式寄存器为 \hyperref[fielddesc:MCPWMDT0REDUPMETHOD]{MCPWM\_DT\textcolor{red}{\it{x}}\_RED\_UPMETHOD}； \\\hyperref[regdesc:MCPWMDT0FEDCFGREG]{MCPWM\_DT\textcolor{red}{\it{x}}\_FED\_CFG\_REG} 的更新方式寄存器为 \hyperref[fielddesc:MCPWMDT0FEDUPMETHOD]{MCPWM\_DT\textcolor{red}{\it{x}}\_FED\_UPMETHOD}。软件也可以触发全局强制更新位 \hyperref[fielddesc:MCPWMGLOBALFORCEUP]{MCPWM\_GLOBAL\_FORCE\_UP}，该位将触发模块中的所有寄存器根据影子寄存器进行更新。寄存器描述详见 \ref{sec:mcpwm-shdw_reg}。
+
+\clearpage
+\subparagraph{死区生成器模块的操作要点}
+ 图 \ref{fig:mcpwm-conf-dt} 描述了创建死区模块的开关拓扑。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-dt.eps}
+    \caption{死区模块的开关拓扑}
+    \label{fig:mcpwm-conf-dt}
+\end{figure}    
+
+上图中的 S0 - S8 开关由 \hyperref[regdesc:MCPWMDT0CFGREG]{MCPWM\_DT\textcolor{red}{\it{x}}\_CFG\_REG} 寄存器中的字段控制，详细信息见表 \ref{tab:mcpwm-s-dt}。 
+
+\input{\modulefiles/tables/36-MCPWM-s-dt__CN}
+
+所有开关组合皆受支持，但不是所有的开关模式都是典型的使用模式。表 \ref{tab:mcpwm-mod-dt} 列举了一些典型的死区配置。在这些配置中，S4 和 S5 的开关位置将 PWM\textcolor{red}{\it{x}}A 设置为下降沿和上升沿延迟的公共源。表 \ref{tab:mcpwm-mod-dt} 中的模式可分为以下几类：
+
+\begin{itemize}
+    \item {\bfseries 模式 1：绕过下降沿 (FED) 和上升沿 (RED) 的延迟}\\
+ 该模式下，死区模块被关闭。PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 信号的波形无变化。
+    \item {\bfseries 模式 2-5：经典死区极性设置}\\
+    这些模式为典型极性配置，涵盖工业电源栅极驱动器中的高／低电平有效模式。图 \ref{fig:mcpwm-wf-dt-ahc} 至 \ref{fig:mcpwm-wf-dt-al}为典型波形。
+    \item {\bfseries 模式 6 和 7：绕过下降沿 (FED) 或上升沿 (RED) 的延迟}\\
+   这两种模式下，绕过上升沿延迟 (RED) 或下降沿延迟 (FED) 。因此，无需使用对应延迟。
+\end{itemize}
+
+\input{\modulefiles/tables/36-MCPWM-mod-dt__CN}
+
+\begin{tiplisting}
+以上所有模式中，S4 - S8 的开关位置都置 0。
+\end{tiplisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/36-MCPWM-dt-ahc.eps}
+    \caption{高电平有效互补 (AHC) 死区波形}
+    \label{fig:mcpwm-wf-dt-ahc}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/36-MCPWM-dt-alc.eps}
+    \caption{低电平有效互补 (ALC) 死区波形}
+    \label{fig:mcpwm-wf-dt-alc}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/36-MCPWM-dt-ah.eps}
+    \caption{高电平有效 (AH) 死区波形}
+    \label{fig:mcpwm-wf-dt-ah}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/36-MCPWM-dt-al.eps}
+    \caption{低电平有效 (AL) 死区波形}
+    \label{fig:mcpwm-wf-dt-al}
+\end{figure}
+
+上升沿延迟 (RED) 和下降沿延迟 (FED) 可分别设置。延迟的值通过 16 位寄存器 MCPWM\_DT\textcolor{red}{\it{x}\_RED} 和 MCPWM\_DT\textcolor{red}{\it{x}\_FED} 配置。 寄存器值表示一个信号边沿可以延迟的 DT\_CLK 时钟周期值。DT\_CLK 可通过寄存器 \hyperref[fielddesc:MCPWMDT0CLKSEL]{MCPWM\_DT\textcolor{red}{\it{x}}\_CLK\_SEL} 从 PWM\_CLK 或 PT\_CLK 中选择。
+
+通过以下公式计算下降沿延迟 (FED) 和上升沿延迟 (RED) 的值:
+
+\begin{center}
+    \item $FED = MCPWM\_DT\textcolor{red}{\it{x}}\_FED \times T_{DT\_CLK}$
+    \item $RED = MCPWM\_DT\textcolor{red}{\it{x}}\_RED \times T_{DT\_CLK}$
+\end{center}
+
+
+\subsubsection{PWM 载波模块}
+将 PWM 输出耦合到电机驱动器可能需要使用变压器隔离。变压器只提供交流信号，而 PWM 信号的占空比可能在 0\% 到 100\% 之间变化。PWM 载波模块可以通过使用高频载波对其进行调制，将该信号传递给变压器。
+
+\subparagraph{功能概述}
+此模块的以下关键功能可配置：
+\begin{itemize}
+    \item 载波频率
+    \item 第一个脉冲的脉宽
+    \item 第二个以及之后的脉冲的占空比
+    \item 开启/关闭载波
+\end{itemize}
+
+\subparagraph{操作要点}
+PWM 载波时钟 (PC\_CLK) 来自于 PWM\_CLK。通过寄存器 \hyperref[regdesc:MCPWMCARRIER0CFGREG]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_CFG\_REG} 的 \\\hyperref[fielddesc:MCPWMCARRIER0PRESCALE]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_PRESCALE} 和 \hyperref[fielddesc:MCPWMCARRIER0DUTY]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_DUTY} 位配置频率和占空比。 一次性脉冲的功能在于提供高能量脉冲以接通电源开关。随后的脉冲用于保持上电的状态。一次性脉冲宽度可通过\\ \hyperref[fielddesc:MCPWMCARRIER0OSHTWTH]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_OSHTWTH} 字段进行配置。通过 \hyperref[fielddesc:MCPWMCARRIER0EN]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_EN} 位来使能/禁用载波模块。
+
+\subparagraph{载波示例}
+图 \ref{fig:mcpwm-carrier-0} 描述了载波叠加在原始 PWM 脉冲上的示例波形。图中未显示第一个脉冲和占空比控制，相关详细信息将在后两节中介绍。
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/36-MCPWM-carrier-0.eps}
+    \caption{PWM 载波操作的波形示例}
+    \label{fig:mcpwm-carrier-0}
+\end{figure}
+\subparagraph{第一个脉冲}
+第一个脉冲的宽度可配置，其值有 16 种可能，可通过下公式计算：
+
+\begin{center}
+$T_{1stpulse} = T_{PWM\_CLK} \times 8 \times (MCPWM\_CARRIER\textcolor{red}{\it{x}}\_PRESCALE+1) \times (MCPWM\_CARRIER\textcolor{red}{\it{x}}\_OSHTWTH+1)$ \\
+\end{center}
+
+其中：
+\begin{itemize}
+    \item $T_{PMW\_CLK}$ 为 PWM 时钟周期 (PWM\_CLK)
+    \item $(MCPWM\_CARRIER\textcolor{red}{\it{x}}\_OSHTWTH+1)$ 为一次性脉冲宽度值（取值范围：1-16）
+    \item $(MCPWM\_CARRIER\textcolor{red}{\it{x}}\_PRESCALE+1)$ PWM 载波时钟 (PC\_CLK) 预分频值
+\end{itemize}
+
+ 图 \ref{fig:mcpwm-carrier-1} 展示了第一个脉冲和之后持续的脉冲。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-carrier-1.eps}
+    \caption{ 载波模块的第一个脉冲和之后持续的脉冲示例}
+    \label{fig:mcpwm-carrier-1}
+\end{figure}
+\subparagraph{占空比控制}
+在发出第一个一次性脉冲之后，根据载波频率调制剩余的 PWM 信号。用户可配置该信号的占空比。 在一定情况下，调整占空比可使信号通过隔离变压器后仍然可以开启或关闭电动机驱动器，改变电机旋转速度和方向。
+
+占空比通过 \hyperref[fielddesc:MCPWMCARRIER0DUTY]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_DUTY} 或寄存器 \hyperref[regdesc:MCPWMCARRIER0CFGREG]{MCPWM\_CARRIER\textcolor{red}{\it{x}}\_CFG\_REG} 的 [7:5] 位设置，其值有 7 种可能性。
+
+占空比的值可通过以下方式计算：
+\begin{center}
+$Duty =  MCPWM\_CARRIER\textcolor{red}{\it{x}}\_DUTY \div 8$
+\end{center}
+
+图 \ref{fig:mcpwm-carrier-2} 为所有 7 种占空比设置。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/36-MCPWM-carrier-2.eps}
+    \caption{PWM 载波模块中持续脉冲的 7 种占空比设置}
+    \label{fig:mcpwm-carrier-2}
+\end{figure}
+
+\subsubsection{故障检测模块}
+ 每个 MCPWM 外设都连接来自 GPIO 矩阵的 3 个故障信号（FAULT0、FAULT1 和 FAULT2）。这些信号用于指示外部故障状况，并且可由故障检测模块预处理后生成故障事件。故障事件通过执行用户代码，针对特定故障调整 MCPWM 输出。
+
+\subparagraph{故障检测模块功能}
+故障检测模块的主要功能为：
+\begin{itemize}
+    \item 在检测到故障时强制 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 输出信号进入以下状态之一：
+    \begin{itemize}
+        \item 高
+        \item 低
+        \item 取反
+        \item 无
+    \end{itemize}
+    \item 在检测到过电流/短路时执行一次性跳闸（OST）
+    \item 逐周期跳闸（CBC）以提供限流操作
+    \item 每个故障信号单独分配一次性或逐周期操作
+    \item 每个故障输入都生成中断
+    \item 支持软件强制跳闸
+    \item 根据需要开启或关闭模块功能
+\end{itemize}
+
+\subparagraph{操作与配置要点}
+本节介绍故障检测模块的操作要点和配置选项。
+
+来自管脚的故障信号在 GPIO 矩阵中采样和同步。 为了保证故障脉冲成功采样，每个脉冲持续时间必须至少为 2 个 APB 时钟周期。故障检测模块使用 PWM\_CLK 对故障信号进行采样，因此，来自 GPIO 矩阵的故障脉冲持续时间必须至少为 1 个 PWM\_CLK 周期。换句话说，无论 APB 时钟周期和 PWM\_CLK 周期的大小关系如何，管脚上的故障信号脉冲的宽度必须至少等于两个 APB 时钟周期与一个 PWM\_CLK 周期的和。
+
+故障检测模块可以使用故障信号 FAULT0 至 FAULT2 中的高电平或低电平来生成故障事件 fault\_event0 至 fault\_event2。 每个故障事件可以单独配置为进行 CBC 操作、OST 操作或无操作。
+
+\begin{itemize}
+    \item {\bfseries 逐周期 (CBC) 操作：}\\
+    触发 CBC 操作时，PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 的状态立即根据字段 \hyperref[fielddesc:MCPWMFH0ACBCU]{MCPWM\_FH\textcolor{red}{\it{x}}\_A\_CBC\_U/D} 和 \\\hyperref[fielddesc:MCPWMFH0BCBCU]{MCPWM\_FH\textcolor{red}{\it{x}}\_B\_CBC\_U/D} 改变。PWM 定时器递增或递减计数时，可配置不同的操作。不同的故障事件可触发不同的 CBC 操作中断。通过状态字段 \hyperref[fielddesc:MCPWMFH0CBCON]{MCPWM\_FH\textcolor{red}{\it{x}}\_CBC\_ON} 开启或关闭 CBC 操作。在没有故障事件时，将在指定时间点，即发生 D/UTEP 或 D/UTEZ 事件时，清除 PWM\textcolor{red}{\it{x}}A/B 上的 CBC 操作。由字段 \hyperref[fielddesc:MCPWMFH0CBCPULSE]{MCPWM\_FH\textcolor{red}{\it{x}}\_CBCPULSE} 决定 PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 恢复正常的事件。因此，在此模式下，每个 PWM 循环后，CBC 操作都将清除或刷新。
+    \item {\bfseries 一次性（OST）操作：}\\
+	触发 OST 操作时，PWM\textcolor{red}{\it{x}}A 和 PWM\textcolor{red}{\it{x}}B 的状态立即根据字段 \hyperref[fielddesc:MCPWMFH0AOSTU]{MCPWM\_FH\textcolor{red}{\it{x}}\_A\_OST\_U/D} 和 \\\hyperref[fielddesc:MCPWMFH0BOSTU]{MCPWM\_FH\textcolor{red}{\it{x}}\_B\_OST\_U/D} 改变。PWM 定时器递增或递减计数时，可配置不同的操作。不同的故障事件可触发不同的 OST 操作中断。通过状态字段  \hyperref[fielddesc:MCPWMFH0OSTON]{MCPWM\_FH\textcolor{red}{\it{x}}\_OST\_ON} 开启或关闭 OST 操作。在没有故障事件时，PWM\textcolor{red}{\it{x}}A/B 上的 OST 操作无法自动清除。须通过将 \hyperref[fielddesc:MCPWMFH0CLROST]{MCPWM\_FH\textcolor{red}{\it{x}}\_CLR\_OST} 位置 1 来清除一次性操作。
+\end{itemize}
+
+\subsection{捕获模块}
+\subsubsection{介绍}
+
+捕获模块包含 3 个完整的捕获通道。通道输入信号 CAP0、CAP1 和 CAP2 来自于 GPIO 矩阵。由于 GPIO 矩阵的灵活性，CAP0、CAP1 和 CAP2 可以通过任一管脚输入配置。 多个捕获通道可以来自同一管脚输入，每个通道的预分频可以分别设置。同时，每个捕获通道也可以来自不同的管脚输入。因此，可以通过后台硬件用多种方式处理捕获信号，而不直接由 CPU 处理。
+
+捕捉模块有以下独立资源：
+\begin{itemize}
+    \item  一个 32 位定时器（计数器），可与 PWM 定时器、另一个模块或软件同步
+    \item 三个捕获通道，每个通道配有一个 32 位时间戳和一个捕获预分频器
+    \item 任何捕获通道的边沿极性（上升/下降沿）可独立选择
+    \item 输入捕获信号预分频（分频取值范围：1 \verb+~+ 256）
+    \item 三个捕获事件都有中断功能
+\end{itemize}
+
+\subsubsection{捕获定时器}
+ 捕获定时器是一个 32 位计数器，使能时不断递增计数。将 \hyperref[fielddesc:MCPWMCAPTIMEREN]{MCPWM\_CAP\_TIMER\_EN} 置 1 使能捕获寄存器。其操作时钟源为 MCPWM模块的主时钟。配置 \hyperref[fielddesc:MCPWMCAPSYNCIEN]{MCPWM\_CAP\_SYNCI\_EN} 后，发生同步事件时，存储在\\ \hyperref[regdesc:MCPWMCAPTIMERPHASEREG]{MCPWM\_CAP\_TIMER\_PHASE\_REG} 寄存器中的相位将被加载至计数器中。同步事件可来自 PWM 定时器同步输出或 PWM 模块同步输入，通过 \hyperref[fielddesc:MCPWMCAPSYNCISEL]{MCPWM\_CAP\_SYNCI\_SEL} 进行配置。也可将 \hyperref[fielddesc:MCPWMCAPSYNCSW]{MCPWM\_CAP\_SYNC\_SW} 置 1 生成同步事件。捕获定时器为所有三个捕获通道提供定时参考。
+
+\subsubsection{捕获通道}
+
+必要时，到达捕获通道的捕获信号可先被反相，然后预分频。每个捕获通道都有一个预分频寄存器 \\\hyperref[fielddesc:MCPWMCAP0PRESCALE]{MCPWM\_CAP\textcolor{red}{\it{x}}\_PRESCALE}。最后，预处理后的捕获信号的指定边沿将触发捕获事件。将 \hyperref[fielddesc:MCPWMCAP0EN]{MCPWM\_CAP\textcolor{red}{\it{x}}\_EN} 置 1 使能捕获通道。捕获事件将在 \hyperref[fielddesc:MCPWMCAP0MODE]{MCPWM\_CAP\textcolor{red}{\it{x}}\_MODE} 配置的时间发生。在捕获事件发生时，捕获定时器的值存储在时间戳寄存器 \hyperref[regdesc:MCPWMCAPCH0REG]{MCPWM\_CAP\_CH\textcolor{red}{\it{x}}\_REG} 中。捕获事件中的不同捕获通道可生成不同的中断。触发捕获事件的边沿储存在寄存器 \hyperref[fielddesc:MCPWMCAP0EDGE]{MCPWM\_CAP\textcolor{red}{\it{x}}\_EDGE} 中。捕获事件可通过将 \hyperref[fielddesc:MCPWMCAP0SW]{MCPWM\_CAP\textcolor{red}{\it{x}}\_SW} 置 1 由软件强制发生。
+
+\subsection{ETM 模块}
+
+\subsubsection{介绍}
+在 \chipname{} 中，MCPWM 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 MCPWM 的 ETM 任务，或者通过 MCPWM 的 ETM 事件触发任意外设的 ETM 任务。MCPWM 的捕获模块、故障检测模块、三个定时器以及三个操作器都可以独立产生事件或响应任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与 MCPWM 相关的 ETM 任务和 ETM 事件。
+
+\subsubsection{MCPWM 可产生的 ETM 事件}
+
+将使能字段置 1 后，满足对应生成条件时，将产生对应 ETM 事件，详见表 \ref{tab:mcpwm-etm-event}：
+
+\input{\modulefiles/tables/36-MCPWM-etm-event__CN}
+
+\subsubsection{MCPWM 可接收的 ETM 任务}
+
+将使能字段置 1 后，接收对应有效任务后，将产生对应的响应操作，详见表 \ref{tab:mcpwm-etm-task}：
+
+\input{\modulefiles/tables/36-MCPWM-etm-task__CN}
+
+\subsection{中断}
+\label{sec:mcpwm-interrupts}
+\begin{itemize}
+\item \label{int:mcpwm-timer-stop}MCPWM\_TIMER\regindex{x}\_STOP\_INT：定时器\regindex{x}停止后触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMTIMER0STOPINTENA]{MCPMW\_TIMER\regindex{x}\_STOP\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-timer-TEZ}MCPWM\_TIMER\regindex{x}\_TEZ\_INT：PWM 定时器\regindex{x} TEZ事件触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMTIMER0TEZINTENA]{MCPWM\_TIMER\regindex{x}\_TEZ\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-timer-tep}MCPWM\_TIMER\regindex{x}\_TEP\_INT：PWM 定时器\regindex{x} TEP事件触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMTIMER0TEPINTENA]{MCPWM\_TIMER\regindex{x}\_TEP\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-fault}MCPWM\_FAULT\regindex{x}\_INT：fault\_event\regindex{x} 开始后触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMFAULT0INTENA]{MCPWM\_FAULT\regindex{x}\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-fault-clr}MCPWM\_FAULT\regindex{x}\_CLR\_INT：fault\_event\regindex{x} 结束后触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMFAULT0CLRINTENA]{MCPWM\_FAULT\regindex{x}\_CLR\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-cmpr-tea}MCPWM\_CMPR\regindex{x}\_TEA\_INT：PWM 操作器\regindex{x} TEA事件触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMCMPR0TEAINTENA]{MCPWM\_CMPR\regindex{x}\_TEA\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-cmpr-teb}MCPWM\_CMPR\regindex{x}\_TEB\_INT：PWM 操作器\regindex{x} TEB事件触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMCMPR0TEBINTENA]{MCPWM\_CMPR\regindex{x}\_TEB\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-tz-cbc}MCPWM\_TZ\regindex{x}\_CBC\_INT：由 PWM\regindex{x} 逐周期操作触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMTZ0CBCINTENA]{MCPWM\_TZ\regindex{x}\_CBC\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-tz-ost}MCPWM\_TZ\regindex{x}\_OST\_INT：由 PWM\regindex{x} 一次性操作触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMTZ0OSTINTENA]{MCPWM\_TZ\regindex{x}\_OST\_INT\_ENA} 字段置位后，才能触发该中断。
+\item \label{int:mcpwm-cap}MCPWM\_CAP\regindex{x}\_INT：由 信道\regindex{x} 上捕获事件触发的中断。当寄存器 \hyperref[regdesc:MCPWMINTENAREG]{MCPMW\_INT\_ENA\_REG} 的 \hyperref[fielddesc:MCPWMCAP0INTENA]{MCPWM\_CAP\regindex{x}\_INT\_ENA} 字段置位后，才能触发该中断。
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{mcpwm-reg-summ}{}
+\section{寄存器列表}
+\label{sec:mcpwm-reg-summ}
+
+本小节的所有地址均为相对于电机控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/36-MCPWM-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于电机控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/36-MCPWM-reg__CN}
+
+
+\end{document}

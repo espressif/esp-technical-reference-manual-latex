@@ -1,0 +1,598 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./41-PARLIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%
+%%% Module Name %%%
+%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{parlio}{}
+\chapter{Parallel IO Controller (PARL\_IO)}
+\label{mod:parlio}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+\chipname{} contains a Parallel IO controller (PARLIO) capable of transferring data between external devices and internal memory on a parallel bus through GDMA. It is composed of a TX unit and an RX unit, which are fixed as a transmitter and a receiver respectively. With the two units combined, PARLIO achieves full-duplex communication.
+
+Due to its flexibility, PARLIO can function as a general interface to connect various peripherals. For example, with SPI as the master device and PARLIO as the slave device, a peer-to-peer transfer can be achieved. For detailed application examples, refer to Section \ref{sec:parlio-application-example}.
+
+
+\section{Glossary}
+This section covers terminology used to describe the functionality of PARLIO.
+
+\begin{longtable}[c]{ R{4cm} p{10cm} }
+\textbf{RX unit}            & Module in PARLIO responsible for receiving data from external parallel bus and storing them into internal memory. \\
+\textbf{TX unit}            & Module in PARLIO responsible for transmitting data from internal memory to external parallel bus. \\
+\textbf{RXD}                & Parallel data received from the IO interface of the RX unit. \\
+\textbf{TXD}                & Parallel data sent from the IO interface of the TX unit. \\
+\textbf{Frame}              & Transferred data unit from the moment the START signal is set to the moment the End of Frame (EOF) signal is received. \\
+\textbf{Free-running clock} & Clock that toggles continuously. Otherwise, the clock only toggles during the period when valid data is received and remains constant for the rest of the time.\\
+\textbf{GDMA SUC EOF}       & Signal that indicates GDMA successful end of frame. When GDMA receives this signal, a GDMA interrupt will be triggered, indicating that the current frame is correct and the receive is finished.\\
+\textbf{GDMA ERR EOF}       & Signal that indicates GDMA error end of frame. When GDMA receives this signal, a GDMA interrupt will be triggered, indicating that the current frame has error and the receive is finished.\\
+\textbf{CDC}                & Clock domain crossing.\\
+
+\end{longtable}
+
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:parlio-features}
+
+The PARLIO module has the following main features:
+
+\begin{itemize}
+    \item Variety of clock sources:
+    \begin{itemize}
+        \item Including external IO clock PAD\_CLK and internal system clocks XTAL\_CLK, PLL\_F240M\_CLK, and RC\_FAST\_CLK
+        \item Maximum clock frequency of 40 MHz
+        \item Integer clock frequency division
+    \end{itemize}
+    \item 1/2/4/8/16-bit configurable data bus width
+    \item Half-duplex communication with 16-bit data bus width and full-duplex communication with 8-bit data bus width
+    \item Bit reordering in 1/2/4-bit data bus width mode
+    \item RX unit for receiving IO parallel data, which supports:
+    \begin{itemize}
+        \item RX unit input clock inverse   
+        \item Variety of receive modes
+        \item Configurable GDMA SUC EOF generation
+        \item Configurable IO pin of external enable signal
+    \end{itemize}
+    \item TX unit for sending IO parallel data, which supports:
+    \begin{itemize}
+        \item TX unit output clock inverse
+        \item Valid signal output
+        \item Configurable bus idle value
+    \end{itemize}
+
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:parlio-arch-overview}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/41-parlio_architecture_20230217.pdf}
+    \caption{PARLIO Architecture}
+    \label{fig:parlio-architecture}
+\end{figure}
+
+Figure \ref{fig:parlio-architecture} shows the architecture of PARLIO. In addition to the RX unit and the TX unit, a group of status configuration registers is also included.
+
+The RX unit converts RXD into an asynchronous FIFO interface, which synchronizes RXD to the AHB clock domain. RXD is then converted to a standard GDMA interface and sent to the internal memory.
+
+The TX unit fetches data from internal memory through GDMA and converts the GDMA interface into an asynchronous FIFO interface. The asynchronous FIFO synchronizes the data to the TX Core clock domain and converts the data to TXD for parallel IO bus output.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:parlio-func-descr}
+
+\subsection{Clock Generator}
+\label{subsec:PARLIO-clock_cfg}
+
+There are four input clock domains in PARLIO, namely, RX Core, TX Core, AHB, and APB. 
+
+The status configuration register group works in the APB clock domain.
+
+The GDMA interface logic works in the AHB clock domain.
+
+RX Core and TX Core clock domains each have four clock sources for selection, i.e., the internal system clock sources XTAL\_CLK, RC\_FAST\_CLK, PLL\_F240M\_CLK, and the external clock source (PAD\_CLK\_TX/RX), as shown in Figure \ref{fig:parlio-clock-gen}. Clock sources can be selected by configuring \hyperref[fielddesc:PCRPARLCLKRXSEL]{PCR\_PARL\_CLK\_RX\_SEL} and \hyperref[fielddesc:PCRPARLCLKTXSEL]{PCR\_PARL\_CLK\_TX\_SEL}. The clock can be divided by configuring \hyperref[fielddesc:PCRPARLCLKRXDIVNUM]{PCR\_PARL\_CLK\_RX\_DIV\_NUM} and \hyperref[fielddesc:PCRPARLCLKTXDIVNUM]{PCR\_PARL\_CLK\_TX\_DIV\_NUM}. The clock division factor can be configured up to \begin{math} (2^{16}-1) \end{math}.
+
+The input clock of the RX unit can be inverted. The operating clock of the TX unit can also be inverted before being output to IO.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/41-parlio-clock-gen_20230106.pdf}
+    \caption{PARLIO Clock Generation}
+    \label{fig:parlio-clock-gen}
+\end{figure}
+
+\subsection{Clock \& Reset Restriction}
+\label{subsec:parlio-clock_reset_restriction}
+
+Due to the versatility of PARLIO, the PAD clocks of PARLIO may come from different masters (external devices or internal clock sources). 
+These clocks might be either free-running clock or not. If the clock is not free-running, some internal control signals of PARLIO cannot process CDC, so there are certain restrictions during the operation.
+
+\begin{enumerate}
+    \item During the reset of the asynchronous FIFO, it takes two clock cycles to synchronize within AHB clock domain and Core clock domain. Therefore, if the reset of AHB clock domain is performed with a clock that is not free-running, the reset synchronization must be performed two clock cycles in advance. The specific operation is as follows:
+    \begin{itemize}
+        \item \textbf{Scenario 1:} The current frame transfer is based on free-running clock, but the next frame transfer is not based on free-running clock. \\
+        \textbf{Operation:} Users can reset the next frame transfer before switching to the clock that is not free-running. After the reset is completed, users can switch the clock.
+        \item \textbf{Scenario 2:} The current frame transfer is not based on free-running clock, but the next frame transfer is based on free-running clock.\\
+        \textbf{Operation:} The next frame can be reset freely. Users only need to ensure that there is an interval of two clock cycles between the reset and the start of the transfer.
+        \item \textbf{Scenario 3:} Both the current and next frame transfers are not based on free-running clock. \\
+        \textbf{Operation:} If the next frame transfer needs to be reset, users need to first switch to the internal free-running clock, and then switch to the actual clock after the reset is completed. 
+    \end{itemize}
+    
+    \item Due to the restrictions caused by a clock that is not free-running, \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} and \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} cannot perform CDC processing. Therefore, it is necessary to wait until \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} and \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START} are stable before starting the data transfer, otherwise the transfer might enter a metastable state. 
+    
+    Here are the specific operation steps in the RX unit:
+    \begin{itemize}
+        \item Clear \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} to turn off RX Core clock domain;
+        \item Write 1 to \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START};
+        \item Set \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} to turn on RX Core clock domain;
+        \item Operate the external device to start sending data;
+        \item Clear \hyperref[fielddesc:PCRPARLCLKRXEN]{PCR\_PARL\_CLK\_RX\_EN} to turn off RX Core clock domain;
+        \item Write 0 to \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+    \end{itemize}
+    Here are the specific operation steps in the TX unit:
+    \begin{itemize}
+        \item Clear \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} to turn off TX Core clock domain;
+        \item Write 1 to \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START};
+        \item Set \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} to turn on TX Core clock domain;
+        \item Operate the external device to start receiving data;
+        \item Clear \hyperref[fielddesc:PCRPARLCLKTXEN]{PCR\_PARL\_CLK\_TX\_EN} to turn off TX Core clock domain;
+        \item Write 0 to \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.
+    \end{itemize}
+    
+    \item Reset should follow the requirements below:
+    \begin{itemize}
+        \item The clock reset during the chip start-up should follow the sequence below:
+        \begin{itemize}
+            \item First reset APB clock domain;
+            \item Then reset AHB clock domain;
+            \item Finally reset Core clock domain.
+        \end{itemize}
+        \item Inter-frame transfer requires Core clock domain reset and async FIFO reset.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Master-Slave Mode}
+The TX unit can function as both master and slave while the RX unit can only function as slave. 
+
+When the TX unit serves as master, it is necessary to set the internal free-running clock as the clock source. The TX unit drives TXD on the rising edge of the clock. 
+
+When the TX unit functions as a slave device, there are three scenarios:
+
+\begin{itemize}
+    \item \textbf{Scenario 1:} The clock sent by the master device is a free-running clock. \\
+    \textbf{Requirement:} There is no requirement for the acquisition edge of the master clock.
+    \item \textbf{Scenario 2:} The clock sent by the master device is not a free-running clock, and the clock waveform is as shown in Figure \ref{fig:parlio-pos-clock}. \\
+    \textbf{Requirement:} The master clock should capture TXD at the falling edge.
+    \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/41-parlio-pos-clock.png}
+    \caption{Master Clock Positive Waveform}
+    \label{fig:parlio-pos-clock}
+    \end{figure}
+    \item \textbf{Scenario 3:} The clock sent by the master device is not a free-running clock, and the clock waveform is as shown in Figure \ref{fig:parlio-neg-clock}. \\
+    \textbf{Requirement:} The master device should invert the original clock and convert it to the waveform as Figure \ref{fig:parlio-pos-clock} shows before output.
+    \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/41-parlio-neg-clock.png}
+    \caption{Master Clock Negative Waveform}
+    \label{fig:parlio-neg-clock}
+    \end{figure}
+\end{itemize}
+
+For the RX unit which can only function as slave, the following three scenarios can occur:
+\begin{itemize}
+    \item \textbf{Scenario 1:} The clock sent by the master device is a free-running clock. \\
+    \textbf{Requirement:} There is no requirement for the acquisition edge of the master clock, and the valid data is subject to the external enable signal.
+    \item \textbf{Scenario 2:} The clock sent by the master device is not a free-running clock, and the clock waveform is as shown in Figure \ref{fig:parlio-pos-clock}. \\
+    \textbf{Requirement:} It is required for the master device to drive the data at the rising edge and the RX unit to capture the data at the falling edge (i.e., to inverse the master clock).
+    \item \textbf{Scenario 3:} The clock sent by the master device is not a free-running clock, and the clock waveform is as shown in Figure \ref{fig:parlio-neg-clock}. \\
+    \textbf{Requirement:} It is required for the master device to drive the data at the falling edge and the RX unit to capture the data at the rising edge (i.e., to use the original master clock).
+\end{itemize}
+
+\subsection{Receive Modes of the RX Unit}
+
+PARLIO supports 15 receive modes, which can be divided into three major categories according to the enable signal:
+
+\begin{itemize}
+    \item Level Enable mode: data received is enabled by the external signal level;
+    \item Pulse Enable mode: data received is enabled by the external signal pulse; 
+    \item Software Enable mode: the enable signal of data received can be configured by users directly.
+\end{itemize}
+
+\subsubsection{Level Enable Mode}
+
+Level Enable mode can be divided into two sub-modes depending on the active level of the external enable signal, as shown in Figure \ref{fig:parlio-level-sub-mode}.
+
+In both cases, an active level on the external enable signal must be aligned with valid data. Since the external level enable signal occupies one IO pin, there are at most 15 IO pins left usable for RXD.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/41-parlio-level-submode}
+\caption{Sub-Modes of Level Enable Mode for RX Unit}
+\label{fig:parlio-level-sub-mode}
+\end{figure}
+
+\subsubsection{Pulse Enable Mode}
+Pulse Enable mode can be divided into 12 sub-modes depending on the pulse active level and its alignment with valid data. For detailed classification, see Figure \ref{fig:parlio-pulse-sub-mode}.
+
+
+Sub-modes 1 \verb+~+ 8 all contain start pulse and end pulse. The difference lies in whether start pulse and end pulse are aligned with valid data.
+
+Sub-modes 9 \verb+~+ 12 only contain start pulse and the end of valid data is signaled by configuring \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN}.
+
+Since the external pulse enable signal occupies one IO pin, there are at most 15 IO pins left usable for RXD. However, in sub-modes 4, 8, 10, and 12, as the data is considered valid before the pulse's first edge and after the pulse's last edge, the enable signal IO pin can serve as a data IO pin at the same time. Therefore, there are 16 IO pins usable for RXD in these sub-modes.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/41-parlio-pulse-submode}
+\caption{Sub-Modes of Pulse Enable Mode for RX Unit}
+\label{fig:parlio-pulse-sub-mode}
+\end{figure}
+
+
+\subsubsection{Software Enable Mode}    
+The enable signal in Software Enable mode is determined by the internal configuration register. If users switch to this mode, the receive will only be activated when both \hyperref[fielddesc:PARLIORXSWEN]{PARL\_IO\_RX\_SW\_EN} and \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START} are set to 1.
+
+Since the enable signal does not occupy IO pins on the interface, there are at most 16 IO pins usable by the RXD. Due to the differences of clock domains, the enable signal cannot be aligned with valid data. Thus, the validity of data needs to be identified by the valid clock edge. In this case, the RX Core clock needs to be aligned with valid data.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/41-parlio-software-submode}
+\caption{Sub-Mode of Software Enable Mode for RX Unit}
+\label{fig:parlio-software-sub-mode}
+\end{figure}
+
+\subsection{RX Unit GDMA SUC EOF Generation}
+The RX unit generates a GDMA SUC EOF signal to indicate the end of current frame transfer and send it to the GDMA interface. GDMA SUC EOF can be generated by an external enable signal or by the internally configured byte length.
+\begin{itemize}
+    \item When GDMA SUC EOF is generated by the internally configured byte length, there is no restriction on the receive mode selection. However, \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN} must be configured. If the configured value of \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN} is less than the actual received data, the GDMA SUC EOF will be triggered in advance. In this case, the RX unit stops reading data from the FIFO, but the FIFO continues to receive external data until an RX\_FIFO\_WFULL\_INTR interrupt is triggered.
+
+    \item When GDMA SUC EOF is generated by the external enable signal, only sub-modes 1, 3, 5, and 7 of Pulse Enable mode can be selected. In this mode, the transfer is not affected by the value of \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN}, and the transferred data of the frame is not limited. 
+\end{itemize}
+
+\subsection{RX Unit Timeout}
+The RX unit supports the receive timeout. When the timeout is triggered, a GDMA ERR EOF signal will be generated and sent to the GDMA interface to indicate the end of the receiving. Configure \hyperref[fielddesc:PARLIORXTIMEOUTTHRESHOLD]{PARL\_IO\_RX\_TIMEOUT\_THRESHOLD} to set the timeout threshold.
+
+The timeout function is enabled by default and can be disabled by users. The upper threshold of the configurable timeout is \begin{math} (2^{16}-1) \end{math} cycles of AHB clock domain, and the lower threshold depends on the relative frequency relationship between AHB clock domain and RX Core clock domain. It is recommended to set a relatively large value for \hyperref[fielddesc:PARLIORXTIMEOUTTHRESHOLD]{PARL\_IO\_RX\_TIMEOUT\_THRESHOLD} to avoid undesired GDMA ERR EOF signals.
+
+\subsection{Valid Signal Output of TX Unit }
+The TX unit can generate a valid signal aligned with TXD. Configure \hyperref[fielddesc:PARLIOTXHWVALIDEN]{PARL\_IO\_TX\_HW\_VALID\_EN} to choose whether to output it to TXD. The polarity of the valid signal is fixed to active high.
+
+The valid output function is disabled by default. When enabled, the output valid signal occupies the MSB of the TXD, which means that no matter what the original value is, the 15th bit of TXD remains high and is output as the valid signal. However, the valid signal pin does not affect the bus width configuration. For example, if user configures data bus width as 1 bit, the valid output function can still be enabled with a fixed pin as TXD[15] while the data pin is TXD[0].
+
+
+\subsection{Bus Idle Value of TX Unit}
+The TX unit is regarded as in idle state when it is not transmitting data. It supports a configurable bus idle value.
+
+The bus idle value is 0x0 by default, and its maximum configurable value is 0xFFFF. Note that the configured idle value should not conflict with other enabled functions. For example, when the MSB of TXD is used as the valid signal, users should avoid configuring the MSB of the idle value as 1.
+
+\subsection{Data Transfer in a Single Frame}
+The RX unit and the TX unit are transferred in the unit of bytes, i.e., a single frame transfers 1 byte of data at least.
+
+When the RX unit generates GDMA EOF signals through byte length, the maximum length of the single-frame transmission is \begin{math} (2^{16}-1) \end{math} bytes. When the RX unit generates GDMA EOF signals through the enable signal from an external device, there is no limit to the amount of bytes of the single-frame transmission.
+
+The TX unit only generates GDMA EOF signals through byte length, so the maximum length of a single frame transmission is \begin{math} (2^{16}-1) \end{math} bytes.
+
+When the configured data bus width is 16 bit, the byte length must be configured as a multiple of 2 bytes.
+
+Normally, PARLIO can perform full-duplex transfer. But when in 16-bit bus width mode, PARAIO can only perform half-duplex transfer due to the limitation of the IO numbers.
+
+\subsection{Bit Reordering in One Byte}
+The sequence of data within one byte can be reversed. Taking the RX unit as an example, when the configured bus width is 2 bit, the data needs to be packed into one byte before being written into the RX FIFO.
+
+Presume that the original bit sequence is:
+
+\begin{center}
+\{ \{ b\_{0}, b\_{1} \}, \{ b\_{2}, b\_{3} \}, \{ b\_{4}, b\_{5} \}, \{ b\_{6}, b\_{7} \} \}
+\end{center}
+
+If the bit reordering function is enabled, the sequence will be reordered to:
+
+\begin{center}
+\{ \{ b\_{6}, b\_{7} \}, \{ b\_{4}, b\_{5} \}, \{ b\_{2}, b\_{3} \}, \{ b\_{0}, b\_{1} \} \}
+\end{center}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:parlio-prog-procedures}
+
+\subsection{Data Receiving Operation Process}
+
+This section introduces the programming procedure for receiving data in the RX unit. Perform the following procedure to receive parallel data from IO pins connected to external devices to be stored in the internal memory. For detailed description of the clock and reset operation restrictions in the RX unit, refer to Section \ref{subsec:parlio-clock_reset_restriction}.
+\begin{enumerate}
+    \item Reset the RX unit. For specific reset scenarios and sequences, refer to Section \ref{subsec:parlio-clock_reset_restriction}.
+    \item Set \hyperref[fielddesc:PARLIORXFIFOWFULLINTCLR]{PARL\_IO\_RX\_FIFO\_WFULL\_INT\_CLR} and \hyperref[fielddesc:PARLIORXFIFOWFULLINTENA]{PARL\_IO\_RX\_FIFO\_WFULL\_INT\_ENA}.
+    \item Select the RXD IO pins. If a PAD clock is used, the clock IO pin also needs to be configured. 
+    \item Select the clock source and divide the clock by configuring PCR registers.
+    \item Turn off the clock of RX Core clock domain.
+    \item Select the receive mode and enable functions required as described in Sections \ref{sec:parlio-features} and \ref{sec:parlio-func-descr}.
+    \item Configure GDMA inlink list.
+    \item Set \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE} to synchronize the register signals.
+    \item Set \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+    \item Turn on the clock of RX Core clock domain.
+    \item Operate the external device to start sending data.
+    \item Poll the GDMA SUC EOF interrupt.
+    \item Clear the GDMA SUC EOF interrupt.
+    \item Turn off the clock of RX Core clock domain.
+    \item Clear \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+\end{enumerate}
+
+\subsection{Data Transmitting Operation Process}
+This section introduces the programming procedure for transmitting data in the TX unit. Perform the following procedure to transmit parallel data from internal memory to the IO pins connected to external devices. For detailed description of the clock and reset operation restrictions in the TX unit, refer to Section \ref{subsec:parlio-clock_reset_restriction}.
+\begin{enumerate}
+    \item Reset the TX unit. For specific reset scenarios and sequences, refer to Section \ref{subsec:parlio-clock_reset_restriction}.
+    \item Set \hyperref[fielddesc:PARLIOTXFIFOREMPTYINTCLR]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_CLR}, \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}, \hyperref[fielddesc:PARLIOTXFIFOREMPTYINTENA]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_ENA}, and \hyperref[fielddesc:PARLIOTXEOFINTENA]{PARL\_IO\_TX\_EOF\_INT\_ENA} consecutively. 
+    \item Select the TXD IO pins. If a PAD clock is used, the clock IO PAD also needs to be configured. 
+    \item Select the clock source and  divide the clock by configuring PCR registers.
+    \item Turn off the clock of TX Core clock domain.
+    \item Select the functions required as described in Section \ref{sec:parlio-func-descr}.
+    \item Configure GDMA outlink list.
+    \item Poll the \hyperref[fielddesc:PARLIOTXREADY]{PARL\_IO\_TX\_READY}.
+    \item Set \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.
+    \item Turn on the clock of TX Core clock domain.
+    \item Operate the external device to start receiving data.
+    \item Poll the \hyperref[fielddesc:PARLIOTXEOFINTST]{PARL\_IO\_TX\_EOF\_INT\_ST}.
+    \item Set \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}.
+    \item Turn off the clock of TX Core clock domain.
+    \item Clear \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.
+\end{enumerate}
+
+
+
+\section{Application Examples}
+\label{sec:parlio-application-example}
+This section introduces some PARLIO application examples and their detailed operation process. All peripherals used in the examples are from ESP series chips and can work with PARLIO to form a complete data path. 
+
+\begin{tiplisting}
+The data paths constructed in the examples may not be the optimal. For example, users can use the SPI peripherals on two identical ESP chips to complete the peer-to-peer transfer in real case instead of using PARLIO to work with SPI. However, these examples demonstrate the flexibility of the PARLIO interface to a certain extent.
+\end{tiplisting}
+
+\subsection{Co-working with SPI}
+In this example, external SPI sends data as a master device and PARLIO RX unit receives data as a slave device, and at the same time, PARLIO TX sends data as a master device and SPI receives data as a slave device, thus achieving a peer-to-peer serial data transfer. 
+
+\begin{itemize}
+    \item Follow the operation process below to achieve SPI transmit and PARLIO receive:
+    \begin{itemize}
+        \item Configure SPI clock.
+        \item Configure SPI as the master device.
+        \item Configure signal pins. Connect FSPICLK to PAD\_CLK\_RX, FSPICS0 to RXD[16], and FSPID to RXD[0]. 
+        \item Write the data sent into the SPI buffer and configure the bit length of the data sent.
+        \item Set \hyperref[fielddesc:SPIUPDATE]{SPI\_UPDATE} to update the configured register value.
+        \item Reset PARLIO RX unit.
+        \item Configure PARLIO RX unit clock.
+        \item Turn off the PARLIO RX Core clock domain.
+        \item Configure PARLIO receive mode as sub-mode 1 of Level Enable mode. Configure RX unit data bus width as 1 bit. Configure \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN} according to the sending length of SPI. Set \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE}.
+        \item Configure PARLIO GDMA inlink list.
+        \item Set \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+        \item Turn on the PARLIO RX Core clock domain.
+        \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} to start transmitting data of SPI.
+        \item Poll GDMA SUC EOF interrupt.
+        \item Clear \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.  
+    \end{itemize} 
+    \item Follow the operation process below to achieve PARLIO transmit and SPI receive:
+    \begin{itemize}
+        \item Configure SPI clock.
+        \item Configure SPI as the slave device.
+        \item Configure signal pins. Connect FSPICLK to PAD\_CLK\_TX, FSPICS0 to TXD[16], and FSPID to TXD[0]. 
+        \item Set \hyperref[fielddesc:SPIRDBITORDER]{SPI\_RD\_BIT\_ORDER} to invert the bit order.
+        \item Set \hyperref[fielddesc:SPIUPDATE]{SPI\_UPDATE} to update the configured register value.   
+        \item Reset PARLIO TX unit.
+        \item Set \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR} and \hyperref[fielddesc:PARLIOTXEOFINTENA]{PARL\_IO\_TX\_EOF\_INT\_ENA}.
+        \item Configure PARLIO TX unit clock.
+        \item Turn off the clock of TX Core clock domain.
+        \item Configure data bus width as 1 bit. Write 1 to \hyperref[fielddesc:PARLIOTXHWVALIDEN]{PARL\_IO\_TX\_HW\_VALID\_EN}. Configure \hyperref[fielddesc:PARLIOTXBYTELEN]{PARL\_IO\_TX\_BYTELEN}. 
+        \item Configure GDMA outlink list. 
+        \item Poll \hyperref[fielddesc:PARLIOTXREADY]{PARL\_IO\_TX\_READY}.
+        \item Write 1 to \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.
+        \item Turn on the clock of TX Core clock domain.
+        \item Start data transfer.
+        \item Poll \hyperref[fielddesc:PARLIOTXEOFINTST]{PARL\_IO\_TX\_EOF\_INT\_ST}.
+        \item Set \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}.
+        \item Turn off the clock of TX Core clock domain.
+        \item Clear \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.         
+    \end{itemize} 
+\end{itemize}
+
+\subsection{Co-working with I2S}
+In this example, external I2S sends data as a master device and PARLIO RX unit receives data as a slave device. PARLIO supports the transmission of the I2S TDM MSB alignment standard and the TDM PCM standard. When the I2S transfer protocol is the TDM MSB alignment standard, it is required to configure the receive mode of PARLIO as Level Enable mode. When the I2S transfer protocol is the TDM PCM standard, it is required to configure the receive mode of PARLIO as the sub-mode 10 of Pulse Enable mode.
+
+This section takes the TDM PCM alignment standard as an example. The specific operation process is as follows:
+\begin{enumerate}
+    \item Configure I2S clock.
+    \item Configure signal pins. Connect I2SO\_BCK\_out to PAD\_CLK\_RX, I2SO\_WS\_out to RXD[16], and I2SO\_Data\_out to RXD[0].
+    \item Configure I2S as the master device.
+    \item Configure the I2S TX data mode and channel mode required. Set \hyperref[fielddesc:I2STXUPDATE]{I2S\_TX\_UPDATE}.
+    \item Reset I2S TX unit and TX FIFO.
+    \item Enable \hyperref[int:I2STXDONEINT]{I2S\_TX\_DONE\_INT}. 
+    \item Configure I2S GDMA outlink list.
+    \item Set \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN}.
+    \item Reset PARLIO RX unit.
+    \item Configure PARLIO RX unit clock.
+    \item Turn off PARLIO RX Core clock domain.
+    \item Configure PARLIO receive mode as sub-mode 10 of Pulse Enable mode. Configure the RX unit data bus width as 1 bit. Configure \hyperref[fielddesc:PARLIORXDATABYTELEN]{PARL\_IO\_RX\_DATA\_BYTELEN} according to the length of the data sent by I2S. Set \hyperref[fielddesc:PARLIORXREGUPDATE]{PARL\_IO\_RX\_REG\_UPDATE}.
+    \item Configure PARLIO GDMA inlink list.
+    \item Set \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+    \item Turn on PARLIO RX Core clock domain.
+    \item Set \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} to start transmitting data.
+    \item Poll \hyperref[int:I2STXDONEINT]{I2S\_TX\_DONE\_INT}. 
+    \item Poll GDMA SUC EOF interrupt.
+    \item Clear \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}.
+    \item Clear \hyperref[fielddesc:PARLIORXSTART]{PARL\_IO\_RX\_START}.
+\end{enumerate}
+
+\subsection{Co-working with LCD}\label{parlio-lcd-data-trans}
+
+\vspace{1em}
+\begin{tiplisting}
+    \chipname{} does not support LCD interface. For detailed descriptions about LCD control register fields mentioned below, please refer to the documentation of corresponding ESP series chips.
+\end{tiplisting}
+\vspace{-1em}
+
+In this example, PARLIO TX unit sends data as a master device and external LCD controller receives data as a slave device. The I8080/MOTO6800 format is used. The specific operation process is as follows:
+
+\begin{enumerate}
+    \item Configure signal pins. Connect CLK\_TX\_out to LCD pixel clock PCLK, TXD[7:0] to LCD data input pin, TXD[8] to LCD CS pin, TXD[9] to LCD CD pin.
+    \item Reset PARLIO TX unit.
+    \item Set \hyperref[fielddesc:PARLIOTXFIFOREMPTYINTCLR]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_CLR}, \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}, \hyperref[fielddesc:PARLIOTXFIFOREMPTYINTENA]{PARL\_IO\_TX\_FIFO\_REMPTY\_INT\_ENA}, and \hyperref[fielddesc:PARLIOTXEOFINTENA]{PARL\_IO\_TX\_EOF\_INT\_ENA} in sequence. 
+    \item Configure PARLIO TX unit clock.
+    \item Turn off the clock of TX Core clock domain.
+    \item Configure data bus width as 16 bit. Configure \hyperref[fielddesc:PARLIOTXBYTELEN]{PARL\_IO\_TX\_BYTELEN}.
+    \item Configure GDMA outlink list. Note that the data sent in the linked list should conform to I8080/MOTO6800 format. The lower eight bits are valid parallel data. The 9th and 10th bits are respectively CS, CD. The MSB is the constant 1. The remaining bits are arbitrary values.
+    \item Poll \hyperref[fielddesc:PARLIOTXREADY]{PARL\_IO\_TX\_READY}.
+    \item Write 1 to \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}.
+    \item Turn on the clock of TX Core clock domain.
+    \item Start data transfer.
+    \item Poll \hyperref[fielddesc:PARLIOTXEOFINTST]{PARL\_IO\_TX\_EOF\_INT\_ST}.
+    \item Set \hyperref[fielddesc:PARLIOTXEOFINTCLR]{PARL\_IO\_TX\_EOF\_INT\_CLR}.
+    \item Turn off the clock of TX Core clock domain.
+    \item Clear \hyperref[fielddesc:PARLIOTXSTART]{PARL\_IO\_TX\_START}. 
+\end{enumerate}
+
+\section{Interrupts} \label{sec:parlio-interrupts}
+
+\begin{itemize}
+\item \label{int:TXFIFOREMPTYINT}TX\_FIFO\_REMPTY\_INT: Triggered when TX FIFO is empty. This interrupt indicates that there might be error in the data sent by TX.
+\item \label{int:RXFIFOWFULLINT}RX\_FIFO\_WFULL\_INT: Triggered when RX FIFO is full. This interrupt indicates that there might be error in the data received by RX.
+\item \label{int:TXEOFINT}TX\_EOF\_INT: Triggered when TX finishes sending a complete frame of data.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Memory Blocks %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{parlio-reg-summ}{}
+\section{Register Summary}
+\label{sec:parlio-reg-summ}
+
+The addresses in this section are relative to Parallel IO Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/41-PARLIO-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to Parallel IO Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/41-PARLIO-reg__EN}
+
+
+\end{document}

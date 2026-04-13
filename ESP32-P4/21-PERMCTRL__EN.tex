@@ -1,0 +1,461 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./21-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    \usepackage{diagbox}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{permctrl}{}
+\chapter{Permission Control (PMS)}
+\label{mod:permctrl}
+
+\section{Overview}
+
+The permission control of \chipname{} consists of two parts: PMP (Physical Memory Protection) and APM (Access Permission Management).
+
+PMP is located inside the HP CPUs and can control the HP CPUs' access to all address spaces. APM is an access permission management module located at the bus port, which can manage the permissions for the CPU (HP CPU0/1, LP CPU) to access the registers of all on-chip peripherals (see HP CPU PERI, HP PERI, and LP PERI in Table \ref{tab:pmp-apm}) and part of internal and external memory. The APM can also manage DMA masters like VDMA, USB OTG 2.0, to access parts of internal and external memory.
+
+The APM module compares the configurable address range or the fixed address range, the access permissions of each address range, and the information carried on the bus like master ID, security mode, access address, access type, etc, to determine whether the access is allowed. With APM, users can precisely control the access of all masters to the memory and peripheral registers.
+
+The distribution of management areas by PMP and APM is shown in Table \ref{tab:pmp-apm}. For HP CPU0/1, the control relationship between PMP and APM is shown in Figure \ref{fig:pmp_apm}.
+
+\label{addrspace}
+\begin{ThreePartTable}
+\begin{TableNotes}
+\footnotesize{
+    \item[1] DMA masters that support DMA transfers, such as VDMA, USB 2.0 OTG, MEM\_MONITOR, etc.
+
+    \item[2]
+    \begin{itemize}
+        \item HP ROM (0x4FC0\_0000 - 0x4FC1\_FFFF)
+        \item HP L2MEM (0x4FF0\_0000 - 0x4FFB\_FFFF)
+        \item EXT MEM, including external flash (0x4000\_0000 - 0x43FF\_FFFF) and external RAM (0x4800\_0000 - 0x4BFF\_FFFF)
+    \end{itemize}
+
+    \item[3] ``Direct access" means HP CPU0/1 accesses internal and external memory mapped into the following address spaces without going through the cache:
+    \begin{itemize}
+        \item HP ROM (0x8FC0\_0000 - 0x8FC1\_FFFF)
+        \item HP L2MEM (0x8FF0\_0000 - 0x8FFB\_FFFF)
+        \item EXT MEM, including external flash (0x8000\_0000 - 0x83FF\_FFFF) and external RAM (0x8800\_0000 - 0x8BFF\_FFFF)
+    \end{itemize}
+
+    \item[4] HP CPU peripheral registers (0x3FF0\_0000 - 0x3FF1\_FFFF)
+
+    \item[5] HP system peripheral registers (0x5000\_0000 - 0x500F\_FFFF)
+
+    \item[6] LP system peripheral registers (0x5011\_0000 - 0x5012\_FFFF)
+
+    \item[7] As can be seen from the table, APM includes HP APM, LP APM, and DMA APM, which will be described in the following sections.
+    }
+\end{TableNotes}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|}
+
+    \caption{Management Areas by PMP and APM}
+    \label{tab:pmp-apm}\\\hline     \rowcolor{lightgray}\diagbox{\textbf{Slave}}{\textbf{Master}}
+    & \multicolumn{1}{|c|}{\textbf{HP CPU0}}
+    & \multicolumn{1}{|c|}{\textbf{HP CPU1}}
+    & \multicolumn{1}{|c|}{\textbf{LP CPU}}
+    & \multicolumn{1}{|c|}{\textbf{DMA Masters}\tnote{1}}\\ \hline
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+
+    \textbf{HP ROM}\tnote{2}                     &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{HP SPM}                              &PMP       & PMP  & N/A     & N/A \\ \hline
+    \textbf{HP L2MEM}\tnote{2}                   &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{EXT MEM}\tnote{2}                    &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{Direct Access HP ROM}\tnote{3}    &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{Direct Access HP L2MEM}\tnote{3}  &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{Direct Access EXT MEM}\tnote{3}   &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{HP CPU PERI}\tnote{4}                &PMP + HP APM  & PMP + HP APM & HP APM & N/A \\ \hline
+    \textbf{HP PERI}\tnote{5}                 &PMP + HP APM  & PMP + HP APM & HP APM & N/A\\ \hline
+    \textbf{LP PERI}\tnote{6}                 &PMP + LP APM  & PMP + LP APM & LP APM & N/A\\ \hline
+    \textbf{LP ROM}                           &N/A      & N/A     &  N/A & N/A \\ \hline
+    \textbf{LP SRAM}                          & PMP + LP APM & PMP + LP APM &  N/A & N/A\\ \hline
+
+\end{longtable}
+\end{ThreePartTable}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{21-PERMCTRL//figures/pmp_apm.png}
+    \caption{PMP-APM Management Relation}
+    \label{fig:pmp_apm}
+\end{figure}
+
+The diagram illustrates that when the HP CPUs access HP ROM, HP SPM, HP L2MEM, and EXT MEM, the access paths are solely managed by PMP. On the other hand, when the HP CPUs access the peripheral registers, HP ROM, HP L2MEM, and EXT MEM without going through the cache, the access paths are controlled by both PMP and APM. If the PMP check fails, the APM permission control will not be triggered.
+
+PMP-related registers are located inside the HP CPUs and can be read or configured with special instructions. For how to configure PMP, please refer to Chapter \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} > \ref{sec:riscvcpu-pmp} \textit{\nameref{sec:riscvcpu-pmp}}.
+
+The following sections will provide a detailed introduction to the features, functions, and configurations of the APM module. When referring to HP CPU0/1, accessing HP ROM/HP L2MEM/EXT MEM always means direct access to HP ROM/HP L2MEM/EXT MEM.
+
+
+\section{Features}
+
+The APM module has the following features:
+
+\begin{itemize}
+    \item Up to 32 configurable address ranges for each DMA master
+    \item Access permission management for each CPU core to access internal memory, external memory, and peripheral registers
+    \item Support for interrupts
+    \item Support for exception information record
+\end{itemize}
+
+\section{Functional Description}
+
+\subsection{Architecture}
+
+The APM module contains three parts and five register modules as follows:
+
+\begin{itemize}
+    \item \textbf{DMA APM}, containing register group \nameref{sec:permctrl-reg-dma}, responsible for:
+        \begin{itemize}
+        \item configuring up to 32 address regions for DMA masters
+        \item managing the access permission to each address region for each DMA master
+        \end{itemize}
+    \item \textbf{HP APM}, containing register groups \nameref{sec:permctrl-reg-hp} and \nameref{sec:permctrl-reg-lp2hp}, responsible for managing the access permissions to peripheral registers (HP CPU PERI, HP PERI), internal memory (HP ROM, HP L2MEM), and external memory (EXT MEM) in the HP system, specifically,
+        \begin{itemize}
+        \item managing the access permissions for HP CPU0/1 in user mode to access all the above-mentioned slaves
+        \item managing the access permissions for HP CPU0/1 in machine mode to access all the above-mentioned slaves
+        \item managing the access permissions for LP CPU in machine mode to access all the above-mentioned slaves
+        \end{itemize}
+    \item \textbf{LP APM}, containing register groups \nameref{sec:permctrl-reg-lp} and \nameref{sec:permctrl-reg-hp2lp}, responsible for managing the access permissions to peripheral registers (LP PERI) and internal memory (LP SRAM) in the LP system, specifically,
+    \begin{itemize}
+        \item managing the access permissions for HP CPU0/1 in user mode to access LP PERI and LP SRAM
+        \item managing the access permissions for HP CPU0/1 in machine mode to access LP PERI and LP SRAM
+        \item managing the access permissions for LP CPU in machine mode to access LP PERI
+    \end{itemize}
+\end{itemize}
+
+Figure \ref{fig:APM_Ctrl_Location} shows the access paths managed by APM and the corresponding register groups.
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/apm_architecture.png}
+\centering
+\caption{APM Architecture}
+\label{fig:APM_Ctrl_Location}
+\end{figure}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item For register group names ``HP2LP" and ``LP2HP", the ``HP" refers to HP CPU0/1, and ``LP" refers to LP CPU.
+    \item From Table \ref{tab:pmp-apm}, it can be seen that HP CPU and LP CPU access different address spaces of HP ROM, HP L2MEM, external flash, and external RAM. For HP CPU0/1, HP APM manages their direct access to internal and external memory without going through the cache.
+    \item \nameref{sec:permctrl-reg-lp} includes \iftagged{ESP32-P4-latest}{eight}{two} additional configurable address ranges for HP APM and LP APM to manage the access permissions to peripheral registers, including HP CPU PERI, HP PERI, and LP PERI.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Address Ranges and Permissions Management}\label{sec:permctrl-addr-region}
+
+APM manages address ranges, which can be fixed or configurable. DMA APM can manage up to 32 configurable address ranges. In addition to the fixed address ranges, HP APM and LP APM can also manage in total \iftagged{ESP32-P4-latest}{eight}{two} configurable address ranges.
+
+\subsubsection{Address Ranges Managed by HP APM and LP APM}
+
+In the access paths controlled by HP APM and LP APM, the internal memory and external memory use fixed address ranges for access control, while peripheral registers not only support fixed address ranges permission control but also support \iftagged{ESP32-P4-latest}{eight}{two} configurable address ranges.
+
+\begin{itemize}
+    \item Fixed address ranges
+    \begin{itemize}
+        \item The fixed address ranges are the valid address spaces of peripheral registers, internal memory, and external memory. See the table notes under Table \ref{tab:pmp-apm} for the address ranges of internal and external memory. Refer to Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} > Table \ref{tab:sysmem-base-address} for the address ranges of each peripheral.
+        \item To manage access to the fixed address ranges, please refer to Figure \ref{fig:APM_Ctrl_Location} for the access paths and their corresponding register groups.
+    \end{itemize}
+    \item Configurable Address Range
+    \begin{itemize}
+        \item APM can configure \iftagged{ESP32-P4-latest}{eight}{two} address ranges with \hyperref[fielddesc:PMSPERIREGIONNLOW]{PMS\_PERI\_REGION\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}}\_LOW\_REG} and \hyperref[fielddesc:PMSPERIREGIONNHIGH]{PMS\_PERI\_REGION\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}}\_HIGH\_REG} (\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}} = 0 \verb+~+ \iftagged{ESP32-P4-latest}{7}{1}) in \nameref{sec:permctrl-reg-lp}. These configurable address ranges can be used by HP CPUs and LP CPU to access all on-chip peripheral registers (HP CPU PERI, HP PERI, LP PERI).
+        \item The access permissions are managed by \hyperref[regdesc:PMSPERIREGIONPMSREG]{PMS\_PERI\_REGION\_PMS\_REG} in \nameref{sec:permctrl-reg-lp}.
+    \end{itemize}
+\end{itemize}
+
+When managing access permissions to peripheral registers, the permission management for the configurable address range should precede that of the fixed address range. Specifically:
+
+\begin{itemize}
+    \item If the access address is within the configurable address range, then APM will check if this access is permitted to access the configurable address range.
+    \begin{itemize}
+        \item If permitted, APM will continue to check if the access is permitted to the fixed address range.
+        \item If not permitted, the access will be denied and skip the permission check to the fixed address range.
+
+    \end{itemize}
+    \item If the access address is outside the configurable address range, then it will skip the configurable address range check, but will continue to the fixed address range check.
+
+    \item The management of configurable address ranges is a supplement to the management of fixed address ranges. For example, users can configure access permissions for a fixed address range, and deny access to two configurable ranges within the fixed range, resulting in a fixed address range containing two access-disabled address ranges.
+\end{itemize}
+
+
+\subsubsection{Address Ranges Managed by DMA APM}
+
+The register group \nameref{sec:permctrl-reg-dma} provides 32 sets of registers (\hyperref[fielddesc:PMSDMAREGIONNLOW]{PMS\_DMA\_REGION\regindex{n}\_LOW\_REG} \verb+~+ \hyperref[fielddesc:PMSDMAREGIONNHIGH]{PMS\_DMA\_REGION\regindex{n}\_HIGH\_REG}, \regindex{n} = 0 \verb+~+ 31) to configure address ranges for DMA masters to access. Note that since the address must be aligned to 4K bytes, the lowest 12 bits are set to 0.
+
+\nameref{sec:permctrl-reg-dma} provides separate read and write permissions for each DMA master to access each address range.
+
+\section{Programming Procedure}
+
+As HP CPUs can work in either user mode or machine mode, HP APM and LP APM grant specific access permissions for each work mode. Therefore, users need to configure the work mode for HP CPUs first in order for the HP CPUs to access internal memory, external memory, and peripheral registers.
+
+Since LP CPU only supports machine mode, HP APM and LP APM grant access permissions for the machine mode of LP CPU.
+
+DMA masters can access slaves regardless of the CPUs' work mode. DMA APM provides separate read and write permissions for each DMA master.
+
+\subsection{Configuring Access Permissions for HP CPU0/1}
+
+The configuration process for HP CPU0/1 accessing internal memory, external memory, or peripheral registers is as follows:
+
+\begin{enumerate}
+    \item Configure user mode or machine mode for HP CPU0/1. For how to configure the work mode, please refer to RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10.
+    \item If accessing peripheral registers, \iftagged{ESP32-P4-latest}{eight}{two} additional address ranges can be configured, please refer to Section \ref{sec:permctrl-addr-region} for details.
+    \item Configure access permissions:
+    \begin{itemize}
+        \item Configure the access permissions to internal memory (HP L2MEM and HP ROM), external memory (External RAM and flash), and peripheral registers (HP PERI and HP CPU PERI) in the HP system through \nameref{sec:permctrl-reg-hp}:
+        \begin{itemize}
+            \item Configure the permission of HP CPU\regindex{n} accessing the \regindex{MODULE\_NAME} module in \regindex{MODE\_NAME} mode using \hyperref[fielddesc:PMSCORENMML2ROMALLOW]{PMS\_CORE\regindex{n}\_\regindex{MODE\_NAME}\_\regindex{MODULE\_NAME}\_ALLOW}, for example \hyperref[fielddesc:PMSCORENMMPSRAMALLOW]{PMS\_CORE\regindex{n}\_MM\_PSRAM\_ALLOW}.
+        \end{itemize}
+        \item Configure the access permissions to LP SRAM and LP PERI through \nameref{sec:permctrl-reg-hp2lp}:
+        \begin{itemize}
+            \item Configure the permission of HP CPU\regindex{n} accessing the \regindex{MODULE\_NAME} module in \regindex{MODE\_NAME} mode using \hyperref[fielddesc:PMSHPCORENMMLPSYSREGALLOW]{PMS\_HP\_CORE\regindex{n}\_\regindex{MODE\_NAME}\_\regindex{MODULE\_NAME}\_ALLOW}, for example \hyperref[fielddesc:PMSHPCORENMMLPSYSREGALLOW]{PMS\_HP\_CORE\regindex{n}\_MM\_LP\_SYSREG\_ALLOW}.
+        \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Configuring Access Permissions for LP CPU}
+
+LP CPU only supports machine mode. The configuration process for LP CPU accessing internal memory, external memory, or peripheral registers is as follows:
+
+\begin{enumerate}
+    \item If accessing peripheral registers, \iftagged{ESP32-P4-latest}{eight}{two} additional address ranges can be configured, please refer to Section \ref{sec:permctrl-addr-region} for details.
+    \item Configure access permissions:
+    \begin{itemize}
+        \item Configure the access permissions to internal memory (HP L2MEM and HP ROM), external memory (External RAM and flash), and peripheral registers (HP PERI and HP CPU PERI) in the HP system through \nameref{sec:permctrl-reg-lp2hp}:
+        \begin{itemize}
+            \item Configure the permission of LP CPU accessing the \regindex{MODULE\_NAME} module in machine mode using \hyperref[fielddesc:PMSLPMML2ROMALLOW]{PMS\_LP\_MM\_\regindex{MODULE\_NAME}\_ALLOW}, for example \hyperref[fielddesc:PMSLPMMPSRAMALLOW]{PMS\_LP\_MM\_PSRAM\_ALLOW}.
+        \end{itemize}
+        \item Configure the access permissions to peripheral registers (LP PERI) in the LP system through \nameref{sec:permctrl-reg-lp}:
+        \begin{itemize}
+            \item Configure the permission of LP CPU accessing the \regindex{MODULE\_NAME} module in machine mode using \hyperref[fielddesc:PMSLPMMLPSYSREGALLOW]{PMS\_LP\_MM\_\regindex{MODULE\_NAME}\_ALLOW}, for example \hyperref[fielddesc:PMSLPMMLPSYSREGALLOW]{PMS\_LP\_MM\_LP\_SYSREG\_ALLOW}.
+        \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Configuring Access Permission for DMA Masters}
+
+The configuration process for DMA masters accessing internal memory, external memory, and other address spaces is as follows:
+
+\begin{enumerate}
+    \item Configure the address ranges accessible to all DMA masters:
+    \begin{itemize}
+        \item Configure the high 20 bits of the starting address of region\regindex{n} using \hyperref[regdesc:PMSDMAREGIONNLOWREG]{PMS\_DMA\_REGION\regindex{n}\_LOW\_REG}.
+        \item Configure the high 20 bits of the ending address of region\regindex{n} using \hyperref[regdesc:PMSDMAREGIONNHIGHREG]{PMS\_DMA\_REGION\regindex{n}\_HIGH\_REG}.
+    \end{itemize}
+    \item Configure the read and write permissions for each DMA master (\regindex{DMA\_MASTER}) to access each address range:
+    \begin{itemize}
+        \item Configure the read permissions using PMS\_\regindex{DMA\_MASTER}\_PMS\_R\_REG, such as \hyperref[regdesc:PMSDMAGMACPMSRREG]{PMS\_DMA\_GMAC\_PMS\_R\_REG}.
+        \item Configure the write permissions using PMS\_\regindex{DMA\_MASTER}\_PMS\_W\_REG, such as \hyperref[regdesc:PMSDMAGMACPMSWREG]{PMS\_DMA\_GMAC\_PMS\_W\_REG}.
+    \end{itemize}
+\end{enumerate}
+
+\section{Illegal Access and Interrupts}
+
+When the APM module manages access paths, it parses the information carried on the bus (e.g., master ID, access direction (read or write), access address, and working mode) and then determines the access permission. When the APM module confirms that the access lacks permission, \chipname{} will consider it as an unauthorized access and will take the following actions:
+
+\begin{itemize}
+    \item Reject the access request and provide an error response.
+    \item HP APM will trigger ICM\_SYS\_REG\_INT interrupt signal.
+    \item DMA APM will trigger ICM\_SYS\_REG\_INT interrupt signal.
+    \item LP APM will trigger LP\_SYSREG\_INT interrupt signal.
+\end{itemize}
+
+These interrupt signals are generated by the internal interrupt sources of the APM module. Table \ref{tab:apm-int-sources} lists the internal interrupt sources, interrupt trigger conditions, and the generated interrupt signals.
+
+\begin{longtable}{ | l | L{9cm} | l | }
+\caption{APM Internal Interrupt Sources} \label{tab:apm-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+ICM\_CPU\_ADDRHOLE\_INTR & Triggered when HP APM detects unauthorized access; or when DMA APM detects unauthorized access from high-speed USB 2.0 OTG, full-speed USB 2.0 OTG, EMAC, SDMMC, Trace0/1, GDMA-AHB, L2MEM Monitor, or SPM Monitor. & ICM\_SYS\_REG\_INT \\ \hline
+ICM\_SYS\_ADDRHOLE\_INTR & Triggered when DMA APM detects unauthorized access from VDMA, GDMA-AXI, 2D-DMA, or H264 DMA. & ICM\_SYS\_REG\_INT \\ \hline
+LP\_ADDRHOLE\_INTR & Triggered when LP APM detects unauthorized access. & LP\_SYSREG\_INTR  \\ \hline
+\end{longtable}
+
+APM automatically records relevant information about illegal accesses, including master ID, access direction (read or write), access address, illegal access flags, etc. All this information can be retrieved from the relevant registers described in Chapter \ref{mod:sysreg} \textit{\nameref{mod:sysreg}}.
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{permctrl-reg-summ}{}
+\section{Register Summary}
+\label{sec:permctrl-reg-summ}
+
+\subsection{HP\_DMA\_PMS\_REG}
+\label{sec:permctrl-reg-dma}
+
+The addresses in this section are relative to the HP\_DMA\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\input{21-PERMCTRL/21-PERMCTRL-dma-pms-reg-summ__EN}
+
+\subsection{HP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-hp}
+
+The addresses in this section are relative to the HP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\input{21-PERMCTRL/21-PERMCTRL-hp-peri-pms-reg-summ__EN}
+
+\subsection{LP2HP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-lp2hp}
+
+The addresses in this section are relative to the LP2HP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\input{21-PERMCTRL/21-PERMCTRL-lp2hp-peri-pms-reg-summary__EN}
+
+\subsection{LP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-lp}
+
+The addresses in this section are relative to the LP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\input{21-PERMCTRL/21-PERMCTRL-lp-peri-pms-reg-summary__EN}
+
+\subsection{HP2LP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-hp2lp}
+
+The addresses in this section are relative to the HP2LP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\input{21-PERMCTRL/21-PERMCTRL-hp2lp-peri-pms-reg-summary__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+\clearpage
+\section{Registers}
+
+\subsection{HP\_DMA\_PMS\_REG}
+
+The addresses in this section are relative to the HP\_DMA\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\input{21-PERMCTRL/21-PERMCTRL-dma-pms-reg__EN}
+
+\subsection{HP\_PERI\_PMS\_REG}
+
+The addresses in this section are relative to the HP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\input{21-PERMCTRL/21-PERMCTRL-hp-peri-pms-reg__EN}
+
+\subsection{LP2HP\_PERI\_PMS\_REG}
+
+The addresses in this section are relative to the LP2HP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\input{21-PERMCTRL/21-PERMCTRL-lp2hp-peri-pms-reg__EN}
+
+\subsection{LP\_PERI\_PMS\_REG}
+
+The addresses in this section are relative to the LP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\input{21-PERMCTRL/21-PERMCTRL-lp-peri-pms-reg__EN}
+
+\subsection{HP2LP\_PERI\_PMS\_REG}
+
+The addresses in this section are relative to the H2LP\_PERI\_PMS base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\input{21-PERMCTRL/21-PERMCTRL-hp2lp-peri-pms-reg__EN}
+
+\end{document}

@@ -1,0 +1,812 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./38-PPA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    \usepackage{diagbox}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%
+%%% Module Name %%%
+%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ppa}{}
+\chapter{Pixel-Processing Accelerator (PPA)}
+\label{mod:ppa}
+
+\section{Overview}
+\chipseries{} includes a pixel-processing accelerator (PPA) designed for 2D image display. This module realizes hardware-level acceleration of image algorithms and implements functions such as image rotation, scaling, mirroring, and blending.
+
+PPA consists of two functional modules: scaling-rotation-mirroring (SRM) and image blending (BLEND). The SRM module implements image rotation, scaling, and XY-axis mirroring functions, while the BLEND module achieves the blending of two layers of the same size based on the Alpha channel, i.e., transparency.
+
+PPA processes images in units of pixel block. These pixel blocks are acquired from memory through 2D-DMA. The connection between PPA and 2D-DMA is shown in Figure \ref{figure:ppa-2ddma-connection}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-2ddma-connection.pdf}
+    \caption{PPA 2D-DMA Connection}
+    \label{figure:ppa-2ddma-connection}
+\end{figure}
+
+\section{Terminology}
+To better illustrate the functions of the PPA module, the following terms are used in this chapter:
+
+\begin{longtable}[c]{ r l }
+     \textbf{image} & A complete image stored in the system memory \\
+     \textbf{image block} & \makecell[l]{A portion cropped from an image at a certain size, with the maximum size equivalent to the entire image.\\i.e., hb, vb size under 2D-DMA 2D-MOD0.} \\
+     \textbf{pixel block} & A portion cropped from an image block. SRM reads and writes data in pixel blocks. \\
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+
+\begin{itemize}
+    \item Image rotation, scaling, and mirroring by SRM:
+        \begin{itemize}
+            \item Input formats: ARGB8888, RGB888, RGB565, YUV422, YUV420, GRAY
+            \item Output formats: ARGB8888, RGB888, RGB565, YUV422, YUV420, GRAY
+            \item Counterclockwise rotation angles: 0°, 90°, 180°, 270°
+            \item Horizontal and vertical scaling with scaling factors of 8-bit integer part and 4-bit fractional part
+            \item Horizontal and vertical mirroring
+        \end{itemize}
+    \item Blending two layers of the same size and filling images with specific pixels by BLEND:
+        \begin{itemize}
+            \item Foreground input formats: ARGB8888, RGB888, RGB565, L4, L8, A4, A8
+            \item Background input formats: ARGB8888, RGB888, RGB565, YUV422, YUV420, GRAY, L4, L8
+            \item Output formats: ARGB8888, RGB888, RGB565, YUV422, YUV420, GRAY
+            \item Layer blending based on the Alpha channel. If layers lack an Alpha channel, it can be provided through register configuration.
+            \item Special color filtering by setting color-key ranges of foreground and background layers
+        \end{itemize}
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:ppa-arch-overview}
+
+As shown in figure \ref{figure:ppa-arch}, there are two independent functional modules in PPA: SRM and BLEND.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/38-PPA-arch.pdf}
+    \caption{PPA Architecture}
+    \label{figure:ppa-arch}
+\end{figure}
+
+For SRM, SRM Coordinate Calculation scans coordinates of the output pixel blocks and calculates coordinates of the corresponding input pixel blocks. Addr Gen calculates the address according to the input pixel block coordinates and sends them to 2D-DMA. After that, the PPA receives the pixel block data from 2D-DMA, converts it into ARGB8888 format according to the register configuration, and stores it into the RX FIFO (a ping-pong FIFO composed of two SRAMs, each of which can store the whole pixel block). When a complete pixel block is cached, Bilinear Interpolation reads the input pixels from RX FIFO, interpolates them to get the output pixels, and outputs them to TX FIFO. Reorder CTRL then calculates the output pixel block coordinates and address according to the register configuration and sends them to 2D-DMA. At the same time, Reorder CTRL takes out the corresponding pixels from TX FIFO according to the output pixel block coordinates and sends them to 2D-DMA, which saves them to the corresponding address.
+
+For BLEND, PPA also receives data from 2D-DMA and converts it to ARGB8888 format based on the input data type. Yet the converted pixels will be processed directly by the BLEND Core algorithm module, enter the TX FIFO, and ultimately output to the system memory through 2D-DMA. Unlike SRM, BLEND does not need to calculate the address itself as it is completely controlled by 2D-DMA through a linked list.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:ppa-func-descr}
+
+\subsection{PPA Color Space}
+
+PPA supports both true color and pseudo color. True color refers to a color representation in which each pixel in a color image consists of three primary color components: R (red), G (green), and B (blue). Each of these components directly determines the intensity of the corresponding primary color on the display device. The true color formats supported by PPA include ARGB8888, RGB888, and RGB565.
+
+Pseudo color refers to a color representation in which the color of each pixel in a color image is not directly determined by the numerical values of the primary color components. Instead, the pixel value serves as an entry into a Color Look-Up Table (CLUT) to retrieve the corresponding A, R, G, and B values. PPA supports CLUT entry addresses with 8-bit or 4-bit width.
+
+In addition, SRM supports the YUV422, YUV420, and GRAY data formats. The storage order of supported color formats in memory is shown in Table \ref{tab:color-space-endian}. The input YUV422 storage order can be set using the SRM or BLEND YUV422\_BYTE\_ORDER register; the output, however, is always stored with YUV422\_BYTE\_ORDER = 1.
+
+\begin{longtable}[c]{ |p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}| }
+    \caption{Pixel Storage Order}
+    \label{tab:color-space-endian}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Color Format} & \textbf{Start Addr + 3} & \textbf{Start Addr + 2} & \textbf{Start Addr + 1} & \textbf{Start Addr + 0} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{5}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Color Format} & \textbf{Start Addr + 3} & \textbf{Start Addr + 2} & \textbf{Start Addr + 1} & \textbf{Start Addr + 0} \\\hline
+    \endhead
+
+    \multicolumn{5}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \textbf{ARGB8888} & \textbf{A0}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\hline
+        \multirow{3}{*}{\textbf{RGB888}} & \textbf{B1}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\cline{2-5}
+        & \textbf{G2}[7:0] & \textbf{B2}[7:0] & \textbf{R1}[7:0] & \textbf{G1}[7:0] \\\cline{2-5}
+        & \textbf{R3}[7:0] & \textbf{G3}[7:0] & \textbf{B3}[7:0] & \textbf{R2}[7:0] \\\hline
+        \textbf{RGB565} & \textbf{R1}[4:0]\textbf{G1}[5:3] & \textbf{G1}[2:0]\textbf{B1}[4:0] & \textbf{R0}[4:0]\textbf{G0}[5:3] & \textbf{G0}[2:0]\textbf{B0}[4:0] \\\hline
+        \textbf{L8} & \textbf{L3}[7:0] & \textbf{L2}[7:0] & \textbf{L1}[7:0] & \textbf{L0}[7:0] \\\hline
+        \textbf{L4} & \textbf{L7}[3:0]\textbf{L6}[3:0] & \textbf{L5}[3:0]\textbf{L4}[3:0] & \textbf{L3}[3:0]\textbf{L2}[3:0] & \textbf{L1}[3:0]\textbf{L0}[3:0] \\\hline
+        \textbf{A8} & \textbf{A3}[7:0] & \textbf{A2}[7:0] & \textbf{A1}[7:0] & \textbf{A0}[7:0] \\\hline
+        \textbf{A4} & \textbf{A7}[3:0]\textbf{A6}[3:0] & \textbf{A5}[3:0]\textbf{A4}[3:0] & \textbf{A3}[3:0]\textbf{A2}[3:0] & \textbf{A1}[3:0]\textbf{A0}[3:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=0} & \textbf{Y1}[7:0] & \textbf{V1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=1} & \textbf{Y1}[7:0] & \textbf{U1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=2} & \textbf{v1}[7:0] & \textbf{y1}[7:0] & \textbf{U0}[7:0] & \textbf{Y0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=3} & \textbf{U1}[7:0] & \textbf{Y1}[7:0] & \textbf{V0}[7:0] & \textbf{Y0}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\Odd rows \\such as 1, 3, 5...}} & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\cline{2-5}
+        & \textbf{Y4}[7:0] & \textbf{U4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] \\\cline{2-5}
+        & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{U6}[7:0] & \textbf{Y5}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\Even rows \\such as 2, 4, 6...}} & \textbf{V2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\cline{2-5}
+        & \textbf{Y4}[7:0] & \textbf{V4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] \\\cline{2-5}
+        & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{V6}[7:0] & \textbf{Y5}[7:0] \\\hline
+        \textbf{GRAY} & \textbf{P3}[7:0] & \textbf{P2}[7:0] & \textbf{P1}[7:0] & \textbf{P0}[7:0] \\\hline
+
+\end{longtable}
+
+\subsubsection{SRM Color Space}
+
+SRM supports ARGB8888, RGB888, RGB565, and YUV422, YUV420, and GRAY formats for both input and output. The input format is configured by \hyperref[fielddesc:PPASRMRXCM]{PPA\_SRM\_RX\_CM}, while the output format is configured by \hyperref[fielddesc:PPASRMTXCM]{PPA\_SRM\_TX\_CM}. The SRM input pixel processing steps are shown in Figure \ref{figure:ppa-srm-rx-color-pro}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-srm-rx-color-pro.pdf}
+    \caption{PPA SRM Input Pixel Processing}
+    \label{figure:ppa-srm-rx-color-pro}
+\end{figure}
+
+SRM supports RGB and byte swapping for ARGB8888, RGB888, and RGB565 input formats. The specific configurations are as follows:
+
+\begin{itemize}
+    \item Set \hyperref[fielddesc:PPASRMRXRGBSWAPEN]{PPA\_SRM\_RX\_RGB\_SWAP\_EN} to 1 to reverse RGB to BGR and ARGB to BGRA.
+    \item Set \hyperref[fielddesc:PPASRMRXBYTESWAPEN]{PPA\_SRM\_RX\_BYTE\_SWAP\_EN} to 1 to reverse bytes 0, 1 and 2, 3 respectively, i.e., \{0, 1, 2, 3\} will be reverted to \{1, 0, 3, 2\}. RGB888 would not be affected by this configuration as it only has three bytes per pixel.
+\end{itemize}
+
+SRM uses ARGB8888 when processing images internally. When the input lacks an Alpha channel, the default Alpha channel value for the image is set to 255. The Alpha channel can be further configured using the \hyperref[regdesc:PPASRMFIXALPHAREG]{PPA\_SRM\_FIX\_ALPHA\_REG} register, as shown in Figure \ref{figure:ppa-srm-rx-alpha-pro}. For specific configuration effects, please refer to Table \ref{tab:ppa-srm-rx-alpha-config}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-srm-rx-alpha-pro.pdf}
+    \caption{PPA SRM Alpha Configuration Logic}
+    \label{figure:ppa-srm-rx-alpha-pro}
+\end{figure}
+
+\begin{longtable}[c]{ |p{4cm}|p{4.2cm}|p{8.3cm}| }
+    \caption{PPA SRM Alpha Configuration}
+    \label{tab:ppa-srm-rx-alpha-config}\\\hline
+
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:PPASRMRXALPHAINV]{PPA\_SRM\_RX\_ALPHA\_INV} & \hyperref[fielddesc:PPASRMRXALPHAMOD]{PPA\_SRM\_RX\_ALPHA\_MOD} & \textbf{Output} \\\hline
+    \endfirsthead
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:PPASRMRXALPHAINV]{PPA\_SRM\_RX\_ALPHA\_INV} & \hyperref[fielddesc:PPASRMRXALPHAMOD]{PPA\_SRM\_RX\_ALPHA\_MOD} & \textbf{Output} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+    & 00/11 & \makecell[l]{Original Alpha value} \\\cline{2-3}
+    \multirow{0}{*}{0} & 01 & \makecell[l]{The configuration value of \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA}} \\\cline{2-3}
+    & 10 & \makecell[l]{The high 8 bits of the value obtained by multiplying the \\original Alpha value with \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA}} \\\hline
+    & 00/11 & \makecell[l]{The value obtained by subtracting the original Alpha \\value from 255} \\\cline{2-3}
+    \multirow{0}{*}{1} & 01 & \makecell[l]{The configuration value of \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA}} \\\cline{2-3}
+    & 10 & \makecell[l]{The high 8 bits of the value obtained by multiplying \\the result of subtracting the original Alpha value \\from 255 by \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA}} \\\hline
+
+\end{longtable}
+
+Note that when the input or output format is YUV, further configuration of YUV to RGB color conversion is required.
+
+When the input format is YUV420, the input YUV data range needs to be configured as full-range or limit-range via the \hyperref[fielddesc:PPAYUVRXRANGE]{PPA\_YUV\_RX\_RANGE} field, and the protocol used for YUV to RGB conversion needs to be configured as BT601 or BT709 via the \hyperref[fielddesc:PPAYUV2RGBPROTOCAL]{PPA\_YUV2RGB\_PROTOCAL} field. The conversion formulas are as follows:
+
+\begin{itemize}
+    \item $YUV_{full}$ to $YUV_{limit}$
+        \begin{itemize}
+            \item $Y_{limit} = \frac{220}{256} Y_{full} + 16$
+            \item $U_{limit} = \frac{225}{256} U_{full} + 16$
+            \item $V_{limit} = \frac{225}{256} V_{full} + 16$
+        \end{itemize}
+    \item $YUV_{limit}$ to RGB in BT601
+        \begin{itemize}
+            \item $R = \frac{298}{256}Y_{limit} + \frac{409}{256}V_{limit} - \frac{56906}{256}$
+            \item $G = \frac{298}{256}Y_{limit} - \frac{100}{256}U_{limit} - \frac{208}{256}V_{limit} + \frac{34707}{256}$
+            \item $B = \frac{298}{256}Y_{limit} + \frac{516}{256}U_{limit} -  \frac{70836}{256}$
+        \end{itemize}
+    \item $YUV_{limit}$ to RGB in BT709
+        \begin{itemize}
+            \item $R = \frac{298}{256}Y_{limit} + \frac{459}{256}V_{limit} - \frac{63367}{256}$
+            \item $G = \frac{298}{256}Y_{limit} - \frac{55}{256}U_{limit} - \frac{136}{256}V_{limit} + \frac{19681}{256}$
+            \item $B = \frac{298}{256}Y_{limit} + \frac{541}{256}U_{limit} -  \frac{73918}{256}$
+        \end{itemize}
+\end{itemize}
+
+When the output format is YUV420, the output YUV data range needs to be configured as full-range or limit-range via the \hyperref[fielddesc:PPAYUVTXRANGE]{PPA\_YUV\_TX\_RANGE} field, and the protocol used for YUV to RGB conversion needs to be configured as BT601 or BT709 via the \hyperref[fielddesc:PPARGB2YUVPROTOCAL]{PPA\_RGB2YUV\_PROTOCAL} field. The conversion formulas are as follows:
+
+\begin{itemize}
+    \item $YUV_{limit}$ to $YUV_{full}$
+        \begin{itemize}
+            \item $Y_{full} = \frac{298}{256} Y_{limit} + \frac{4768}{256}$
+            \item $U_{full} = \frac{291}{256} U_{limit} + \frac{4550}{256}$
+            \item $V_{full} = \frac{291}{256} V_{limit} + \frac{4550}{256}$
+        \end{itemize}
+    \item RGB to $YUV_{limit}$ in BT601
+        \begin{itemize}
+            \item $Y_{limit} = \frac{4096}{256} + \frac{66}{256}R + \frac{129}{256}G + \frac{25}{256}B$
+            \item $U_{limit} = \frac{32768}{256} - \frac{38}{256}R - \frac{74}{256}G + \frac{112}{256}B$
+            \item $V_{limit} = \frac{32768}{256} + \frac{112}{256}R - \frac{94}{256}G - \frac{18}{256}B$
+        \end{itemize}
+    \item RGB to $YUV_{limit}$ in BT709
+        \begin{itemize}
+            \item $Y_{limit} = \frac{4096}{256} + \frac{47}{256}R + \frac{157}{256}G + \frac{16}{256}B$
+            \item $U_{limit} = \frac{32768}{256} - \frac{26}{256}R - \frac{86}{256}G + \frac{112}{256}B$
+            \item $V_{limit} = \frac{32768}{256} + \frac{112}{256}R - \frac{102}{256}G - \frac{10}{256}B$
+        \end{itemize}
+\end{itemize}
+
+
+\subsubsection{BLEND Color Space}
+\label{sec:blend-color-space}
+
+BLEND supports ARGB8888, RGB888, RGB565, L4, L8, A4, and A8 foreground input formats, and ARGB8888, RGB888, RGB565, YUV422, YUV420, GRAY, L4, L8 background input formats. The input color format of the foreground and background layers can be configured respectively via the \hyperref[fielddesc:PPABLEND0RXCM]{PPA\_BLEND\textcolor{red}{0/1}\_RX\_CM} field. Among the above input formats, A4 and A8 only support the foreground layer, and when the input format is L4 or A4, the size of the image block, hb, and the offset in the image, x, must be an even number. For the output format, BLEND supports ARGB8888, RGB888, and RGB565, which can be configured via the \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM} field.
+
+BLEND's RGB conversion, byte conversion, and alpha channel configuration are consistent with SRM input. Additionally, when the foreground layer data format is A4 or A8, the input data will be Alpha channel values. In this case, if \hyperref[fielddesc:PPABLENDBYPASS]{PPA\_BLEND\_BYPASS} is set as 1, the foreground layer's input Alpha value replaces the background layer's Alpha channel and output. If set as 0, it will be a normal BLEND operation, and the foreground layer's RGB values will be specified by \hyperref[regdesc:PPABLENDRGBREG]{PPA\_BLEND\_RGB\_REG}.
+
+When the input data format is L4 or L8, it requires to first initialize the CLUT for BLEND. BLEND has two CLUTs with a depth of 256 and a width of 32. There are two initialization modes: FIFO and MEM.
+
+\begin{itemize}
+    \item Write 0 to \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} to enter the FIFO mode. \\
+    In the FIFO mode, access to CLUT is achieved by reading/writing \hyperref[fielddesc:PPARDWRWORDBLEND0CLUT]{PPA\_RDWR\_WORD\_BLEND\textcolor{red}{x}\_CLUT}, where 0 corresponds to the background channel CLUT and 1 corresponds to the foreground channel CLUT. \\
+    Each time this register is read/written, the corresponding read/write address is automatically incremented by 1. The read/write address can be reset by writing 1 and then 0 to \hyperref[fielddesc:PPABLEND0CLUTMEMRST]{PPA\_BLEND\textcolor{red}{x}\_CLUT\_MEM\_RST}. The read address can be reset by writing 1 then 0 to \hyperref[fielddesc:PPABLEND0CLUTMEMRDADDRRST]{PPA\_BLEND\textcolor{red}{x}\_CLUT\_MEM\_RDADDR\_RST}.
+    \item Write 1 to \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} to enter the MEM mode. \\
+    In the MEM mode, CLUT can be directly accessed through addresses. The CLUT addresses in the PPA's bus address range are as shown in Table \ref{tab:blend-clut-addr}.
+\end{itemize}
+
+\begin{longtable}[c]{ |p{5cm}|p{5cm}|p{2.5cm}| }
+    \caption{BLEND CLUT Address}
+    \label{tab:blend-clut-addr}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{addr[11:10]} & \textbf{addr[9:2]} & \textbf{addr[1:0]} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Start Addr + 2} & \textbf{Start Addr + 1} & \textbf{Start Addr + 0} \\\hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \makecell[l]{01: Select BLEND0 CLUT\\10: Select BLEND1 CLUT} & CLUT actual address, 0 \verb+~+ 255 & 00 \\\hline
+
+\end{longtable}
+
+\subsection{PPA 2D-DMA Linked List Configuration}
+
+PPA exchanges data with the system memory via 2D-DMA. For both SRM and BLEND, it is necessary to configure the 2D-DMA linked list information for the required image block operations in one go. The 2D-DMA linked list is shown in Figure \ref{figure:ppa-2ddma-link-list}. For detailed information, please refer to \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-2ddma-link-list.pdf}
+    \caption{2D-DMA Linked List}
+    \label{figure:ppa-2ddma-link-list}
+\end{figure}
+
+The corresponding linked list parameters of PPA are shown in Table \ref{tab:ppa_link_list_config}.
+
+\begin{longtable}[c]{ |p{2.5cm}|p{8cm}| }
+    \caption{PPA Linked List Configuration}
+    \label{tab:ppa_link_list_config}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Field} & \textbf{Configuration} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Field} & \textbf{Configuration} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        owner & 1 \\\hline
+        eof & 1 \\\hline
+        2DEN & 1 \\\hline
+        err\_eof & 0 \\\hline
+        hb & \makecell[l]{Horizontal size of the image block.\\ Must be even if the input or output data format \\is YUV420} \\\hline
+        vb & \makecell[l]{Vertical size of the image block.\\ Must be even if the input or output data format \\is YUV420} \\\hline
+        pbyte & \makecell[l]{ARGB8888: 5 (4 byte/pixel)\\RGB888: 4 (3 byte/pixel)\\RGB565: 3 (2 byte/pixel)\\YUV420: 2 (1.5 byte/pixel)\\A8/L8: 1 (1 byte/pixel)\\A4/L4: 0 (0.5 byte/pixel)} \\\hline
+        HA & \makecell[l]{Horizontal size of the entire image.\\ Must be even if the input or output data format \\is YUV420} \\\hline
+        VA & \makecell[l]{Vertical size of the entire image.\\ Must be even if the input or output data format \\is YUV420} \\\hline
+        mod & 0 \\\hline
+        X & \makecell[l]{Horizontal offset of the image block within the image \\(offset starts from 0).\\ Must be even if the input or output data is YUV420} \\\hline
+        Y & \makecell[l]{Vertical offset of the image block within the image \\(offset starts from 0). \\Must be even if the input or output data is YUV420} \\\hline
+        Buffer address pointer & Starting address of the image \\\hline
+        Next descriptor address & N/A \\\hline
+
+\end{longtable}
+
+\subsubsection{SRM Special Configuration}
+
+Once the 2D-DMA linked lists for input and output image blocks are configured, SRM needs to select the required pixel blocks from the input image block memory space and process them in units of pixel blocks. The processed pixel blocks are then stored in the corresponding memory space of the output image block. Throughout this process, the starting address of each pixel block needs to be controlled by SRM. To realize this functionality, write 1 to the \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_\textcolor{red}{IN/OUT}\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}} field of the corresponding channel of the 2D-DMA to enable the descriptor interface (also called DSCR-PORT in 2D-DMA), allowing PPA to control the starting address of the next pixel block in real-time.
+
+For the data input, SRM must receive a complete pixel block each time. When the pixel block selection reaches the boundary of the image block, 2D-DMA needs to automatically pad the pixel block beyond the boundary. This can be achieved by configuring the \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_\textcolor{red}{V/H}\_CH\textcolor{red}{x}} field of the corresponding channel of 2D-DMA to the pixel block size. The required values depend on the image format, as shown in Table \ref{tab:ppa_blk_config} below.
+
+\begin{longtable}[c]{ |p{4cm}|p{4cm}|p{4cm}|p{4cm}| }
+    \caption{Automatic Padding Block Size Configuration}
+    \label{tab:ppa_blk_config}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL}} & \textbf{Pixel Format} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_H\_CH\textcolor{red}{x}}}} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_V\_CH\textcolor{red}{x}}}} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL}} & \textbf{Pixel Format} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_H\_CH\textcolor{red}{x}}}} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_V\_CH\textcolor{red}{x}}}} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        0 & \makecell[l]{ARGB8888\\RGB888\\RGB565\\GRAY} & 34 & 34 \\\hline
+        0 & YUV422 & 36 & 34 \\\hline
+        0 & YUV420 & 36 & 36 \\\hline
+        1 & \makecell[l]{ARGB8888\\RGB888\\RGB565\\GRAY} & 18 & 18 \\\hline
+        1 & YUV422 & 20 & 18 \\\hline
+        1 & YUV420 & 20 & 20 \\\hline
+
+\end{longtable}
+
+\begin{tiplisting}
+    For optimal memory-access performance, use the default setting \hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL} = 0.
+\end{tiplisting}
+
+
+\subsection{Scaling - Rotation - Mirroring (SRM)}
+
+\subsubsection{Basic Functionality}
+
+SRM supports scaling, rotation, and mirroring. It first scales the image based on the origin point, then rotates it around the center point ($X_{middle}$, $Y_{middle}$), and finally mirrors it horizontally and vertically based on the center point ($X_{target}$, $Y_{target}$), as shown in Figure \ref{figure:ppa_srm}. Scaling, rotation, and mirroring parameters are all configured through registers:
+
+\begin{itemize}
+\item \hyperref[fielddesc:PPASRMSCALXINT]{PPA\_SRM\_SCAL\_X\_INT}: Integer part of the horizontal scaling factor
+\item \hyperref[fielddesc:PPASRMSCALXFRAG]{PPA\_SRM\_SCAL\_X\_FRAG}: Fractional part of the horizontal scaling factor
+\item \hyperref[fielddesc:PPASRMSCALYINT]{PPA\_SRM\_SCAL\_Y\_INT}: Integer part of the vertical scaling factor
+\item \hyperref[fielddesc:PPASRMSCALYFRAG]{PPA\_SRM\_SCAL\_Y\_FRAG}: Fractional part of the vertical scaling factor
+\item \hyperref[fielddesc:PPASRMROTATEANGLE]{PPA\_SRM\_ROTATE\_ANGLE}: Counterclockwise rotation angle
+\item \hyperref[fielddesc:PPASRMMIRRORX]{PPA\_SRM\_MIRROR\_X}: Enable horizontal mirroring
+\item \hyperref[fielddesc:PPASRMMIRRORY]{PPA\_SRM\_MIRROR\_Y}: Enable vertical mirroring
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/38-PPA-srm.pdf}
+    \caption{SRM Procedure}
+    \label{figure:ppa_srm}
+\end{figure}
+
+\subsubsection{Pixel Block Rearrangement}
+
+When the output pixel block is small, initiating a 2D-DMA transfer for each pixel block would result in low bus bandwidth utilization. To improve bus bandwidth utilization, SRM can cache and concatenate output pixel blocks into a larger pixel block before outputting them all at once. This feature is enabled by default and can be disabled by setting \hyperref[fielddesc:PPASRMMACROBKROBYPASS]{PPA\_SRM\_MACRO\_BK\_RO\_BYPASS} to 1.
+
+Once pixel block rearrangement is enabled, under certain conditions, the output pixel blocks will be automatically rearranged and concatenated, as specified in Table \ref{tab:srm_blk_ro_num}.
+
+\begin{itemize}
+    \item For the output pixel block in ARGB8888/RGB888 format, if its vertical height is less than or equal to 32, and the horizontal width is less than or equal to 16, pixel block rearrangement will be automatically enabled.
+    \item For the output pixel block in RGB565 format, if its vertical height is less than or equal to 32, and the horizontal width is less than or equal to 32, pixel block rearrangement will be automatically enabled.
+    \item For the output pixel block in YUV420 format, if its vertical height is less than or equal to 32, and horizontal width is less than or equal to 32, pixel block rearrangement will be automatically enabled.
+\end{itemize}
+
+\begin{longtable}[c]{ |p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}| }
+    \caption{Number of Pixel Block Rearrangements in SRM Output}
+    \label{tab:srm_blk_ro_num}\\\hline
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|c|}{\textbf{ARGB8888/RGB888}} & \multicolumn{2}{c|}{\textbf{RGB565}} & \multicolumn{2}{c|}{\textbf{YUV420}} \\\hline
+    \rowcolor{lightgray}
+    \textbf{Horizontal Size} & \textbf{Rearrangement Number} & \textbf{Horizontal Size} & \textbf{Rearrangement Number} & \textbf{Horizontal Size (Even)} & \textbf{Rearrangement Number} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{5}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \multicolumn{2}{|c|}{\textbf{ARGB8888/RGB888}} & \multicolumn{2}{c|}{\textbf{RGB565}} & \multicolumn{2}{c|}{\textbf{YUV420}} \\\hline
+    \rowcolor{lightgray}
+    \textbf{Horizontal Size} & \textbf{Rearrangement Number} & \textbf{Horizontal Size} & \textbf{Rearrangement Number} & \textbf{Horizontal Size (Even)} & \textbf{Rearrangement Number} \\\hline
+    \endhead
+
+    \multicolumn{5}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        1  & 32 & 1  & 64 & 2  & 32 \\\hline
+        2  & 16 & 2  & 32 & 4  & 16 \\\hline
+        3  & 10 & 3  & 20 & 6  & 10 \\\hline
+        4  & 8  & 4  & 16 & 8  & 8  \\\hline
+        5  & 6  & 5  & 12 & 10 & 6  \\\hline
+        6  & 5  & 6  & 10 & 12 & 5  \\\hline
+        7  & 4  & 7  & 9  & 14 & 4  \\\hline
+        8  & 4  & 8  & 8  & 16 & 4  \\\hline
+        9  & 3  & 9  & 7  & 18 & 3  \\\hline
+        10 & 3  & 10 & 6  & 20-32 & 2 \\\hline
+        11 & 2  & 11 & 5  &  &  \\\hline
+        12 & 2  & 12 & 5  &  &  \\\hline
+        13 & 2  & 13 & 4  &  &  \\\hline
+        14 & 2  & 14 & 4  &  &  \\\hline
+        15 & 2  & 15 & 4  &  &  \\\hline
+        16 & 2  & 16 & 4  &  &  \\\hline
+           &    & 17 & 3  &  &  \\\hline
+           &    & 18 & 3  &  &  \\\hline
+           &    & 19-32 & 2 &  &  \\\hline
+
+\end{longtable}
+
+\subsection{Layer Blending (BLEND)}
+
+\subsubsection{Basic Functionality}
+
+BLEND combines two image blocks of the same size using the Alpha channel and then outputs the result. The blending formula is as follows, where Ab is the Alpha channel of the background layer, Af is the Alpha channel of the foreground layer, Cb corresponds to the R, G, and B components of the background layer, and Cf corresponds to the R, G, B components of the foreground layer:
+
+\begin{itemize}
+    \item $Aout = Ab + Af - Ab*Af$
+    \item $Cout = (Cb*Ab*(1-Af) + Cf*Af) / (Ab + Af - Ab*Af)$
+\end{itemize}
+
+Additionally, BLEND supports color-keying based on pixel color. By configuring color ranges via \hyperref[regdesc:PPACKBGLOWREG]{PPA\_CK\_\textcolor{red}{FG/BG}\_\textcolor{red}{HIGH/LOW}\_REG}, BLEND allows for image segmentation into four distinct regions, each subjected to different operations:
+
+\begin{itemize}
+    \item When the foreground pixel falls within the color-key range and the background pixel falls outside the color-key range, output the background pixel.
+    \item When the background pixel falls within the color-key range and the foreground pixel falls outside the color-key range, the output depends on the value of \hyperref[fielddesc:PPACOLORKEYFGBGREVERSE]{PPA\_COLORKEY\_FG\_BG\_REVERSE}. If 0, output the background pixel; if 1, output the foreground pixel.
+    \item When both the background and foreground pixels fall within the color-key range, the output is set to the color defined by \hyperref[fielddesc:PPACOLORKEYDEFAULTB]{PPA\_COLORKEY\_DEFAULT\_\textcolor{red}{R/G/B}}.
+    \item When neither the background nor foreground pixels fall within the color-key range, output follows the normal Alpha Blending process.
+\end{itemize}
+
+When \hyperref[fielddesc:PPABLENDBYPASS]{PPA\_BLEND\_BYPASS} is set to 1, BLEND directly outputs the background layer data. If the foreground input data type is A4/A8 at this time, the foreground input data will replace the background input data's Alpha channel and then be output.
+
+\subsubsection{Filled Image Output}
+BLEND also supports filled image output. When this feature is enabled, only the output side of BLEND works, continuously outputting the filled image. The size and data of the filled image can be configured via \hyperref[regdesc:PPABLENDTXSIZEREG]{PPA\_BLEND\_TX\_SIZE\_REG} and \hyperref[fielddesc:PPABLENDTXFIXPIXEL]{PPA\_BLEND\_TX\_FIX\_PIXEL}.
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+
+\chipname{}'s PPA can generate the following interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item PPA\_INTR
+    \end{itemize}
+
+The following interrupt sources can generate PPA\_INTR interrupt signal:
+
+\begin{itemize}
+    \item \label{int:PPASRMPARAMCFGERR}PPA\_SRM\_PARAM\_CFG\_ERR\_INT: Triggered when invalid parameters are configured in the SRM mode. You can acquire the specific error type through \hyperref[regdesc:PPASRMPARAMERRSTREG]{PPA\_SRM\_PARAM\_ERR\_ST\_REG}, as shown in Table \ref{tab:srm_param_err}.
+    \item \label{int:PPABLENDPARAMCFGERR}PPA\_BLEND\_PARAM\_CFG\_ERR\_INT: Triggered when invalid parameters are configured in the BLEND mode. You can acquire the specific error type through \hyperref[regdesc:PPABLENDSTREG]{PPA\_BLEND\_ST\_REG}, as shown in Table \ref{tab:blend_param_err}.
+    \item \label{int:PPASRMEOF}PPA\_SRM\_EOF\_INT: Triggered when SRM workflow reaches EOF.
+    \item \label{int:PPABLENDEOF}PPA\_BLEND\_EOF\_INT: Triggered when BLEND workflow reaches EOF.
+\end{itemize}
+
+\begin{longtable}[c]{ |p{6cm}|p{10cm}| }
+    \caption{SRM Parameter Error Types}
+    \label{tab:srm_param_err}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Error Type} & \textbf{Details} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Error Type} & \textbf{Details} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \hyperref[fielddesc:PPATXDSCRVBERRST]{PPA\_TX\_DSCR\_VB\_ERR\_ST} & The sum of the vertical size of the output image block from SRM and the vertical offset Y specified in the output descriptor exceeds the total vertical size of the image configured in the output descriptor (VA) \\\hline
+        \hyperref[fielddesc:PPATXDSCRHBERRST]{PPA\_TX\_DSCR\_HB\_ERR\_ST} & The sum of the horizontal size of the output image block from SRM and the vertical offset X specified in the output descriptor exceeds the total horizontal size of the image configured in the output descriptor (HA) \\\hline
+        \hyperref[fielddesc:PPAYRXSCALEQUAL0ERRST]{PPA\_Y\_RX\_SCAL\_EQUAL\_0\_ERR\_ST} & The vertical scaling factor for the input image block in SRM is set to 0 \\\hline
+        \hyperref[fielddesc:PPARXDSCRVBERRST]{PPA\_RX\_DSCR\_VB\_ERR\_ST} & The sum of the vertical size VB and the vertical offset Y in the SRM input descriptor exceeds the overall vertical size VA in the output descriptor \\\hline
+        \hyperref[fielddesc:PPAYDSTLENTOOSAMLLERRST]{PPA\_YDST\_LEN\_TOO\_SAMLL\_ERR\_ST} & The vertical size of the image block after SRM scaling is 0. For example, if the vertical size of the image block is 14 and the vertical scaling factor is 1/16 without rotation, the scaled vertical size of the image block becomes 0 \\\hline
+        \hyperref[fielddesc:PPAYDSTLENTOOLARGEERRST]{PPA\_YDST\_LEN\_TOO\_LARGE\_ERR\_ST} & The vertical size of the image block after SRM scaling exceeds 8191 \\\hline
+        \hyperref[fielddesc:PPAXRXSCALEQUAL0ERRST]{PPA\_X\_RX\_SCAL\_EQUAL\_0\_ERR\_ST} & The horizontal scaling factor for the input image block in SRM is 0 \\\hline
+        \hyperref[fielddesc:PPARXDSCRHBERRST]{PPA\_RX\_DSCR\_HB\_ERR\_ST} & The sum of the horizontal size HB of the input image block configured in the SRM input descriptor and the horizontal offset X exceeds the entire image's horizontal size HA configured in the output descriptor \\\hline
+        \hyperref[fielddesc:PPAXDSTLENTOOSAMLLERRST]{PPA\_XDST\_LEN\_TOO\_SAMLL\_ERR\_ST} & The horizontal size of the image block after SRM scaling is 0 \\\hline
+        \hyperref[fielddesc:PPAXDSTLENTOOLARGEERRST]{PPA\_XDST\_LEN\_TOO\_LARGE\_ERR\_ST} & The horizontal size of the image block after SRM scaling exceeds 8191 \\\hline
+        \hyperref[fielddesc:PPAXYUV420RXSCALEERRST]{PPA\_X\_YUV420\_RX\_SCALE\_ERR\_ST} & The input descriptor parameters HA/hb/X happen to be odd numbers when the SRM input format is YUV420  \\\hline
+        \hyperref[fielddesc:PPAYYUV420RXSCALEERRST]{PPA\_Y\_YUV420\_RX\_SCALE\_ERR\_ST} & The input descriptor parameters VA/vb/Y happen to be odd numbers when the SRM input format is YUV420 \\\hline
+        \hyperref[fielddesc:PPAXYUV420TXSCALEERRST]{PPA\_X\_YUV420\_TX\_SCALE\_ERR\_ST} & The output descriptor parameters HA/hb/X happen to be odd numbers when the SRM output format is YUV420 \\\hline
+        \hyperref[fielddesc:PPAYYUV420TXSCALEERRST]{PPA\_Y\_YUV420\_TX\_SCALE\_ERR\_ST} & The output descriptor parameters VA/vb/Y happen to be odd numbers when the SRM output format is YUV420 \\\hline
+
+\end{longtable}
+
+\begin{longtable}[c]{ |p{6cm}|p{10cm}| }
+    \caption{BLEND Parameter Error Types}
+    \label{tab:blend_param_err}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Error Type} & \textbf{Details} \\\hline
+    \endfirsthead
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- ...Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Error Type} & \textbf{Details} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page...}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \hyperref[fielddesc:PPABLENDSIZEDIFFST]{PPA\_BLEND\_SIZE\_DIFF\_ST} & The BLEND foreground and background sizes do not match \\\hline
+        \hyperref[fielddesc:PPABLENDYUVXSCALEERRST]{PPA\_BLEND\_YUV\_X\_SCALE\_ERR\_ST} & The BLEND background image format is YUV422 or YUV420, the horizontal size is an odd number \\\hline
+        \hyperref[fielddesc:PPABLENDYUVYSCALEERRST]{PPA\_BLEND\_YUV\_Y\_SCALE\_ERR\_ST} & The BLEND background image format is YUV420, the vertical size is an odd number \\\hline
+
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:ppa-prog-procedures}
+
+\subsection{PPA Clock Reset Configuration}
+\label{sec:ppa_clk_rst}
+
+1. Enable the clock of the PPA and 2D-DMA modules:
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:HPSYSCLKRSTPPASYSCLKEN]{HP\_SYS\_CLKRST\_PPA\_SYS\_CLK\_EN} to enable the PPA clock
+    \item Write 1 to \hyperref[fielddesc:HPSYSCLKRSTDMA2DSYSCLKEN]{HP\_SYS\_CLKRST\_DMA2D\_SYS\_CLK\_EN} to enable the 2D-DMA clock
+\end{itemize}
+
+2. Reset the PPA and 2D-DMA modules:
+\begin{itemize}
+    \item Write 1 and then 0 to \hyperref[fielddesc:HPSYSCLKRSTRSTENPPA]{HP\_SYS\_CLKRST\_RST\_EN\_PPA} reset PPA
+    \item Write 1 and then 0 to \hyperref[fielddesc:HPSYSCLKRSTRSTENDMA2D]{HP\_SYS\_CLKRST\_RST\_EN\_DMA2D} reset 2D-DMA
+\end{itemize}
+
+\subsection{SRM Configuration}
+
+1. Refer to Section \ref{sec:ppa_clk_rst} to enable and reset PPA and 2D-DMA.
+
+2. Configure the inlink and outlink of 2D-DMA. For detailed parameters, please refer to Table \ref{tab:ppa_link_list_config}.
+
+3. Select the input and output channels of 2D-DMA:
+\begin{itemize}
+    \item Write 0x1 to \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA output channel to the PPA SRM input
+    \item Write 0x1 to \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA input channel to the PPA SRM output
+\end{itemize}
+
+4. Enable descriptor interface for 2D-DMA channels used by PPA:
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}}  to enable descriptor interface
+    \item Write 1 to \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_IN\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}}  to enable descriptor interface
+\end{itemize}
+
+5. Configure the descriptor interface completion parameters of 2D-DMA:
+\begin{itemize}
+    \item Configure the horizontal completion parameters via \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_H\_CH\textcolor{red}{x}}. See Table \ref{tab:ppa_blk_config} for details
+    \item Configure the vertical completion parameters via \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_V\_CH\textcolor{red}{x}}. See Table \ref{tab:ppa_blk_config} for details
+\end{itemize}
+
+6. Enable the input and output channels of 2D-DMA:
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\textcolor{red}{x}} to enable the output channel of 2D-DMA
+    \item Write 1 to \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} to enable the input channel of 2D-DMA
+\end{itemize}
+
+7. Configure SRM parameters:
+\begin{itemize}
+    \item Configure the size of image blocks to be processed via \hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL}
+    \item Configure SRM input data format via \hyperref[fielddesc:PPASRMRXCM]{PPA\_SRM\_RX\_CM}
+    \item Configure SRM output data format via \hyperref[fielddesc:PPASRMTXCM]{PPA\_SRM\_TX\_CM}
+    \item Configure the integer part of the horizontal scaling factor via \hyperref[fielddesc:PPASRMSCALXINT]{PPA\_SRM\_SCAL\_X\_INT}
+    \item Configure the fractional part of the horizontal scaling factor via \hyperref[fielddesc:PPASRMSCALXFRAG]{PPA\_SRM\_SCAL\_X\_FRAG}
+    \item Configure the integer part of the vertical scaling factor via \hyperref[fielddesc:PPASRMSCALYINT]{PPA\_SRM\_SCAL\_Y\_INT}
+    \item Configure the fractional part of the vertical scaling factor via \hyperref[fielddesc:PPASRMSCALYFRAG]{PPA\_SRM\_SCAL\_Y\_FRAG}
+    \item Configure the counterclockwise rotation angle via \hyperref[fielddesc:PPASRMROTATEANGLE]{PPA\_SRM\_ROTATE\_ANGLE}
+    \item Enable horizontal mirroring via \hyperref[fielddesc:PPASRMMIRRORX]{PPA\_SRM\_MIRROR\_X}
+    \item Enable vertical mirroring via \hyperref[fielddesc:PPASRMMIRRORY]{PPA\_SRM\_MIRROR\_Y}
+\end{itemize}
+
+8. Write 1 to \hyperref[fielddesc:PPASCALROTATESTART]{PPA\_SCAL\_ROTATE\_START} to start the SRM workflow.
+
+\subsection{BLEND CLUT Configuration}
+\label{sec: ppa_blend_clut_config}
+1. In the FIFO mode:
+\begin{itemize}
+    \item Write 0 to \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} to enter the FIFO mode
+    \item Write data to \hyperref[fielddesc:PPARDWRWORDBLEND0CLUT]{PPA\_RDWR\_WORD\_BLEND0\_CLUT} to initialize the background layer's CLUT
+    \item Write data to \hyperref[fielddesc:PPARDWRWORDBLEND1CLUT]{PPA\_RDWR\_WORD\_BLEND1\_CLUT} to initialize the foreground layer's CLUT
+\end{itemize}
+2. In the MEM mode:
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} to enter the MEM mode
+    \item Initialize the CLUT by writing data directly to the corresponding address, referring to Table \ref{tab:blend-clut-addr}
+\end{itemize}
+
+\subsection{BLEND Configuration}
+1. Refer to Section \ref{sec:ppa_clk_rst} to enable and reset PPA and 2D-DMA.
+
+2. Configure the input and output link lists of 2D-DMA. For detailed parameters, please refer to Table \ref{tab:ppa_link_list_config}.
+
+3. Select the input and output channels of 2D-DMA:
+\begin{itemize}
+    \item Write 0x2 to \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA output channel to PPA BLEND for background layer input
+    \item Write 0x3 to \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA output channel to PPA BLEND for foreground layer input
+    \item Write 0x2 to \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA input channel to PPA BLEND for output
+\end{itemize}
+
+4. Enable the input and output channels for 2D-DMA. The x in the registers refers to the two channels allocated to BLEND foreground and background respectively:
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\textcolor{red}{x}} to enable the output channel of 2D-DMA
+    \item Write 1 to \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} to enable the input channel of 2D-DMA
+\end{itemize}
+
+5. Configure BLEND parameter:
+\begin{itemize}
+    \item Configure the data type for the background layer input of BLEND via \hyperref[fielddesc:PPABLEND0RXCM]{PPA\_BLEND0\_RX\_CM}. If the format is L4/L8, initialize the CLUT first as described in \ref{sec: ppa_blend_clut_config}
+    \item Configure the data type for the background layer input of BLEND via \hyperref[fielddesc:PPABLEND1RXCM]{PPA\_BLEND1\_RX\_CM}. If the format is L4/L8, initialize the CLUT first as described in \ref{sec: ppa_blend_clut_config}
+    \item Configure the output data format of BLEND via \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM}
+    \item Configure the upper and lower limits of the color-key for the background layer via \hyperref[regdesc:PPACKBGHIGHREG]{PPA\_CK\_BG\_HIGH\_REG} and \hyperref[regdesc:PPACKBGLOWREG]{PPA\_CK\_BG\_LOW\_REG}
+    \item Configure the upper and lower limits of the color-key for the foreground layer via \hyperref[regdesc:PPACKFGHIGHREG]{PPA\_CK\_FG\_HIGH\_REG} and \hyperref[regdesc:PPACKFGLOWREG]{PPA\_CK\_FG\_LOW\_REG}
+    \item Configure the default value and behavior for the color-key via \hyperref[regdesc:PPACKDEFAULTREG]{PPA\_CK\_DEFAULT\_REG}
+    \item Write 1 to \hyperref[fielddesc:PPABLENDEN]{PPA\_BLEND\_EN} to enable BLEND
+\end{itemize}
+
+6. Write 1 to \hyperref[fielddesc:PPABLENDTRANSMODEUPDATE]{PPA\_BLEND\_TRANS\_MODE\_UPDATE} to start BLEND workflow
+
+\subsection{BLEND Image Filling Configuration}
+1. Refer to Section \ref{sec:ppa_clk_rst} to enable and reset PPA and 2D-DMA.
+
+2. Configure the input link lists of 2D-DMA (output link lists of PPA BLEND). For detailed parameters, please refer to Table \ref{tab:ppa_link_list_config}.
+
+3. Write 0x2 to \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} to allocate one 2D-DMA input channel to PPA BLEND output.
+
+4. Write 1 to \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} to enable the output channel of 2D-DMA.
+
+5. Configure BLEND parameters:
+\begin{itemize}
+    \item Configure the output data format of BLEND via \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM}
+    \item Write 1 to \hyperref[fielddesc:PPABLENDFIXPIXELFILLEN]{PPA\_BLEND\_FIX\_PIXEL\_FILL\_EN} to enable image filling
+    \item Configure the pixel value for image filling via \hyperref[fielddesc:PPABLENDTXFIXPIXEL]{PPA\_BLEND\_TX\_FIX\_PIXEL}
+    \item Configure the filled image size via \hyperref[fielddesc:PPABLENDHB]{PPA\_BLEND\_HB} and \hyperref[fielddesc:PPABLENDVB]{PPA\_BLEND\_VB}
+\end{itemize}
+
+6. Write 1 to \hyperref[fielddesc:PPABLENDTRANSMODEUPDATE]{PPA\_BLEND\_TRANS\_MODE\_UPDATE} to start BLEND workflow.
+
+\subsection{Error Handling}
+\begin{itemize}
+    \item Refer to Section \ref{sec:ppa_clk_rst} to reset the whole PPA, and configure again.
+    \item Or write 1 and then 0 to reset SRM and BLEND via \hyperref[fielddesc:PPASCALROTATERST]{PPA\_SCAL\_ROTATE\_RST}, \hyperref[fielddesc:PPABLENDRST]{PPA\_BLEND\_RST}, and configure again.
+\end{itemize}
+
+\begin{tiplisting}
+\begin{itemize}
+    \vspace{-1.5em}
+    \item The 2D-DMA configurations mentioned in this chapter involve only key steps. For detailed procedures, please refer to \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}.
+    \item In this chapter, DMA2D\_OUT corresponds to the PPA input direction, and DMA2D\_IN corresponds to the PPA output direction.
+\end{itemize}
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+\newpage
+\hypertarget{ppa-reg-summ}{}
+\section{Register Summary}
+\label{sec:ppa-reg-summ}
+
+The addresses in this section are relative to the Pixel-Processing Accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/38-PPA-reg-summ-latest__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to the Pixel-Processing Accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/38-PPA-reg-latest__EN}
+
+
+\end{document}

@@ -1,0 +1,894 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./26-I2S}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\raggedbottom
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{i2s}{}
+\chapter{I2S 控制器 (I2S)}
+\label{mod:i2s}
+
+\section{概述}
+I2S 总线为多媒体应用，尤其是数字音频应用提供了灵活的数据通信接口。ESP32-S2 内置一个 I2S 接口，即 I2S\textcolor{red}{\it{0}}。
+
+I2S 标准总线定义了三种信号：串行时钟信号 BCK、字选择信号 WS 和串行数据信号 SD。一个基本的 I2S 数据总线有一个主机和一个从机。主机和从机的角色在通信过程中保持不变。ESP32-S2 的 I2S 模块包含独立的发送单元和接收单元，能够保证优良的通信性能。
+
+与标准 I2S 相比，ESP32-S2 I2S 模块同时还支持 LCD 和 Camera 模式，使用并行总线进行数据传输。
+\section{系统架构}
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/ESP723_I2S_block_diagram}}
+    \caption{ESP32-S2 I2S 系统框图}
+    \label{Figure:i2s_arch}
+\end{figure}
+
+图 \ref{Figure:i2s_arch} 是 ESP32-S2 I2S 模块的结构框图。ESP32-S2 I2S 模块包含一个独立的发送单元 (TX control)、一个独立的接收单元 (RX control)、一个输入输出时序调节单元 (I/O Timing)、一个时钟分频器 (Clock Generator)、一个发送 FIFO (TX FIFO) 和一个接收 FIFO (RX FIFO)。TX/RX FIFO 大小均为 64 x 32-bit。ESP32-S2 I2S 模块支持 DMA，可访问内部存储器和片外 RAM，访问片外 RAM 时需要注意 cache 和 DMA 的一致性问题。更多信息见 DMA 控制器章节。ESP32-S2 I2S 模块支持 I2S 主从机发送和接收模式、LCD 主机发送模式和 Camera 从机接收模式。
+
+在 I2S 模式下，发送和接收单元各自有一组三线接口，分别为串行时钟线 BCK，字选择线 WS 和串行数据线 SD。其中，发送单元的 SD 信号固定为输出，接收单元的 SD 线固定为接收。发送单元和接收单元的 BCK 和 WS 信号线均可配置为主机输出模式和从机输入模式。
+
+在 LCD 主机发送模式下，I2S\textcolor{red}{\it{0}}O\_BCK\_out 为输出的 LCD 像素时钟线，I2S\textcolor{red}{\it{0}}O\_Data\_out[23:0] 为 LCD 并行输出数据总线，可支持多种 LCD 格式和位宽。
+
+在 Camera 从机接收模式下，
+\begin{itemize}
+\item I2S\textcolor{red}{\it{0}}I\_V\_SYNC 为 Camera 帧频输入信号线；
+\item I2S\textcolor{red}{\it{0}}I\_H\_SYNC 为 Camera 行频输入信号线；
+\item I2S\textcolor{red}{\it{0}}I\_H\_ENABLE 为 Camera 行有效输入信号线；
+\item I2S\textcolor{red}{\it{0}}I\_WS\_in 为 Camera 像素时钟输入线；
+\item I2S\textcolor{red}{\it{0}}I\_Data\_in[15:0] 为 Camera 并行输入数据总线。
+\end{itemize}
+
+图 \ref{Figure:i2s_arch} 右侧为 I2S 模块的信号总线。RX 和 TX 模块的信号命名规则为：I2S\textcolor{red}{\it{0}}A\_B\_C，例如 I2S\textcolor{red}{\it{0}}I\_BCK\_in。其中：
+
+\begin{itemize}
+    \item "A" 表示 I2S 模块的数据总线信号的方向
+    \begin{itemize}
+        \item "I" 表示输入
+        \item "O" 表示输出
+    \end{itemize}
+    \item "B" 表示信号功能，包括：
+    \begin{itemize}
+        \item BCK
+        \item WS
+        \item SD
+    \end{itemize}
+    \item "C" 表示该信号的方向
+    \begin{itemize}
+        \item "in" 表示该信号输入 I2S 模块
+        \item "out" 表示该信号自 I2S 模块输出
+    \end{itemize}
+\end{itemize}
+
+各信号总线的具体描述见表 \ref{table:I2S 信号总线描述}。
+
+
+\begin{longtable}{|p{3cm}|p{2cm}|p{10cm}|}
+\caption{模块信号描述} \label{table:I2S 信号总线描述} \\
+\hline
+\rowcolor{lightgray}
+信号 & 方向 & 功能 \\
+\hline
+\endfirsthead
+
+\hline
+\rowcolor{lightgray}
+信号 & 方向 & 功能 \\
+\hline
+\endhead
+
+I2S\textcolor{red}{\it{0}}I\_BCK\_in & 输入 & I2S 从机模式下，输入 BCK 信号，用于 RX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_BCK\_out & 输出 & I2S 主机模式下，输出 BCK 信号，用于 RX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_WS\_in & 输入 & I2S 从机模式下，输入 WS 信号，用于 RX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_WS\_out & 输出 & I2S 主机模式下，输出 WS 信号，用于 RX 模块 \\
+\hline
+\vspace{0.6em}I2S\textcolor{red}{\it{0}}I\_Data\_in & \vspace{0.6em}输入 & I2S 模式下，I2S\textcolor{red}{\it{0}}I\_Data\_in 为 I2S 的串行输入总线；Camera 模式下，为并行输入总线，可以根据支持的数据传输格式需要，配置数据线的位宽，最大支持 16 位。 \\
+\hline
+\vspace{0.6em}I2S\textcolor{red}{\it{0}}O\_Data\_out & \vspace{0.6em}输出 & I2S 模式下，I2S\textcolor{red}{\it{0}}O\_Data\_out 为 I2S 的串行输出数据线；LCD 模式下，为并行输出数据线，可以根据支持的数据传输格式需要，配置数据线的位宽，最大支持 24 位。 \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_BCK\_in & 输入 & I2S 从机模式下，输入 BCK 信号，用于 TX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_BCK\_out & 输出 & I2S 主机模式下，输出 BCK 信号，用于 TX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_WS\_in & 输入 & I2S 从机模式下，输入 WS 信号，用于 TX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_WS\_out & 输出 & I2S 主机模式下，输出 WS 信号，用于 TX 模块 \\
+\hline
+I2S\textcolor{red}{\it{0}}\_CLK & 输出 & 作为外部芯片的时钟源 \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_H\_SYNC & \multirow{3}{*}{输入} & \multirow{3}{=}{Camera 模式下，输入 HSYNC、VSYNC 和 HREF 信号，见图 \ref{Figure:i2s_camera}。} \\
+\cline{1-1}
+I2S\textcolor{red}{\it{0}}I\_V\_SYNC & & \\
+\cline{1-1}
+I2S\textcolor{red}{\it{0}}I\_H\_ENABLE & & \\
+\hline
+\end{longtable}
+
+
+
+\begin{tiplisting}
+1. 假设 LCD/Camera 模式下，输入/输出信号位宽为 \textcolor{red}{\it{N}}，那么模块输入信号应使用 I2S\textcolor{red}{\it{0}}I\_Data\_in[\textcolor{red}{\it{N}}-1:0]，模块输出信号应使用 I2S\textcolor{red}{\it{0}}O\_Data\_out[23:23-\textcolor{red}{\it{N}}+1]。通常对输入信号 \textcolor{red}{\it{N}} = 8 \verb+～+ 16，对输出信号 \textcolor{red}{\it{N}} = 8 \verb+～+ 24。
+
+2. I2S 的所有信号均需要经过 GPIO 交换矩阵映射到芯片的 Pad。更多信息请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+\end{tiplisting}
+
+\section{主要特性}
+I2S 模式
+\begin{itemize}
+    \item 支持主机模式和从机模式
+    \item 支持全双工和半双工通信
+    \item TX 模块和 RX 模块相互独立，可独立工作或同时工作
+    \item 支持多种音频标准：Philips I2S 标准，PCM 标准以及 MSB 对齐标准
+    \item 可配置高精度采样时钟，支持的采样频率：8 kHz、16 kHz、32 kHz、44.1 kHz、48 kHz、88.2 kHz、96 kHz、128 kHz 和 192 kHz。注意：不支持从机 192 kHz 32 位模式。
+    \item 支持 8/16/24/32 位数据通信
+
+\end{itemize}
+
+LCD 和 Camera 模式
+\begin{itemize}
+    \item 支持单独外接 LCD，可配置为 8 \verb+～+ 24 位并行输出模式
+    \begin{itemize}
+        \item I2S LCD 通过 DMA 访问内部存储器
+            \begin{itemize}
+            \item LCD 数据总线为 8 \verb+～+ 16 位并行输出时，时钟频率需小于 40 MHz
+            \item LCD 数据总线为 17 \verb+～+ 24 位并行输出时，时钟频率需小于 26.7 MHz
+            \end{itemize}
+
+        \item I2S LCD 通过 EDMA 访问片外 RAM
+            \begin{itemize}
+            \item LCD 数据总线为 8 位并行输出时，时钟频率需小于 25 MHz
+            \item LCD 数据总线为 9 \verb+～+ 16 位并行输出时，时钟频率需小于 12.5 MHz
+            \item LCD 数据总线为 17 \verb+～+ 24 位并行输出时，时钟频率需小于 6.25 MHz
+            \end{itemize}
+        \item 支持 MOTO6800、I8080 等多种 LCD 模式
+    \end{itemize}
+
+    \item 支持单独外接 Camera（即 DVP 图像传感器），可配置为 8 \verb+～+ 16 位并行输入模式
+    \begin{itemize}
+        \item I2S Camera 通过 DMA 访问内部存储器
+            \begin{itemize}
+            \item 8 \verb+～+ 16 位并行输入时，时钟频率需小于 40 MHz
+            \end{itemize}
+        \item I2S Camera 通过 EDMA 访问片外 RAM
+            \begin{itemize}
+            \item 8 位并行输入时，时钟频率小于 25 MHz
+            \item 9 \verb+～+ 16 位并行输入时，时钟频率需小于 12.5 MHz
+            \end{itemize}
+    \end{itemize}
+
+    \item 支持同时外接 LCD 和 Camera
+    \begin{itemize}
+        \item 访问内部存储器时，需保证接口上最大的数据吞吐率小于 DMA 总数据带宽，即 80 兆字节每秒。
+        \item 访问片外 RAM 时，需保证接口上最大的数据吞吐率小于 EDMA 总数据带宽，即 25 兆字节每秒。
+    \end{itemize}
+\end{itemize}
+
+I2S 中断
+\begin{itemize}
+    \item 支持 I2S 接口中断；
+    \item 支持 I2S DMA 接口中断。
+\end{itemize}
+
+\section{I2S 模式支持的音频协议} \label{I2S_supported_protocal}
+
+
+ESP32-S2 I2S 模块支持多种音频标准。
+
+\subsection{Philips 标准模式}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_phillips_standard}}
+    \caption{Philips 标准}
+    \label{Figure:i2s_phillips_standard}
+\end{figure}
+
+如图 \ref{Figure:i2s_phillips_standard} 所示，在 Philips 标准下，在 BCK 的下降沿，WS 信号先于 SD 信号一个 BCK 时钟周期开始变化，即 WS 信号从当前通道数据的第一个位之前的一个时钟开始有效，并在当前通道数据发送结束前一个 BCK 时钟周期开始变化。SD 信号线上首先传输音频数据的最高位。分别置位寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXMSBSHIFT]{I2S\_RX\_MSB\_SHIFT} 和 \hyperref[fielddesc:I2STXMSBSHIFT]{I2S\_TX\_MSB\_SHIFT} 位，使得 I2S 模块接收数据和发送数据处于 Philips 标准模式。
+
+\subsection{MSB 对齐标准模式}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_MSB_32_mode}}
+    \caption{MSB 对齐标准}
+    \label{Figure:i2s_MSB_32_mode}
+\end{figure}
+
+如图 \ref{Figure:i2s_MSB_32_mode} 所示，MSB 对齐标准下，在 BCK 下降沿，WS 信号和 SD 信号同时变化。WS 持续到当前通道数据发送结束，SD 信号线上首先传输音频数据的最高位。清零寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXMSBSHIFT]{I2S\_RX\_MSB\_SHIFT} 和 \hyperref[fielddesc:I2STXMSBSHIFT]{I2S\_TX\_MSB\_SHIFT}，使得 I2S 模块接收数据和发送数据处于 MSB 对齐标准模式。
+
+\subsection{PCM 标准模式}
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_pcm_mode}}
+    \caption{PCM 标准}
+    \label{Figure:i2s_pcm_mode}
+\end{figure}
+
+如图 \ref{Figure:i2s_pcm_mode} 所示，在 PCM 标准的短帧同步模式下，在 BCK 的下降沿，WS 信号先于 SD 信号一个 BCK 时钟周期开始变化，即 WS 信号从当前通道数据的第一个位之前的一个时钟开始有效，并持续 1 个 BCK 时钟周期。SD 信号线上首先传输音频数据的最高位。如果将寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXSHORTSYNC]{I2S\_RX\_SHORT\_SYNC} 和 \hyperref[fielddesc:I2STXSHORTSYNC]{I2S\_TX\_SHORT\_SYNC} 置 1，那么 I2S 模块接收数据和发送数据将使用短帧同步模式。
+
+\section{I2S 模块时钟}\label{The Clock of I2S Module}
+
+I2S\textcolor{red}{\it{0}}\_CLK 作为 I2S 模块的主时钟，是由 160 MHz 的 PLL\_F160M\_CLK 时钟或者频率可配置的模拟 PLL 输出时钟 APLL\_CLK 进行分频获得。I2S 模块的串行时钟 BCK 再由 I2S\textcolor{red}{\it{0}}\_CLK 分频获得，如图 \ref{Figure:i2s_clk} 所示。寄存器 \hyperref[regdesc:I2SCLKMCONFREG]{I2S\_CLKM\_CONF\_REG} 中 \hyperref[fielddesc:I2SCLKSEL]{I2S\_CLK\_SEL}[1:0] 用于选择 PLL\_F160M\_CLK 还是 APLL\_CLK 作为 I2S\textcolor{red}{\it{0}} 的时钟源，或者关闭 I2S 模块的时钟源。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_clk}}
+    \caption{I2S 时钟}
+    \label{Figure:i2s_clk}
+\end{figure}
+
+I2S\textcolor{red}{\it{0}}\_CLK 的频率 $f_{\textrm{i2s}}$ 与分频器时钟源频率 $f_{\textrm{I2S\_CLK\_S}}$ 间的关系如下：
+$$f_{\textrm{i2s}}=\frac{f_{\textrm{I2S\_CLK\_S}}}{\textrm{N} + \frac{\textrm{b}}{\textrm{a}}}$$
+
+其中，N>=2，N 对应为 \hyperref[regdesc:I2SCLKMCONFREG]{I2S\_CLKM\_CONF\_REG} 寄存器中 \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] 的值，具体为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] = 0 时，N = 256；
+    \item \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] = 1 时，N = 2。
+    \item \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] 为其它值时，N = \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] 的值。
+
+\end{itemize}
+
+b 为 \hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0] 的值，a 对应 \hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0] 的值。对于整数分频，\hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0] 和 \hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0] 都清零；对于小数分频，\hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0] 的值应该小于 \hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0] 的值。
+
+
+在主机发送模式下，I2S 模块的串行时钟 BCK 为 I2S\textcolor{red}{0}O\_BCK\_out 信号，由 I2S\textcolor{red}{0}\_CLK 分频获得。即：
+
+$$f_{\textrm{I2S0O\_BCK\_out}} = \frac{f_{\textrm{i2s}}}{\textrm{MO}}$$
+
+
+其中，MO 对应寄存器 \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} 中 \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 的值，具体为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] = 0 时，MO = 128；
+    \item \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 为其它值 时，MO = \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 的值。
+\end{itemize}
+注意，\hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 不可配置为 1。
+
+在主机接收模式下，I2S 模块的串行时钟 BCK 为 I2S\textcolor{red}{0}I\_BCK\_out 信号，由 I2S\textcolor{red}{0}\_CLK 分频获得。即：
+
+$$f_{\textrm{I2S0I\_BCK\_out}} = \frac{f_{\textrm{i2s}}}{\textrm{MI}}$$
+
+其中 MI 对应寄存器 \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] 的值，特例为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] = 0 时，MI 为 128；
+    \item \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] = 2 \verb+~+ 63 时，MI = \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] 的值。
+\end{itemize}
+
+{\bfseries 注意：}
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] 不可配置为 1；
+    \item 使用小数分频功能会产生时钟抖动。当 I2S\textcolor{red}{\it{0}}\_CLK 和 BCK 无法通过 PLL\_F160M\_CLK 整数分频产生时，可使用 APLL\_CLK 作为时钟源，详情请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+    \item 当模块处于 I2S 从机模式时，必须保证 $f_{\textrm{i2s}}$ >= 8 * $f_{\textrm{BCK}}$。另外模块可以输出 I2S\textcolor{red}{\it{0}}\_CLK 作为外部设备的主时钟。
+
+\end{itemize}
+
+\section{I2S 模块复位} \label{module_reset}
+
+I2S 模块中各个单元可通过配置寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中相关位进行复位：
+\begin{itemize}
+\item I2S TX/RX 单元：可配置 \hyperref[fielddesc:I2STXRESET]{I2S\_TX\_RESET} 和 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 位进行复位；
+\item I2S TX/RX FIFO：可配置 \hyperref[fielddesc:I2STXFIFORESET]{I2S\_TX\_FIFO\_RESET} 和 \hyperref[fielddesc:I2SRXFIFORESET]{I2S\_RX\_FIFO\_RESET} 位进行复位。
+\end{itemize}
+用户可分别查询寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2STXRESETST]{I2S\_TX\_RESET\_ST}、 \hyperref[fielddesc:I2SRXRESETST]{I2S\_RX\_RESET\_ST}、 \hyperref[fielddesc:I2STXFIFORESETST]{I2S\_TX\_FIFO\_RESET\_ST} 和 \hyperref[fielddesc:I2SRXFIFORESETST]{I2S\_RX\_FIFO\_RESET\_ST} 查看上述复位的状态：
+\begin{itemize}
+    \item 0：复位完成；
+    \item 1：复位未完成。
+\end{itemize}
+
+具体的复位流程如下：
+\begin{itemize}
+    \item 置位寄存器 \hyperref[fielddesc:I2STXRESET]{I2S\_TX\_RESET}、\hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET}、\hyperref[fielddesc:I2STXFIFORESET]{I2S\_TX\_FIFO\_RESET} 和 \hyperref[fielddesc:I2SRXFIFORESET]{I2S\_RX\_FIFO\_RESET}
+    \item 等待寄存器 \hyperref[fielddesc:I2STXRESETST]{I2S\_TX\_RESET\_ST}、\hyperref[fielddesc:I2SRXRESETST]{I2S\_RX\_RESET\_ST}、\hyperref[fielddesc:I2STXFIFORESETST]{I2S\_TX\_FIFO\_RESET\_ST}、\hyperref[fielddesc:I2SRXFIFORESETST]{I2S\_RX\_FIFO\_RESET\_ST} 被清零
+\end{itemize}
+
+{\bfseries 注意：}
+  在模块和 FIFO 复位之前，需要先配置 I2S 模块时钟。
+
+
+\section{I2S 主/从机模式}
+
+ESP32-S2 I2S 模块可作为主机或从机，两种模式均支持半双工通信或全双工通信。用户可配置 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} 和 \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} 选择需要的模式。
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD}
+    \begin{itemize}
+        \item 0：主机发送模式
+        \item 1：从机发送模式
+    \end{itemize}
+    \item \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD}
+    \begin{itemize}
+        \item 0：主机接收模式
+        \item 1：从机接收模式
+    \end{itemize}
+\end{itemize}
+
+\subsection{主/从机发送模式} \label{subsubsection:master/slave_transmitting_mode}
+\begin{itemize}
+    \item 主机发送模式
+    \begin{itemize}
+        \item 置位寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 位启动一次发送操作。
+        \item 置位该位，发送单元会一直输出时钟信号和串行数据。
+        \item 置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，则主机停止发送数据。
+        \item 清零 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，并且没有新数据填入，发送模块将一直发送最后一帧数据。
+        \item 当 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 位被清零时，主机停止发送数据。
+    \end{itemize}
+    \item 从机发送模式
+     \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。
+        \item 发送单元等待主机 BCK 时钟，来启动发送操作。
+        \item 置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，则从机发送数据一直为零，直到主机停止发送 BCK 时钟为止。
+        \item 清零 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，并且没有新数据填入，发送模块将一直发送最后一帧数据。当 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 位被清零时，从机发送数据一直为零，直到主机停止发送 BCK 时钟为止。
+    \end{itemize}
+\end{itemize}
+
+\subsection{主/从机接收模式}
+\begin{itemize}
+    \item 主机接收模式
+    \begin{itemize}
+        \item 置位寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中的 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 启动一次接收操作。
+        \item 接收单元会一直输出时钟信号，并对输入数据进行采样。
+        \item 清零 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，接收单元停止接收数据。
+    \end{itemize}
+    \item 从机接收模式
+     \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}。
+        \item 等待主机 BCK 时钟，来启动接收操作。
+    \end{itemize}
+\end{itemize}
+
+\section{发送数据}\label{TXCHAN}
+
+对于 \ref{I2S_supported_protocal} 小节所描述的音频标准而言，ESP32-S2 I2S 发送数据格式的控制方式相同，本小节以 MSB 对齐标准的发送模式为例来进行说明。
+
+ESP32-S2 I2S 通过 DMA 实现 I2S 外设数据和 ESP32-S2 内存数据间的传输，通过 EDMA 实现 I2S 外设数据和 片外 RAM 数据间的传输。ESP32-S2 I2S 发送数据分为三个阶段：
+\begin{itemize}
+    \item 第一阶段从内存中读出有效数据并写入 TX FIFO；
+    \item 第二阶段将待发送数据从 TX FIFO 中读出，将发送的左右声道数据拼成 64 bit，并进行输出数据模式转换；
+    \item 第三阶段，在 I2S 模式下，将待发送数据转换为串行数据流输出；在 LCD
+          模式下，将待发送数据转换为位宽固定的并行数据流输出。
+\end{itemize}
+
+
+发送的数据格式主要由 \hyperref[fielddesc:I2STXFIFOMOD]{I2S\_TX\_FIFO\_MOD}、\hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0]、\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}、\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT}、\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}、\hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 和 \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST} 进行配置。
+
+ESP32-S2 I2S 发送单元默认 WS 为 0 指示左声道；WS 为 1 时指示右声道。为后续描述方便，假设 ESP32-S2 I2S 配置的前四个发送数据依次为 D0（对应低地址/低位）、D1、D2、D3（对应高地址/高位），且左声道数据存储在低地址/低位（如 D0、D2），右声道数据存储在高地址/高位（如 D1、D3）。
+
+\subsection{I2S\_TX\_DMA\_EQUAL = 0 时的发送数据模式}
+
+\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0 时，左右声道发送不同的数据，发送数据的格式如图 \ref{Figure:ESP723_I2S_TX} 所示。图 \ref{Figure:ESP723_I2S_TX} 中 $D^{'}_{\textcolor{red}{\it{n}}}$ （\textcolor{red}{\it{n}} 为 0\verb+～+3）是 D\textcolor{red}{\it{n}} （\textcolor{red}{\it{n}} 为 0\verb+～+3）经 \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} 控制后的结果；$D^{''}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）是 $D^{'}_{\textcolor{red}{\it{n}}}$ （\textcolor{red}{\it{n}} 为 0\verb+～+3）经 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 处理后的结果，对应虚线框中 TX Data2 的值；single 对应寄存器 I2S\_CONF\_SINGLE\_DATA\_REG[31:0] 的值。\hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0]
+置为 8、16、24、32 时，single 分别为寄存器 I2S\_CONF\_SINGLE\_DATA\_REG[31:0] 的低 8 位、低 16 位、低 24 位、低 32 位的值。
+
+\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} 用于设置发送数据的内部字节序。假设图 \ref{Figure:ESP723_I2S_TX} 中发送数据位宽为 32、24、16 和 8 位时，D0 对应的值分别为 \{B3、B2、B1、B0\}、\{B2、B1、B0\}、\{B1、B0\} 和 B0，则数据 $D^{'}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）和 D\textcolor{red}{\it{n}}（\textcolor{red}{\it{n}} 为 0\verb+～+3）的对应关系如表 \ref{table:TX_BIG_ENDIAN} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8 \textwidth]{\modulefiles/figures/ESP723_I2S_TX}}
+    \caption{当 \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} 为零时，ESP32-S2 I2S 发送数据的控制图}
+    \label{Figure:ESP723_I2S_TX}
+\end{figure}
+
+\newpage
+\begin{table}[H]
+    \centering
+    \caption{发送数据字节序控制模式}
+    \label{table:TX_BIG_ENDIAN}
+    \begin{tabular}{|p{4cm}|p{3.3cm}|p{3cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] & \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} & $D^{'}_{\textcolor{red}{\it{n}}}$ \\ \hline
+    \multirow{2}*{32} & 0 & \{B3、B2、B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1、B2、B3\} \\\hline
+
+    \multirow{2}*{24} & 0 & \{B2、B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1、B2\} \\\hline
+
+    \multirow{2}*{16} & 0 & \{B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1\} \\\hline
+
+                8     & - & B0 \\\hline
+    \end{tabular}
+\end{table}
+
+\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} 用于设置发送的左右声道数据顺序。\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} 和 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 可控制发送多种左右声道数据格式。\hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST} 用于设置先发送右声道数据，还是先发送左声道数据。
+
+由图 \ref{Figure:ESP723_I2S_TX} 可知，\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} 为零时的发送数据传输格式如表 \ref{table:TX_CHAN_MOD0} 所示。当 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] = 0 且 \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0 时，输出数据的波形如图 \ref{Figure:ESP723_I2S_TX_sequence} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_TX_sequence}}
+    \caption{\hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] = 0 且 \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0 时，ESP32-S2 I2S 输出数据的波形图}
+    \label{Figure:ESP723_I2S_TX_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0 时，发送数据通道模式}
+    \label{table:TX_CHAN_MOD0}
+    \begin{tabular}{|p{4cm}|p{2cm}|p{7cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] & 声道模式 & 描述\\ \hline
+
+    \multirow{4}*{0} & 双声道模式
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0 时，左声道传输右声道数据（即高地址/高位数据），右声道传输左声道数据（即低地址/低位数据）。\\
+        &&\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1 时，左声道传输低地址/低位数据，右声道传输高地址/高位数据。\\
+        \hline
+
+    \multirow{4}*{1} & 单声道模式
+        &\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0 时，左、右声道均传输低地址/低位数据。\\
+        &&\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1 时，左、右声道均传输高地址/高位数据。\\
+        \hline
+
+    \multirow{4}*{2} & 单声道模式
+        &\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0 时，左、右声道均传输高地址/高位数据。\\
+        &&\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1 时，左、右声道均传输低地址/低位数据。\\
+        \hline
+
+    \multirow{4}*{3} & 单声道模式
+        &\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0 时，左声道传输常数 single[31:0]，右声道传输低地址/低位数据。\\
+        &&\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1 时，左声道传输常数 single[31:0]，右声道传输高地址/高位数据。\\
+    \hline
+
+    \multirow{4}*{4} & 单声道模式
+        &\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0 时，左声道传输高地址/高位数据，右声道传输常数 single[31:0]。\\
+        &&\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1 时，左声道传输低地址/低位数据，右声道传输常数 single[31:0]。\\
+    \hline
+    \end{tabular}
+\end{table}
+
+\subsection{I2S\_TX\_DMA\_EQUAL = 1 时的发送数据模式}
+
+\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1 时，左右声道发送相同数据，因此，I2S 单元仅发送单声道数据，\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} 不能控制数据的结构。用户可通过配置 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 输出常数 I2S\_CONF\_SINGLE\_DATA\_REG[31:0]。ESP32-S2 I2S 发送数据的传输格式和通道模式分别见图 \ref{Figure:ESP723_I2S_TX_equal_sequence} 和表 \ref{table:TX_CHAN_MOD2}。
+
+\newpage
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8 \textwidth]{\modulefiles/figures/ESP723_I2S_TX_equal_sequence}}    \caption{\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1 时，ESP32-S2 I2S 输出数据的控制图}
+    \label{Figure:ESP723_I2S_TX_equal_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1 时，发送数据通道模式}
+    \label{table:TX_CHAN_MOD2}
+    \begin{tabular}{|p{4cm}|p{2cm}|p{8cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] & 声道模式 & 描述\\ \hline
+    {0/1/2} & 单声道模式 & 左、右声道均传输相同的有效数据。\\ \hline
+
+    {3} & 单声道模式  & 右声道传输有效数据，左声道传输常数 single[31:0]。\\\hline
+
+    {4} & 单声道模式  & 左声道传输有效数据，右声道传输常数 single[31:0]。\\\hline
+
+    \end{tabular}
+\end{table}
+
+\newpage
+\subsection{配置 I2S 发送模式}\label{sec:i2s-conf-tx-mode}
+软件配置 I2S 发送模式的流程如下：
+
+\begin{enumerate}
+    \item 根据 \ref{The Clock of I2S Module} 小节的描述，配置时钟。
+
+    \item 根据表 \ref{table:I2S 信号总线描述} 的描述，配置信号管脚。
+
+    \item 清零寄存器 \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG} 中 \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} 位，使能 I2S 模式。
+
+    \item 根据主从机模式配置寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} 位：
+    \begin{itemize}
+        \item 0：主机发送模式
+        \item 1：从机发送模式
+    \end{itemize}
+
+    \item 根据 \ref{TXCHAN} 小节的描述，配置 \hyperref[fielddesc:I2STXFIFOMOD]{I2S\_TX\_FIFO\_MOD}、\hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0]、\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}、\hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT}、\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}、\hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 和 \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST}，设置正确的发送数据模式。
+
+    \item 置位 \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} 中 \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} 位，使能 I2S DMA。
+
+    \item 根据 \ref{module_reset} 小节的描述，复位发送单元和发送 FIFO。
+    \item 根据 \ref{I2S_INT} 小节的描述使能相应的中断。\label{I2S-TX-INTERRUPT}
+
+    \item 配置 DMA 发送链表，置位 \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} 启动 DMA。
+
+    \item 根据需要置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN}，更多信息见章节 \ref{subsubsection:master/slave_transmitting_mode}。
+
+    \item 开始发送数据：
+    \begin{itemize}
+        \item 主机模式下，等待 I2S 从设备配置完成后，置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 寄存器开始发送数据；
+        \item 从机模式下，置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 寄存器。I2S 主设备提供 BCK 和 WS 信号后，开始发送数据。
+    \end{itemize}
+
+    \item 等待步骤 \ref{I2S-TX-INTERRUPT} 设置的中断信号，或查询 \hyperref[fielddesc:I2STXIDLE]{I2S\_TX\_IDLE} 寄存器检查传输是否结束：
+    \begin{itemize}
+        \item 0：发送设备为工作状态；
+        \item 1：发送设备为空闲状态。
+    \end{itemize}
+
+    \item 清零 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。
+\end{enumerate}
+
+\section{接收数据}\label{RXCHAN}
+对于 \ref{I2S_supported_protocal} 小节所描述的音频标准而言，ESP32-S2 I2S 接收数据格式的控制方式相同，本小节以 MSB 对齐标准模式的接收数据格式控制为例来进行说明。
+
+ESP32-S2 I2S 接收单元默认 WS 为 0 对应的 SD 传输左声道数据，WS 为 1 对应的 SD 传输右声道数据。假设 ESP32-S2 I2S 接收单元的前四个接收数据依次为 D0（对应低地址/低位）、D1、D2、D3（对应高地址/高位）。
+
+接收数据格式主要由 \hyperref[fielddesc:I2SRXFIFOMOD]{I2S\_RX\_FIFO\_MOD}、\hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0]、\hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}、\hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}、\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}、\hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[1:0] 和 \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} 控制。
+
+\subsection{I2S\_RX\_DMA\_EQUAL = 0 时的接收数据模式}
+
+\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0 时，左右声道传输不同数据，I2S RX 模块进入双通道接收数据模式。接收数据的格式不受 \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[1:0] 控制，接收数据的格式如图 \ref{Figure:ESP723_I2S_RX} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX}}
+    \caption{\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0 时，ESP32-S2 I2S 接收数据的控制图}
+    \label{Figure:ESP723_I2S_RX}
+\end{figure}
+
+图 \ref{Figure:ESP723_I2S_RX} 中 $D^{''}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）是  $D^{'}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）经 \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT} 控制后的结果。$D^{}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）是  $D^{''}_{\textcolor{red}{\it{n}}}$（\textcolor{red}{\it{n}} 为 0\verb+～+3）经 \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN} 控制后的结果。\hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN} 用于
+控制接收数据的字节序，具体情形可参考表 \ref{table:TX_BIG_ENDIAN}。
+
+由图 \ref{Figure:ESP723_I2S_RX} 可知，清零 \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} 时，ESP32-S2 I2S 接收数据的波形如图 \ref{Figure:ESP723_I2S_RX_4_sequence} 所示，具体控制规则见表 \ref{table:RX_CHAN_MOD1} 所示。
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX_4_sequence}}    \caption{\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0 时，ESP32-S2 I2S 接收数据的控制图}
+    \label{Figure:ESP723_I2S_RX_4_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0 时，接收数据通道模式}
+    \label{table:RX_CHAN_MOD1}
+    \begin{tabular}{|p{3.5cm}|p{2cm}|p{8cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}  & 声道模式 & 描述\\ \hline
+
+    0 & 双声道模式 & \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} 设置帧内左右声道接收顺序，右声道数据存入 ESP32-S2 存储器的低地址，左声道数据存入 ESP32-S2 存储器的高地址。\\ \hline
+
+    1 & 双声道模式 & \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} 设置帧内左右声道接收顺序，左声道数据存入 ESP32-S2 存储器的低地址，右声道数据存入 ESP32-S2 存储器的高地址。\\ \hline
+
+    \end{tabular}
+\end{table}
+
+\subsection{I2S\_RX\_DMA\_EQUAL = 1 时的接收数据模式}
+\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 1 时，左右声道传输相同数据，I2S 接收单元进入单通道接收数据模式。接收数据的格式如图 \ref{Figure:ESP723_I2S_RX_equal_sequence} 和表 \ref{table:RX_CHAN_MOD2} 所示。
+
+\newpage
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX_equal_sequence}}    \caption{\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 1 时，ESP32-S2 I2S 接收数据的控制图}
+    \label{Figure:ESP723_I2S_RX_equal_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{当 \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 1 时，接收数据通道模式}
+    \label{table:RX_CHAN_MOD2}
+    \begin{tabular}{|p{3.5cm}|p{4cm}|p{2cm}|p{3cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT} & \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0] & 声道模式 & 描述\\ \hline
+
+    \multirow{3}*{0} & 0/3 & 单声道模式 & 无意义 \\ \cline{2-4}
+
+                    & 1 & 单声道模式 & 仅存储右声道数据 \\ \cline{2-4}
+
+                    & 2 & 单声道模式 & 仅存储左声道数据 \\
+    \hline
+
+    \multirow{3}*{1} & 0/3 & 单声道模式 & 无意义 \\ \cline{2-4}
+
+                    & 1 & 单声道模式 & 仅存储左声道数据 \\ \cline{2-4}
+
+                    & 2 & 单声道模式 & 仅存储右声道数据 \\
+    \hline
+
+    \end{tabular}
+\end{table}
+
+\subsection{配置 I2S 接收模式}\label{sec:i2s-conf-rx-mode}
+软件配置 I2S 接收模式的流程如下：
+
+\begin{enumerate}
+    \item 根据 \ref{The Clock of I2S Module} 小节的描述，配置时钟。
+
+    \item 根据表 \ref{table:I2S 信号总线描述} 的描述，配置信号管脚。
+
+    \item 清零寄存器 \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG} 中 \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} 位和 \hyperref[fielddesc:I2SCAMERAEN]{I2S\_CAMERA\_EN} 位，使能 I2S 模式。
+    \item 配置寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} 选择需要的模式：
+    \begin{itemize}
+        \item 0：主机接收模式
+        \item 1：从机接收模式
+    \end{itemize}
+
+    \item 根据 \ref{RXCHAN} 小节的描述，配置 \hyperref[fielddesc:I2SRXFIFOMOD]{I2S\_RX\_FIFO\_MOD}、\hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}、\hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0]、\hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}、\hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}、\hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0] 和 \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST}，以使用正确的模式接收数据。
+
+    \item 置位 \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} 中 \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} 位，使能 I2S DMA。
+    \item 根据 \ref{module_reset} 小节的描述，复位接收单元和接收 FIFO。
+    \item 根据 \ref{I2S_INT} 小节的描述使能相应的中断。\label{I2S-RX-INTERRUPT}
+
+    \item 配置 DMA 接收链表，并在 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 寄存器中配置接收数据长度，置位 \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} 启动 DMA。
+
+    \item 开始接收数据：
+    \begin{itemize}
+        \item 在主机模式下，等待从机准备好后，置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 开始接收数据；
+        \item 在从机模式下，置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，等待主机提供 BCK 和 WS 信号后开始接收数据。
+    \end{itemize}
+    \item 接收数据，并存到 ESP32-S2 存储器的指定地址。最终产生步骤 \ref{I2S-RX-INTERRUPT} 中设置的中断。
+\end{enumerate}
+
+
+\section{LCD 主机发送模式}\label{LCDMODE}
+
+\subsection{概述}
+如图 \ref{Figure:i2s_LCD} 所示，在 LCD 主机发送模式下，LCD 的 WR 信号接 I2S 模块的 WS 信号，数据位宽度最大为 24 位，可以通过配置 \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] 寄存器选择 8/16/24 位并行输出模式。LCD 模式下，WS 时钟频率为：
+
+$$f_{\textrm{WS}}=\frac{f_{\textrm{i2s}}}{\textrm{W} * \textrm{2}}$$
+
+其中，W>=1，对应寄存器 \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} 中 \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 位的值：
+
+\begin{itemize}
+    \item 当 \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 为 0 时，W 为 64；
+
+    \item 当 \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 的值在 1 \verb+~+ 63 之间时，W 为 \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] 的值。
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/i2s_LCD}
+    \caption{LCD 主机发送模式}
+    \label{Figure:i2s_LCD}
+\end{figure}
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_lcd_frame_b}}
+    \caption{LCD 主机发送数据帧格式 1}
+    \label{Figure:i2s_lcd_frame_b}
+\end{figure}
+
+\subsection{配置 LCD 主机发送模式}
+
+ESP32-S2 I2S 工作在 LCD 主机发送模式时，支持如图 \ref{Figure:i2s_lcd_frame_b} 所示的数据帧格式，对应的软件配置流程如下：
+
+\begin{enumerate}
+    \item 根据本小节的描述，配置时钟。
+
+    \item 根据表 \ref{table:I2S 信号总线描述} 和图 \ref{Figure:i2s_LCD} 的描述，配置信号管脚。
+
+    \item 置位寄存器 \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG} 中 \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} 位，并清零寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} 位，从而使能 LCD 主机发送模式。
+
+    \item 置位 \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}，清零 \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST}、\hyperref[fielddesc:I2SLCDTXWRX2EN]{I2S\_LCD\_TX\_WRX2\_EN}、 \hyperref[fielddesc:I2SLCDTXSDX2EN]{I2S\_LCD\_TX\_SDX2\_EN}，将 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] 置零。
+    \item 根据 \ref{TXCHAN} 小节的描述配置 \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] 和 \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}，以使用正确的模式发送数据。
+
+    \item 置位 \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} 的 \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} 位，使能 I2S DMA。
+    \item 根据 \ref{module_reset} 小节的描述，复位发送单元和发送 FIFO。
+    \item 根据 \ref{I2S_INT} 小节的描述使能相应的中断。\label{LCD-INTERRUPT}
+
+    \item 配置 DMA 发送链表，置位 \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} 启动 DMA。
+
+    \item 等待 LCD 从设备配置完成后，置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}，开始发送数据。
+
+    \item 等待步骤 \ref{LCD-INTERRUPT} 设置的相应中断信号，或通过查询 \hyperref[fielddesc:I2STXIDLE]{I2S\_TX\_IDLE} 检查传输是否结束：
+    \begin{itemize}
+        \item 0：发送设备为工作状态；
+        \item 1：发送设备为空闲状态。
+    \end{itemize}
+    \item 清零 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。
+
+\end{enumerate}
+
+在 LCD 模式主机发送模式下，还支持如图 \ref{Figure:i2s_lcd_frame_a} 所示的数据帧格式。相对图 \ref{Figure:i2s_lcd_frame_b} 中的软件配置而言，唯一的区别是需置位 \hyperref[fielddesc:I2SLCDTXSDX2EN]{I2S\_LCD\_TX\_SDX2\_EN}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_lcd_frame_a}}
+    \caption{LCD 主机发送数据帧格式 2}
+    \label{Figure:i2s_lcd_frame_a}
+\end{figure}
+
+
+\section{Camera 从机接收模式} \label{Camera_MODE}
+
+\subsection{概述}
+
+ESP32-S2 I2S 可以配置成 Camera 从机接收模式，以此实现与外部 camera 模块的高速数据传输。在此模式下，I2S 模块工作在从机接收模式下，除了 16 路数据信号总线 I2S\textcolor{red}{\it{0}}I\_Data\_in[15:0] 外，还有 I2S\textcolor{red}{\it{0}}I\_H\_SYNC、I2S\textcolor{red}{\it{0}}I\_V\_SYNC 和 I2S\textcolor{red}{\it{0}}I\_H\_ENABLE 信号，具体管脚连接如图 \ref{Figure:i2s_camera} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/i2s_camera}
+    \caption{Camera 从机接收模式 }
+    \label{Figure:i2s_camera}
+\end{figure}
+
+\begin{tiplisting}
+输入信号位宽为 \textcolor{red}{N}，\textcolor{red}{N} = 8 \verb+~+ 16。
+\end{tiplisting}
+
+\subsection{配置 Camera 从机发送模式}
+软件配置 Camera 模式的流程如下：
+
+\begin{enumerate}
+    \item 根据 \ref{The Clock of I2S Module} 小节的描述，配置时钟。I2S 模块时钟频率 $f_{\textrm{i2s}}$ 需要大于等于 从 I2S\textcolor{red}{\it{0}}I\_WS\_in 管脚输入的 PLL 时钟频率的 2 倍。
+
+    \item 根据表 \ref{table:I2S 信号总线描述} 和图 \ref{Figure:i2s_camera} 的描述，配置信号管脚。
+
+     \item 置位寄存器 \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG} 中 \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} 和 \hyperref[fielddesc:I2SCAMERAEN]{I2S\_CAMERA\_EN}，使能 Camera 模式。
+     \item 置位寄存器 \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} 中 \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD}，使能从机模式。
+
+
+    \item 置位 \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}，并根据 \ref{RXCHAN} 小节的描述，配置 \hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0]、 \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}、\hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}、\hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0] 和 \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST}，以正确的模式接收数据。
+
+    \item 置位 \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} 中 \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} 位。
+    \item 根据 \ref{module_reset} 小节的描述，复位接收单元和接收 FIFO。
+    \item 根据 \ref{I2S_INT} 小节的描述使能相应的中断。\label{camera-interrupt}
+
+    \item 配置 DMA 接收链表，并在 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 寄存器中配置接收数据长度，置位 \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} 启动 DMA。
+
+    \item 置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，等待 \hyperref[start-signal]{\begin{math}{transmission\_start} \end{math}} 信号。
+
+    \item 接收数据，并存到 ESP32-S2 存储器的指定地址。最终产生步骤 \ref{camera-interrupt} 中设置的中断。
+\end{enumerate}
+
+在 Camera 模式下，需首先检测到 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 的上升沿，接着当 I2S\textcolor{red}{\it{0}}I\_H\_SYNC 和 I2S\textcolor{red}{\it{0}}I\_H\_ENABLE 为高电平，I2S\textcolor{red}{\it{0}}I\_V\_SYNC 为低电平时，Camera 模式下 I2S 模块开始接收数据，即：
+$$transmission\_start= (  (  I2S\textcolor{red}{\it{0}}I\_V\_SYNC==0 ) \&\& (I2S\textcolor{red}{\it{0}}I\_H\_SYNC==1) \&\& ( I2S\textcolor{red}{\it{0}}I\_H\_ENABLE==1 ) $$ \label{start-signal}
+
+上述三个信号均应满足 $transmission\_start$ 的条件，如果有信号不满足要求，可以通过 GPIO 交换矩阵进行取反操作。详情请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+
+为防止 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 信号上的噪声干扰，可以置位 \hyperref[fielddesc:I2SVSYNCFILTEREN]{I2S\_VSYNC\_FILTER\_EN} 使能对 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 信号进行滤波的功能。滤波器的功能为连续采样输入信号，如果输入信号在连续 \hyperref[fielddesc:I2SVSYNCFILTERTHRES]{I2S\_VSYNC\_FILTER\_THRES} 个 PCLK 时钟周期内保持不变，则输入信号有效，否则输入信号无效。只有有效的输入信号才能通过滤波器，滤波器的输出信号才能变化。因此，该滤波器可以滤除 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 信号线上脉冲宽度小于 \hyperref[fielddesc:I2SVSYNCFILTERTHRES]{I2S\_VSYNC\_FILTER\_THRES} 个 PCLK 周期长度的线路毛刺。
+
+进入接收状态后，Camera 模块在 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 为高电平期间至少提供 8 个 PCLK 上升沿时钟信号，以确保 I2S 能正确采样到 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 的上升沿。
+
+
+\section{I2S 中断} \label{I2S_INT}
+\subsection{FIFO 中断}
+
+\begin{itemize}
+\item \label{int:I2STXHUNGINT}I2S\_TX\_HUNG\_INT：当发送数据超时即触发此中断。
+\item \label{int:I2SRXHUNGINT}I2S\_RX\_HUNG\_INT：当接收数据超时即触发此中断。
+\item \label{int:I2STXREMPTYINT}I2S\_TX\_REMPTY\_INT：当发送 FIFO 为空时即触发此中断。
+\item \label{int:I2STXWFULLINT}I2S\_TX\_WFULL\_INT：当发送 FIFO 满时即触发此中断。
+\item \label{int:I2SRXREMPTYINT}I2S\_RX\_REMPTY\_INT：当接收 FIFO 为空时即触发此中断。
+\item \label{int:I2SRXWFULLINT}I2S\_RX\_WFULL\_INT：当接收 FIFO 满时即触发此中断。
+\item \label{int:I2STXPUTDATAINT}I2S\_TX\_PUT\_DATA\_INT：当发送 FIFO 中的左右声道数据个数小于阈值 \hyperref[fielddesc:I2STXDATANUM]{I2S\_TX\_DATA\_NUM}[5:0] 时（将要空），触发此中断。
+\item \label{int:I2SRXTAKEDATAINT}I2S\_RX\_TAKE\_DATA\_INT：当接收 FIFO 中的左右声道数据个数大于阈值 \hyperref[fielddesc:I2SRXDATANUM]{I2S\_RX\_DATA\_NUM}[5:0] 时（将要满），触发此中断。
+\item \label{int:I2SVSYNCINT}I2S\_V\_SYNC\_INT：当 transmission\_start 有效，且检测到一个新的 I2S\textcolor{red}{\it{0}}I\_V\_SYNC 的上升沿时，触发此中断。
+\end{itemize}
+
+\subsection{DMA 中断}\label{section:DMA interrupts}
+\begin{itemize}
+\item \label{int:I2SOUTTOTALEOFINT}I2S\_OUT\_TOTAL\_EOF\_INT: 当所有发送链表使用完毕时即触发此中断。
+\item \label{int:I2SINDSCREMPTYINT}I2S\_IN\_DSCR\_EMPTY\_INT: 无有效接收链表可用时即触发此中断。
+\item \label{int:I2SOUTDSCRERRINT}I2S\_OUT\_DSCR\_ERR\_INT: 当遇到无效发送链表描述符时即触发此中断。
+\item \label{int:I2SINDSCRERRINT}I2S\_IN\_DSCR\_ERR\_INT: 当遇到无效接收链表描述符时即触发此中断。
+\item \label{int:I2SOUTEOFINT}I2S\_OUT\_EOF\_INT: 当发送链表完成发送一个数据包时即触发此中断。
+\item \label{int:I2SOUTDONEINT}I2S\_OUT\_DONE\_INT: 当所有发送缓存数据被读取完毕后即触发此中断。
+\item \label{int:I2SINSUCEOFINT}I2S\_IN\_SUC\_EOF\_INT: 当所有数据接收完毕时即触发此中断。
+\item \label{int:I2SINDONEINT}I2S\_IN\_DONE\_INT: 当前接收链表描述符被处理时即触发此中断。
+\end{itemize}
+
+\section{基地址}\label{Section:Register Base Address}
+
+用户可通过两个不同的寄存器基地址访问 I2S 模块，如表 \ref{table:clock_pol_slave} 所示。
+
+\begin{table}[H]
+    \centering
+    \caption{ESP32-S2 I2S 模块寄存器基地址}
+    \label{table:clock_pol_slave}
+    \begin{tabular}[c]{|p{2.5cm}|p{3.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    基地址类型 & 基地址值\\
+    \hline
+
+    PeriBUS1 &  \hexprefix{}3F40F000 \\ \hline
+
+    PeriBUS2 &  \hexprefix{}6000F000 \\  \hline
+
+    \end{tabular}
+\end{table}
+
+\hypertarget{i2s-reg-summ}{}
+\section{寄存器列表}
+
+\subfile{\modulefiles/i2s_reg_summary_cn.tex}
+\section{寄存器}\label{I2SRegister}
+\subfile{\modulefiles/i2s_reg_cn.tex}
+\end{document}

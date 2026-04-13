@@ -1,0 +1,489 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./22-LOWPOWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+\hypertarget{lowpowm}{}
+\chapter{低功耗管理}\label{mod:lowpowm}
+
+\section{概述}
+
+\chipname{} 拥有一个先进的电源管理单元，灵活打开或关闭芯片的不同电源域，协助客户在芯片工作性能、功耗控制和唤醒延迟之间实现最佳平衡。为了便利用户的使用，\chipname{}  定义了四种最常见的电源域设置组合，对应四种预设功耗模式，可满足用户的常见场景需求，但也同时支持用户对某个电源域的独立控制，以满足一些复杂场景的功耗需求。
+
+\section{主要特性}
+\chipname{} 的低功耗管理有如下特性：
+\begin{itemize}
+\item 4 种预设功耗模式，可满足多种典型应用场景需求
+\item 高达 8 KB 保留内存 (retention memory)
+\item 8 个 32 位保留寄存器 (retention register)
+\item 支持 RTC Boot 功能，用于快速唤醒
+\end{itemize}
+
+在本章节中，我们将首先介绍 \chipname{}  低功耗管理的工作过程，其次介绍芯片的预设低功耗工作模式，最后介绍芯片的 RTC Boot 过程。
+
+\section{功能描述}
+
+\chipname{} 的低功耗管理主要由以下模块实现：
+\begin{itemize}
+\item 功耗管理单元 (PMU)：控制向模拟、RTC 和数字类电源域的供电；
+\item 电源隔离单元：保证各电源域的独立工作，防止掉电电源域影响其他电源域的工作；
+\item 低功耗时钟：为低功耗模式下工作的电源域提供时钟信号；
+\item RTC 定时器：一个工作在 RTC 时钟下的 ``always-on" 的定时器，可记录特定事件的发生时刻；
+\item 8 个 32 位 ``always-on" 保留寄存器：即这 8 个寄存器永远处于工作状态，不受 deep-sleep 等低功耗模式的影响，可用于存储一些不能丢失的数据。
+\item 6 个 ``always-on" 管脚：即这 6 个管脚永远处于工作状态，不受 deep-sleep 等低功耗模式的影响，可用作低功耗模式下的唤醒源（详见第 \ref{sec:lpm-wakeup-source} 节），也作为正常 GPIO 使用（详见 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} 章节）。
+\item RTC 快速内存：8 KB SRAM，工作时钟与 CPU 时钟 (CPU\_CLK) 同频，可用作扩展内存。
+\item 调压器：调节向不同电源域的供电电压。
+\end{itemize}
+
+\chipname{} 低功耗管理的原理图可见图 \ref{fig:lpm-esp32-power-control}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/22-LOWPOWM-power_ctrl.pdf}
+\caption{低功耗管理原理图}
+\label{fig:lpm-esp32-power-control}
+\end{figure}
+
+
+\begin{tiplisting}
+\begin{itemize}
+\vspace{-3em}
+    \item 有关各电源域的具体描述，请见第 \ref{sec:lpm-power-domain} 节。
+    \item 上图中所有开关均由寄存器控制，详见\hyperref[regdesc:RTCCNTLDIGPWCREG]{RTC\_CNTL\_DIG\_PWC\_REG}。
+    \item 上图中开关之外的信号描述如下：
+    \begin{itemize}
+        \item xpd\_rtc\_reg: 
+        \begin{itemize}
+            \item 当 \hyperref[fielddesc:RTCCNTLREGULATORFORCEPU]{RTC\_CNTL\_REGULATOR\_FORCE\_PU} 置 1 时，低功耗调压器常开；
+            \item 否则，低功耗调压器在芯片进入 Light-sleep 和 Deep-sleep 时关闭。此时，RTC 电路由一个极低功耗的内置电源供电。
+        \end{itemize}
+        \item xpd\_dig\_reg: 
+        \begin{itemize}
+            \item 当 \hyperref[fielddesc:RTCCNTLDGWRAPPDEN]{RTC\_CNTL\_DG\_WRAP\_PD\_EN} 使能时，数字系统调压器在芯片进入 Light-sleep 和 Deep-sleep 时关闭；
+            \item 否则，数字系统调压器常开。
+        \end{itemize}
+        \item xpd\_ex\_crystal: 
+        \begin{itemize}
+            \item 当 \hyperref[fielddesc:RTCCNTLXTLFORCEPU]{RTC\_CNTL\_XTL\_FORCE\_PU} 置 1 时，外部主晶振常开； 
+            \item 否则，外部主晶振在芯片进入 Light-sleep 和 Deep-sleep 时关闭。
+        \end{itemize}
+        \item xpd\_rc\_oscilator: 
+        \begin{itemize}
+            \item 当 \hyperref[fielddesc:RTCCNTLFOSCFORCEPU]{RTC\_CNTL\_FOSC\_FORCE\_PU} 置 1 时，快速 RC 振荡器常开；
+            \item 否则，快速 RC 振荡器在芯片进入 Light-sleep 和 Deep-sleep 时关闭。
+        \end{itemize}
+        \item 其他信号不对客户开放。如有具体需求，请联系我们的 \href{https://www.espressif.com/en/contact-us/technical-inquiries}{销售人员}。
+    \end{itemize}
+\end{itemize} 
+\end{tiplisting}
+
+\subsection{功耗管理单元 (PMU)}
+
+\chipname{} 功耗管理单元可以控制向不同电源域的供电，其主要组成部分包括：
+
+\begin{itemize}
+\item RTC 主状态机 (RTC Main State Machine)：产生电源门控、时钟门控和复位信号。
+\item 电源控制器 (Power Controller)：根据 RTC 主状态机产生的电源门控信号，打开或关闭各电源域。
+\item 睡眠和唤醒控制器 (Sleep Controller, Wakeup Controller)：向 RTC 主状态机发送睡眠或唤醒请求。
+\item 时钟控制器 (Clock Controller)：选择并打开或关闭时钟源。
+\item 保护定时器 (Protection Timer)：控制主状态机切换状态的等待时间。
+\end{itemize}
+
+在 \chipname{} 的电源管理单元中，睡眠和唤醒控制器向 RTC 主状态机发送睡眠或唤醒请求，RTC 主状态机接着产生电源门控、时钟门控和复位信号。此后，电源控制器和时钟控制器会根据 RTC 主状态机产生的信号，打开或关闭不同的电源域和时钟信号，从而让芯片进入或退出低功耗模式。电源管理单元的主要工作流程可见图 \ref{fig:lpm-rtc-structure}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/22-LOWPOWM-rtc_structure_new.pdf}
+\caption{电源管理单元的主要工作流程}
+\label{fig:lpm-rtc-structure}
+\end{figure}
+
+\begin{tiplisting}
+\vspace{-3em}
+\begin{enumerate}
+    \item 每个电源控制器均对控制一个具体的电源域。因此，有关具体电源控制器的完整列表，可见电源域列表，具体请见第 \ref{sec:lpm-power-domain} 节。
+    \item 有关各唤醒源的具体描述，请见表 \ref{tab:lpm-wakeup-source}。
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{低功耗时钟}
+
+通常情况下，当 \chipname{} 处于低功耗模式下，芯片的外部主晶振 XTAL\_CLK 晶振和 PLL 将被断电以降低功耗，但低功耗时钟仍保持开启，为芯片的低功耗管理系统提供时钟，以确保芯片在低功耗模式下的正常工作。
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/22-LOWPOWM_rtc_clock.pdf}
+\caption{RTC 电源域的时钟}
+\label{fig:lpm-RTC-fast-clocks}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/22-LOWPOWM-low_power_clk.pdf}
+\caption{Wireless 时钟}
+\label{fig:lpm-Digital-low-power-clocks}
+\end{figure}
+
+
+\begin{table}[H]
+\caption{低功耗时钟}\label{tab:lpm-clock-type}
+\begin{tabular}{|L{2cm}| l | l | L{5cm}| }
+\hline \rowcolor{lightgray}
+\textbf{时钟类型} & \textbf{可选时钟源}               & \textbf{时钟选择寄存器}                                                      & \textbf{作用电源域} \\\hline
+\multirow{2}{*}{\begin{tabular}[c]{@{}l@{}} RTC 快速时钟\end{tabular}} & RC\_FAST\_CLK 的 n 分频（默认）& \multirow{2}{*}{\hyperref[fielddesc:RTCCNTLFASTCLKRTCSEL]{RTC\_CNTL\_FAST\_CLK\_RTC\_SEL}} & \multirow{2}{*}{RTC 寄存器} \\ \cline{2-2}
+                                                                        & XTAL\_DIV\_CLK  &                       &     \\ \hline
+\multirow{3}{*}{RTC 慢速时钟} &  XTAL32K\_CLK & \multirow{3}{*}{\hyperref[fielddesc:RTCCNTLANACLKRTCSEL]{RTC\_CNTL\_ANA\_CLK\_RTC\_SEL}} & \multirow{3}{*}{功耗管理系统（RTC 寄存器之外）} \\ \cline{2-2}
+                              & RC\_FAST\_DIV\_CLK &                                                                    &     \\ \cline{2-2}
+                              & RC\_SLOW\_CLK（默认）  &                                                                    &     \\ \hline
+\multirow{4}{*}{Wireless 时钟} &  XTAL32K\_CLK &  \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL32K} & \multirow{4}{*}{\makecell[l]{低功耗模式下的数字系统中\\的无线通信模块 (Wi-Fi/BT)}} \\ \cline{2-3}
+                            & RC\_FAST\_CLK  的 n 分频       & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_20M}   &     \\ \cline{2-3}
+                            & RTC\_SLOW\_CLK       & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_RTC\_SLOW} &     \\ \cline{2-3}
+                            & XTAL\_CLK         & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL} &     \\ \hline
+\end{tabular}
+\end{table}
+
+在低功耗模式下，\chipname{}  的 XTAL\_CLK 和 PLL 通常将断电以降低功耗，但低功耗时钟仍将开启，以确保芯片在低功耗模式下的正常工作 更多有关时钟的描述，请见章节
+\ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\subsection{定时器}
+
+\chipname{} 的低功耗管理使用 RTC 定时器。RTC 定时器是一个 48 位的可读计数器，可通过配置，使用 RTC 慢速时钟记录以下任一事件发生的时刻。更多详情，请见表 \ref{tab:lpm-Update-RTC-TIMER-VALUE}。
+
+\begin{longtable}[c]{|p{6cm}|p{9cm}|}
+\caption{RTC 定时器的触发条件}
+\label{tab:lpm-Update-RTC-TIMER-VALUE}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{使能条件} & \textbf{描述} \\
+\hline
+\hyperref[fielddesc:RTCCNTLTIMERXTLOFF]{RTC\_CNTL\_TIMER\_XTL\_OFF} & 1. RTC 主状态机关闭，或 2. 打开 40 MHz 晶振时均触发。\\
+\hline
+\multirow{2}{*}{\hyperref[fielddesc:RTCCNTLTIMERSYSSTALL]{RTC\_CNTL\_TIMER\_SYS\_STALL}} & CPU 进入或退出 stall 状态时触发。该设置可保证 SYS\_TIMER 的时间连续性。\\
+\hline
+\hyperref[fielddesc:RTCCNTLTIMERSYSRST]{RTC\_CNTL\_TIMER\_SYS\_RST} & 系统复位时触发。\\
+\hline
+\multirow{2}{*}{\hyperref[fielddesc:RTCCNTLTIMEUPDATE]{RTC\_CNTL\_TIME\_UPDATE}} & 配置寄存器 \hyperref[fielddesc:RTCCNTLTIMEUPDATE]{RTC\_CNTL\_TIME\_UPDATE} 时触发。该触发由 CPU 产生（比如用户）。\\
+\hline
+\end{longtable}
+
+
+RTC 定时器会在每次触发时更新两组寄存器。其中第一组寄存器记录本次触发的时间，第二组寄存器记录之前触发的时间。这两组寄存器的具体情况见下：
+
+\begin{itemize}
+\item 寄存器组 0 用于记录 RTC 定时器在当前触发下的计数值。
+\begin{itemize}
+\item \hyperref[regdesc:RTCCNTLTIMEHIGH0REG]{RTC\_CNTL\_TIME\_HIGH0\_REG}
+\item \hyperref[regdesc:RTCCNTLTIMELOW0REG]{RTC\_CNTL\_TIME\_LOW0\_REG}
+\end{itemize}
+\item 寄存器组 1 用于记录 RTC 定时器在上一次触发下的计数值。
+\begin{itemize}
+\item \hyperref[regdesc:RTCCNTLTIMEHIGH1REG]{RTC\_CNTL\_TIME\_HIGH1\_REG} 
+\item \hyperref[regdesc:RTCCNTLTIMELOW1REG]{RTC\_CNTL\_TIME\_LOW1\_REG}
+\end{itemize}
+\end{itemize}
+
+每次有新的触发，上一次触发时的记录将从寄存器组 0 移至寄存器组 1（寄存器组 1 中之前的记录将被覆盖），而本次触发的记录将存储在寄存器组 0。因此，RTC 定时器最多可同时记录两次触发的值。
+
+值得注意的是，除上电复位外的其余任何复位／睡眠均不会使 RTC 定时器停止或复位。
+
+此外，RTC 定时器还能用作唤醒源。更多详情，请见第 \ref{sec:lpm-wakeup-source} 节。
+
+\subsection{调压器}
+\chipname{} 共有两个调压器，负责调节向不同电源域的供电：
+\begin{itemize}
+\item 数字系统调压器：负责数字类电源域；
+\item 低功耗调压器：负责 RTC 类电源域；
+\end{itemize}
+
+\begin{tiplisting}
+更多有关不同电源域的描述，请见第 \ref{sec:lpm-power-domain} 节。
+\end{tiplisting}
+
+
+\subsubsection{数字系统调压器}
+
+\chipname{} 的内置数字系统调压器可以将外部电源电压（通常为 3.3 V）转换为 1.1 V，支持数字类电源域的正常工作。该寄存器主要 xpd\_dig\_reg 信号控制，详见 \ref{fig:lpm-esp32-power-control}。
+具体结构示意图可见下方图 \ref{fig:lpm-digital-regulator}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/22-LOWPOWM-REG_DIGITAL.jpg}
+\caption{数字系统调压器}
+\label{fig:lpm-digital-regulator}
+\end{figure}
+
+
+\subsubsection{低功耗调压器}
+
+\chipname{} 的内置低功耗调压器可以将外部电源电压（通常为 3.3 V）转换为 1.1 V，支持 RTC 类电源域的正常工作。当管脚 CHIP\_PU 为高电平时，低功耗调压器无法关闭。否则，低功耗调压器在芯片进入 Light-sleep 和 Deep-sleep 时关闭。此时，RTC 电路由一个极低功耗的内置电源供电。具体结构示意图可见下方图 \ref{fig:lpm-low-power-regulator}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/22-LOWPOWM-REG_RTC.jpg}
+\caption{低功耗调压器}
+\label{fig:lpm-low-power-regulator}
+\end{figure}
+
+\subsubsection{欠压检测器}
+
+\chipname{} 的欠压检测器可以检查管脚 VDD3P3\_RTC，VDD3P3\_CPU，VDDA1 和 VDDA2 的电压，在电压快速下落至预设阈值（默认为 2.7 V）以下时发出触发信号，并在触发信号持续一定时间后进行芯片或系统复位，从而关闭部分耗电模块（比如 LNA 和 PA 等），为数字模块争取更多时间，用以保存、转移重要数据。
+
+\hyperref[fielddesc:RTCCNTLBROWNOUTDET]{RTC\_CNTL\_BROWN\_OUT\_DET} 可用于指示欠压检测器的输出电平，默认为低电平，可在检测管脚电压下降至阈值以下时跳至高电平。
+
+\hyperref[fielddesc:RTCCNTLBROWNOUTRSTSEL]{RTC\_CNTL\_BROWN\_OUT\_RST\_SEL} 可用于选择欠压检测器被触发后的复位方式。
+\begin{itemize}
+\item 0：芯片复位
+\item 1：系统复位
+\end{itemize}
+
+欠压检测器的功耗非常低，在芯片开启时将永远保持开启。
+\chipname{}  欠压检测器的具体结构示意图可见下方图 \ref{fig:lowpowm-brown-out-detector}。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/22-LOWPOWM-BROWN_OUT_DET.jpg}
+\caption{欠压检测器}
+\label{fig:lowpowm-brown-out-detector}
+\end{figure}
+
+\begin{tiplisting}
+更多有关芯片复位和系统复位的介绍，请前往章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+\end{tiplisting}
+
+\section{功耗模式管理}
+
+\subsection{电源域}\label{sec:lpm-power-domain}
+
+\chipname{}  共有三大类共 9 个电源域：
+\begin{itemize}
+\item RTC 类
+\begin{itemize}
+\item 功耗管理单元（含 RTC 时钟、快速内存、Always on 保留寄存器等）
+\end{itemize}
+\item 数字类
+\begin{itemize}
+\item 部分数字外设，包括 SPI2、GDMA、SHA、RSA、AES、HMAC、DS、Secure Boot 等
+\item 数字系统
+\item Wireless 数字电路
+\item CPU
+\end{itemize}
+\item 模拟类
+\begin{itemize}
+\item RC\_FAST\_CLK 
+\item XTAL\_CLK
+\item PLL
+\item RF 电路
+\end{itemize}
+\end{itemize}
+
+\subsection{预设功耗模式}
+如上文所示，\chipname{}  定义了四种最常见的电源域设置组合，对应四种预设功耗模式，可满足用户的常见场景需求，详见表 \ref{tab:lpm-predefined-power-modes}。
+
+\begin{table}[H]
+    \centering
+    \caption{预设功耗模式}
+    \label{tab:lpm-predefined-power-modes}
+    \begin{threeparttable}
+    \begin{tabular}{|l|c|c|c|c|l|c|c|c|c|}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{9}{c|}{\textbf{电源域}} \\\cline{2-10}
+        \rowcolor{lightgray}        
+        \multirow{-2}{*}{\textbf{功耗模式}} & \textbf{PMU} & \textbf{部分数字外设} & \textbf{数字系统} & \textbf{\makecell{无线\\数字电路}} & \textbf{CPU} & \textbf{RC\_FAST\_CLK} & \textbf{XTAL\_CLK} & \textbf{PLL} & \textbf{RF 电路} \\\hline
+        Active      & ON   & ON  & ON  & ON   & ON   & ON  & ON  & ON  & ON  \\\hline
+        Modem-sleep & ON   & ON  & ON  & ON\tnote{*} & ON  & ON  & ON  & ON  & OFF \\\hline
+        Light-sleep & ON   & ON  & ON  & OFF\tnote{*} & OFF\tnote{*} & OFF\tnote{*} & OFF & OFF& OFF \\\hline
+        Deep-sleep  & ON   & OFF  & OFF & OFF & OFF & OFF & OFF & OFF & OFF \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[*] 可配置
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+默认情况下，\chipname{} 系统复位后将进入 Modem-sleep 模式，当有收发包任务时，可配置为 Active 模式。当 CPU 停止工作一段时间后，可以进入 Modem-sleep、Light-sleep 和 Deep-sleep 等低功耗模式。从 Active 到 Deep-sleep，可用功能递减 \hyperref[other:lpm-predefined-modes-notes]{$^1$}、功耗递减\hyperref[other:lpm-predefined-modes-notes]{$^2$}、唤醒延迟时间递增。此外，这些模式可支持的唤醒源 \hyperref[other:lpm-predefined-modes-notes]{$^3$} 不同。用户根据具体需求，从功能要求、功耗高低、唤醒延迟及可用唤醒源等方面考虑，选择合适的功耗模式。
+
+\begin{tiplisting}
+\vspace{-2em}
+\label{other:lpm-predefined-modes-notes}
+\begin{enumerate}
+    \item 更多详情，请见表 \ref{tab:lpm-predefined-power-modes}。
+    \item 具体功耗数据可见 \href{https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_cn.pdf}{《\chipname{} 技术规格书》}中的功耗特性章节。
+    \item 具体可支持的唤醒源，请见第 \ref{sec:lpm-wakeup-source} 节。
+\end{enumerate}
+\end{tiplisting}
+
+
+\subsection{唤醒源}\label{sec:lpm-wakeup-source}
+
+\chipname{} 可支持多种唤醒源将 CPU 从不同睡眠模式中唤醒。唤醒源的选择由 \hyperref[fielddesc:RTCCNTLWAKEUPENA]{RTC\_CNTL\_WAKEUP\_ENA} 决定，见表 \ref{tab:lpm-wakeup-source}。
+
+\begin{table}[H]
+    \centering
+    \caption{唤醒源}
+    \label{tab:lpm-wakeup-source}
+    \begin{threeparttable}
+    \begin{tabular}{| r | l | c | c |} 
+    \hline
+    \rowcolor{lightgray}
+    \textbf{WAKEUP\_ENA} & \textbf{唤醒源\tnote{5}} &  \textbf{Light-sleep} & \textbf{Deep-sleep}  \\\hline
+    0x4 & GPIO\tnote{1} & Y & Y \\\hline
+    0x8 & RTC 定时器 & Y & Y \\\hline
+    0x20 & Wi-Fi\tnote{2} & Y & - \\\hline
+    0x40 & UART0\tnote{3} & Y & - \\\hline
+    0x80 & UART1\tnote{3} & Y & - \\\hline
+    0x400 & Bluetooth & Y & - \\\hline
+    0x1000 & XTAL32K\_CLK\tnote{4} & Y & Y \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 在 Deep-sleep 模式下，仅有 RTC GPIO 可以作为唤醒源。
+        \item[2] 为了通过 Wi-Fi 唤醒芯片，芯片将在 Active、Modem-sleep 和 Light-sleep 之间进行切换，CPU 和 RF 模块均将在预设间隔中唤醒，保证 Wi-Fi 的正常连接和数据通信。
+        \item[3] 当接收到的 RX 脉冲数量超过阈值寄存器 \hyperref[regdesc:UARTSLEEPCONFREG]{UART\_SLEEP\_CONF\_REG} 中的设置时，即触发唤醒。详情请见章节 \ref{mod:uart} \textit{\nameref{mod:uart}}。
+        \item[4] 32 kHz 晶振作为 RTC 慢速时钟时，当 32 kHz 看门狗定时器检测到任何时钟停振，即触发唤醒。
+        \item[5] 表格中的所有唤醒源均可配置为拒绝睡眠原因，但 UART 除外。
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsection{拒绝睡眠}\label{sec:lpm-reject-source}
+
+\chipname{}  提供了硬件拒绝睡眠的机制，防止系统在某些外设仍在工作但是未被 CPU 检测到时进入睡眠，最终导致该外设不能正常工作。
+
+\chipname{} 的所有唤醒源也同时可以作为芯片拒绝睡眠的原因，因此具体的拒绝睡眠源请见表 \ref{tab:lpm-wakeup-source}（UART 除外）。
+
+用户可以配置以下寄存器使能或禁用拒绝睡眠功能。
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:RTCCNTLSLEEPREJECTENA]{RTC\_CNTL\_SLEEP\_REJECT\_ENA} 整体使能或关闭拒绝休眠功能：
+        \begin{itemize}
+            \item 进一步配置 \hyperref[fielddesc:RTCCNTLLIGHTSLPREJECTEN]{RTC\_CNTL\_LIGHT\_SLP\_REJECT\_EN}，具体使能拒绝进入 Light\_sleep；
+            \item 进一步配置 \hyperref[fielddesc:RTCCNTLDEEPSLPREJECTEN]{RTC\_CNTL\_DEEP\_SLP\_REJECT\_EN}，具体使能拒绝进入 Deep\_sleep；
+        \end{itemize}
+    \item 读取 \hyperref[fielddesc:RTCCNTLREJECTCAUSE]{RTC\_CNTL\_SLP\_REJECT\_CAUSE\_REG} 了解拒绝睡眠的原因。
+\end{itemize}
+
+\section{Retention 功能}
+\chipname{} 可以选择将 CPU 掉电，进一步降低 light\_sleep 模式下的功耗。为了解决 CPU 掉电之后从 light\_sleep 唤醒时，程序无法接着从进入睡眠之前的断点运行，\chipname{} 专门新增了 retention 模块。
+\chipname{} 的 retention 模块可以在芯片进入 light\_sleep 前通过 retention DMA 将 CPU 中的信息备份到 Internal SRAM 的第 9～12 块的任意地址中，然后在退出 light\_sleep 后将这些信息从 Internal SRAM 中恢复至 CPU，从而保证 CPU 可以接着睡眠之前的断点运行。
+
+\chipname{} 中 retention DMA 的具体特性如下：
+
+\begin{itemize}
+    \item Retention DMA 的传输位宽为 128 位，并且只支持 4 字 (Word) 对齐的地址访问。
+    \item Retention DMA 的链表经过专门设计，读写操作均共用同一个链表，与通用 DMA 链表的配置方法保持一致：
+    \begin{itemize}
+        \item 用户需要在进入睡眠前申请一定的 SRAM 内存空间 \hyperlink{dma-note1}{*}，用于存放 CPU 的寄存器信息（428 个字）和配置信息（4 个字），共 432 个字;
+        \item 根据内存的申请情况，填写链表的地址和长度信息。注意：若申请到的地址不连续，则所有链表均需经过配置。在配置过程中，其中 bit30 为 eof，[23:12] 为 size，[11:0] 为 length，均采用四字对齐。具体可参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}
+\end{itemize}
+
+\begin{tiplisting}\label{dma-note1}
+\textbf{*}如果申请的 SRAM 空间不够 432 个字，芯片仅能进入普通的 light-sleep，无法进一步关闭 CPU。
+\end{tiplisting}
+\end{itemize}
+
+此后，用户即可使能寄存器 \hyperref[fielddesc:RTCCNTLRETENTIONEN]{RTC\_CNTL\_RETENTION\_EN} 开启 retention 功能，即：
+\begin{itemize}
+    \item 在系统进入睡眠前，自动启动保留 DMA 进行数据备份；
+    \item 在系统唤醒后但未恢复前，自动启动保留 DMA 进行数据还原。
+\end{itemize}
+
+
+\section{RTC Boot}
+
+在 Deep-sleep 下，芯片的 ROM 和 RAM 均将断电，因此在唤醒时 SPI 启动（从 flash 复制数据）所需时间更长。因此，相较于 Light-sleep 和 Modem-sleep 模式，Deep-sleep 的唤醒时间要长的多。不过，值得注意的是，在 Deep-sleep 模式下，RTC 快速内存可以处于上电状态。因此，用户可以将一些代码规模不大（即小于 8 KB 的 ``deep sleep wake stub" ）写入 RTC 快速内存，避免 SPI 启动带来的延迟，从而加速芯片唤醒过程。具体方式介绍如下：
+
+\begin{enumerate}
+\item 设置寄存器 \hyperref[fielddesc:RTCCNTLSTATVECTORSELPROCPU]{RTC\_CNTL\_STAT\_VECTOR\_SEL\_PROCPU} 为 1。
+
+\item 计算 RTC 快速内存的 CRC 码，并将结果保存在寄存器 \hyperref[regdesc:RTCCNTLSTORE7REG]{RTC\_CNTL\_STORE7\_REG[31:0]} 中。
+\item 设置寄存器 \hyperref[regdesc:RTCCNTLSTORE6REG]{RTC\_CNTL\_STORE6\_REG[31:0]} 为 RTC 快速内存的入口地址。
+\item 芯片进入睡眠模式。
+\item 当 CPU 开启时，开始进行 ROM 解包和部分初始化工作。此后，再次计算 RTC 快速内存的 CRC 码。如果与寄存器 \hyperref[regdesc:RTCCNTLSTORE7REG]{RTC\_CNTL\_STORE7\_REG[31:0]} 中保存的结果一致，则 CPU 跳转至 RTC 快速内存的入口地址。
+\end{enumerate}
+\clearpage
+\chipname{} 的 RTC 启动流程见下方图 \ref{fig:lpm-rtc-boot}：
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/22-LOWPOWM-rtc_boot-2.png}
+\caption{\chipname{} 启动流程图}
+\label{fig:lpm-rtc-boot}
+\end{figure}
+
+ 
+\clearpage
+\section{寄存器列表}\hypertarget{lowpowm-reg-summ}{} \label{sec:lowpowm-reg-summ}
+
+本小节的所有地址均为相对于低功耗管理基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/22-LOWPOWM-reg-summ__CN}
+
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于低功耗管理基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/22-LOWPOWM-reg__CN}
+
+\end{document}

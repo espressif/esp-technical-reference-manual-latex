@@ -1,0 +1,251 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./17-EXTMEMENCR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{extmemencr}{}
+\chapter{External Memory Encryption and Decryption (FLASH)}
+\label{mod:extmemencr}
+
+
+\section{Overview}
+
+Many variants of the ESP32 must store programs and data in external flash memory. The external flash memory chip is likely to contain proprietary firmware and sensitive user data, such as credentials for gaining access to a private network.
+The Flash Encryption block can encrypt code and write encrypted code to off-chip flash memory for enhanced hardware security. When the CPU reads off-chip flash through the cache, the
+Flash Decryption block can automatically decrypt instructions and data read from the off-chip flash, thus providing hardware-based security for application code.
+
+\section{Features}
+
+\begin{itemize}
+    \item Various key generation methods
+    \item Software-based encryption
+    \item High-speed, hardware decryption
+    \item Register configuration, system parameters and boot mode jointly determine the flash encryption/decryption function.
+\end{itemize}
+
+
+\section{Functional Description}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{./17-EXTMEMENCR/figures/Structure.eps}
+    \caption{Flash Encryption/Decryption Module Architecture}
+    \label{figure:Structure}
+\end{figure}
+
+The Flash Encryption/Decryption module consists of three parts, namely the Key Generator, Flash Encryption block and Flash Decryption block. The structure of these parts is shown in Figure \ref{figure:Structure}.
+The Key Generator is shared by both the Flash Encryption block and the Flash Decryption block, which can function simultaneously.
+
+In the peripheral DPort Register, the register relevant to Flash Encryption/Decryption is DPORT\_SPI\_ENCRYPT\_ENABLE bit and DPORT\_SPI\_DECRYPT\_ENABLE bit in DPORT\_SLAVE\_SPI\_CONFIG\_REG.
+The Flash Encryption/Decryption module will fetch six system parameters from the peripheral eFuse Controller. These parameters are:
+coding\_scheme, BLOCK1, flash\_crypt\_config,
+download\_dis\_encrypt,
+flash\_crypt\_cnt, and download\_dis\_decrypt.
+
+
+\subsection{Key Generator}
+
+According to system parameters coding\_scheme and BLOCK1, the Key Generator will first generate\\
+\begin{math}Key_{o} = f( coding\_scheme, BLOCK1 )\end{math}.
+
+Then, according to system parameter flash\_crypt\_config,
+and off-chip flash physical addresses \begin{math}Addr_{e}\end{math} and \begin{math}Addr_{d}\end{math} accessed by the Flash Encryption block and the Flash Decryption block, the Key Generator will respectively figure out that:
+\\
+\begin{math}Key_{e} = g( Key_{o}, flash\_crypt\_config, Addr_{e} )\end{math}, \\
+\begin{math}Key_{d} = g( Key_{o}, flash\_crypt\_config, Addr_{d} )\end{math}.
+
+When all values of system parameter flash\_crypt\_config are 0, \begin{math}Key_{e}\end{math} and \begin{math}Key_{d}\end{math} are not relevant to the physical address of the off-chip flash.
+When all values of system parameter flash\_crypt\_config are not 0, every 8-word block on the off-chip flash has a dedicated \begin{math}Key_{e}\end{math} and \begin{math}Key_{d}\end{math}.
+
+
+\subsection{Flash Encryption Block}
+
+The Flash Encryption block is equipped with registers that can be accessed by the CPU directly.
+Registers embedded in the Flash Encryption block, registers in the peripheral DPort Register, system parameters and Boot Mode jointly configure and control this block.
+
+The Flash Encryption block requires software intervention during operation. The steps are as follows:
+
+\newcounter{STEP_W_ADDR}
+\newcounter{STEP_POLL}
+\newcounter{STEP_W_FLASH}
+\begin{enumerate}
+    \item Set the DPORT\_SPI\_ENCRYPT\_ENABLE bit of register DPORT\_SLAVE\_SPI\_CONFIG\_REG.
+    \item Write the physical address prepared for the off-chip flash on register FLASH\_ENCRYPT\_ADDRESS\_REG. The address must be 8-word boundary aligned.
+    \setcounter{STEP_W_ADDR}{\theenumi}
+    \item  The Flash Encryption block must encrypt 8-word long code segments. Write the lowest word to register FLASH\_ENCRYPT\_BUFFER\_0\_REG,
+    the second-lowest word into FLASH\_ENCRYPT\_BUFFER\_1\_REG, and so on, up to  FLASH\_ENCRYPT\_BUFFER\_7\_REG.
+    \item Set the FLASH\_START bit in FLASH\_ENCRYPT\_START\_REG.
+    \item Wait for the FLASH\_DONE bit to be set in FLASH\_ENCRYPT\_DONE\_REG.
+    \setcounter{STEP_POLL}{\theenumi}
+    \item Use this function and write any 8-word code to the 8-word aligned address on the off-chip flash via the peripheral SPI0.
+    \setcounter{STEP_W_FLASH}{\theenumi}
+\end{enumerate}
+
+In Steps 1 to \arabic{STEP_POLL}, the Flash Encryption block encrypts 8-word long codes. The key encryption algorithm uses \begin{math}Key_{e}\end{math}. The encryption result will also be 8-word long.
+In Step \arabic{STEP_W_FLASH}, the peripheral SPI0 writes encrypted results of the Flash Encryption block to the off-chip flash. One parameter of the function used in Step \arabic{STEP_W_FLASH} will be the physical address of the off-chip flash.
+The physical address must be 8-word boundary aligned.
+Also, the value must be the same as the value written into register FLASH\_ENCRYPT\_ADDRESS\_REG during Step \arabic{STEP_W_ADDR}.
+Even though the function used in Step \arabic{STEP_W_FLASH} still has a parameter with an 8-word long code, the parameter will be meaningless if Steps 1 to \arabic{STEP_POLL} are executed. The Peripheral SPI0 will use the encrypted result instead.
+If the Flash Encryption block is not operating, or has not executed Steps 1 to \arabic{STEP_POLL}, Step \arabic{STEP_W_FLASH} will not use the encrypted result. Instead, the function parameter will be used.
+
+Flash Encryption Operating Conditions:
+
+\begin{itemize}
+
+    \item During SPI Flash Boot
+
+    If the DPORT\_SPI\_ENCRYPT\_ENABLE bit of register DPORT\_SLAVE\_SPI\_CONFIG\_REG is 1,
+    the Flash Encryption block is operational. Otherwise, it is not.
+
+    \item During Download Boot
+
+    If the DPORT\_SPI\_ENCRYPT\_ENABLE bit of register DPORT\_SLAVE\_SPI\_CONFIG\_REG is 1, and system parameter download\_dis\_encrypt is 0,
+    the Flash Encryption block is operational. Otherwise, it is not.
+
+\end{itemize}
+
+Even though software participates in the whole process, it cannot directly read the encrypted codes. Instead, the encrypted codes are integrated into the off-chip flash.
+Even though the CPU can skip the cache and get the encrypted code directly by reading the off-chip flash, the software can by no means access \begin{math}Key_{e}\end{math}.
+
+
+\subsection{Flash Decryption Block}
+
+Flash Decryption is not a conventional peripheral, and is not equipped with registers. Therefore, the CPU cannot directly access the Flash Decryption block. The Peripheral DPort Register, system parameters and Booting Mode jointly control and configure the Flash Decryption block.
+
+When the Flash Decryption block is operating, the CPU will read instructions and data from the off-chip flash via the cache.
+The Flash Decryption block automatically decrypts the instructions and data in the cache. The entire decryption process does not need software intervention and is transparent to the cache.
+The decryption algorithm can decrypt the code that has been encrypted by the Flash Encryption block. Software cannot access the key algorithm \begin{math}Key_{d}\end{math} used.
+
+When the Flash Decryption block is not operating, it does not have any effect on the contents stored in the off-chip flash, be they encrypted or unencrypted. What the CPU reads via the cache is the original information stored in the off-chip flash.
+
+Flash Encryption Operating Conditions:
+
+\begin{itemize}
+
+    \item During SPI Flash Boot
+
+    In the efuse system parameter flash\_crypt\_cnt (7 bits wide), if the number of bits with value 1 is odd,
+    the Flash Decryption block is operational. Otherwise, it is not.
+
+    \item During Download Boot
+
+    If the DPORT\_SPI\_DECRYPT\_ENABLE bit in DPORT\_SLAVE\_SPI\_CONFIG\_REG is 1, and system parameter download\_dis\_decrypt is 0, the Flash Decryption block is operational. Otherwise, it is not.
+\end{itemize}
+
+\hypertarget{extmemencr-reg-summ}{}
+\section{Register Summary}
+\label{sec:flash-reg-sum}
+
+The addresses in this section are relative to the External Memory Encryption and Decryption (FLASH) base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\begin{longtable}{ | p{7cm} | p{5cm} | p{2cm} | p{1cm} | }
+    \hline
+    \rowcolor{lightgray}
+    Name & Description &  Address & Access \\ \hline
+            \endfirsthead
+            \hline
+            \rowcolor{lightgray}
+    Name & Description &  Address & Access \\
+            \hline
+            \endhead
+            \endfoot
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_0\_REG} & Flash encryption buffer register 0 & 0x3FF5B000 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_1\_REG} & Flash encryption buffer register 1 & 0x3FF5B004 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_2\_REG} & Flash encryption buffer register 2 & 0x3FF5B008 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_3\_REG} & Flash encryption buffer register 3 & 0x3FF5B00C & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_4\_REG} & Flash encryption buffer register 4 & 0x3FF5B010 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_5\_REG} & Flash encryption buffer register 5 & 0x3FF5B014 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_6\_REG} & Flash encryption buffer register 6 & 0x3FF5B018 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONBUFFERnREG]{FLASH\_ENCRYPTION\_BUFFER\_7\_REG} & Flash encryption buffer register 7 & 0x3FF5B01C & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONSTARTREG]{FLASH\_ENCRYPTION\_START\_REG} & Encrypt operation control register & 0x3FF5B020 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONADDRESSREG]{FLASH\_ENCRYPTION\_ADDRESS\_REG} & External flash address register & 0x3FF5B024 & WO \\ \hline
+    \hyperref[regdesc:FLASHENCRYPTIONDONEREG]{FLASH\_ENCRYPTION\_DONE\_REG} & Encrypt operation status register & 0x3FF5B028 & RO \\ \hline
+    \end{longtable}
+
+\section{Register}
+
+The addresses in this section are relative to the External Memory Encryption and Decryption (FLASH) base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:flash-reg-sum} \textit{\nameref{sec:flash-reg-sum}}. 
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/flashenc_reg_en.tex}
+
+\end{document}

@@ -1,0 +1,302 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./35-BOOTCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{bootctrl}{}
+\chapter{芯片 Boot 控制}
+\label{mod:bootctrl}
+
+\section{概述}
+
+\chipname{} 共有四个 Strapping 管脚：
+\begin{itemize}
+    \item GPIO0
+    \item GPIO3
+    \item GPIO45
+    \item GPIO46
+\end{itemize}
+Strapping 管脚用于控制 \chipname{} 芯片上电或硬件复位时的一些功能：
+\begin{itemize}
+    \item 控制 Boot 模式
+    \item 控制 ROM 日志打印
+    \item 设置 VDD\_SPI 电压
+    \item 控制 JTAG 信号源
+\end{itemize}
+
+在芯片复位过程中（请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}），硬件将采样 Strapping 管脚电平存储到锁存器中，并一直保持到芯片掉电或关闭。GPIO0、GPIO3、GPIO45 和 GPIO46 锁存的状态可以通过软件从寄存器 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 中读取。
+
+GPIO0、GPIO45 和 GPIO46 默认连接内部上拉/下拉。如果这些管脚没有外部连接或者连接的外部线路处于高阻抗状态，内部弱上拉/下拉将决定这几个管脚输入电平的默认值，如表 \ref{tab:bootctrl-default-config-strapping-pins} 所示。
+
+\begin{longtable}[c]{|l|c|}
+\caption{Strapping 管脚默认上拉/下拉}
+\label{tab:bootctrl-default-config-strapping-pins} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{管脚} & \textbf{默认值} \\ \hline
+  \textbf{GPIO0} & 上拉 \\ \hline
+  \textbf{GPIO3} & N/A \\ \hline
+  \textbf{GPIO45} & 下拉 \\ \hline
+  \textbf{GPIO46} & 下拉 \\ \hline
+\end{longtable}
+
+如需改变 Strapping 管脚的默认值，用户可以应用外部下拉/上拉电阻，或者应用主机 MCU 的 GPIO 来控制 \chipname{} 上电复位时的 Strapping 管脚电平。复位释放后，Strapping 管脚和普通管脚功能相同。
+
+\begin{tiplisting}
+以下小节介绍了芯片复位时的功能以及控制该功能使用到的 Strapping 组合模式。请使用本章节所介绍的组合，其它组合可能会导致不可控结果。
+\end{tiplisting}
+
+\section{Boot 模式控制}\label{sec:boot-mode-control}
+
+复位释放后，GPIO0、GPIO1、GPIO2 和 GPIO46 在复位时的值将共同决定 Boot 模式。表 \ref{tab:bootctrl-boot-mode-control} 列出了 GPIO0、GPIO1、GPIO2 和 GPIO46 的 Strapping 值及其对应的系统启动模式。
+
+\begin{ThreePartTable}
+\begin{TableNotes}
+    \item[1] Joint Download Boot：该模式下支持以下下载方式：
+    \begin{itemize}
+        \item USB Download Boot
+        \begin{itemize}
+            \item USB-Serial-JTAG Download Boot
+            \item USB-OTG Download Boot
+        \end{itemize}
+        \item UART Download Boot
+    \end{itemize}
+    \item[2] SPI Download Boot 模式：GPIO1 和 GPIO2 不是 strapping 管脚，但使用 SPI Download Boot 模式时需要预留 GPIO1 和 GPIO2。 GPIO1 和 GPIO2 默认浮空，在复位时处于高阻抗状态。
+\end{TableNotes}
+\begin{longtable}[c]{|p{5cm}|c|c|c|c|}
+\caption{系统启动模式}
+\label{tab:bootctrl-boot-mode-control} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{启动模式} & \textbf{GPIO0} & \textbf{GPIO46} & \textbf{GPIO1} & \textbf{GPIO2}\\
+  \hline
+  \endfirsthead
+  \insertTableNotes
+  \endlastfoot
+  SPI Boot 模式 & 1 & 忽略 & 忽略 & 忽略 \\ \hline
+  Joint Download Boot 模式\tnote{1} & 0 & 0 & 忽略 & 忽略\\ \hline
+  SPI Download Boot 模式\tnote{2} & 0 & 1 & 1 & 0 \\ \hline
+\end{longtable}
+\end{ThreePartTable}
+
+在 SPI Boot 模式下，ROM 引导加载程序通过从 SPI flash 中读取程序来启动系统。SPI Boot 模式可进一步细分为以下两种启动方式：
+\begin{itemize}
+    \item 常规 flash 启动方式：支持安全启动。ROM 引导加载程序将程序从 flash 加载到 SRAM，并执行。在大多数实际应用场景中，上述执行的程序多为二级引导程序，该二级引导程序将启动最终的应用程序。
+    \item 直接启动方式：不支持安全启动，程序直接从 flash 中运行。如需使能这一启动方式，请确保下载至 flash 的 bin 文件其前两个字（地址：0x{}42000000）为 0x{}aedb041d。
+\end{itemize}
+
+在 Joint Download Boot 模式下，用户可通过 UART 或 USB 接口将二进制文件下载至 flash，或将二进制文件下载至 SRAM 并在 SRAM 中运行程序。
+
+在 SPI Download Boot 模式下，用户可通过 SPI 接口将二进制文件下载至 flash，或将二进制文件下载至 SRAM 并运行 SRAM 中的程序。
+
+下面几个 eFuse 可用于控制启动模式的具体行为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDISFORCEDOWNLOAD]{EFUSE\_DIS\_FORCE\_DOWNLOAD}
+    \begin{itemize}
+    \item 如果此 eFuse 设置为 0（默认），软件可通过设置 \hyperref[fielddesc:RTCCNTLFORCEDOWNLOADBOOT]{RTC\_CNTL\_FORCE\_DOWNLOAD\_BOOT}，触发 CPU 复位，将芯片启动模式强制从 SPI Boot 模式切换至 Joint Download Boot 模式。这种情况下，硬件会将 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}[3:2] 的值从 ``1x" 覆盖为 ``00"；
+    \item 如果此 eFuse 设置为 1，则禁用 RTC\_CNTL\_FORCE\_DOWNLOAD\_BOOT。\hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值不受影响 。
+    \end{itemize}
+    \item \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{EFUSE\_DIS\_DOWNLOAD\_MODE}
+
+    如果此 eFuse 设置为 1，则禁用 Joint Download Boot 模式。\hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值则不受 \hyperref[fielddesc:RTCCNTLFORCEDOWNLOADBOOT]{RTC\_CNTL\_FORCE\\\_DOWNLOAD\_BOOT} 的影响。
+    \item \hyperref[fielddesc:EFUSEENABLESECURITYDOWNLOAD]{EFUSE\_ENABLE\_SECURITY\_DOWNLOAD}
+
+    如果此 eFuse 设置为 1，则启用安全下载模式，允许读取、写入和擦除 \textbf{明文} flash，不允许通过 UART、USB 或 SPI 接口下载代码到 flash 直接执行，并且不支持寄存器的操作。注意：在该模式下，支持的 \href{https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/index.html}{esptool} 命令受限，例如只能写入 flash 而无法读取。如需读取 flash，请切换至 SPI Boot 模式，启用引导加载程序。
+
+    如果 Joint Download Boot 模式已禁用，则此 eFuse 设置将被忽略。
+
+    \item EFUSE\_DIS\_DIRECT\_BOOT
+
+    如果此 eFuse 设置为 1，则禁用 Direct Boot 模式。
+\end{itemize}
+
+USB Serial/JTAG 控制器可将芯片从 SPI Boot 模式强制切换到 Joint Download Boot 模式，或从 Joint Download Boot 模式强制切换到 SPI Boot 模式。更多信息，请参考章节 \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}}。
+
+\section{ROM 日志打印控制}
+
+在系统启动过程中，默认配置下，系统将同时把 ROM 日志打印至 UART0 和 USB Serial/JTAG 控制器。在不同启动模式以及配置下，可以分别关闭 UART0 和 USB Serial/JTAG 控制器的 ROM 日志打印功能。
+
+UART0 的 ROM 日志打印控制如下表：
+
+\begin{table}[H]
+    \centering
+    \caption{UART0 的 ROM 日志打印控制}
+    \label{table:ROM_CODE_CONTROL_UART0}
+    \begin{threeparttable}
+    \begin{tabular}{ |p{3.5cm}|p{1.5cm}<{\centering}|p{1.3cm}<{\centering}|p{1.3cm}<{\centering}|p{5cm}|}
+    \hline
+        \rowcolor{lightgray}
+    \textbf{启动模式} & \textbf{Register\tnote{1}} & \textbf{eFuse\tnote{2}} &   \textbf{GPIO46}      & \textbf{ROM 代码打印至 UART0} \\\hline
+    Download Boot 模式           & 忽略       & 忽略                & 忽略 & 使能打印 \\\hline
+    \multirow{7}*{SPI Boot 模式} & \multirow{6}*{0}  & 0                & 忽略 & 使能打印 \\\cline{3-5}
+                                 &                   & \multirow{2}*{1} & 0 & 使能打印 \\\cline{4-5}
+                                 &                   &                  & 1 & 关闭打印 \\\cline{3-5}
+                                 &                   & \multirow{2}*{2} & 0 & 关闭打印 \\\cline{4-5}
+                                 &                   &                  & 1 & 使能打印 \\\cline{3-5}
+                                 &                   & 3                & 忽略 & 关闭打印 \\\cline{2-5}
+                                 & 1                 & 忽略              & 忽略 & 关闭打印 \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] Register：\hyperref[regdesc:RTCCNTLRTCSTORE4REG]{RTC\_CNTL\_RTC\_STORE4\_REG}[0]
+            \item[2] eFuse：\hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL}
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+USB Serial/JTAG 控制器 的 ROM 日志打印控制如下表：
+
+\begin{table}[H]
+    \centering
+    \caption{USB Serial/JTAG 控制器的 ROM 日志打印控制}
+    \label{table:ROM_CODE_CONTROL_USB}
+    \begin{threeparttable}
+    \begin{tabular}{ |p{3.5cm}|p{1.5cm}<{\centering}|p{1.4cm}<{\centering}|p{1.4cm}<{\centering}|p{1.4cm}<{\centering}|p{5cm}|}
+    \hline
+        \rowcolor{lightgray}
+    \textbf{启动模式} & \textbf{Register\tnote{a}} & \textbf{eFuse\_1\tnote{b}} & \textbf{eFuse\_2\tnote{c}} & \textbf{eFuse\_3\tnote{d}} & \textbf{ROM 日志打印至 USB Serial/JTAG 控制器} \\\hline
+    \multirow{2}*{Download Boot 模式} & \multirow{2}*{忽略} & 0                             & 0  & 0  & 使能打印 \\\cline{3-6}
+                                      &                           & \multicolumn{3}{|c|}{其他 }            & 关闭打印 \\\hline
+    \multirow{4}*{SPI Boot 模式}      & \multirow{3}*{0}          & 1                             & 1  & 忽略  & 使能打印 \\\cline{3-6}
+                                      &                           & \multicolumn{2}{|c|}{00/10/01}     & 0  & 使能打印 \\\cline{3-6}
+                                      &                           & \multicolumn{2}{|c|}{00/10/01}     & 1  & 关闭打印 \\\cline{2-6}
+                                      & 1                         & 忽略                            & 忽略  & 忽略  & 关闭打印 \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[a] Register：\hyperref[regdesc:RTCCNTLRTCSTORE4REG]{RTC\_CNTL\_RTC\_STORE4\_REG}[0]
+            \item[b] eFuse\_1: \hyperref[fielddesc:EFUSEDISUSBSERIALJTAG]{EFUSE\_DIS\_USB\_SERIAL\_JTAG}
+            \item[c] eFuse\_2：在 Download Boot 模式下为 \hyperref[fielddesc:EFUSEDISUSBSERIALJTAGDOWNLOADMODE]{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_DOWNLOAD\_MODE}，在 SPI Boot 模式下为 \hyperref[fielddesc:EFUSEDISUSBOTG]{EFUSE\_DIS\_USB\_OTG}
+            \item[d] eFuse\_3：在 Download Boot 模式下为 \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{EFUSE\_DIS\_DOWNLOAD\_MODE}，在 SPI Boot 模式下为 \hyperref[fielddesc:EFUSEDISUSBPRINT]{EFUSE\_DIS\_USB\_PRINT}
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\vspace{-1em}
+\begin{tiplisting}
+\hyperref[regdesc:RTCCNTLRTCSTORE4REG]{RTC\_CNTL\_RTC\_STORE4\_REG}[0] 的值可以任意多次读写，而 eFuse 仅可烧写一次。因此，\hyperref[regdesc:RTCCNTLRTCSTORE4REG]{RTC\_CNTL\_RTC\_STORE4\_\\REG}[0] 可用于临时关闭 ROM 日志打印，而 eFuse 可用于永久关闭 ROM 日志打印。
+\end{tiplisting}
+
+\section{VDD\_SPI 电压控制}
+
+芯片复位时，GPIO45 可用于选择 VDD\_SPI 电压：
+
+\begin{itemize}
+    \item GPIO45 = 0 时，VDD\_SPI 由 VDD3P3\_RTC 通过电阻 R$_{SPI}$ 后供电（电压典型值为 3.3 V）；更多信息见\href{https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_cn.pdf}{《\chipname{} 技术规格书》}中图：\chipname{} 电源管理。
+    \item GPIO45 = 1 时，VDD\_SPI 可选择由内置 LDO 供电（电压为 1.8 V）。
+\end{itemize}
+
+\hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} 设置为 1 时，可关闭上述功能。此时 VDD\_SPI 电压由 \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} 的值决定：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} = 0 时，VDD\_SPI 连接 1.8 V LDO；
+    \item \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} = 1 时，VDD\_SPI 连接 VDD3P3\_RTC。
+\end{itemize}
+
+\section{JTAG 信号源控制}
+
+在系统启动早期阶段，GPIO3 与 \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}、\hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG} 和 \hyperref[fielddesc:EFUSESTRAPJTAGSEL]{EFUSE\_STRAP\_JTAG\_SEL} 一起控制 JTAG 信号源，见表 \ref{tab:bootctrl-jtag-signal-src-control}。
+
+\begin{table}[H]
+    \centering
+    \caption{JTAG 信号源控制}
+    \label{tab:bootctrl-jtag-signal-src-control}
+    \begin{threeparttable}
+        \begin{tabular}{ | l | C{2.3cm} | C{2.3cm} | C{2.3cm} | C{2cm} | }
+        \hline
+
+        \rowcolor{lightgray}
+        \textbf{JTAG 信号源} & \textbf{\hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\newline\_PAD\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\newline\_USB\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSESTRAPJTAGSEL]{EFUSE\_STRAP\newline\_JTAG\_SEL}} &   \textbf{GPIO3}       \\\hline
+
+        \multirow{3}*{\textbf{USB 串口/JTAG 控制器}} & \textbf{0}\tnote{a} & \textbf{0} & \textbf{0} & 忽略 \\\cline{2-5}
+        & 0 & 0 & 1 & 1 \\\cline{2-5}
+        & 1 & 0 & 忽略 & 忽略 \\\hline
+        \multirow{2}*{JTAG 管脚 MTDI、MTCK、MTMS 和 MTDO} & 0 & 0 & 1 & 0 \\\cline{2-5}
+        & 0 & 1 & 忽略 & 忽略 \\\hline
+        JTAG 关闭 & 1 & 1 & 忽略 & 忽略 \\\hline
+
+            \end{tabular}
+
+            \begin{tablenotes}
+                \item[a] \textbf{加粗}表示默认值和默认配置
+            \end{tablenotes}
+        \end{threeparttable}
+      \end{table}
+
+    \end{document}

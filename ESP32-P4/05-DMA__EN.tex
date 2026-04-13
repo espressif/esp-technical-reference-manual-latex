@@ -1,0 +1,673 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./05-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{dma}{}
+\chapter{GDMA Controller (GDMA-AHB, GDMA-AXI)}
+\label{mod:dma}
+
+
+\section{Overview}
+
+
+General Direct Memory Access (GDMA) is a feature that allows peripheral-to-memory, memory-to-peripheral, and memory-to-memory data transfer at high speed. The CPU is not involved in the GDMA transfer and therefore is more efficient with less workload.
+
+\chipname{} has two types of general-purpose DMA controllers, namely GDMA-AHB and GDMA-AXI, to directly access the AHB bus or the AXI bus respectively. Both GDMA-AHB and GDMA-AXI have six independent channels, i.e., three transmit channels and three receive channels.
+
+The GDMA-AHB channels are shared and can be assigned to I3C, UHCI, I2S, ADC, or RMT to access internal and external memory.
+
+The GDMA-AXI channels are also shared and can be assigned to LCD, CAM, two general-purpose SPIs, PARLIO, AES, or SHA to access internal and external memory.
+
+GDMA-AHB and GDMA-AXI use configurable priority and weight arbitration schemes to manage peripherals' needs for bandwidth.
+
+Unless otherwise specified, the term "GDMA controller" refers to both GDMA-AHB and GDMA-AXI in the following text.
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/gdma-ahb-modules.pdf}}
+\centering
+\caption{Modules that Share GDMA-AHB Channels}
+\label{Figure:Module_with_DMA_AHB}
+\end{figure}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/gdma-axi-modules.pdf}}
+\centering
+\caption{Modules that Share GDMA-AXI Channels}
+\label{Figure:Module_with_DMA_AXI}
+\end{figure}
+
+\section{Features}
+
+GDMA-AHB and GDMA-AXI have the following features:
+
+\begin{itemize}
+    \item Architecture:
+        \begin{itemize}
+            \item GDMA-AHB: AHB bus architecture
+            \item GDMA-AXI: AXI bus architecture, which gives the possibility to complete up to 8 transactions out of order and up to 8 outstanding transactions
+        \end{itemize}
+    \item Programmable length of data to be transferred in bytes
+    \item Access via any address and size
+    \item Alignment:
+        \begin{itemize}
+            \item GDMA-AHB:
+                \begin{itemize}
+                    \item Descriptor address: 1-word aligned
+                    \item Data address and length:
+                        \begin{itemize}
+                            \item Internal memory and non-encrypted external memory address space: no requirements
+                            \item Encrypted external memory address space: 16-byte aligned
+                        \end{itemize}
+                \end{itemize}
+            \item GDMA-AXI:
+                \begin{itemize}
+                    \item Descriptor address: 2-word aligned
+                    \item Data address and length:
+                        \begin{itemize}
+                            \item Internal memory and non-encrypted external memory address space: no requirements
+                            \item Encrypted external memory address space: 16-byte aligned
+                        \end{itemize}
+                \end{itemize}
+        \end{itemize}
+    \item Linked list of descriptors
+    \item \iftagged{ESP32-P4-latest}{
+            When accessing memory, GDMA-AHB supports INCR4, INCR8, or INCR16 burst transfer, and GDMA-AXI supports INCR burst transfer
+        }{
+            INCR burst transfer when accessing memory
+        }
+    \item Three transmit channels and three receive channels for each controller
+    \item Software-configurable selection of peripheral requesting its service
+    \item Configurable channel priority and weight arbitration
+    \item Support for memory transfer
+    \item CRC calculation of data
+    \tagged{ESP32-P4-latest}{
+        \item Interrupt response mechanism for GDMA-AXI linked list switching
+    }
+\end{itemize}
+
+
+\section{Architecture}
+
+In \chipname{}, all modules that need high-speed data transfer support GDMA. The GDMA controller and CPU data bus have access to the same address space in memory. Figure \ref{fig:gdma-controller} shows the basic architecture of the GDMA controller.
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/gdma_controller}}
+\centering
+\caption{GDMA controller Architecture}
+\label{fig:gdma-controller}
+\end{figure}
+
+
+GDMA-AHB and GDMA-AXI have six independent channels respectively, i.e., three transmit channels and three receive channels. Every channel can be connected to different peripherals. In other words, channels are general-purpose, and shared by peripherals.
+
+GDMA-AHB and GDMA-AXI read data from or write data to internal and external memory via AHB\_BUS or AXI\_BUS respectively. Before this, GDMA uses configurable arbitration schemes for channels requesting read or write access. For the available address range of internal and external memory, please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+Software can use the GDMA through linked lists. GDMA-AHB linked lists are stored in internal memory, while GDMA-AXI linked lists are stored in internal or external memory. These linked lists consist of outlink\textcolor{red}{\it{n}} and inlink\textcolor{red}{\it{n}}, where \textcolor{red}{\it{n}} indicates the channel number (ranging from 0 to 2).
+The GDMA reads an outlink\textcolor{red}{\it{n}} (i.e., a linked list of transmit descriptors) from memory and transmit data in corresponding memory according to the outlink\textcolor{red}{\it{n}}, or read an inlink\textcolor{red}{\it{n}} (i.e., a linked list of receive descriptors) and store received data into specific address space in memory according to the inlink\textcolor{red}{\it{n}}.
+
+
+\clearpage
+\section{Functional Description}
+
+\subsection{Linked List}
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/link_strut}
+\centering
+\caption{Structure of a Linked List}
+\label{fig:gdma-link-descriptor}
+\end{figure}
+
+Figure \ref{fig:gdma-link-descriptor} shows the structure of a linked list. An outlink and an inlink have the same structure. A linked list is formed by one or more descriptors, and each descriptor consists of three words. Linked lists should be stored in the memory for the GDMA to be able to use them. The meanings of a descriptor's fields are as follows:
+
+\begin{itemize}
+    \item owner (DW0) [31]: Specifies who is allowed to access the buffer that this descriptor points to.\\
+    0: CPU can access the buffer. \\
+    1: The GDMA controller can access the buffer.\\
+    When the GDMA controller stops using the buffer, this bit in a receive descriptor is automatically cleared by hardware, while this bit in a transmit descriptor can only be automatically cleared by hardware if \hyperref[fielddesc:AHBDMAOUTAUTOWRBACKCHN]{AHB/AXI\_DMA\_OUT\_AUTO\_WRBACK\_CH\regindex{n}} is set to 1. Software can disable automatic clearing by hardware by setting the \hyperref[fielddesc:AHBDMAOUTLOOPTESTCHN]{AHB/AXI\_DMA\_OUT\_LOOP\_TEST\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAINLOOPTESTCHN]{AHB/AXI\_DMA\_IN\_LOOP\_TEST\_CH\regindex{n}} bit. When software loads a linked list, this bit should be set to 1.
+    \\{\bfseries Note:} AHB/AXI\_DMA\_OUT is the prefix of transmit channel registers, and AHB/AXI\_DMA\_IN is the prefix of receive channel registers.
+    \item suc\_eof (DW0) [30]: Specifies whether the AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT or AHB/AXI\_DMA\_OUT\_EOF\_CH\regindex{n}\_INT interrupt will be triggered when the data corresponding to this descriptor has been received or transmitted.\\
+    0: No interrupt will be triggered after the current descriptor's successful transfer;\\
+    1: An interrupt will be triggered after the current descriptor's successful transfer.\\
+    For receive descriptors, software needs to clear this bit to 0, and hardware will set it to 1 after receiving data containing the EOF flag.\\
+    For transmit descriptors, software needs to set this bit to 1 as needed.\\
+    If software configures this bit to 1 in a descriptor, the GDMA will include the EOF flag in the data sent to the corresponding peripheral, indicating to the peripheral that this data segment marks the end of one transfer phase.
+    \item reserved (DW0) [29]: Reserved. The value of this bit does not matter.
+    \item err\_eof (DW0) [28]: Specifies whether the received data has errors.\\
+    0: The received data does not have errors.\\
+    1: The received data has errors.\\
+    This bit is used only when UHCI or PARLIO uses the GDMA to receive data. When an error is detected in the received data segment corresponding to a descriptor, this bit in the receive descriptor is set to 1 by hardware.
+    \item reserved (DW0) [27:24]: Reserved.
+    \item length (DW0) [23:12]: Specifies the number of valid bytes in the buffer that this descriptor points to. This field in a transmit descriptor is written by software and indicates how many bytes can be read from the buffer; this field in a receive descriptor is written by hardware automatically and indicates how many valid bytes have been stored in the buffer.
+    \item size (DW0) [11:0]: Specifies the size of the buffer that this descriptor points to.
+    \item buffer address pointer (DW1): Address of the buffer.
+    \item next descriptor address (DW2): Address of the next descriptor. If the current descriptor is the last one, this value is 0. For GDMA-AHB, this field can only point to the internal memory space; for GDMA-AXI, this field can point to the internal or external memory space.
+        \begin{tiplisting}
+            Please note that addresses of GDMA-AHB descriptors should be 4-byte aligned, and addresses of GDMA-AXI descriptors should be 8-byte aligned.
+        \end{tiplisting}
+\end{itemize}
+
+If the length of data received is smaller than the size of the buffer, the GDMA controller will not use the available space of the buffer in the next transaction.
+
+\subsection{Peripheral-to-Memory and Memory-to-Peripheral Data Transfer}
+
+The GDMA controller can transfer data from memory to peripheral (transmit) and from peripheral to memory (receive). A transmit channel transfers data in the specified memory location to a peripheral's transmitter via an outlink\textcolor{red}{\it{n}}, whereas a receive channel transfers data received by a peripheral to the specified memory location via an inlink\textcolor{red}{\it{n}}.
+
+Every transmit and receive channel can be connected to any peripheral with the GDMA feature. Table \ref{tab:gdma-ahb-peri-sel} and Table \ref{tab:gdma-axi-peri-sel} illustrate how to select the peripheral to be connected via registers. ``Dummy-\regindex{n}" corresponds to register values for memory-to-memory data transfer. When a channel is connected to a peripheral, the rest of the channels cannot be connected to that peripheral.
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{GDMA-AHB Selecting Peripherals via Register Configuration}
+\label{tab:gdma-ahb-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:AHBDMAPERIINSELCHN]{AHB\_DMA\_PERI\_IN\_SEL\_CH\regindex{n}}} & \\
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:AHBDMAPERIOUTSELCHN]{AHB\_DMA\_PERI\_OUT\_SEL\_CH\regindex{n}}} & \multirow{-2}{*}{\textbf{Peripheral}}\\
+    \hline
+    0   & I3C \\ \hline
+    1   & Dummy-1 \\ \hline
+    2   & UHCI  \\ \hline
+    3   & I2S0 \\ \hline
+    4   & I2S1 \\ \hline
+    5   & I2S2  \\ \hline
+    6 \verb+~+ 7 & Dummy-6 \verb+~+ 7 \\ \hline
+    8   & ADC  \\ \hline
+    9   & Dummy-9  \\ \hline
+    10  & RMT  \\ \hline
+    11 \verb+~+  15   & Dummy-11  \verb+~+  15  \\ \hline
+    16 \verb+~+  63 & Invalid \\\hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{GDMA-AXI Selecting Peripherals via Register Configuration}
+\label{tab:gdma-axi-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:AXIDMAPERIINSELCHN]{AXI\_DMA\_PERI\_IN\_SEL\_CH\regindex{n}}} & \\
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:AXIDMAPERIOUTSELCHN]{AXI\_DMA\_PERI\_OUT\_SEL\_CH\regindex{n}}} & \multirow{-2}{*}{\textbf{Peripheral}}\\\hline
+
+    0   & LCD or CAM \\ \hline
+    1   & SPI2 \\ \hline
+    2   & SPI3  \\ \hline
+    3   & PARLIO \\ \hline
+    4   & AES \\ \hline
+    5   & SHA  \\ \hline
+    6 \verb+~+ 15 & Dummy-6 \verb+~+ 15 \\ \hline
+    16 \verb+~+  63 & Invalid \\\hline
+\end{longtable}
+
+\subsection{Memory-to-Memory Data Transfer}
+
+The GDMA controller also allows memory-to-memory data transfer. Such data transfer can be enabled by setting \hyperref[fielddesc:AHBDMAMEMTRANSENCHN]{AHB/AXI\_DMA\_MEM\_TRANS\_EN\_CH\regindex{n}}, which connects the output of transmit channel \textcolor{red}{\it{n}} to the input of receive channel \textcolor{red}{\it{n}}. Note that a transmit channel is only connected to the receive channel with the same number (\textcolor{red}{\it{n}}), and \hyperref[fielddesc:AHBDMAPERIINSELCHN]{AHB/AXI\_DMA\_PERI\_IN\_SEL\_CH\regindex{n}} and \hyperref[fielddesc:AHBDMAPERIOUTSELCHN]{AHB/AXI\_DMA\_PERI\_OUT\_SEL\_CH\regindex{n}} should be configured to the same value corresponding to ``Dummy".
+
+\tagged{ESP32-P4-latest}{
+    GDMA-AHB only supports memory-to-memory data transfer on channels 1 and 2, and the \hyperref[fielddesc:AXIDMAPERIINSELCHN]{AXI\_DMA\_PERI\_IN\_SEL\_CH\regindex{n}} and \hyperref[fielddesc:AXIDMAPERIOUTSELCHN]{AXI\_DMA\_PERI\_OUT\_SEL\_CH\regindex{n}} (\regindex{n} = 1 \textasciitilde 2) fields need to be configured to fixed values. When using channel 1, configure both fields to 11; when using channel 2, configure both fields to 12.
+}
+
+
+\subsection{Enabling GDMA}
+
+The software uses the GDMA controller through linked lists. When the GDMA controller receives data, software loads an inlink, configures the \hyperref[fielddesc:AHBDMAINLINKADDRCHN]{AHB/AXI\_DMA\_INLINK\_ADDR\_CH\regindex{n}} field with the address of the first receive descriptor, and sets the \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} bit to enable GDMA. When the GDMA controller transmits data, software loads an outlink, prepares data to be transmitted, configures the \hyperref[fielddesc:AHBDMAOUTLINKADDRCHN]{AHB/AXI\_DMA\_OUTLINK\_ADDR\_CH\regindex{n}} field with address of the first transmit descriptor, and sets the \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}} bit to enable GDMA. The \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} bit and \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}} bit are cleared automatically by hardware.
+
+In some cases, you may want to append more descriptors to a DMA transfer that is already started. Naively, it would seem to be possible to do this by clearing the EOF bit of the final descriptor in the existing list and setting its next descriptor address pointer field (DW2) to the first descriptor of the to-be-added list. However, this strategy fails if the existing DMA transfer is almost or entirely finished. Instead, the GDMA controller has specialized logic to make sure a DMA transfer can be continued or restarted: if the transfer is ongoing, the controller will make sure to take the appended descriptors into account; if the transfer has already finished, the controller will restart with the new descriptors. This is implemented by the Restart function.
+
+When using the Restart function, software needs to rewrite the address of the first descriptor in the new list to DW2 of the last descriptor in the loaded list, and set \hyperref[fielddesc:AHBDMAINLINKRESTARTCHN]{AHB/AXI\_DMA\_INLINK\_RESTART\_CH\regindex{n}} bit or \hyperref[fielddesc:AHBDMAOUTLINKRESTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_RESTART\_CH\regindex{n}} bit (these two bits are cleared automatically by hardware). As shown in Figure \ref{fig:gdma-link-restart}, by doing so hardware can obtain the address of the first descriptor in the new list when reading the last descriptor in the loaded list, and then read the new list.
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/link_restart}
+\centering
+\caption{Relationship among Linked Lists}
+\label{fig:gdma-link-restart}
+\end{figure}
+
+
+\subsection{Linked List Reading Process}
+
+Once configured and enabled by software, the GDMA controller starts to read the linked list from memory. The GDMA performs checks on descriptors in the linked list. Only if descriptors pass the checks, the corresponding GDMA channel will start data transfer. If the descriptors fail any of the checks, hardware will trigger descriptor error interrupt (either AHB/AXI\_DMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT or AHB/AXI\_DMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT), and the channel will halt.
+
+The checks performed on descriptors are:
+\begin{itemize}
+    \item Owner bit check when \hyperref[fielddesc:AHBDMAINCHECKOWNERCHN]{AHB/AXI\_DMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAOUTCHECKOWNERCHN]{AHB/AXI\_DMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is set to 1. If the owner bit is 0, the buffer is accessed by the CPU. In this case, the owner bit fails the check. The owner bit will not be checked if \hyperref[fielddesc:AHBDMAINCHECKOWNERCHN]{AHB/AXI\_DMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAOUTCHECKOWNERCHN]{AHB/AXI\_DMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is 0.
+    \item Descriptor address check, which checks if the descriptor address is located in configured memory space. If a GDMA-AHB descriptor points to \hyperref[fielddesc:AHBDMAACCESSINTRMEMSTARTADDR]{AHB\_DMA\_ACCESS\_INTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:AHBDMAACCESSINTRMEMENDADDR]{AHB\_DMA\_ACCESS\_INTR\_MEM\_END\_ADDR}, it passes the check. If a GDMA-AXI descriptor points to \hyperref[fielddesc:AXIDMAACCESSINTRMEMSTARTADDR]{AXI\_DMA\_ACCESS\_INTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:AXIDMAACCESSINTRMEMENDADDR]{AXI\_DMA\_ACCESS\_INTR\_MEM\_END\_ADDR}, or \hyperref[fielddesc:AXIDMAACCESSEXTRMEMSTARTADDR]{AXI\_DMA\_ACCESS\_EXTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:AXIDMAACCESSEXTRMEMENDADDR]{AXI\_DMA\_ACCESS\_EXTR\_MEM\_END\_ADDR}, it passes the check. For details, please refer to Section \ref{sec:dma-access-inter-ram}.
+\end{itemize}
+
+After the software detects a descriptor error interrupt, it must reset the corresponding channel, and enable GDMA by setting \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} bit.
+
+\tagged{ESP32-P4-latest}{
+    \subsection{Interrupt Response Mechanism for GDMA-AXI Linked List Switching}
+
+    GDMA-AXI supports generating an interrupt when a linked list switching is completed. Software can set the \hyperref[fielddesc:AXIDMALINKSWITCHSTATECHN]{AXI\_DMA\_LINK\_SWITCH\_STATE\_CH\regindex{n}} bit to 1 to enable the linked list switching. Once the linked list switching is completed, if the AXI\_DMA\_OUT\_LINK\_SWITCH\_CH\regindex{n}\_INT interrupt is enabled, GDMA-AXI will generate this interrupt, and clear the \hyperref[fielddesc:AXIDMALINKSWITCHSTATECHN]{AXI\_DMA\_LINK\_SWITCH\_STATE\_CH\regindex{n}} bit, indicating that the linked list has been switched.
+
+    This feature serves only as a status indication and does not affect normal GDMA-AXI data transfers.
+}
+
+\subsection{EOF}
+
+{\bfseries Note: }In this chapter, EOF of transmit descriptors refers to suc\_eof (i.e., bit 30 of DW0), while EOF of receive descriptors refers to both suc\_eof and err\_eof (i.e., bit 28 of DW0).
+
+The GDMA controller uses EOF (end of frame) flags to indicate the end of data segment transfer corresponding to a specific descriptor.
+
+For data transmission, the GDMA generates two types of EOF interrupts:
+\begin{itemize}
+    \item AHB/AXI\_DMA\_OUT\_EOF\_CH\regindex{n}\_INT, generated when the suc\_eof bit of any descriptor in the linked list is set, and the data corresponding to this descriptor has been transmitted. This interrupt is enabled by setting the \hyperref[fielddesc:AHBDMAOUTEOFCHNINTENA]{AHB/AXI\_DMA\_OUT\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+    \item AHB/AXI\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT, generated when the suc\_eof bit of the last descriptor in the linked list is set, and the data corresponding to the last descriptor has been transmitted. This interrupt is enabled by setting the \hyperref[fielddesc:AHBDMAOUTTOTALEOFCHNINTENA]{AHB/AXI\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+\end{itemize}
+
+For data reception, the GDMA also generates two types of EOF interrupts:
+\begin{itemize}
+    \item AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT, generated when a data segment with an EOF flag has been received. This interrupt is enabled by setting the \hyperref[fielddesc:AHBDMAINSUCEOFCHNINTENA]{AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+    \item (UHCI and PARLIO only) AHB/AXI\_DMA\_IN\_ERR\_CH\regindex{n}\_EOF\_INT, generated when a data segment corresponding to a descriptor has been received with errors. This interrupt is enabled by setting the \hyperref[fielddesc:AHBDMAINERREOFCHNINTENA]{AHB/AXI\_DMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT\_ENA} bit, and is valid only when the channel is connected to UHCI or PARLIO.
+\end{itemize}
+
+When detecting an \hyperref[int: GDMAOUTTOTALEOFINT]{AHB/AXI\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT} or \hyperref[int:GDMAINSUCEOFINT]{AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} interrupt, software can read the value of the \hyperref[fielddesc:AHBDMAOUTEOFDESADDRCHN]{AHB/AXI\_DMA\_OUT\_EOF\_DES\_ADDR\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAINSUCEOFDESADDRCHN]{AHB/AXI\_DMA\_IN\_SUC\_EOF\_DES\_ADDR\_CH\regindex{n}} field, which stores the address of the finished descriptor. Therefore, the software can tell which descriptors have been used and reclaim them as needed. For RX, the address of the descriptor can also be stored to the \hyperref[fielddesc:AHBDMAINERREOFDESADDRCHN]{AHB/AXI\_DMA\_IN\_ERR\_EOF\_DES\_ADDR\_CH\regindex{n}} field when an  \hyperref[int:GDMAINERREOFINT]{AHB/AXI\_DMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT} interrupt is triggered.
+
+
+\subsection{Accessing Memory}\label{sec:dma-access-inter-ram}
+
+The transmit and receive channels of GDMA-AHB can access the internal and external memory space configured by \hyperref[fielddesc:AHBDMAACCESSINTRMEMSTARTADDR]{AHB\_DMA\_ACCESS\_INTR\_MEM\_START\_ADDR} and \hyperref[fielddesc:AHBDMAACCESSINTRMEMENDADDR]{AHB\_DMA\_ACCESS\_INTR\_MEM\_END\_ADDR}.
+
+The transmit and receive channels of GDMA-AXI can access:
+\begin{itemize}
+    \item Internal memory space configured by \hyperref[fielddesc:AXIDMAACCESSINTRMEMSTARTADDR]{AXI\_DMA\_ACCESS\_INTR\_MEM\_START\_ADDR} and \hyperref[fielddesc:AXIDMAACCESSINTRMEMENDADDR]{AXI\_DMA\_ACCESS\_INTR\_MEM\_END\_ADDR}.
+    \item External memory space configured by \hyperref[fielddesc:AXIDMAACCESSEXTRMEMSTARTADDR]{AXI\_DMA\_ACCESS\_EXTR\_MEM\_START\_ADDR} and \hyperref[fielddesc:AXIDMAACCESSEXTRMEMENDADDR]{AXI\_DMA\_ACCESS\_EXTR\_MEM\_END\_ADDR}.
+\end{itemize}
+
+To improve data transfer efficiency, GDMA can send data in burst mode. For GDMA-AHB, this mode is disabled by default, and can be enabled for receive channels by setting \hyperref[fielddesc:AHBDMAINDATABURSTENCHN]{AHB\_DMA\_IN\_DATA\_BURST\_EN\_CH\regindex{n}}, and enabled for transmit channels by setting \hyperref[fielddesc:AHBDMAOUTDATABURSTENCHN]{AHB\_DMA\_OUT\_DATA\_BURST\_EN\_CH\regindex{n}}. For GDMA-AXI, this mode is enabled by default, and cannot be disabled. Users can configure the number of data bytes in a single AXI burst (burst length) to 8, 16, 32, 64, or 128 bytes via \hyperref[fielddesc:AXIDMAINBURSTSIZESELCHN]{AXI\_DMA\_IN\_BURST\_SIZE\_SEL\_CH\regindex{n}} and \hyperref[fielddesc:AXIDMAOUTBURSTSIZESELCHN]{AXI\_DMA\_OUT\_BURST\_SIZE\_SEL\_CH\regindex{n}}.
+
+When GDMA-AHB and GDMA-AXI access the configured internal memory and non-encrypted external memory space, there are no requirements for descriptor field alignment; when they access the encrypted external memory space (see Chapter \ref{mod:extmemencr} \textit{\nameref{mod:extmemencr}}), buffer address pointer and data should be 16-byte aligned, and other fields are not required to be aligned.
+
+
+\subsection{Arbitration}
+
+To ensure timely response to peripherals running at a high speed with low latency (such as SPI), the GDMA controller implements two arbitration schemes, based on channel priority and channel weight respectively.
+
+\begin{itemize}
+    \item Priority arbitration: Each channel can be assigned a priority from 0 \verb+~+ 5 (in total 6 levels). The larger the number, the higher the priority. When several channels perform data transfers at the same time, the GDMA would respond to the transfer requests according to priority levels, and the channel with higher priority would get a response more timely.
+    \item Weight arbitration:
+        \begin{itemize}
+            \item Each channel is assigned a weight (i.e., the number of tokens) from 0 \verb+~+ 15. The GDMA divides the AHB or AXI bus clock period into multiple time slots, and in each time slot, the number of transfers performed by a channel is determined by the number of its tokens. Every time a channel performs a data transfer, one of its tokens is spent. If all of its tokens have been spent in a time slot, then this channel's transfer request will no longer be responded to until the time slot expires, or until tokens of all channels have been spent and the new time slot starts.
+            \item If the number of tokens assigned to a channel is not zero, the GDMA waits for this channel's tokens to be spent even if it does not have data transfer requests, and will not exit from this time slot ahead of expiration. This leads to a waste of bandwidth. Therefore, the GDMA provides weight arbitration optimization. When this feature is enabled, a channel without data transfer requests will not be involved in the arbitration and its tokens will be ignored. When all channels no longer have transfer requests, the GDMA arbiter exits from the current time slot before expiration. This way, the arbitration response is accelerated and the transfer efficiency is improved.
+        \end{itemize}
+\end{itemize}
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item If channels have the same weight but different priorities, on condition that the number of bytes to be transferred is the same and not large, channels with higher priorities would finish data transfers first.
+    \item If channels have different priorities and weights, on condition that the number of bytes to be transferred is the same, channels with higher weights would be allocated more bandwidth and finish data transfers first.
+\end{itemize}
+\end{tiplisting}
+
+
+\tagged{ESP32-P4-latest}{
+    \subsection{Bus Error Response Information Logging}\label{sec:dma-bus-error-resp}
+
+    During GDMA-AHB data transfers, if a slave device on the bus returns an error response, the data transfer will not be interrupted; GDMA-AHB will continue to transfer data according to the existing linked list. As a result, the actual data received after the transfer may not match the expected data. To facilitate troubleshooting, if an error response is received during GDMA-AHB data transfer, the following internal registers can be used to store relevant transfer information:
+
+    \begin{itemize}
+        \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRADDR]{AHB\_DMA\_AHBINF\_RESP\_ERR\_ADDR}: Records the 32-bit address corresponding to the current bus transfer.
+        \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRCHID]{AHB\_DMA\_AHBINF\_RESP\_ERR\_CH\_ID}: Records the GDMA-AHB channel used for the current bus transfer.
+        \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRID]{AHB\_DMA\_AHBINF\_RESP\_ERR\_ID}: Records the transfer ID corresponding to the current the peripheral-to-memory, memory-to-peripheral, or memory-to-memory transfer on the bus.
+        \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRWR]{AHB\_DMA\_AHBINF\_RESP\_ERR\_WR}: Records the type of transfer for the current bus transfer.
+    \end{itemize}
+
+    When GDMA-AHB initiates an AHB bus transfer as the master and receives an error response, it will also generate an error response interrupt to notify the CPU. After the interrupt is generated, GDMA-AHB will not interrupt the data transfer. In addition, GDMA-AHB does not latch data into registers for the first AHB bus transfer that triggers an error response. If GDMA-AHB receives multiple consecutive error responses, the error response logging registers always reflect the most recent error; only the last error response prior to reading the registers is retained.
+
+    \subsection{Automatic Clock Gating}\label{sec:dma-auto-clk-gating}
+
+    When GDMA-AHB is operating, not all channels are needed in certain scenarios; in this case, the clocks for unused channels can be disabled to reduce power consumption. Similarly, the internal arbitration and bus interface modules only need to operate during data transfer, and their clocks can also be disabled during idle periods to save power. Currently, GDMA-AHB has the following internal modules:
+    \begin{itemize}
+        \item Bus interface processing module
+        \item Arbitration module
+        \item RX data processing module
+        \item RX descriptor processing module
+        \item TX data processing module
+        \item TX descriptor processing module
+        \item Register configuration synchronization module
+    \end{itemize}
+
+    Clocks of above modules are automatically disabled when idle to further minimize power consumption. These clocks can also be forced to enable by setting corresponding register bits. For example, setting \hyperref[fielddesc:AHBDMAAHBINFCLKEN]{AHB\_DMA\_AHBINF\_CLK\_EN} will keep the bus interface processing module clock always on; the configurations for keeping other module clocks always on are similar.
+}
+
+\subsection{CRC Calculation}\label{sec:dma-crc-func}
+
+The GDMA has a CRC calculation module for both TX and RX. This module supports arbitrary polynomials and 8-bit parallel computation, namely 8 bits at a time. The CRC result is up to 32-bit wide for GDMA-AHB, and up to 16-bit for GDMA-AXI. It is calculated for each linked list descriptor by descriptor and becomes invalid when the Restart function is triggered during transfer.
+
+For easier understanding of register configuration rules, assume:
+\begin{itemize}
+    \item The 8-bit data to calculate each time is data[7:0].
+    \item The required CRC result is 5-bit wide, and the polynomial used is \(crc[4:0] = x \oplus 5+ x \oplus 2 +1\);
+    \item The initial CRC value is 0x1F, and the intermediate result calculated in each clock cycle is crc\_tmp[4:0].
+\end{itemize}
+
+Taking as an example the GDMA reading data from memory and transmitting the data to peripherals, the following fields are provided by hardware for CRC computation:
+
+\begin{itemize}
+\item \hyperref[fielddesc:AHBDMAOUTCRCINITDATACHN]{AHB/AXI\_DMA\_OUT\_CRC\_INIT\_DATA\_CH\regindex{n}}: Configures the initial CRC value, i.e., 0x1F in the above example. \hyperref[fielddesc:AHBDMAOUTCRCINITDATACHN]{AHB\_DMA\_OUT\_CRC\_INIT\_DATA\_CH\regindex{n}} can be configured with a 32-bit value at the maximum, while \hyperref[fielddesc:AXIDMAOUTCRCINITDATACHN]{AXI\_DMA\_OUT\_CRC\_INIT\_DATA\_CH\regindex{n}} can be configured with a 16-bit value at the maximum, meaning that the CRC result could be 32 bits or 16 bits at most.
+\item \hyperref[fielddesc:AHBDMAOUTCRCFINALRESULTCHN]{AHB/AXI\_DMA\_OUT\_CRC\_FINAL\_RESULT\_CH\regindex{n}}: Stores the computation result of all data in a DMA transfer (until data pointed by the last descriptor in the linked list has been transferred). The computation result could be 32 bits at most.
+\item \hyperref[fielddesc:AHBDMATXCRCWIDTHCHN]{AHB/AXI\_DMA\_TX\_CRC\_WIDTH\_CH\regindex{n}}: Configures the CRC result length.
+\item \hyperref[fielddesc:AHBDMATXCRCLAUTCHFLGACHN]{AHB/AXI\_DMA\_TX\_CRC\_LAUTCH\_FLGA\_CH\regindex{n}}, which latches the CRC result.
+\item \hyperref[fielddesc:AHBDMATXCRCENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_EN\_WR\_DATA\_CH\regindex{n}}: Indicates which bits in crc\_tmp[4:0] are used to compute crc[x] (x is configured via \hyperref[fielddesc:AHBDMATXCRCENADDRCHN]{AHB/AXI\_DMA\_TX\_CRC\_EN\_ADDR\_CH\regindex{n}}). If \hyperref[fielddesc:AHBDMATXCRCENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_EN\_WR\_DATA\_CH\regindex{n}} is configured as 0xF, it means that only crc\_tmp[3], crc\_tmp[2], crc\_tmp[1], and crc\_tmp[0] are used for computation, and other bits are not used (in this case crc\_tmp[4]).
+\item \hyperref[fielddesc:AHBDMATXCRCDATAENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_DATA\_EN\_WR\_DATA\_CH\regindex{n}}: Indicates which bits in data[7:0] are used to compute crc[x] (x is configured via \hyperref[fielddesc:AHBDMATXCRCDATAENADDRCHN]{AHB/AXI\_DMA\_TX\_CRC\_DATA\_EN\_ADDR\_CH\regindex{n}}). GDMA calculates the CRC in the unit of byte, so only the lower 8 bits of this field needs to be configured. If \hyperref[fielddesc:AHBDMATXCRCDATAENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_DATA\_EN\_WR\_DATA\_CH\regindex{n}} is configured as 0xF, it means that only data[3], data[2], data[1], and data[0] are used for computation.
+\end{itemize}
+
+CRC calculation is achieved in the GDMA by configuring a parallel calculation matrix derived from the polynomial. If the expected CRC result is n bits, then the matrix has $n$ rows and $n+8$ columns.
+
+Based on the assumptions at the beginning of this section, the calculation matrix would be 5 rows and 13 columns, and the actual hardware CRC calculation formulas would be as follows (\(\oplus\)represents the XOR operation):
+
+\(crc[0] = crc\_tmp[0]\oplus crc\_tmp[2]\oplus crc\_tmp[3]\oplus data[0]\oplus data[3]\oplus data[5]\oplus data[6]\)
+\(crc[1] = crc\_tmp[1]\oplus crc\_tmp[3]\oplus crc\_tmp[4]\oplus data[1]\oplus data[4]\oplus data[6]\oplus data[7]\)
+\(crc[2] = crc\_tmp[0]\oplus crc\_tmp[3]\oplus crc\_tmp[4]\oplus data[0]\oplus data[2]\oplus data[3]\oplus data[6]\oplus data[7]\)
+\(crc[3] = crc\_tmp[0]\oplus crc\_tmp[1]\oplus crc\_tmp[4]\oplus data[1]\oplus data[4]\oplus data[3]\oplus data[7]\)
+\(crc[4] = crc\_tmp[1]\oplus crc\_tmp[2]\oplus data[2]\oplus data[4]\oplus data[5]\)
+
+The above calculation formula can be abstracted as a switch matrix shown in Figure \ref{fig:gdma-crc-matrix}:
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/crc_matrix.eps}
+\centering
+\caption{CRC Calculation Matrix}
+\label{fig:gdma-crc-matrix}
+\end{figure}
+
+
+\begin{tiplisting}
+The CRC calculation described above is a Linear Feedback Shift Register (LFSR) implementation of the bytewise CRC algorithm. The formulas can be generated with some online tools according to the polynomial and the data width for parallel computation (always 8 bits for \chipname{}).
+\end{tiplisting}
+
+\section{Event Task Matrix Feature}\label{sec:dma-etm-func}
+
+The GDMA controller on \chipname{} supports the Event Task Matrix (ETM) function, which allows GDMA's ETM tasks to be triggered by any peripherals' ETM events, or GDMA's ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to GDMA. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+
+GDMA can receive the following ETM tasks:
+
+\begin{itemize}
+    \item GDMA\_AHB/AXI\_TASK\_IN\_START\_CH\regindex{n}: Enables the corresponding RX channel \regindex{n} for data transfer.
+    \item GDMA\_AHB/AXI\_TASK\_OUT\_START\_CH\regindex{n}: Enables the corresponding TX channel \regindex{n} for data transfer.
+\end{itemize}
+
+\begin{tiplisting}
+Above ETM tasks can achieve the same functions as CPU configuring \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} and \\\hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}}. When \hyperref[fielddesc:AHBDMAINETMENCHN]{AHB/AXI\_DMA\_IN\_ETM\_EN\_CH\regindex{n}}  or \hyperref[fielddesc:AHBDMAOUTETMENCHN]{AHB/AXI\_DMA\_OUT\_ETM\_EN\_CH\regindex{n}} is 1, only ETM tasks can be used to configure the transfer direction and enable the corresponding GDMA channel. When \hyperref[fielddesc:AHBDMAINETMENCHN]{AHB/AXI\_DMA\_IN\_ETM\_EN\_CH\regindex{n}} or \hyperref[fielddesc:AHBDMAOUTETMENCHN]{AHB\_DMA\_OUT\_ETM\_EN\_CH\regindex{n}} is 0, only CPU can be used to enable the corresponding GDMA channel.
+\end{tiplisting}
+
+GDMA can generate the following ETM events:
+
+\begin{itemize}
+    \item GDMA\_AHB/AXI\_EVT\_IN\_DONE\_CH\regindex{n}: Indicates that the data has been received according to the receive descriptor via channel \regindex{n}.
+    \item GDMA\_AHB/AXI\_EVT\_IN\_SUC\_EOF\_CH\regindex{n}: Indicates that the data corresponding to a receive descriptor has been received via channel \regindex{n} and the EOF bit of this descriptor is 1.
+    \item GDMA\_AHB/AXI\_EVT\_IN\_FIFO\_EMPTY\_CH\regindex{n}: Indicates that the RX FIFO has become empty.
+    \item GDMA\_AHB/AXI\_EVT\_IN\_FIFO\_FULL\_CH\regindex{n}: Indicates that the RX FIFO has become full.
+    \item GDMA\_AHB/AXI\_EVT\_OUT\_DONE\_CH\regindex{n}: Indicates that the data has been transmitted according to the transmit descriptor via channel \regindex{n}.
+    \item GDMA\_AHB/AXI\_EVT\_OUT\_SUC\_EOF\_CH\regindex{n}: Indicates that the data corresponding to a transmit descriptor has been transmitted or received via channel \regindex{n} and the EOF bit of this descriptor is 1.
+    \item GDMA\_AHB/AXI\_EVT\_OUT\_TOTAL\_EOF\_CH\regindex{n}: Indicates that the data corresponding to the last transmit descriptors has been sent via transmit channel \regindex{n} and the EOF bit of this descriptor is 1.
+    \item GDMA\_AHB/AXI\_EVT\_OUT\_FIFO\_EMPTY\_CH\regindex{n}: Indicates that the TX FIFO has become empty.
+    \item GDMA\_AHB/AXI\_EVT\_OUT\_FIFO\_FULL\_CH\regindex{n}: Indicates that the TX FIFO has become full.
+\end{itemize}
+
+In practical applications, GDMA's ETM events can trigger its own ETM tasks. For example, the GDMA\_AHB/AXI\_EVT\_OUT\_TOTAL\_EOF\_CH0 event can trigger the GDMA\_AHB/AXI\_TASK\_IN\_START\_CH1 task, and in this way trigger a new round of GDMA operations.
+
+\section{Interrupts}
+
+\chipname{}'s GDMA module can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item AHB/AXI\_PDMA\_IN\_CH0\_INTR
+        \item AHB/AXI\_PDMA\_IN\_CH1\_INTR
+        \item AHB/AXI\_PDMA\_IN\_CH2\_INTR
+        \item AHB/AXI\_PDMA\_OUT\_CH0\_INTR
+        \item AHB/AXI\_PDMA\_OUT\_CH1\_INTR
+        \item AHB/AXI\_PDMA\_OUT\_CH2\_INTR
+    \end{itemize}
+
+There are several internal interrupt sources from GDMA that can generate the above interrupt signals.
+
+The AHB/AXI\_PDMA\_IN\_CH\regindex{n}\_INTR (\regindex{n} is 0 \verb+~+ 2) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+    \item \label{int:GDMAINDONEINT}AHB/AXI\_DMA\_IN\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a receive descriptor has been received via receive channel \textcolor{red}{\it{n}}.
+    \item \label{int:GDMAINSUCEOFINT}AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT: Triggered when the suc\_eof bit in a receive descriptor is 1 and the data corresponding to this receive descriptor has been received via receive channel \regindex{n}.
+    \item \label{int:GDMAINERREOFINT}AHB/AXI\_DMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT: Triggered when an error is detected in the data segment corresponding to a descriptor received via receive channel \textcolor{red}{\it{n}}. This interrupt is used only for UHCI (UART0 or UART1) or PARLIO.
+    \item \label{int:GDMAINDSCREMPTYINT}AHB/AXI\_DMA\_IN\_DSCR\_EMPTY\_CH\regindex{n}\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received via receive channel \textcolor{red}{\it{n}}.
+    \item \label{int:GDMAINDSCRERRINT}AHB/AXI\_DMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when a receive descriptor on receive channel \textcolor{red}{\it{n}} fails any of the two descriptor checks.
+    \item \label{int:GDMAINFIFOOVFINT}AHB\_DMA\_INFIFO\_OVF\_CH\regindex{n}\_INT or AXI\_DMA\_INFIFO\_L1/L2/L3\_OVF\_CH\regindex{n}\_INT: Triggered when the RX FIFO of GDMA-AHB or the L1/L2/L3 RX FIFO of GDMA-AXI overflows.
+    \item \label{int:GDMAINFIFOUDFINT}AHB\_DMA\_INFIFO\_UDF\_CH\regindex{n}\_INT or AXI\_DMA\_INFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT: Triggered when the  RX FIFO of GDMA-AHB or the L1/L2/L3 RX FIFO of GDMA-AXI underflows.
+    \tagged{ESP32-P4-latest}{
+        \item \label{int:GDMAINAHBINFRESPERRINT}AHB\_DMA\_IN\_AHBINF\_RESP\_ERR\_CH\regindex{n}\_INT: Triggered when GDMA-AHB receive channel \textcolor{red}{\it{n}} performs a data transfer on the AHB bus and an error response is received during the transfer.
+    }
+\end{itemize}
+
+The AHB/AXI\_PDMA\_OUT\_CH\regindex{n}\_INTR (\regindex{n} is 0 \verb+~+ 2) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+    \item \label{int:GDMAOUTDONEINT}AHB/AXI\_DMA\_OUT\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a transmit descriptor has been sent via transmit channel \textcolor{red}{\it{n}}.
+    \item \label{int:GDMAOUTEOFINT}AHB/AXI\_DMA\_OUT\_EOF\_CH\regindex{n}\_INT: Triggered when the suc\_eof bit in a transmit descriptor is 1 and data corresponding to this descriptor has been sent via transmit channel \textcolor{red}{\it{n}}. If \hyperref[fielddesc:AHBDMAOUTEOFMODECHN]{AHB/AXI\_DMA\_OUT\_EOF\_MODE\_CH\regindex{n}} is 0, this interrupt will be triggered when the last byte of data corresponding to this descriptor enters GDMA's transmit channel; if \hyperref[fielddesc:AHBDMAOUTEOFMODECHN]{AHB/AXI\_DMA\_OUT\_EOF\_MODE\_CH\regindex{n}} is 1, this interrupt is triggered when the last byte of data is taken from GDMA's transmit channel.
+    \item \label{int:GDMAOUTDSCRERRINT}AHB/AXI\_DMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when a transmit descriptor on transmit channel \textcolor{red}{\it{n}} fails any of the two descriptor checks.
+    \item \label{int: GDMAOUTTOTALEOFINT}AHB/AXI\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) has been sent via transmit channel \textcolor{red}{\it{n}}.
+    \item \label{int:GDMAOUTFIFOOVFINT}AHB\_DMA\_OUTFIFO\_OVF\_CH\regindex{n}\_INT or AXI\_DMA\_OUTFIFO\_L1/L2/L3\_OVF\_CH\regindex{n}\_INT: Triggered when the TX FIFO of GDMA-AHB or the L1/L2/L3 TX FIFO of GDMA-AXI overflows.
+    \item \label{int:GDMAOUTFIFOUDFINT}AHB\_DMA\_OUTFIFO\_UDF\_CH\regindex{n}\_INT or AXI\_DMA\_OUTFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT: Triggered when the TX FIFO of GDMA-AHB or the L1/L2/L3 TX FIFO of GDMA-AXI underflows.
+    \tagged{ESP32-P4-latest}{
+        \item \label{int:AXIDMAOUTLINKSWITCHINT}AXI\_DMA\_OUT\_LINK\_SWITCH\_CH\regindex{n}\_INT: Triggered when GDMA-AXI has switched to a new linked list on transmit channel \textcolor{red}{\it{n}}.
+        \item \label{int:GDMAOUTAHBINFRESPERRINT}AHB\_DMA\_OUT\_AHBINF\_RESP\_ERR\_CH\regindex{n}\_INT: Triggered when GDMA-AHB transmit channel \textcolor{red}{\it{n}} performs a data transfer on the AHB bus and an error response is received during the transfer.
+    }
+\end{itemize}
+
+
+\section{Programming Procedures}
+
+The clock gating for GDMA can be configured via \hyperref[fielddesc:HPSYSCLKRSTAHBPDMASYSCLKEN]{HP\_SYS\_CLKRST\_AHB/AXI\_PDMA\_SYS\_CLK\_EN}, and is enabled by default. GDMA can be reset by configuring \hyperref[fielddesc:HPSYSCLKRSTRSTENAHBPDMA]{HP\_SYS\_CLKRST\_RST\_EN\_AHB/AXI\_PDMA}.
+
+\subsection{Programming Procedures for GDMA's Transmit Channel}
+
+To transmit data, GDMA's transmit channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:AHBDMAOUTRSTCHN]{AHB/AXI\_DMA\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's transmit channel and FIFO pointer.
+    \item Load an outlink, and configure \hyperref[fielddesc:AHBDMAOUTLINKADDRCHN]{AHB/AXI\_DMA\_OUTLINK\_ADDR\_CH\regindex{n}}  with address of the first transmit descriptor.
+    \item Configure \hyperref[fielddesc:AHBDMAPERIOUTSELCHN]{AHB/AXI\_DMA\_PERI\_OUT\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:gdma-ahb-peri-sel} and Table \ref{tab:gdma-axi-peri-sel}.
+    \item Set \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}} to enable GDMA's transmit channel for data transfer.
+    \item Configure and enable the corresponding peripheral (SPI2, UHCI (UART0 or UART1), I2S, AES, SHA, and ADC). See details in individual chapters of these peripherals.
+    \item Wait for the AHB/AXI\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT interrupt, which indicates the completion of data transfer.
+\end{enumerate}
+
+\subsection{Programming Procedures for GDMA's Receive Channel}
+To receive data, GDMA's receive channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:AHBDMAINRSTCHN]{AHB/AXI\_DMA\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's receive channel and FIFO pointer.
+    \item Load an inlink, and configure \hyperref[fielddesc:AHBDMAINLINKADDRCHN]{AHB/AXI\_DMA\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor.
+    \item Configure \hyperref[fielddesc:AHBDMAPERIINSELCHN]{AHB/AXI\_DMA\_PERI\_IN\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:gdma-ahb-peri-sel} and Table \ref{tab:gdma-axi-peri-sel}.
+    \item Set \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} to enable GDMA's receive channel for data transfer.
+    \item Configure and enable the corresponding peripheral (SPI2, UHCI (UART0 or UART1), I2S, AES, SHA, and ADC). See details in individual chapters of these peripherals.
+\end{enumerate}
+
+\subsection{Programming Procedures for Memory-to-Memory Transfer}
+To transfer data from one memory location to another, GDMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:AHBDMAOUTRSTCHN]{AHB/AXI\_DMA\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's transmit channel and FIFO pointer.
+    \item Set \hyperref[fielddesc:AHBDMAINRSTCHN]{AHB/AXI\_DMA\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's receive channel and FIFO pointer.
+    \item Load an outlink, and configure \hyperref[fielddesc:AHBDMAOUTLINKADDRCHN]{AHB/AXI\_DMA\_OUTLINK\_ADDR\_CH\regindex{n}} with address of the first transmit descriptor.
+    \item Load an inlink, and configure \hyperref[fielddesc:AHBDMAINLINKADDRCHN]{AHB/AXI\_DMA\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor.
+    \item Set \hyperref[fielddesc:AHBDMAMEMTRANSENCHN]{AHB/AXI\_DMA\_MEM\_TRANS\_EN\_CH\regindex{n}} to enable memory-to-memory transfer.
+    \item Set \hyperref[fielddesc:AHBDMAOUTLINKSTARTCHN]{AHB/AXI\_DMA\_OUTLINK\_START\_CH\regindex{n}} to enable GDMA's transmit channel for data transfer.
+    \item Set \hyperref[fielddesc:AHBDMAINLINKSTARTCHN]{AHB/AXI\_DMA\_INLINK\_START\_CH\regindex{n}} to enable GDMA's receive channel for data transfer.
+    \item If the suc\_eof bit is set in a transmit descriptor, an AHB/AXI\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT interrupt will be triggered when the data segment corresponding to this descriptor has been transmitted.
+\end{enumerate}
+
+\subsection{Programming Procedures for Channel Priority and Weight}
+
+The priority arbitration can be configured as follows:
+\begin{enumerate}
+    \item Configure the channel priority for TX and RX respectively via \hyperref[fielddesc:AHBDMATXPRICHN]{AHB/AXI\_DMA\_TX\_PRI\_CH\regindex{n}} and \hyperref[fielddesc:AHBDMARXPRICHN]{AHB/AXI\_DMA\_RX\_PRI\_CH\regindex{n}}.
+\end{enumerate}
+
+The weight arbitration can be configured as follows:
+\begin{enumerate}
+    \iftagged{ESP32-P4-latest}{
+        \item Configure the time slot
+            \begin{itemize}
+                \item GDMA-AHB: TX and RX share the same time slot configured by \hyperref[fielddesc:AHBDMAARBTIMEOUT]{AHB/AHB\_DMA\_ARB\_TIMEOUT}.
+                \item GDMA-AXI: TX and RX use independent time slots configured by \hyperref[fielddesc:AXIDMAARBTIMEOUTTX]{AXI\_DMA\_ARB\_TIMEOUT\_TX} and \hyperref[fielddesc:AXIDMAARBTIMEOUTRX]{AXI\_DMA\_ARB\_TIMEOUT\_RX}.
+            \end{itemize}
+    }{
+        \item Configure the time slot for TX and RX respectively via \hyperref[fielddesc:AHBDMAARBTIMEOUTTX]{AHB/AXI\_DMA\_ARB\_TIMEOUT\_TX} and \hyperref[fielddesc:AHBDMAARBTIMEOUTRX]{AHB/AXI\_DMA\_ARB\_TIMEOUT\_RX}.
+    }
+    \item Configure the number of tokens for TX and RX respectively via \hyperref[fielddesc:AHBDMATXCHARBWEIGHCHN]{AHB/AXI\_DMA\_TX\_CH\_ARB\_WEIGH\_CH\regindex{n}} and \hyperref[fielddesc:AHBDMARXCHARBWEIGHCHN]{AHB/AXI\_DMA\_RX\_CH\_ARB\_WEIGH\_CH\regindex{n}}.
+    \item Enable weight arbitration optimization for TX and RX respectively by clearing \hyperref[fielddesc:AHBDMATXARBWEIGHOPTDIRCHN]{AHB/AXI\_DMA\_TX\_ARB\_WEIGH\_OPT\_DIR\_CH\regindex{n}} and \hyperref[fielddesc:AHBDMARXARBWEIGHOPTDIRCHN]{AHB/AXI\_DMA\_RX\_ARB\_WEIGH\_OPT\_DIR\_CH\regindex{n}}.
+    \iftagged{ESP32-P4-latest}{
+        \item Enable the arbitration:
+            \begin{itemize}
+                \item GDMA-AHB: Enable the arbitration for both TX and RX by setting \hyperref[fielddesc:AHBDMAWEIGHTEN]{AHB\_DMA\_WEIGHT\_EN}.
+                \item GDMA-AXI: Enable the arbitration for TX and RX respectively by setting \hyperref[fielddesc:AXIDMAWEIGHTENTX]{AXI\_DMA\_WEIGHT\_EN\_TX} and \hyperref[fielddesc:AXIDMAWEIGHTENRX]{AXI\_DMA\_WEIGHT\_EN\_RX}.
+            \end{itemize}
+    }{
+        \item Enable the arbitration for TX and RX respectively by setting \hyperref[fielddesc:AHBDMAWEIGHTENTX]{AHB/AXI\_DMA\_WEIGHT\_EN\_TX} and \hyperref[fielddesc:AHBDMAWEIGHTENRX]{AHB/AXI\_DMA\_WEIGHT\_EN\_RX}.
+    }
+\end{enumerate}
+
+\subsection{Programming Procedures for CRC Calculation}
+
+The CRC calculation registers can be configured as follows:
+
+\begin{enumerate}
+    \item Configure which bits in crc\_tmp and data are used in the matrix via \hyperref[fielddesc:AHBDMATXCRCENADDRCHN]{AHB/AXI\_DMA\_TX\_CRC\_EN\_ADDR\_CH\regindex{n}}, \hyperref[fielddesc:AHBDMATXCRCDATAENADDRCHN]{AHB/AXI\_DMA\_TX\_CRC\_DATA\_EN\_ADDR\_CH\regindex{n}}, \hyperref[fielddesc:AHBDMATXCRCENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_EN\_WR\_DATA\_CH\regindex{n}}, and \hyperref[fielddesc:AHBDMATXCRCDATAENWRDATACHN]{AHB/AXI\_DMA\_TX\_CRC\_DATA\_EN\_WR\_DATA\_CH\regindex{n}}.
+    \item Latch the values of the above four fields by first writing 1 and then 0 to \hyperref[fielddesc:AHBDMATXCRCLAUTCHFLGACHN]{AHB/AXI\_DMA\_TX\_CRC\_LAUTCH\_FLGA\_CH\regindex{n}}. Then the configuration for a row is complete.
+    \item Repeat Step 1 and Step 2 until all rows in the matrix are set up, and then start DMA transfer.
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\begin{landscape}
+\hypertarget{dma-reg-summ}{}
+\section{Register Summary}
+\label{sec:dma-reg-summ}
+
+\subsection{GDMA-AHB Register Summary}
+
+The addresses in this section are relative to GDMA-AHB base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/05-AHB-DMA-reg-summ__EN}
+
+\subsection{GDMA-AXI Register Summary}
+
+The addresses in this section are relative to GDMA-AXI base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/05-AXI-DMA-reg-summ__EN}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+\subsection{GDMA-AHB Registers}
+
+The addresses in this section are relative to GDMA-AHB base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/05-AHB-DMA-reg__EN}
+
+\subsection{GDMA-AXI Registers}
+
+The addresses in this section are relative to GDMA-AXI base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/05-AXI-DMA-reg__EN}
+
+
+\end{document}

@@ -13,7 +13,7 @@ Steps:
 1. Check backport labels
 2. Create new backport branch from target branch commit SHA (or use existing branch)
 3. Cherry-pick commit(s); paths matching revision-history file names are skipped (target branch kept) to reduce conflicts
-4. Push backport branch using CI_JOB_TOKEN
+4. Push backport branch using TRM_BACKPORT_GL_TOKEN
 5. Create backport MR
 6. Update original MR description with backport link
 7. Add 'backport created' label to original MR
@@ -39,9 +39,10 @@ TRM_BACKPORT_GL_TOKEN = os.environ["TRM_BACKPORT_GL_TOKEN"]
 CI_COMMIT_SHA = os.environ.get("CI_COMMIT_SHA")
 
 # Backport configuration
-BACKPORT_TARGET_BRANCH = "release/v0.1_test"
+BACKPORT_TARGET_BRANCH = "release/v0.1"
 NEEDS_BACKPORT_LABEL = "needs backport"
 BACKPORT_CREATED_LABEL = "backport created"
+RELEASE_LABEL = "release"
 # BACKPORT_LABEL = "backport"
 
 # Paths matching these substrings are not backported (keep target branch version; avoids merge conflicts)
@@ -169,7 +170,7 @@ if BACKPORT_CREATED_LABEL in labels_lower:
 print("'needs backport' label detected, proceeding with backport.")
 
 # Step 2: Create or use existing backport branch
-backport_branch = f"{mr.source_branch}_{BACKPORT_TARGET_BRANCH}"
+backport_branch = f"{mr.source_branch}_v0.1"
 
 # Get commit SHA of target branch (needed for both create and reset-existing)
 target_branch_obj = project.branches.get(BACKPORT_TARGET_BRANCH)
@@ -241,8 +242,12 @@ else:
     # No '## Related' section, append it at the end
     backport_description = f"{mr.description}\n\n## Related\n* Backport of !{mr.iid}"
 
-# Copy original MR labels except backport-related ones
-labels_exclude = {NEEDS_BACKPORT_LABEL.lower(), BACKPORT_CREATED_LABEL.lower()}
+# Copy original MR labels except backport- and release-specific ones
+labels_exclude = {
+    NEEDS_BACKPORT_LABEL.lower(),
+    BACKPORT_CREATED_LABEL.lower(),
+    RELEASE_LABEL.lower(),
+}
 backport_labels = [l for l in mr.labels if (l or "").strip() and (l.strip().lower() not in labels_exclude)]
 
 # Create the backport MR

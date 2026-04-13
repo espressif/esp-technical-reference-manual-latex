@@ -1,0 +1,380 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./21-I2C}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{i2c}{}
+\chapter{I2C Controller (I2C)}
+\label{mod:i2c}
+
+
+\section{Overview}
+
+An I2C (Inter-Integrated Circuit) bus can be used for communication with several external devices connected to the same bus as ESP32. The ESP32 has dedicated hardware to communicate with peripherals on the I2C bus.
+
+\section{Features}
+
+The I2C controller has the following features:
+
+\begin{itemize}
+    \item Supports both master mode and slave mode
+    \item Supports multi-master and multi-slave communication
+    \item Supports standard mode (100 kbit/s)
+    \item Supports fast mode (400 kbit/s)
+    \item Supports 7-bit addressing and 10-bit addressing
+    \item Supports continuous data transmission with disabled Serial Clock Line (SCL)
+    \item Supports programmable digital noise filter
+\end{itemize}
+
+\section{Functional Description}
+
+
+\subsection{Introduction}
+
+I2C is a two-wire bus, consisting of an SDA and an SCL line. These lines are configured to open the drain output. The lines are shared by two or more devices: usually one or more masters and one or more slaves.
+
+Communication starts when a master sends out a start condition: it will pull the SDA line low, and will then pull the SCL line high. It will send out nine clock pulses over the SCL line. The first eight pulses are used to shift out a byte consisting of a 7-bit address and a read/write bit. If a slave with this address is active on the bus, the slave can answer by pulling the SDA low on the ninth clock pulse. The master can then send out more 9-bit clock pulse clusters and, depending on the read/write bit sent, the device or the master will shift out data on the SDA line, with the other side acknowledging the transfer by pulling the SDA low on the ninth clock pulse. During data transfer, the SDA line changes only when the SCL line is low. When the master has finished the communication, it will send a stop condition on the bus by raising SDA, while SCL will already be high.
+
+The ESP32 I2C peripheral can handle the I2C protocol, freeing up the processor cores for other tasks.
+\newpage
+
+\subsection{Architecture}\label{I2C Architecture}
+
+An I2C controller can operate either in master mode or slave mode. The I2C\_MS\_MODE register is used to select the mode. Figure \ref{Figure:I2C_Master_architecture} shows the I2C Master architecture, while Figure \ref{Figure:I2C_Slave_architecture} shows the I2C Slave architecture.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{./21-I2C/figures/I2C_Master_architecture}
+    \caption{I2C Master Architecture}
+    \label{Figure:I2C_Master_architecture}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{./21-I2C/figures/I2C_Slave_architecture}
+    \caption{I2C Slave Architecture}
+    \label{Figure:I2C_Slave_architecture}
+\end{figure}
+
+ The I2C controller contains the following units:
+
+\begin{itemize}
+    \item RAM, the size of which is 32 x 8 bits, and it is directly mapped onto the address space of the CPU cores, starting at address REG\_I2C\_BASE+0x100. Each byte of I2C data is stored in a 32-bit word of memory (so, the first byte is at +0x100, the second byte at +0x104, the third byte at +0x108, etc.) Users need to set register I2C\_NONFIFO\_EN.
+        \begin{tiplisting}
+        The I2C controller only supports NON-FIFO mode.
+        \end{tiplisting}
+    \vspace{-1em}
+    \item A CMD\_Controller and 16 command registers (cmd0 \verb+~+ cmd15), which are used by the I2C Master to control data transmission. One command at a time is executed by the I2C controller.
+    \item SCL\_FSM: A state machine that controls the SCL clock. The I2C\_SCL\_HIGH\_PERIOD\_REG and I2C\_SCL\_\\LOW\_PERIOD\_REG registers are used to  configure the frequency and duty cycle of the signal on the SCL line.
+    \item SDA\_FSM: A state machine that controls the SDA data line.
+    \item DATA\_Shifter which converts the byte data to an outgoing bitstream, or converts an incoming bitstream to byte data. I2C\_RX\_LSB\_FIRST and I2C\_TX\_LSB\_FIRST can be used for configuring whether the LSB or MSB is stored or transmitted first.
+    \item SCL\_Filter and SDA\_Filter: Input noise filter for the I2C\_Slave. The filter can be enabled or disabled by configuring I2C\_SCL\_FILTER\_EN and I2C\_SDA\_FILTER\_EN. The filter can remove line glitches with pulse width less than  I2C\_SCL\_FILTER\_THRES and I2C\_SDA\_FILTER\_THRES ABP clock cycles.
+\end{itemize}
+
+\subsection{I2C Bus Timing}\label{I2C Bus Timing}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{./21-I2C/figures/I2C_bus_timing_20181012}}
+    \caption{I2C Sequence Chart}
+    \label{Figure:I2C_bus_timing}
+\end{figure}
+
+Figure \ref{Figure:I2C_bus_timing} is an I2C sequence chart. When the I2C controller works in master mode, SCL is an output signal. In contrast, when the I2C controller works in slave mode, the SCL becomes an input signal. The values assigned to I2C\_SDA\_HOLD\_REG and I2C\_SDA\_SAMPLE\_REG are still valid in slave mode. Users need to configure the values of I2C\_SDA\_HOLD\_TIME and I2C\_SDA\_SAMPLE\_TIME, according to the host characteristics, for the I2C slave to receive data properly. Table \ref{SCL Frequency Configuration} shows available settings of SCL low and high level cycles when SCL is configured to direct output mode. The settings determine the SCL output frequency $f_{\textrm{scl}}$.
+
+\begin{footnotesize}
+\begin{longtable}{ | p{2.5cm} | p{3cm} | p{3.5cm} | p{6.5cm}|}
+\caption{SCL Frequency Configuration}\label{SCL Frequency Configuration}\\\hline
+\rowcolor{lightgray}
+I2C\_SCL\_FILTER\_EN &  I2C\_SCL\_FILTER\_THRES &  SCL\_Low\_Level\_Cycles & SCL\_High\_Level\_Cycles \\ \hline
+\endfirsthead
+\hline\rowcolor{lightgray}
+I2C\_SCL\_FILTER\_EN &  I2C\_SCL\_FILTER\_THRES &  SCL\_Low\_Level\_Cycles & SCL\_High\_Level\_Cycles\\\hline
+\endhead
+\endfoot
+0&Don’t care& &I2C\_SCL\_HIGH\_PERIOD+7\\
+\cline{1-2} \cline{4-4}
+\multirow{2}*{1}&[0,2]&\makecell{I2C\_SCL\_LOW\_PERIOD+1} &I2C\_SCL\_HIGH\_PERIOD+8\\
+\cline{2-2} \cline{4-4}
+&[3,7]& &I2C\_SCL\_HIGH\_PERIOD+6+I2C\_SCL\_FILTER\_THRES\\
+\hline
+\end{longtable}
+\end{footnotesize}
+\vspace{-2em}
+    \[
+    f_{\textrm{scl}}=\frac{\textrm{80 MHz}}{\textrm{SCL\_Low\_Level\_Cycles + SCL\_High\_Level\_Cycles}}
+    \]
+
+According to the I2C protocol, each transmission of data begins with a START condition and ends with a STOP condition. Data is transmitted by one byte at a time, and each byte has an ACK bit. The receiver informs the transmitter to continue transmission by pulling down SDA, which indicates an ACK. The receiver can also indicate it wants to stop further transmission by pulling up the SDA line, thereby not indicating an ACK.
+
+Figure \ref{Figure:I2C_bus_timing} also shows the registers that can configure the START bit, STOP bit, SDA hold time, and SDA sample time.
+
+{\bfseries Notice:} If the I2C pads are configured in open-drain mode, it will take longer for the signal lines to transition from a low level to a high level. The transition duration is determined together by the pull-up resistor and capacitor. The output frequency of SCL is relatively low in open-drain mode.
+
+\subsection{I2C cmd Structure}
+\label{para:i2ccmd}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./21-I2C/figures/I2C_Cmd_structure}
+    \caption{Structure of The I2C Command Register}
+    \label{Figure:I2C_Cmd_structure}
+\end{figure}
+
+The Command register is active only in I2C master mode, with its internal structure shown in Figure \ref{Figure:I2C_Cmd_structure}.
+
+
+CMD\_DONE: The CMD\_DONE bit of every command can be read by software to tell if the command has been handled by hardware.
+
+    op\_code: op\_code is used to indicate the command. The I2C controller supports four commands:
+
+\begin{itemize}
+    \item RSTART: op\_code = 0 is the RSTART command to control the transmission of a START or RESTART I2C condition.
+    \item WRITE: op\_code = 1 is the WRITE command for the I2C Master to transmit data.
+    \item READ: op\_code = 2 is the READ command for the I2C Master to receive data.
+    \item STOP: op\_code = 3 is the STOP command to control the transmission of a STOP I2C condition.
+    \item END: op\_code = 4 is the END command for continuous data transmission. When the END command is given, SCL is temporarily disabled to allow software to reload the command and data registers for subsequent events before resuming. Transmission will then continue seamlessly.
+\end{itemize}
+
+A complete data transmission process begins with an RSTART command, and ends with a STOP command.
+
+ack\_value: When receiving data, this bit is used to indicate whether the receiver will send an ACK after this byte has been received.
+
+ack\_exp: This bit is to set an expected ACK value for the transmitter.
+
+ack\_check\_en: When transmitting a byte, this bit enables checking the ACK value received against the ack\_exp value. Checking is enabled by 1, while 0 disables it.
+
+byte\_num: This register specifies the length of data (in bytes) to be read or written. The maximum length is 255, while the minimum is 1. When the op\_code is RSTART, STOP or END, this value is meaningless.
+
+\subsection{I2C Master Writes to Slave}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./21-I2C/figures/I2C_MWS7}
+    \caption{I2C Master Writes to Slave with 7-bit Address}
+    \label{Figure:I2C_MWS7}
+\end{figure}
+
+In all subsequent figures that illustrate I2C transactions and behavior, both the I2C Master and Slave devices are assumed to be ESP32 I2C peripheral controllers for ease of demonstration.
+
+Figure \ref{Figure:I2C_MWS7} shows the I2C Master writing N bytes of data to an I2C Slave. According to the I2C protocol, the first byte is the Slave address. As shown in the diagram, the first byte of the RAM unit has been populated with the Slave's 7-bit address plus the 1-bit read/write flag. In this case, the flag is zero, indicating a write operation. The rest of the RAM unit holds N bytes of data ready for transmission. The cmd unit has been populated with the sequence of commands for the operation.
+
+For the I2C master to begin an operation, the bus must not be busy, i.e. the SCL line must not be pulled low by another device on the I2C bus. The I2C operation can only begin when the SCL line is released (made high) to indicate that the I2C bus is free. After the cmd unit and data are prepared, I2C\_TRANS\_START bit in I2C\_CTR\_REG must be set to begin the configured I2C Master operation. The I2C Master then initiates a START condition on the bus and progresses to the WRITE command which will fetch N+1 bytes from RAM and send them to the Slave. The first of these bytes is the address byte.
+
+When the transmitted data size exceeds I2C\_NONFIFO\_TX\_THRES, an I2C\_TX\_SEND\_EMPTY\_INT interrupt will be generated. After detecting the interrupt, software can read TXFIFO\_END\_ADDR in register RXFIFO\_ST\_REG, get the last address of the data in the RAM and refresh the old data in the RAM. TXFIFO\_END\_ADDR will be refreshed each time interrupt I2C\_TX\_SEND\_EMPTY\_INT or I2C\_TRANS\_COMPLETE\_INT occurs.
+
+When ack\_check\_en is set to 1, the Master will check the ACK value each time it sends a data byte. If the ACK value received does not match ack\_exp (the expected ACK value) in the WRITE command, then the Master will generate an I2C\_ACK\_ERR\_INT interrupt and stop the transmission.
+
+During transmission, when the SCL is high, if the input value and output value of SDA do not match, then the Master will generate an I2C\_ARBITRATION\_LOST\_INT interrupt. When the transmission is finished, the Master will generate an I2C\_TRANS\_COMPLETE\_INT interrupt.
+
+After detecting the START bit sent from the Master, the Slave will start receiving the address and comparing it to its own. If the address does not match I2C\_SLAVE\_ADDR, then the Slave will ignore the rest of the transmission. If they do match, the Slave will store the rest of the data into RAM in the receiving order. When the data size exceeds I2C\_NONFIFO\_RX\_THRES, an I2C\_RX\_REC\_FULL\_INT interrupt is generated. After detecting the interrupt, software will get the starting and ending addresses in the RAM by reading RXFIFO\_START\_ADDR and RXFIFO\_END\_ADDR bits in register RXFIFO\_ST\_REG, and fetch the data for further processing. Register RXFIFO\_START\_ADDR is refreshed only once during each transmission, while RXFIFO\_END\_ADDR gets refreshed every time when either I2C\_RX\_REC\_FULL\_INT or I2C\_TRANS\_COMPLETE\_INT interrupt is generated.
+
+When the END command is not used, the I2C master can transmit up to (14*255-1) bytes of valid data, and the cmd unit is populated with RSTART + 14 WRITE + 1 STOP.
+
+There are several special cases to be noted:
+
+\begin{itemize}
+    \item If the Master fails to send a STOP bit, because the SDA is pulled low by other devices, then the Master needs to be reset.
+    \item If the Master fails to send a START bit, because the SDA or SCL is pulled low by other devices, then the Master needs to be reset. It is recommended that the software uses a timeout period to implement the reset.
+    \item If the SDA is pulled low by the Slave during transmission, the Master can simply release it by sending it nine SCL clock signals at the most.
+\end{itemize}
+
+It is important to note that the behaviour of another I2C master or slave device on the bus may not always be similar to that of the ESP32 I2C peripheral in the master- or slave-mode operation described above. Please consult the datasheets of the respective I2C devices to ensure proper operation under all bus conditions.
+
+The ESP32 I2C controller uses 7-bit addressing by default. However, 10-bit addressing can also be used. In the master, this is done by sending a second I2C address byte after the first address byte. In the slave, the I2C\_SLAVE\_ADDR\_10BIT\_EN bit in I2C\_SLAVE\_ADDR\_REG can be set to activate a 10-bit addressing mode. I2C\_SLAVE\_ADDR is used to configure the I2C Slave address, as per usual. Figure \ref{Figure:I2C_MWS10} shows the equivalent of I2C Master operation writing N-bytes of data to an I2C Slave with a 10-bit address. Since 10-bit Slave addresses require an extra address byte, both the byte\_num field of the WRITE command and the number of total bytes in RAM increase by one.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./21-I2C/figures/I2C_MWS10}
+    \caption{I2C Master Writes to Slave with 10-bit Address}
+    \label{Figure:I2C_MWS10}
+\end{figure}
+
+When the END command is not used, the I2C master can transmit up to (14*255-2) bytes of valid data to Slave with 10-bit address.
+
+One way many I2C Slave devices are designed is by exposing a register block containing various settings. The I2C Master can write one or more of these registers by sending the Slave a register address. The ESP32 I2C Slave controller has hardware support for such a scheme.
+
+Specifically, on the Slave, I2C\_FIFO\_ADDR\_CFG\_EN can be set so that the I2C Master can write to a specified register address inside the I2C Slave memory block. Figure \ref{Figure:I2C_MWS7_M} shows the  Master writing N-bytes of data byte0 \verb+~+ byte(N-1) from the RAM unit to register address M (determined by addrM in RAM unit) with the Slave. In this mode,  Slave can receive up to 32 bytes of valid data. When  Master needs to transmit extra amount of data, segmented transmission can be enabled.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./21-I2C/figures/I2C_MWS7_M}
+    \caption{I2C Master Writes to addrM in RAM of Slave with 7-bit Address}
+    \label{Figure:I2C_MWS7_M}
+\end{figure}
+
+If the data size exceeds the capacity of a 14-byte read/write cmd, the END command can be called to enable segmented transmission. Figure \ref{Figure:I2C_MWS_END} shows the  Master writing data to the Slave, in three segments. The first segment shows the configuration of the Master's commands and the preparation of data in the RAM unit. When the I2C\_TRANS\_START bit is enabled, the Master starts transmission. After executing the END command, the Master will turn off the SCL clock and pull the SCL low to reserve the  bus and prevent any other device from transacting on the bus. The controller will generate an I2C\_END\_DETECT\_INT interrupt to notify the software.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./21-I2C/figures/I2C_MWS_END}
+    \caption{ Master Writes to Slave with 7-bit Address in Three Segments}
+    \label{Figure:I2C_MWS_END}
+\end{figure}
+
+After detecting an I2C\_END\_DETECT\_INT interrupt, the software can refresh the contents of the cmd and RAM blocks, as shown in the second segment. Subsequently, it should clear the I2C\_END\_DETECT\_INT interrupt and resume the transaction by setting the I2C\_TRANS\_START bit. To stop the transaction, it should configure the cmd, as the third segment shows, and enable the I2C\_TRANS\_START bit to generate a STOP bit, after detecting the I2C\_END\_DETECT\_INT interrupt.
+
+Please note that the other masters on the  bus will be starved of bus time between two segments. The bus is only released after a STOP signal is sent.
+
+{\bfseries Note:} When there are more than three segments, the address of an END command in the cmd should not be altered into another command by the next segment.
+
+\subsection{ Master Reads from Slave}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./21-I2C/figures/I2C_MRS7}
+    \caption{ Master Reads from Slave with 7-bit Address}
+    \label{Figure:I2C_MRS7}
+\end{figure}
+
+Figure \ref{Figure:I2C_MRS7} shows the  Master reading N-bytes of data from an  Slave with a 7-bit address. At first, the  Master needs to send the address of the  Slave, so cmd1 is a WRITE command. The byte that this command sends is the  slave address plus the R/W flag, which in this case is 1 and, therefore, indicates that this is going to be a read operation. The  Slave starts to send data to the Master if the addresses match. The Master will return ACK, according to the ack\_value in the READ command, upon receiving every byte. As can be seen from Figure \ref{Figure:I2C_MRS7}, READ is divided into two segments. The  Master replies ACK to N-1 bytes in cmd2 and does not reply ACK to the single byte READ command in cmd3, i.e., the last transmitted data.  Users can configure it as they wish.
+
+When storing the received data,  Master will start from the first address in RAM. Byte0 (Slave address + 1-bit R/W marker bit) will be overwritten.
+
+When the END command is not used, the  Master can receive up to (13*255) bytes of valid data. The cmd unit is populated with RSTART + 1 WRITE + 13 READ + 1 STOP.
+
+
+Figure \ref{Figure:I2C_MRS10} shows the  Master reading data from a slave with a 10-bit address. This mode can be enabled by setting I2C\_SLAVE\_ADDR\_10BIT\_EN bit and preparing data to be sent in the slave RAM. In the Master, two bytes of RAM are used for a 10-bit address. Finally, the I2C
+ \_TRANS\_START bit must be set to enable one transaction.
+\newpage
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./21-I2C/figures/I2C_MRS10}
+    \caption{ Master Reads from Slave with 10-bit Address}
+    \label{Figure:I2C_MRS10}
+\end{figure}
+
+Figure \ref{Figure:I2C_MRS7_M} shows the  Master reading data from a specified address in the  Slave. This mode can be enabled by setting I2C\_FIFO\_ADDR\_CFG\_EN and preparing the data to be read by the master in the Slave RAM block. Subsequently, the address of the Slave and the address of the specified register (that is, M) have to be determined by the master. Finally, the I2C\_TRANS\_START bit must be set in the Master to initiate the read operation, following which the  Slave will fetch N bytes of data from RAM and send them to the Master.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./21-I2C/figures/I2C_MRS7_M}
+    \caption{ Master Reads N Bytes of Data from addrM in Slave with 7-bit Address}
+    \label{Figure:I2C_MRS7_M}
+\end{figure}
+
+Figure \ref{Figure:I2C_MRS_END} shows the  Master reading N+M bytes of data in three segments from the  Slave. The first segment shows the configuration of the cmd and the preparation of data in the Slave RAM. When the I2C\_TRANS\_START bit is enabled, the  Master starts the operation. The  Master will refresh the cmd after executing the END command. It will clear the I2C\_END\_DETECT\_INT interrupt, set the I2C\_TRANS\_START bit and resume the transaction. To stop the transaction, the  Master will configure the cmd, as the third segment shows, after detecting the I2C\_END\_DETECT\_INT interrupt. After setting the I2C\_TRANS\_START bit,  Master will send a STOP bit to stop the transaction.
+\newpage
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./21-I2C/figures/I2C_MRS_END}
+    \caption{ Master Reads from Slave with 7-bit Address in Three Segments}
+    \label{Figure:I2C_MRS_END}
+\end{figure}
+
+\subsection{Interrupts}\label{5.3.7}
+\begin{itemize}
+\item \label{int:I2CTXSENDEMPTYINT}I2C\_TX\_SEND\_EMPTY\_INT: Triggered when the Master or Slave has sent nonfifo\_tx\_thres bytes of data.
+\item \label{int:I2CRXRECFULLINT}I2C\_RX\_REC\_FULL\_INT: Triggered when the Master or Slave has received nonfifo\_rx\_thres bytes of data.
+\item \label{int:I2CACKERRINT}I2C\_ACK\_ERR\_INT: Triggered when the Master receives an ACK that is not as expected, or when the  Slave receives an ACK whose value is 1.
+\item \label{int:I2CTRANSSTARTINT}I2C\_TRANS\_START\_INT: Triggered when the Master or Slave sends the START bit.
+\item \label{int:I2CTIMEOUTINT}I2C\_TIME\_OUT\_INT:  Triggered when the SCL stays high or low for more than I2C\_TIME\_OUT clocks.
+\item \label{int:I2CTRANSCOMPLETEINT}I2C\_TRANS\_COMPLETE\_INT: Triggered when the Master or Slave detects a STOP bit.
+\item \label{int:I2CMASTERTRANCOMPINT}I2C\_MASTER\_TRAN\_COMP\_INT: Triggered when the Master sends or receives a byte.
+\item \label{int:I2CARBITRATIONLOSTINT}I2C\_ARBITRATION\_LOST\_INT: Triggered when the Master's SCL is high, while the output value and input value of the SDA do not match.
+\item \label{int:I2CSLAVETRANCOMPINT}I2C\_SLAVE\_TRAN\_COMP\_INT: Triggered when the Slave sends or receives a byte.
+\item \label{int:I2CENDDETECTINT}I2C\_END\_DETECT\_INT: Triggered when the Master deals with the END command.
+\item \label{int:I2CRXFIFOOVFINT}I2C\_RXFIFO\_OVF\_INT: Triggered when RX FIFO of the I2C controller overflows.
+\item \label{int:I2CTXFIFOEMPTYINT}I2C\_TXFIFO\_EMPTY\_INT: I2C TX FIFO interrupt. Triggered when the pointers of TX FIFO are less than I2C\_TXFIFO\_EMPTY\_THRHD[4:0].
+\item \label{int:I2CRXFIFOFULLINT}I2C\_RXFIFO\_FULL\_INT: I2C RX FIFO interrupt. Triggered when the pointers of RX FIFO are greater than I2C\_RXFIFO\_FULL\_THRHD[4:0].
+
+\end{itemize}
+\newpage
+\hypertarget{i2c-reg-summ}{}
+\section{Register Summary}\label{sec:i2c-reg-summ}
+
+The addresses in this section are relative to the I2C base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/i2c_reg_summary_en.tex}
+{\clearpage}
+
+\section{Registers}\label{5.5}
+
+The addresses in this section are relative to the I2C base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:i2c-reg-summ} \textit{\nameref{sec:i2c-reg-summ}}. 
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/i2c_reg_en.tex}
+
+\end{document}
+

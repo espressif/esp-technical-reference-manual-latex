@@ -1,0 +1,359 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./28-EXTMEMENCR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{片外存储器加密与解密 (XTS\_AES)}
+\label{mod:extmemencr}
+\hypertarget{extmemencr}{}
+
+
+\section{概述}
+
+\chipname{} 芯片集成了片外存储器加密与解密模块，使用 \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007} 指定的 XTS-AES 标准算法，为用户存放在片外存储器 (flash) 的应用代码和数据提供了安全保障。用户可以将专有固件、敏感的用户数据（如用来访问私有网络的证书）存放在片外 flash 中。
+
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 使用通用 XTS-AES 算法，符合 \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}
+    \item 支持手动加密，需要软件参与
+    \item 支持高速自动解密，无需软件参与
+    \item 由寄存器配置、eFuse 参数、启动 (boot) 模式共同决定开启/关闭加解密功能
+    \item 支持可配置的抗 DPA 攻击功能
+\end{itemize}
+
+
+\section{模块结构}
+片外存储器加解密模组包含两个模块：手动加密 (Manual Encryption) 模块和自动解密 (Auto Decryption) 模块。结构图如图 \ref{fig:extmemencr-arch-ext-mem-encr-decr} 所示。
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/28-EXTMEMENCR-ext-mem-crypto}
+    \caption{片外存储器加解密结构}
+    \label{fig:extmemencr-arch-ext-mem-encr-decr}
+\end{figure}
+
+手动加密模块能够对指令/数据进行加密，将指令/数据以密文状态通过 SPI1 写入片外 flash。
+
+系统寄存器 (SYSREG) 外设中（请参见章节 \ref{mod:sysreg} \textit{\nameref{mod:sysreg}}），\\ \hyperref[regdesc:HPSYSTEMEXTERNALDEVICEENCRYPTDECRYPTCONTROLREG]{HP\_SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG} 内与片外存储器加解密相关的有以下 3 位：
+\begin{itemize}
+    \item \hyperref[fielddesc:HPSYSTEMENABLEDOWNLOADMANUALENCRYPT]{HP\_SYSTEM\_ENABLE\_DOWNLOAD\_MANUAL\_ENCRYPT} 
+    \item \hyperref[fielddesc:HPSYSTEMENABLEDOWNLOADG0CBDECRYPT]{HP\_SYSTEM\_ENABLE\_DOWNLOAD\_G0CB\_DECRYPT} 
+    \item \hyperref[fielddesc:HPSYSTEMENABLESPIMANUALENCRYPT]{HP\_SYSTEM\_ENABLE\_SPI\_MANUAL\_ENCRYPT} 
+\end{itemize}
+
+此外，片外存储器加解密模组还会从外设 eFuse 控制器中获取两个参数：\hyperref[fielddesc:EFUSEDISDOWNLOADMANUALENCRYPT]{EFUSE\_DIS\_DOWNLOAD\_MANUAL\_ENCRYPT} 和 \hyperref[fielddesc:EFUSESPIBOOTCRYPTCNT]{EFUSE\_SPI\_BOOT\_CRYPT\_CNT}。更多详细信息，请参考章节 \ref{mod:efuse} \textit{\nameref{mod:efuse}}。
+
+
+\section{功能描述}
+
+\subsection{XTS 算法} 
+\label{sec:extmemncr-xts-algo}
+\newcommand{\K}{K\mkern-3mu}
+\newcommand{\f}{\mkern-2mu f\mkern-2mu}
+手动加密模块和自动解密模块均使用 XTS 算法。
+具体实现中，XTS 算法使用 1024 位为一个数据单元 (data unit)，此处的“数据单元”由 \textit{XTS-AES Tweakable Block Cipher} 标准中的章节 \textit{XTS-AES encryption procedure} 定义。更多关于 XTS-AES 算法的信息，请参考 \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}。
+
+\subsection{密钥} 
+\label{sec:extmemncr-key}
+
+执行 XTS 运算时，手动加密模块和自动解密模块共用同一密钥 ${\K}ey$。密钥 ${\K}ey$ 来自硬件 eFuse，用户无法访问获取。
+
+${\K}ey$ 的长度为 256 位。${\K}ey$ 的值完全由 BLOCK4 \verb+~+ BLOCK9 中的一个 eFuse 块的参数信息决定。为方便阐述如何通过 eFuse 参数信息推导出 ${\K}ey$ 的值，现定义：
+\begin{itemize}
+    \item Block$_A$：BLOCK4 \verb+~+ BLOCK9 中密钥用途为 EFUSE\_KEY\_PURPOSE\_XTS\_AES\_128\_KEY 的 BLOCK（请参考表 \ref{tab:efuse-key-purpose} \textit{\nameref{tab:efuse-key-purpose}}）。如果 Block$_A$ 存在，那么 Block$_A$ 中存放着 256 位的 ${\K}ey$\begin{math}_{A}\end{math}。
+\end{itemize}
+
+根据 Block$_A$ 是否存在，有两种生成 ${\K}ey$ 的方式。不同情况下，${\K}ey$ 值可以由 ${\K}ey$\begin{math}_{A}\end{math} 的值唯一确定，如表 \ref{tab:extmemencr-key-possibility} 所示。
+
+\input{\modulefiles/tables/28-EXTMEMENCR-key-possibility__CN}
+
+更多有关密钥用途的信息，请参考章节 \ref{mod:efuse} \textit{\nameref{mod:efuse}} 中的表 \ref{tab:efuse-key-purpose} \textit{\nameref{tab:efuse-key-purpose}}。
+
+\subsection{目标空间} 
+\label{sec:extmemencr-target-space}
+
+目标空间指的是片外存储器 (flash) 中存放密文的一段连续地址空间。目标空间可由目标大小和目标基地址唯一确定。这两个参数的定义如下：
+
+\begin{itemize}
+    \item 目标大小：目标空间的大小 (\begin{math} size \end{math})， 即单次加密的数据量。以字节为单位，支持 16 字节、32 字节或 64 字节。
+    \item 目标基地址：目标空间的基地址 (\begin{math} base\_addr\end{math})。目标基地址为 24 位的物理地址，取值范围为 0x0000\_0000 \verb+~+ 0x00FF\_FFFF， 但要求以 \begin{math} size \end{math} 为单位对齐，即 \begin{math} base\_addr \% size == 0 \end{math}。
+\end{itemize}
+
+例如，在一次加密操作中，需要将 16 字节的指令数据加密后写入片外 flash 中的地址段 0x130 \verb+~+ 0x13F，则目标空间为 0x130 \verb+~+ 0x13F，目标大小为 16 (字节)，目标基地址为 0x130。
+
+对于任意长度（必须是 16 字节 的整数倍）的明文指令/数据的加密，整个加密过程可拆分成多次进行，每次加密均具备相应的目标空间和相应参数。
+
+对于自动解密模块，目标空间等参数由硬件自动调节。对于手动加密模块，目标空间等参数需由用户主动配置。
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+     \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007} 中的章节 \textit{Data units and tweaks} 中定义的 “tweak”  是一个 128-bit 的非负整数（ \begin{math} tweak \end{math}），
+    其值可以通过公式求出： \begin{math} tweak \end{math} = (\begin{math} base\_addr \end{math} \& 0x00FFFF80)。\begin{math} tweak \end{math} 中低 7 位和高 97 位恒为零。
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{数据写入} 
+\label{sec:extmemncr-data-writing}
+
+对于自动解密模块，数据写入由硬件自动完成。对于手动加密模块，数据写入需由用户主动配置。手动加密模块中包含一个由 8 个寄存器组成的寄存器块 XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG (\textcolor{red}{\it{n}}: 0 \verb+~+ 15)，专用于数据写入，一次可以存放最多 256 位明文指令/数据。
+
+实际上，在手动加密模块中，相对于明文的来源，密文将要存放的位置更为重要。基于明文和密文之间严格的对应关系，为更好地描述明文在寄存器块中的存放方式，现假设明文从一开始就存放在目标空间中，在加密完成后替换为密文。因此，本节中将不再出现“明文”的概念，而用“目标空间”来代替。
+
+{\bfseries 目标空间映射到寄存器块的方法：}
+
+假设目标空间中某个字的存放地址为 \begin{math} address \end{math}，记   $o{\f}{\f}set$ = \begin{math} address \% 64 \end{math}， \textcolor{red}{\it{$n$}} =  $o{\f}{\f}set$/\begin{math}{4}\end{math}， 那么该字将被存放在寄存器 XTS\_AES\_PLAIN\_\textcolor{red}{\it{$n$}}\_REG 中。
+
+例如，当目标大小为 32 时，寄存器块中的所有寄存器都将被使用，目标空间中的地址与寄存器块之间的映射关系如表 \ref{tab:extmemencr-data-padding} 所示。
+
+\input{\modulefiles/tables/28-EXTMEMENCR-data-padding__CN}
+
+\subsection{手动加密模块}
+
+手动加密模块是一个外设模块，自身带有寄存器，可以被 CPU 直接访问。模块内的寄存器、系统寄存器 (SYSREG) 外设、eFuse 参数、 boot 模式共同配置并使用这一模块。
+
+\textbf{ 当且仅当手动加密模块拥有工作权限时，才允许手动加密。}  手动加密模块是否拥有工作权限取决于：
+
+\begin{itemize}
+
+    \item SPI Boot 模式下：
+    
+    当寄存器 \hyperref[regdesc:HPSYSTEMEXTERNALDEVICEENCRYPTDECRYPTCONTROLREG]{HP\_SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG} 的 \\ \hyperref[fielddesc:HPSYSTEMENABLESPIMANUALENCRYPT]{HP\_SYSTEM\_ENABLE\_SPI\_MANUAL\_ENCRYPT} 位为 1 时，手动加密模块拥有工作权限，否则无法工作。
+    
+    \item Download Boot 模式下：
+    
+    当寄存器 \hyperref[regdesc:HPSYSTEMEXTERNALDEVICEENCRYPTDECRYPTCONTROLREG]{HP\_SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG} 的\\ \hyperref[fielddesc:HPSYSTEMENABLEDOWNLOADMANUALENCRYPT]{HP\_SYSTEM\_ENABLE\_DOWNLOAD\_MANUAL\_ENCRYPT} 位为 1，且 eFuse 参数\\ \hyperref[fielddesc:EFUSEDISDOWNLOADMANUALENCRYPT]{EFUSE\_DIS\_DOWNLOAD\_MANUAL\_ENCRYPT} 为 0 时，
+    手动加密模块拥有工作权限，否则无法工作。
+    
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item 即使 CPU 可以越过 cache，直接读取片外存储器从而得到加密指令/数据，
+但用户依旧无法获取密钥 ${\K}ey$。
+\end{itemize}
+\end{tiplisting}
+
+
+\subsection{自动解密模块}
+
+自动解密并非传统外设模块，自身不带寄存器，不能被 CPU 直接访问。系统寄存器 (SYSREG) 外设、eFuse 参数、boot 模式共同配置并使用这一模块。
+
+\textbf{当且仅当自动解密模块拥有工作权限时，才允许自动解密。}自动解密模块是否拥有工作权限取决于：
+
+\begin{itemize}
+    
+    \item SPI Boot 模式下
+    
+    当参数 SPI\_BOOT\_CRYPT\_CNT（3 位）中奇数个位为 1 时，自动解密模块拥有工作权限，否则无法工作。
+    
+    \item Download Boot 模式下
+    
+    当寄存器 \hyperref[regdesc:HPSYSTEMEXTERNALDEVICEENCRYPTDECRYPTCONTROLREG]{HP\_SYSTEM\_EXTERNAL\_DEVICE\_ENCRYPT\_DECRYPT\_CONTROL\_REG} 的 \\ \hyperref[fielddesc:HPSYSTEMENABLEDOWNLOADG0CBDECRYPT]{HP\_SYSTEM\_ENABLE\_DOWNLOAD\_G0CB\_DECRYPT} 位为 1 时，自动解密模块拥有工作权限，否则无法工作。
+    
+\end{itemize}
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+
+\item 当自动解密模块拥有工作权限时，如果 CPU 通过 cache 读取片外存储器中的指令/数据，自动解密将自动对读取到的密文进行解密以恢复指令/数据。解密的整个过程无需软件参与，且对 cache 透明。解密算法过程中，密钥 ${\K}ey$ 无法被用户获取。
+
+\item 当自动解密模块没有工作权限时，无论数据加密与否，自动解密模块不对片外存储器中的数据产生作用。此时，CPU 通过 cache 读取到的是片外存储器中的原始内容。
+
+\end{enumerate}
+\end{tiplisting}
+
+
+\section{ 软件流程 }
+手动加密模块工作时需要软件参与，软件流程为：
+
+\begin{enumerate}
+    
+    \item 配置 XTS\_AES： 
+    \begin{itemize}
+        \item 将寄存器 \hyperref[regdesc:XTSAESPHYSICALADDRESSREG]{XTS\_AES\_PHYSICAL\_ADDRESS\_REG} 的值设置为 \begin{math}base\_addr\end{math}。
+        \item 将寄存器 \hyperref[regdesc:XTSAESLINESIZEREG]{XTS\_AES\_LINESIZE\_REG} 的值设置为 \begin{math}\frac{size}{32}\end{math}。
+    \end{itemize}
+    关于 \begin{math} base\_addr\end{math} 和 \begin{math}size\end{math} 的定义，请参考章节 \ref{sec:extmemencr-target-space}。
+    \item 将明文指令/数据写入至寄存器块 XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG (\textcolor{red}{\it{n}}: 0 \verb+~+ 15)。更多详细信息，请参考章节 \ref{sec:extmemncr-data-writing}。\\请根据实际需求写入寄存器，未使用的寄存器可为任意值。
+    
+    \item 等待手动加密模块进入空闲状态。轮询寄存器 \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} 直到软件读取到 0，表明手动加密模块已进入空闲状态。
+    
+    \item 向寄存器 \hyperref[regdesc:XTSAESTRIGGERREG]{XTS\_AES\_TRIGGER\_REG} 写入 1，启动手动加密。
+    
+    \item 等待加密完成。轮询寄存器 \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG}，直到软件读取到 2。\\
+    上述步骤为使用 ${\K}ey$ 操作手动加密模块对明文指令/数据进行加密的过程。
+    
+    \item 向寄存器 \hyperref[regdesc:XTSAESRELEASEREG]{XTS\_AES\_RELEASE\_REG} 写入 1，使 SPI1 获得密文的访问权限。该操作完成后，寄存器 \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} 的值将为 3。
+    
+    \item 调用 SPI1，将密文写入片外 flash（请参阅 \href{https://docs.espressif.com/projects/esp-idf/en/latest/esp32h2/index.html}{ESP-IDF 编程指南} 中的 \href{https://docs.espressif.com/projects/esp-idf/en/latest/esp32c6/api-reference/peripherals/spi_flash/index.html#api-reference-flash-encrypt}{Flash 加密 API 参考}）。
+    
+    \item 向寄存器 \hyperref[regdesc:XTSAESDESTROYREG]{XTS\_AES\_DESTROY\_REG} 写入 1，销毁密文。该操作完成后，寄存器 \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} 的值将为 0。
+    
+\end{enumerate}
+
+请根据所需加密的明文指令/数据的数量，重复上述步骤。
+
+
+\section{抗 DPA 攻击}
+\chipname{} XTS\_AES 模块支持抗 DPA 攻击功能。
+根据 \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}，XTS-AES 算法可分为两步：
+\begin{itemize}
+    \item 第一步：计算 T 的值。下文中，将此步骤称为“计算 T”。
+    \item 第二步：计算密文/明文。下文中，将此步骤称为“计算 D”。
+\end{itemize}
+
+用户可以通过寄存器配置实现不同安全等级：
+\begin{itemize}
+    \item 首先，为更好地描述各步骤，定义以下参数：
+    \begin{itemize}
+        \item $select\_reg     = \textrm{\hyperref[fielddesc:XTSAESCRYPTDPASELECTREGISTER]{XTS\_AES\_CRYPT\_DPA\_SELECT\_REGISTER}}$
+        \item $reg\_d\_dpa\_en = \textrm{\hyperref[fielddesc:XTSAESCRYPTCALCDDPAEN]{XTS\_AES\_CRYPT\_CALC\_D\_DPA\_EN}}$ 
+        \item $efuse\_dpa\_en  = \textrm{\hyperref[fielddesc:EFUSECRYPTDPAENABLE]{EFUSE\_CRYPT\_DPA\_ENABLE}}$
+        \item $reg\_anti\_dpa\_level = \textrm{\hyperref[fielddesc:XTSAESCRYPTSECURITYLEVEL]{XTS\_AES\_CRYPT\_SECURITY\_LEVEL}}$
+        \item $efuse\_anti\_dpa\_level = \textrm{3}$
+    \end{itemize}
+    \item 配置 XTS\_AES 模块抗 DPA 攻击的安全等级：
+    $$ Anti\_DPA\_level = select\_reg \ ?\  (reg\_anti\_dpa\_level) : (efuse\_dpa\_en * efuse\_anti\_dpa\_level) $$
+    当 Anti\_DPA\_level 为 0 时，关闭抗 DPA 攻击功能。Anti\_DPA\_level 的值越大，抗 DPA 攻击的能力就越强。
+    \item 配置是否在 XTS-AES 算法计算 D 时开启抗 DPA 功能：
+    $$ Anti\_DPA\_enabled\_in\_calc\_D = select\_reg \ ? \ reg\_d\_dpa\_en : efuse\_dpa\_en $$
+    在 $Anti\_DPA\_level$ 不为 0 的情况下，当 $ Anti\_DPA\_enabled\_in\_calc\_D $ 等于 1 时，XTS-AES 算法在计算 D 时开启抗 DPA 功能。\\
+    在 $Anti\_DPA\_level$ 不为 0 的情况下，XTS-AES 算法计算 T 时总是开启抗 DPA 功能。
+\end{itemize}
+\vspace{-0.5em}
+
+\begin{tiplisting}
+配置是否开启抗 DPA 功能会对外存访问带宽造成影响：
+\vspace{-0.5em}
+\begin{itemize}
+    \item 在计算 D 过程中配置开启抗 DPA 功能时，当抗攻击等级 >=4，会对读写带宽造成显著影响。
+    \item 在计算 D 过程中配置关闭抗 DPA 功能时，当抗攻击等级 >=6，会对读写带宽造成显著影响。
+\end{itemize}
+\end{tiplisting}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\section{寄存器列表}
+\label{sec:extmemencr-reg-summ}
+\hypertarget{extmemencr-reg-summ}{}
+
+本小节的所有地址均为相对于片外存储器加密与解密基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/28-EXTMEMENCR-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于片外存储器加密与解密基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/28-EXTMEMENCR-reg__CN}
+
+
+\end{document}

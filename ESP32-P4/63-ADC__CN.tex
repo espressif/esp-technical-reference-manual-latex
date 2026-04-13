@@ -1,0 +1,705 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./63-ADC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{adc}{}
+\chapter{ADC 控制器 (ADC)}
+\label{mod:adc}
+
+
+\section{概述}
+
+\chipname{} 内置了两个 12 位的逐次逼近型模拟数字转换器 (SAR ADC)，可测量最多来自 14 个管脚的模拟信号。图 \ref{figure:sar adc overview} 所示为 SAR ADC 概图。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{63-ADC/figures/SAR_ADC_simplified_architecture_cn.pdf}
+    \caption{SAR ADC 结构概图}
+    \label{figure:sar adc overview}
+\end{figure}
+
+如图 \ref{figure:sar adc overview} 所示，SAR ADC 由四个专用控制器控制，包括：
+
+\begin{itemize}
+    \item 两个 HP（高性能）控制器，包括 HP ADC1 控制器和 HP ADC2 控制器，支持多通道采样模式，支持 GDMA 连续数据搬运。
+    \item 两个 LP（低功耗）控制器，包括 LP ADC1 控制器和 LP ADC2 控制器，支持在低功耗模式下工作和单次采样模式。
+\end{itemize}
+
+\section{术语表}
+
+下列有关 SAR ADC 的术语是在《ESP32-P4 技术参考手册》的语境下定义的，旨在帮助读者更好地理解本文档。
+
+\begin{longtable}{ R{4cm} p{11cm} }
+\textbf{SAR ADC：} & 包含模拟 ADC 电路与数字 ADC 控制器。下文的 HP ADC 与 LP ADC 共用一套模拟 ADC 电路，但拥有各自的控制器，即 HP ADC 控制器 与 LP ADC 控制器。文中出现的 SAR ADC 既指 HP ADC 也指 LP ADC。\\
+\textbf{HP ADC：} & 高性能 ADC，支持多通道采样，GDMA 数据搬运等，睡眠模式下不可用。\\
+\textbf{LP ADC：} & 低功耗 ADC，支持单次采样模式，睡眠模式下可用。\\
+\textbf{单次采样模式：} & 在此模式下，LP ADC 一次对一个通道进行采样。 \\
+\textbf{多通道采样模式：} & 在此模式下，HP ADC 依次对一组通道进行采样，或者连续对单个通道进行采样。\\
+\textbf{双 HP ADC 采样：} & 指的是两个 HP ADC 可以同时或轮流进行采样。 \\
+\textbf{转换结果：} & 转换结果是模拟到数字转换后得到的二进制数字值。有时也被称为转换数据。\\
+\textbf{滤波数据：} & 滤波数据是转换数据经过滤波器处理得到的结果。 \\
+\textbf{采样：} & 该术语通常指的是对模拟输入进行采样、转换采样数据，并将转换结果传输到内存的整个过程。在特定语境和流程中，“采样”也可能指 SAR ADC 从模拟信号中采集数据。\\
+\end{longtable}
+
+\section{主要特性}
+SAR ADC 具有以下特性：
+
+\begin{itemize}
+\item 支持 HP ADC\regindex{x} 控制器和 LP ADC\regindex{x} 控制器通过软件选择的方式获取 SAR ADC\regindex{x} 的控制权，\regindex{x} = 1, 2
+\item 支持 12 位采样分辨率
+\item 支持采集最多 14 个管脚上的模拟信号
+\item HP ADC\regindex{x} 控制器：
+    \begin{itemize}
+        \item 配有多通道采样控制模块，支持多通道采样模式，采样通道顺序可配
+        \item 提供模式控制模块，支持双 HP ADC 采样
+        \item 提供两个滤波器，滤波系数可配
+        \item 提供两个阈值监控器，滤波数据大于设置的高阈值或小于设置的低阈值将产生中断
+        \item GDMA 连续数据搬运
+    \end{itemize}
+\item{LP ADC\regindex{x} 控制器：}
+    \begin{itemize}
+        \item 支持单次采样模式
+        \item 支持在低功耗模式（如 Deep-sleep）下工作
+    \end{itemize}
+\item 支持多个事件任务矩阵 (ETM) 相关的事件和任务
+\end{itemize}
+
+\section{结构概览}
+
+SAR ADC 的主要元件与连接情况见图 \ref{fig:sar-adc-functional-overview}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/SAR_ADC_architecture}
+    \caption{SAR ADC 结构图}
+    \label{fig:sar-adc-functional-overview}
+\end{figure}
+
+\vspace{-2em}
+\begin{itemize}
+    \item \textcolor{red}{\textbf{--->}}：时钟信号
+    \item
+    \begin{tikzpicture}
+\draw[rounded corners][red][dashed] (0,0) rectangle (1,0.5);
+\end{tikzpicture}
+：时钟分频器、多路器、以及时钟作用的模块
+\end{itemize}
+
+如图 \ref{fig:sar-adc-functional-overview} 所示，SAR ADC 模块主要包括以下部分：
+
+\begin{itemize}
+    \item SAR ADC1：可对 8 个通道进行电压检测；
+    \item SAR ADC2：可对 6 个通道进行电压检测；
+    \item 时钟管理 (Clock Management)：对时钟源进行选择和分频；
+    \item 定时器 (Timer)：HP ADC\regindex{x} 控制器的专用定时器，可发起采样使能信号。
+    \item HP ADC FSM\regindex{x}：有限状态机 1 和有限状态机 2，用于
+    \begin{itemize}
+        \item 接收定时器提供的采样使能信号
+        \item 根据样式表生成 HP ADC\regindex{x} 的采样配置
+        \item 驱动 HP Reader\regindex{x} 模块读取转换数据
+        \item 将转换数据传输到滤波器
+    \end{itemize}
+    \item 滤波器 (Filter)：滤波器 0 和滤波器 1，用于在多通道采样模式下对目标通道的转换数据进行滤波
+    \item 阈值监控器 (Threshold Monitor)：阈值监控器 0 和阈值监控器 1，可在滤波数据大于设定的高阈值，或小于设定的低阈值时触发中断。
+    \item 模式控制模块 (MODE\_CNTL)：用于过滤定时器触发的采样信号，支持双 HP ADC 采样。
+    \item HP Reader\regindex{x}：HP 读值器 1 和 HP 读值器 2，由 HP ADC FSM\regindex{x} 驱动，读取 HP ADC\regindex{x} 的数值。
+    \item LP Reader\regindex{x}：LP 读值器 1 和 LP 读值器 2，由 LP ADC\regindex{x} 控制器驱动，读取 LP ADC\regindex{x}  的数值。
+    \item LP ADC\regindex{x} Controller：LP ADC1 控制器和 LP ADC2 控制器，提供采样使能信号，根据配置驱动 LP Reader\regindex{x} 模块读取 LP ADC\regindex{x} 的转换数据，并存储转换数据。
+\end{itemize}
+
+\section{功能描述}
+\subsection{SAR ADC 上电}
+置位 \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} 和 \hyperref[fielddesc:PMUPERIFI2CRST]{PMU\_PERIF\_I2C\_RST} 寄存器给 SAR ADC 上电。上电后即可进行采样，硬件设计上已考虑等待时间，因此用户无需特意等待。
+
+\subsection{SAR ADC 通道}
+SAR ADC
+共有 14 个通道，连接芯片的 14 个管脚。SAR ADC 需首先通过内部多路器选择待测量的模拟管脚，然后才能采样模拟信号。
+
+表 \ref{tab:adc-inputs} 列出了用作 SAR ADC 通道的芯片管脚。
+
+\begin{longtable}{ |p{3cm}|C{4cm}|p{3cm}| }
+    \caption{SAR ADC 通道及芯片管脚}
+    \label{tab:adc-inputs}
+    \\\hline
+    \rowcolor{lightgray}
+   \textbf{芯片管脚} & \textbf{SAR ADC 通道编号}  & \textbf{SAR ADC 选择} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+   \textbf{芯片管脚} & \textbf{SAR ADC 通道编号}  & \textbf{SAR ADC 选择} \\\hline
+    \endhead
+    \hline
+    \endfoot
+   GPIO16       &  0  & \multirow{8}{*}{SAR ADC1} \\ \cline{1-2}
+   GPIO17       &  1  & \\ \cline{1-2}
+   GPIO18       &  2  & \\ \cline{1-2}
+   GPIO19       &  3  & \\ \cline{1-2}
+  GPIO20       &  4  & \\ \cline{1-2}
+    GPIO21       &  5  & \\ \cline{1-2}
+    GPIO22       &  6  & \\ \cline{1-2}
+    GPIO23       &  7  & \\\hline
+    GPIO49       &  0  & \multirow{6}{*}{SAR ADC2} \\ \cline{1-2}
+    GPIO50       &  1  & \\ \cline{1-2}
+    GPIO51       &  2  & \\ \cline{1-2}
+    GPIO52       &  3  & \\ \cline{1-2}
+    GPIO53       &  4  & \\ \cline{1-2}
+    GPIO54       &  5  & \\\hline
+\end{longtable}
+
+\subsection{SAR ADC 时钟}\label{sec:dig-adc-clock}
+
+用户可配置 \hyperref[fielddesc:HPSYSCLKRSTADCCLKSRCSEL]{HP\_SYS\_CLKRST\_ADC\_CLK\_SRC\_SEL} 选择 HP ADC\regindex{x} 控制器的时钟源：
+    \begin{itemize}
+       \item XTAL\_CLK
+       \item RC\_FAST\_CLK
+       \item PLL\_F80M\_CLK
+    \end{itemize}
+
+HP ADC\regindex{x} 控制器的分频时钟有：
+    \begin{itemize}
+        \item HPADC\_SARCLK：HP ADC\regindex{x}、HP Reader\regindex{x} 的工作时钟。
+        \item HPADC\_CLK：HP ADC FSM\regindex{x} 的工作时钟。
+    \end{itemize}
+注意，HPADC\_SARCLK 频率会影响采样精度。当 HPADC\_SARCLK 的频率高于 5 MHz 时，采样精度会变低。HPADC\_SARCLK 由 HPADC\_CLK 经过专用分频器分频所得，分频系数通过 \hyperref[fielddesc:ADCSARCLKDIV]{ADC\_SAR\_CLK\_DIV} 配置。
+
+HP ADC 每采样一个数据需要 25 个 HPADC\_SARCLK 时钟周期数，所以最大采样速率受到 HPADC\_SARCLK 的频率限制。
+
+LP ADC\regindex{x} 控制器的时钟源为：LP\_DYN\_FAST\_CLK。
+
+LP ADC\regindex{x} 控制器的分频时钟有：
+    \begin{itemize}
+        \item LPADC\_SARCLK：LP ADC\regindex{x}、LP Reader\regindex{x} 的工作时钟；其中控制 LPADC\_SARCLK 分频的 \hyperref[fielddesc:LPADCSAR1CLKDIV]{LPADC\_SAR1\_CLK\_DIV} 和 \hyperref[fielddesc:LPADCSAR2CLKDIV]{LPADC\_SAR2\_CLK\_DIV} 的分频系数至少是 2 分频，且 LPADC\_SARCLK 的频率不能超过 5 MHz。
+        \item LPADC\_CLK：LP ADC FSM\regindex{x} 的工作时钟。
+    \end{itemize}
+
+更多时钟信息，见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\subsection{SAR ADC 转换和衰减}
+
+SAR ADC 转换模拟信号时，转换电压范围为 0 mV \verb+~+ \(V_{ref}\)。\(V_{ref}\) 为 SAR ADC 内部参考电压。SAR ADC 的转换结果是个 12 位的数字值，是原始值。用户可使用以下公式将原始值 \(data\) 转换成模拟电压 \(V_{data}\)：
+
+    \[
+    V_{data} = \frac{V_{ref}}{k}\times{\frac{data}{4095}}
+    \]
+
+其中 k 为衰减对应的系数。
+
+如需转换大于 \(V_{ref}\) 的电压，信号输入 SAR ADC 前可进行衰减。支持的衰减等级包括：
+
+\begin{itemize}
+    \item 0 dB (k≈100\%)
+    \item 2.5 dB (k≈75\%)
+    \item 6 dB (k≈50\%)
+    \item 12 dB (k≈25\%)
+\end{itemize}
+
+\subsection{HP ADC FSM}
+HP ADC FSM（下文简称 FSM）在多通道采样模式下工作，用于生成整个采样过程中所需的各种信号。图 \ref{fig:sensor-diagram-dig-adc-fsm} 展示了 FSM 的工作原理。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/SAR_ADC_FSM}
+    \caption{HP ADC FSM 概况}
+    \label{fig:sensor-diagram-dig-adc-fsm}
+\end{figure}
+
+其中，
+\begin{itemize}
+    \item Timer（定时器）：表示 HP ADC 控制器的专用定时器，用于触发多通道采样模式。定时器可产生 \texttt{sample\_start} 信号，表示开始采样。
+    \item pr：样式表指针，FSM 将根据该指针指向的样式配置，发送相应信号。
+\end{itemize}
+
+用户通过置位 \hyperref[fielddesc:ADCTIMEREN]{ADC\_TIMER\_EN} 使能定时器。定时器超时将触发 \texttt{sample\_start} 信号驱动 FSM 模块开始采样。FSM 模块收到 \texttt{sample\_start} 信号后，执行以下操作：
+
+    \begin{itemize}
+        \item 开启 HP ADC 电源；
+        \item 根据当前 pr 指向的样式，决定该次采样通道以及衰减；
+        \item 根据配置信息，输出相应的 \texttt{en\_pin}（使能管脚）以及 \texttt{atten}（衰减）信号到模拟端；
+        \item 发起 \texttt{sar\_start} 信号，开启采样。
+   \end{itemize}
+
+FSM 收到 HP Reader 返回的 \texttt{reader\_done} 信号后，执行以下操作：
+    \begin{itemize}
+        \item 结束采样；
+        \item 将数据传输给滤波器，然后阈值监控器通过 GDMA 将数据传输给内存（见图 \ref{fig:sar-adc-functional-overview}）；
+        \item 更新样式表指针 pr，等待下一次采样。pr 在 0 - ADC\_SAR1/2\_PATT\_LEN (table\_length) 之间循环计数。
+    \end{itemize}
+
+\subsection{HP ADC 样式表}\label{sec:adc_pattern}
+
+HP ADC FSM1/2 各自包含一个独立样式表，由 \hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR\regindex{x}\_PATT\_TAB\regindex{m}\_REG} 配置，其中 \regindex{m} 表示样式表的寄存器序号 1 \verb+~+ 4。每个寄存器包含四个样式，每个样式长度为六位，如下图所示：
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd0}{6}{18}{{0x0000}}%
+\regfield{cmd1}{6}{12}{{0x0000}}%
+\regfield{cmd2}{6}{6}{{0x0000}}%
+\regfield{cmd3}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 0 - 3)] 表示样式表中的样式，即样式 0 \verb+~+ 样式 3。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{ADC\_SAR\regindex{x}\_PATT\_TAB1\_REG 包含样式 0 - 3}
+    \label{fig:pattern-tab-1}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd4}{6}{18}{{0x0000}}%
+\regfield{cmd5}{6}{12}{{0x0000}}%
+\regfield{cmd6}{6}{6}{{0x0000}}%
+\regfield{cmd7}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 4 - 7)] 表示样式表中的样式，即样式 4 \verb+~+ 样式 7。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{ADC\_SAR\regindex{x}\_PATT\_TAB2\_REG 包含样式 4 - 7}
+    \label{fig:pattern-tab-2}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd8}{6}{18}{{0x0000}}%
+\regfield{cmd9}{6}{12}{{0x0000}}%
+\regfield{cmd10}{6}{6}{{0x0000}}%
+\regfield{cmd11}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 8 - 11)] 表示样式表中的样式，即样式 8 \verb+~+ 样式 11。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{ADC\_SAR\regindex{x}\_PATT\_TAB3\_REG 包含样式 8 - 11}
+    \label{fig:pattern-tab-3}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd12}{6}{18}{{0x0000}}%
+\regfield{cmd13}{6}{12}{{0x0000}}%
+\regfield{cmd14}{6}{6}{{0x0000}}%
+\regfield{cmd15}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 12 - 15)] 表示样式表中的样式，即样式 12 \verb+~+ 样式 15。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{ADC\_SAR\regindex{x}\_PATT\_TAB4\_REG 包含样式 12 - 15}
+    \label{fig:pattern-tab-4}
+\end{figure}
+\vspace{-2em}
+每个样式长度为六位，共包括 2 个字段，分别存储通道和衰减信息，具体见图 \ref{tab:pattern-table-register}。
+
+\begin{figure}[H]
+\centering
+\regfield{ch\_sel}{4}{2}{{xx}}%
+\regfield{atten}{2}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{样式结构}
+    \label{tab:pattern-table-register}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [atten] 衰减配置信息：\\
+0: 0 dB\\
+1: 2.5 dB\\
+2: 6 dB\\
+3: 12 dB
+\item [ch\_sel] 采样通道选择信息，对于 HP ADC1，0-7 分别对应 0-7 通道。对于 HP ADC2，0-5 分别对应 0-5 通道。
+\end{reglist}\end{regdesc}
+
+
+\subsection{HP ADC 多通道采样配置示例}
+
+假设，希望实现如下顺序的 HP ADC1 多通道采样方式：
+\begin{itemize}
+    \item 采样 HP ADC1 的通道 2，且衰减配置为 12 dB；
+    \item 采样 HP ADC1 的通道 0，且衰减配置为 2.5 dB。
+\end{itemize}
+
+则具体的配置如下：
+\begin{itemize}
+    \item 配置 HP ADC1 第一个样式 cmd0（即 \hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG}[5:0]），如下图所示：
+
+    \centering
+    \regfield{ch\_sel}{4}{2}{{2}}%
+    \regfield{atten}{2}{0}{3}%
+    \reglabel{}\regnewline%
+    \begin{regdesc}\begin{reglist}
+    \begin{figure}[H]
+        \centering
+        \caption{HP ADC1 cmd0 配置示例}
+        \label{fig:cmd-config-1}
+    \end{figure}
+    \vspace{-2em}
+    \item [atten] 配置该字段的值为 3，即衰减配置为 12 dB。
+    \item [ch\_sel] 配置该字段的值为 2，即选择通道 2。
+    \end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+
+    \item 配置 HP ADC1 第二个样式 cmd1（即 \hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG}[11:6]），如下图所示：
+
+    \centering
+    \regfield{ch\_sel}{4}{2}{{0}}%
+    \regfield{atten}{2}{0}{1}%
+    \reglabel{}\regnewline%
+    \begin{regdesc}\begin{reglist}
+    \begin{figure}[H]
+        \centering
+        \caption{HP ADC1 cmd1 配置示例}
+        \label{fig:cmd-config-2}
+    \end{figure}
+    \vspace{-2em}
+    \item [atten] 配置该字段的值为 1，即衰减配置为 2.5 dB。
+    \item [ch\_sel] 配置该字段的值为 0，即选择通道 0（见表 \ref{tab:adc-inputs}）。
+    \end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:ADCSAR1PATTLEN]{ADC\_SAR1\_PATT\_LEN} 为 1，即样式表大小为 (配置值+1)= 2，也即选择使用上述配置好的样式 0 和样式 1；
+    \item 使能定时器，则 HP ADC1 控制器将根据上述样式配置，周期性采样 HP ADC1 的通道 2 和通道 0。
+\end{itemize}
+
+\subsection{双 HP ADC 采样控制}
+
+\hyperref[fielddesc:ADCWORKMODE]{ADC\_WORK\_MODE} 控制是否让两个 HP ADC 同时工作：
+\begin{itemize}
+    \item 0：单 HP ADC 采样，即只有一个 HP ADC 采样。当定时器触发采样请求时，由 \hyperref[fielddesc:ADCSARSEL]{ADC\_SAR\_SEL} 控制某个 FSM 收到采样请求：
+        \begin{itemize}
+            \item 0：HP ADC FSM1 收到采样请求，即使用 HP ADC1 采样。
+            \item 1：HP ADC FSM2 收到采样请求，即使用 HP ADC2 采样。
+        \end{itemize}
+    \item 1：双 HP ADC 同时采样。当定时器触发采样请求时，HP ADC FSM1 和 HP ADC FSM2 将同时收到采样请求。
+    \item 2：双 HP ADC 轮流采样。当有奇数次定时器触发的采样请求时，HP ADC FSM1 收到采样请求；当有偶数次采样请求时，HP ADC FSM2 收到采样请求。
+\end{itemize}
+
+\subsection{HP ADC 滤波器}\label{sec:adc_filter}
+
+HP ADC\regindex{x} 控制器提供两个滤波器，用于在多通道采样模式下对目标通道的转换数据进行滤波。两个滤波器均可配置给 HP ADC 的任一通道，但不能配置给同一通道。如果配置给同一通道，则第一次配置的滤波器生效。
+
+\[data_{cur} = \frac{(k-1)data_{prev}}{k}+\frac{data_{in}}{k}+0.5\]
+
+\begin{itemize}
+    \item \(data_{cur}\)：滤波后数据
+    \item \(data_{in}\)：转换数据
+    \item \(data_{prev}\)：上次滤波数据
+    \item \(k\)：滤波系数
+\end{itemize}
+
+配置滤波器如下：
+\begin{itemize}
+\item 配置 \hyperref[fielddesc:ADCFILTERCHANNEL0]{ADC\_FILTER\_CHANNEL\regindex{x}} 设置滤波器 \regindex{x} 作用的 HP ADC 通道，\regindex{x}=0, 1。
+\item 配置 \hyperref[fielddesc:ADCFILTERFACTOR0]{ADC\_FILTER\_FACTOR\regindex{x}} 设置滤波器 \regindex{x} 的滤波系数，\regindex{x}=0, 1。
+\end{itemize}
+
+\subsection{HP ADC 阈值监控器}\label{sec:adc_threshold}
+
+HP ADC 控制器包含两个阈值监控器，用于在多通道采样模式下对滤波之后的数据进行监控。当数据大于设定的高阈值，则触发高阈值中断；当数据小于设定的低阈值，则触发低阈值中断。两个监控器可配置给 HP ADC 的任一通道，但不能配置给同一通道。
+
+阈值监控配置如下：
+\begin{itemize}
+    \item 置位 \hyperref[fielddesc:ADCTHRES0EN]{ADC\_THRES\regindex{x}\_EN} 使能阈值监控 \regindex{x} (\regindex{x}=0, 1)；
+    \item 配置 \hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES\regindex{x}\_LOW} 设置低阈值；
+    \item 配置 \hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES\regindex{x}\_HIGH} 设置高阈值；
+    \item 配置 \hyperref[fielddesc:ADCTHRES0CHANNEL]{ADC\_THRES\regindex{x}\_CHANNEL} 设置监控的 HP ADC 以及通道。
+\end{itemize}
+
+\subsection{HP ADC 的 GDMA 支持}
+
+当转换多个通道时需要使用 GDMA，通过 GDMA 接口将转换数据连续存储至内存。
+
+由 HP ADC\regindex{x} 专用定时器产生触发信号，用户可通过软件配置 \hyperref[fielddesc:ADCAPBADCTRANS]{ADC\_APB\_ADC\_TRANS} 将 GDMA 的数据通路切换到 HP ADC。关于 GDMA 的具体配置，请参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+HP ADC 最终向 GDMA 传递 32 位数据，如下图所示：
+
+\begin{figure}[H]
+\centering
+\regfield{reserved}{15}{17}{{xx}}%
+\regfield{ch\_sel}{3}{13}{{xxx}}%
+\regfield{reserved}{1}{12}{{x}}%
+\regfield{data}{12}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{GDMA 数据格式}
+    \label{fig:dma-data-format}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [data] HP ADC 转换结果，12 位
+\item [ch\_sel] 通道信息，3 位
+\end{reglist}\end{regdesc}
+
+\subsection{LP ADC 自动监测唤醒模式}
+
+LP ADC 控制器支持自动监测转换数据，一个专用的定时器会每根据 \hyperref[fielddesc:LPADCADC1HWREADRATEI]{LPADC\_ADC\regindex{x}\_HW\_READ\_RATE\_I} 配置值周期性产生 LP ADC 采样信号，并将得到的转换数据送入一个阈值监控器（未复用 HP ADC 的阈值监控器）中，若转换数据超过阈值，将产生中断。
+
+自动监测有两种唤醒模式：绝对值模式和变化量模式，通过寄存器 \hyperref[fielddesc:LPADCSAR1WAKEUPMODE]{LPADC\_SAR\regindex{x}\_WAKEUP\_MODE} 进行选择：
+
+   \begin{itemize}
+       \item 0：绝对值模式––\\
+        用于监测当前转换数据的绝对值。配置 \hyperref[fielddesc:LPADCSAR1WAKEUPTHLOW]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_LOW} 和 \hyperref[fielddesc:LPADCSAR1WAKEUPTHHIGH]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_HIGH} 来决定转换数据阈值，转换数据超过高阈值或小于低阈值时将触发唤醒。
+
+       \item 1：变化量模式––\\
+        用于监测转换数据的变化量。若连续两次采样的转换数据增量超过 \hyperref[fielddesc:LPADCSAR1WAKEUPTHHIGH]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_HIGH} 的配置值或减少量超过 \hyperref[fielddesc:LPADCSAR1WAKEUPTHLOW]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_LOW} 的配置值，将触发唤醒。例如当 \hyperref[fielddesc:LPADCSAR1WAKEUPTHLOW]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_LOW} 的值为 8 时，若连续两次采样后的转换数据分别为 28 和 19，即转换数据减少量为 9，将触发唤醒。
+
+    \end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{事件任务矩阵功能}
+\label{sec:etm-func}
+
+
+在 \chipname{} 中，SAR ADC 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 SAR ADC 的 ETM 任务，或者通过 SAR ADC 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与 SAR ADC 相关的 ETM 任务和 ETM 事件。
+
+SAR ADC 可接收的 ETM 任务有：
+
+\begin{itemize}
+    \item ADC\_TASK\_SAMPLE0：该任务被触发时，LP ADC 开始进行单次采样。
+    \item ADC\_TASK\_START0：该任务被触发时，HP ADC 开始进行多通道采样。
+    \item ADC\_TASK\_STOP0：该任务被触发时，SAR ADC 停止采样。
+\end{itemize}
+
+SAR ADC 可产生的 ETM 事件有：
+
+\begin{itemize}
+    \item ADC\_EVT\_CONV\_CMPLT0：在单次采样模式和多通道采样模式下，SAR ADC 每完成一次采样时生成。
+    \item ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{x}：HP ADC 过滤后数据高于阈值时生成。\regindex{x}=0, 1，代表阈值监控器 0, 1。
+    \item ADC\_EVT\_EQ\_BELOW\_THRESH\regindex{x}: HP ADC 过滤后数据低于阈值时生成。\regindex{x}=0, 1，代表阈值监控器 0, 1。
+    \item ADC\_EVT\_STARTED0：SAR ADC 开始采样时生成，单次采样不会触发该事件。
+    \item ADC\_EVT\_STOPPED0：SAR ADC 停止采样时生成，单次采样不会触发该事件。
+\end{itemize}
+
+在具体应用中，SAR ADC 的 ETM 事件可以用来触发 SAR ADC 的 ETM 任务，例如，ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{x} 事件可以触发 ADC\_TASK\_STOP0 任务。
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+
+\chipname{} 的 SAR ADC 可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+   \begin{itemize}
+        \item ADC\_INTR
+        \item LP\_ADC\_INTR
+    \end{itemize}
+
+ADC\_INTR 由以下 HP ADC 的内部中断源生成。
+
+\begin{itemize}
+   \item \label{interreupt:ADCDONEINT1} ADC\_SAR\regindex{x}\_DONE\_INT：当 HP ADC\regindex{x} 完成一次采样后触发。
+   \item \label{interreupt:ADCTHRESxHIGHINT} ADC\_THRES\regindex{x}\_HIGH\_INT：当滤波后的数据超过高阈值时触发。
+   \item \label{interreupt:ADCTHRESxLOWINT} ADC\_THRES\regindex{x}\_LOW\_INT：当滤波后的数据低于低阈值时触发。
+\end{itemize}
+
+LP\_ADC\_INTR 由以下 LP ADC 的内部中断源生成。
+
+\begin{itemize}
+   \item \label{interreupt:LPADCCOCPUSARADCxINT} LPADC\_COCPU\_SARADC\regindex{x}\_DONE\_INT：当 LP ADC\regindex{x} 完成一次采样时触发。
+   \item \label{interreupt:LPADCCOCPUSARADCxERRORINT} LPADC\_COCPU\_SARADC\regindex{x}\_ERROR\_INT：当 LP ADC\regindex{x} 发生采样错误时触发。
+   \item \label{interreupt:LPADCCOCPUSARADCxWAKEINT} LPADC\_COCPU\_SARADC\regindex{x}\_WAKE\_INT：当 LP ADC\regindex{x} 产生一个唤醒事件（如转换数据超阈值）时触发。
+\end{itemize}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:adc-reg-summ} \textit{\nameref{sec:adc-reg-summ}}。
+
+\section{配置流程}
+\subsection{HP ADC 多通道采样配置}
+
+专用定时器驱动的多通道采样的具体配置如下：
+\begin{enumerate}
+    \item 置位 \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} 和 \hyperref[fielddesc:PMUPERIFI2CRST]{PMU\_PERIF\_I2C\_RST} 给 HP ADC 上电；
+    \item 配置 \hyperref[fielddesc:HPSYSCLKRSTADCCLKSRCSEL]{HP\_SYS\_CLKRST\_ADC\_CLK\_SRC\_SEL} 选择时钟源；
+    \item 配置时钟分频寄存器 \hyperref[fielddesc:HPSYSCLKRSTADCCLKDIVNUM]{HP\_SYS\_CLKRST\_ADC\_CLK\_DIV\_NUM} 和 \hyperref[fielddesc:HPSYSCLKRSTADCSARCLKDIVNUM]{HP\_SYS\_CLKRST\_ADC\_SAR\regindex{x}\_CLK\_DIV\_NUM}；
+    \item 置位 \hyperref[fielddesc:HPSYSCLKRSTADCCLKEN]{HP\_SYS\_CLKRST\_ADC\_CLK\_EN} 使能 HP ADC 时钟；
+    \item 置位 \hyperref[fielddesc:LPADCSAR1DIGFORCE]{LPADC\_SAR\regindex{x}\_DIG\_FORCE} 打开 HP ADC 采样通道；
+    \item 按照章节 \ref{sec:adc_pattern} \textit{\nameref{sec:adc_pattern}} 所述步骤配置样式表；
+    \item 按照章节 \ref{sec:adc_filter} \textit{\nameref{sec:adc_filter}} 所述步骤配置滤波器作用的通道和滤波系数；
+    \item 根据需要，按照章节 \ref{sec:adc_threshold} \textit{\nameref{sec:adc_threshold}} 所述步骤设置阈值监控；
+    \item 置位 \hyperref[fielddesc:ADCAPBADCTRANS]{ADC\_APB\_ADC\_TRANS} 选择使用 GDMA；
+    \item 配置 \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} 设置 HP ADC 定时器的触发周期；
+    \item 置位 \hyperref[fielddesc:ADCTIMEREN]{ADC\_TIMER\_EN} 使能定时器。
+\end{enumerate}
+
+定时器超时则将驱动 HP ADC FSM 根据样式表进行采样。数据通过 GDMA 自动存储到内存空间中。当采集到 \hyperref[fielddesc:ADCAPBADCEOFNUM]{ADC\_APB\_ADC\_EOF\_NUM} 寄存器设置的次数时，采样停止。
+
+采样完成将产生 \hyperref[fielddesc:ADCSAR1DONEINTRAW]{ADC\_SAR\regindex{x}\_DONE\_INT\_RAW} 中断。
+
+\subsection{LP ADC 单次采样配置}
+
+软件驱动的单次采样具体配置过程如下：
+\begin{enumerate}
+  \item 置位 \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} 和 \hyperref[fielddesc:PMUPERIFI2CRSTB]{PMU\_PERIF\_I2C\_RSTB} 给 LP ADC 上电；
+  \item 配置时钟分频寄存器 \hyperref[fielddesc:LPPERILPADCFUNCDIVNUM]{LPPERI\_LPADC\_FUNC\_DIV\_NUM} 和 \hyperref[fielddesc:LPPERILPADCSAR1DIVNUM]{LPPERI\_LPADC\_SAR\regindex{x}\_DIV\_NUM}，分别决定 LPADC\_CLK 与 LPADC\regindex{x}\_SARCLK 的频率；
+  \item 配置 \hyperref[fielddesc:LPADCSAR1ENPAD]{LPADC\_SAR\regindex{x}\_EN\_PAD} 和 \hyperref[fielddesc:LPADCSAR1ATTEN]{LPADC\_SAR\regindex{x}\_ATTEN} 选择本次采样的通道及衰减值；
+  \item 配置 \hyperref[fielddesc:LPADCMEAS1STARTSAR]{LPADC\_SAR\_MEAS\regindex{x}\_START\_SAR} 触发 LP ADC\regindex{x} 控制器采样。
+\end{enumerate}
+
+采样结束即触发 \hyperref[fielddesc:LPADCCOCPUSARADC1INTRAW]{LPADC\_COCPU\_SARADC\regindex{x}\_INT\_RAW}。软件检测到该中断后，可从 \hyperref[fielddesc:LPADCMEAS1DATASAR]{LPADC\_SAR\_MEAS\regindex{n}\_DATA\_SAR} 读取转换数据。
+
+\subsection{LP ADC 自动监测唤醒配置}
+
+LP ADC 控制器的自动监测唤醒模式配置过程如下：
+\begin{enumerate}
+        \item 配置 \hyperref[fielddesc:LPADCADC1HWREADRATEI]{LPADC\_ADC\regindex{x}\_HW\_READ\_RATE\_I} 设置采样率；
+        \item 配置 \hyperref[fielddesc:LPADCSAR1WAKEUPMODE]{LPADC\_SAR\regindex{x}\_WAKEUP\_MODE} 选择唤醒模式；
+        \item 配置 \hyperref[fielddesc:LPADCSAR1WAKEUPTHHIGH]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_HIGH} 与 \hyperref[fielddesc:LPADCSAR1WAKEUPTHLOW]{LPADC\_SAR\regindex{x}\_WAKEUP\_TH\_LOW} 设置高低阈值；
+        \item 置位 \hyperref[fielddesc:LPADCSAR1WAKEUPEN]{LPADC\_SAR\regindex{x}\_WAKEUP\_EN} 启用自动监测；
+        \item 置位 \hyperref[fielddesc:LPADCADC1HWREADENI]{LPADC\_ADC\regindex{x}\_HW\_READ\_EN\_I} 自动触发持续监测。
+    \end{enumerate}
+
+自动监测工作模式下，转换数据不会存储，但用户可以随时读取寄存器 \hyperref[fielddesc:LPADCMEAS1DATASAR]{LPADC\_SAR\_MEAS\regindex{n}\_DATA\_SAR} 获取最后一次转换数据。
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{adc-reg-summ}{}
+\section{寄存器列表}
+\label{sec:adc-reg-summ}
+\subsection{HP ADC 寄存器列表}
+
+下表的所有地址均为相对于 HP ADC（写作 ADC 控制器）基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/63-ADC-adc-reg-summ__CN}
+
+\subsection{LP ADC 寄存器列表}
+
+下表的所有地址均为相对于 LP ADC 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/63-ADC-lpadc-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+\subsection{HP ADC 寄存器}
+
+以下所有地址均为相对于 HP ADC（写作 ADC 控制器）基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/63-ADC-adc-reg__CN}
+
+\subsection{LP ADC 寄存器}
+
+以下所有地址均为相对于 LP ADC 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/63-ADC-lpadc-reg__CN}
+
+\end{document}

@@ -1,0 +1,467 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./25-I2C}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{i2c}{}
+\chapter{I2C 控制器 (I2C)}
+\label{mod:i2c}
+
+\chipname{} 通过 I2C (Inter-Integrated Circuit) 总线用于使 ESP32-S2 和多个外部设备进行通信。多个外部设备可以共用一个 I2C 总线。
+
+\section{主要特性}
+
+I2C具有以下几个特点。
+
+\begin{itemize}
+    \item 支持主机模式以及从机模式
+    \item 支持多主机多从机通信
+    \item 支持标准模式 (100 Kbit/s)
+    \item 支持快速模式 (400 Kbit/s)
+    \item 支持 7-bit 以及 10-bit 模式寻址
+    \item 支持拉低 SCL 时钟实现连续数据传输
+    \item 支持可编程数字噪声滤波功能
+    \item 支持双寻址模式
+\end{itemize}
+
+\section{\texorpdfstring{I2C 功能描述}{I2C 功能描述}}
+
+\subsection{\texorpdfstring{I2C 简介}{I2C 简介}}
+I2C 是一个两线总线，由 SDA 线和 SCL 线构成。这些线设置为漏极开漏 (open-drain) 输出。因此，I2C 总线上可以挂载多个外设，通常是和一个或多个主机以及一个或多个从机。但同一时刻只有一个主机能占用总线访问一个从机。
+
+主机发出开始信号，则通讯开始：在 SCL 为高电平时拉低 SDA 线，主机将通过 SCL 线发出 9 个时钟脉冲。前 8 个脉冲用于按位传输，该字节包括 7-bit 地址和 1 个读写位。如果从机地址与该 7-bit 地址一致，那么从机可以通过在第 9 个脉冲上拉低 SDA 线来应答。接下来，根据读／写标志位，主机和从机可以发送／接收更多的数据。根据应答位的逻辑电平决定是否停止发送数据。在数据传输中，SDA 线仅在 SCL 线为低电平时才发生变化。当主机完成通讯，发送一个停止标志：在 SCL 为高电平时，拉高 SDA 线。如果一次通信中主机既有写操作又有读操作，则主机需在读写操作变化前，发送一个重新开始信号、从机地址和读写标志位。
+
+\subsection{\texorpdfstring{I2C 架构}{I2C 架构}}
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.65\textwidth]{\modulefiles/figures/I2C_Master_architecture}}
+    \caption{I2C Master 基本架构}
+    \label{Figure:I2C_mst_723}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/I2C_Slave_architecture}}
+    \caption{I2C Slave 基本架构}
+    \label{Figure:I2C_slv_723}
+\end{figure}
+
+I2C 控制器可以工作于 Master 模式或者 Slave 模式，\hyperref[fielddesc:I2CMSMODE]{I2C\_MS\_MODE} 寄存器用于模式选择。图 \ref{Figure:I2C_mst_723} 为 I2C Master 基本架构图，图 \ref{Figure:I2C_slv_723} 为 I2C Slave 基本架构图。I2C 控制器内部包括的模块主要有 TX/RX RAM、CMD\_Controller、SCL\_FSM、 SCL\_MAIN\_FSM、DATA\_Shifter、SCL\_Filter 和 SDA\_Filter 。
+
+\newpage
+\subsubsection{TX/RX RAM}
+TX/RX RAM大小均为 32 x 8 bits。 TX RAM 用于存储 I2C 控制器需要发送的数据。在 I2C 通信的过程中，当 I2C 控制器需要发送数据时（不包括 ACK 位响应），会依次读出 TX RAM 中的数据并串行输出到 SDA 线上。当 I2C 控制器工作于主机模式时，所有需要发送给从机的数据都必须按照发送顺序依次存储在 TX RAM 中。包括被访问的从机地址、读写标志位、被访问的寄存器地址（仅限双地址寻址模式下）、写数据。当 I2C 控制器工作于从机模式时，TX RAM 中只存放写数据。
+
+RX RAM 存储的是 I2C 通信过程中，I2C 控制器接收到的数据。当I2C 控制器工作于从机模式时，主机发送的从机地址及被访问的寄存器地址（仅限双地址寻址模式下）都不会存储在 RX RAM 中。软件可以在 I2C 通信结束后，读出 RX RAM 的值。
+
+TX RAM 和 RX RAM 均可以通过 FIFO 和直接地址 (non-FIFO) 两种方式访问，具体访问方式通过 \hyperref[fielddesc:I2CNONFIFOEN]{I2C\_NONFIFO\_EN} 位配置。
+
+TX RAM 可被 CPU 读写。CPU 可通过两种方式写 TX RAM: FIFO 访问和直接地址访问。FIFO 访问方式是通过固定地址 \hyperref[regdesc:I2CDATAREG]{I2C\_DATA\_REG} 写 TX RAM，硬件自动进行 TX RAM 写地址自增。直接地址访问是通过地址段 (\hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}100) \textasciitilde (\hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}17C) 直接访问 TX RAM。TX RAM 的每一个字节占据一个 word 的地址。因此，第一个字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}100, 第二字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}104, 第三字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}108 ，以此类推。CPU 只可通过直接地址访问方式读 TX RAM，读 TX RAM 的地址相比于写 TX RAM 地址需要减去 \hexprefix{}80 的偏移。
+
+RX RAM 只可被 CPU 读。CPU 可通过两种方式读 RX RAM: FIFO 访问和直接地址访问。FIFO 访问方式是通过固定地址 \hyperref[regdesc:I2CDATAREG]{I2C\_DATA\_REG} 读 RX RAM，硬件自动完成 RX RAM 读地址自增。直接地址访问是通过地址段 (\hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}100) \textasciitilde (\hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}17C) 直接访问 RX RAM。RX RAM 的每一个字节占据一个 word 的地址。因此，第一个字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}100, 第二字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}104, 第三字节访问地址为 \hyperref[table:I2C base address]{I2C 基地址} + \hexprefix{}108 ，以此类推。
+
+TX RAM 的写地址和 RX RAM 的读地址范围一样，因此可以把 TX RAM 和 RX RAM 看成一块 32 x 8 bits 的 RAM。本文在后续章节中都以 RAM 来代替 TX RAM 和 RX RAM。
+
+\paragraph {CMD\_Controller}\label{i2c_cmd_controller}
+I2C 控制器工作于主机模式时，CMD\_Controller 会依次从16 个命令寄存器中读出命令并按照命令来控制 SCL\_FSM 及 SDA\_FSM。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/I2C_Cmd_structure_723}
+    \caption{I2C 命令寄存器结构}
+    \label{Figure:I2C_Cmd_structure}
+\end{figure}
+
+命令寄存器只在 I2C 控制器工作于主机模式时才有效，其内部结构如图 \ref{Figure:I2C_Cmd_structure} 所示。命令寄存器的参数为:
+
+\begin{enumerate}
+
+\item CMD\_DONE: 命令执行完成标识。每条命令执行完硬件会将对应命令寄存器中的 CMD\_DONE 置 1。软件可以通过读取每条命令的 CMD\_DONE 位来判断该命令是否执行完毕。每次更新命令时，软件需要将 CMD\_DONE 位清零。
+
+\item op\_code: 命令编码，共有 5 种命令。
+
+\begin{itemize}
+    \item RSTART: op\_code 等于 0 时为 RSTART 命令，该命令指示 I2C 控制器发送 I2C 协议中的 START 位以及 RESTART 位。
+
+    \item WRITE: op\_code 等于 1 时为 WRITE 命令，该命令指示 I2C 控制器向从机发送从机地址、被访问的寄存器地址（仅限双寻址模式）、数据。
+
+    \item READ: op\_code 等于 2 时为 READ 命令，该命令指示 I2C 控制器从从机读取数据。
+
+    \item STOP: op\_code 等于 3 时为 STOP 命令，该命令指示 I2C 控制器发送 I2C 协议中的 STOP 位。 此条命令也标识本次命令序列执行完成，CMD\_Controller 将会停止取指令。软件再次启动 CMD\_Controller 后， 会重新从命令寄存器 0 开始去取指令。
+
+    \item END:op\_code 等于 4 时为 END 命令，该命令指示 I2C 控制器将 SCL 信号拉低，暂停 I2C 通信。该命令也标识本次命令序列执行完成，CMD\_Controller 将会停止取指令。软件在更新命令寄存器和 RAM 数据后可重新启动 CMD\_Controller，继续进行 I2C 协议传输。再次启动后 CMD\_Controller 会重新从命令寄存器 0 开始去取指令。
+
+\end{itemize}
+
+\item ack\_value: 该位设置读操作时 I2C 控制器在 I2C 协议中的 ACK 位发送的电平值。 RSTART 、STOP 、END 、WRITE 命令中该位没有意义。
+
+\item ack\_exp: 该位用于设置写操作时 I2C 控制器在 I2C 协议中的 ACK 位期望接收的电平值。 RSTART 、STOP 、END 、READ 命令中该位没有意义。
+
+\item ack\_check\_en: 该位使能写操作中 I2C 控制器检查从机发送的 ACK 位电平与命令中的 ack\_exp 是否一致。如果接收的 ACK 值与 WRITE 命令中的 ack\_exp 电平不一致时，I2C Master 会产生 I2C\_NACK\_INT\\ 中断，停止发送数据并产生 STOP。 1:检测从机发送的 ACK 位电平; 0:不检测从机发送的 ACK 位电平。RSTART 、STOP 、END 、READ 命令中该位没有意义。
+
+\item byte\_num: 读写数据的长度(单位字节)，最大为 255，最小为 1。RSTART 、STOP 、END 命令中 byte\_num 无意义。
+
+\end{enumerate}
+
+每次命令序列的执行都是从命令寄存器 0 开始，到 STOP 或 END 命令结束。所以需要保证 16 个命令寄存器中必须有 STOP 或 END 命令。
+
+一次完整的 I2C 协议传输应该起始于 START 命令，结束于 STOP 命令。可通过 END 命令将一次 I2C 协议传输分为多个命令序列来完成。每个命令序列可以改变数据传输的方向、时钟频率、从机地址、数据长度和发送数据等。这样可以弥补 RAM 大小不足的问题，也可以实现更灵活的 I2C 通信。
+
+\subsubsection{SCL\_FSM}
+SCL\_FSM单元模块控制 SCL 时钟线。 \hyperref[regdesc:I2CSCLLOWPERIODREG]{I2C\_SCL\_LOW\_PERIOD\_REG}、\hyperref[regdesc:I2CSCLHIGHPERIODREG]{I2C\_SCL\_HIGH\_PERIOD\_REG} 和\\ \hyperref[fielddesc:I2CSCLWAITHIGHPERIOD]{I2C\_SCL\_WAIT\_HIGH\_PERIOD} 用于配置 SCL 的频率和占空比。当 SCL\_FSM 长时间处于非空闲状态，且时间超过 \hyperref[fielddesc:I2CSCLSTTO]{I2C\_SCL\_ST\_TO} 个时钟周期后，会触发 I2C\_SCL\_ST\_TO\_INT 中断，状态机会回到空闲状态。
+
+\subsubsection{SCL\_MAIN\_FSM}
+SCL\_MAIN\_FSM 单元模块控制 SDA 数据线以及数据的存取。当 SCL\_MAIN\_FSM 长时间处于非空闲状态，且时间超过 \hyperref[fielddesc:I2CSCLMAINSTTO]{I2C\_SCL\_MAIN\_ST\_TO} 个模块时钟后，会触发 I2C\_SCL\_MAIN\_ST\_TO\_INT 中断，状态机会回到空闲状态。
+
+\subsubsection{DATA\_Shifter}
+DATA\_Shifter 模块用于串并转换，将字节数据转化成比特流或者将比特流转化成字节数据。\hyperref[fielddesc:I2CRXLSBFIRST]{I2C\_RX\_LSB\_FIRST} 和 \hyperref[fielddesc:I2CTXLSBFIRST]{I2C\_TX\_LSB\_FIRST} 用于配置最高有效位或最低有效位的优先储存或传输。
+
+\subsubsection{SCL\_Filter 和 SDA\_Filter}
+SCL\_Filter 和 SDA\_Filter 滤波器模块实现方式相同，用于滤除 SCL 及 SDA 输入信号上的噪声。通过配置 \hyperref[fielddesc:I2CSCLFILTEREN]{I2C\_SCL\_FILTER\_EN} 以及 \hyperref[fielddesc:I2CSDAFILTEREN]{I2C\_SDA\_FILTER\_EN} 寄存器可以开启或关闭滤波器。
+
+以 SCL\_Filter 为例， SCL\_Filter 滤波器的功能为连续采样输入信号 SCL, 如果输入信号在连续 \hyperref[fielddesc:I2CSCLFILTERTHRES]{I2C\_SCL\_FILTER\_THRES} 个 APB 时钟周期内保持不变,则输入信号有效,否则输入信号无效。只有有效的输入信号才能通过滤波器。因此, SCL\_Filter 和 SDA\_Filter 滤波器会
+过滤脉冲宽度小于 \hyperref[fielddesc:I2CSCLFILTERTHRES]{I2C\_SCL\_FILTER\_THRES} 以及 \hyperref[fielddesc:I2CSDAFILTERTHRES]{I2C\_SDA\_FILTER\_THRES} 个 APB 时钟周期的线路毛刺。
+
+\subsection{\texorpdfstring{I2C 总线时序}{I2C 总线时序}}
+I2C 控制器计时的时钟源可以用 APB\_CLK，也可以用 REF\_TICK。\hyperref[fielddesc:I2CREFALWAYSON]{I2C\_REF\_ALWAYS\_ON} 置 1 选择 APB\_CLK，清零选择 REF\_TICK。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/I2C_bus_timing_723}}
+    \caption{I2C 时序图}
+    \label{Figure:I2C_bus_timing}
+\end{figure}
+
+图 \ref{Figure:I2C_bus_timing} 为 I2C主机的时序图，图中的参数是以模块时钟 (I2C\_CLK)  为单位的， 即 \hyperref[fielddesc:I2CREFALWAYSON]{I2C\_REF\_ALWAYS\_ON} 为1时， 以$T_{APB\_CLK}$为单位； \hyperref[fielddesc:I2CREFALWAYSON]{I2C\_REF\_ALWAYS\_ON} 为0时， 以$T_{REF\_TICK}$为单位。I2C 控制器的 START 位、STOP 位、数据保持时间、数据采样时间、SCL上升沿等待时间等时序均可以通过图 \ref{Figure:I2C_bus_timing} 中所示的寄存器进行配置。如图\ref{Figure:I2C_bus_timing} 所示， 各参数的含义如下:
+
+\begin{enumerate}
+\item \hyperref[fielddesc:I2CSCLSTARTHOLDTIME]{I2C\_SCL\_START\_HOLD\_TIME}
+生成 I2C 协议中的 start 位时， SDA 信号拉低到 SCL 信号拉低的时间间隔。该时间间隔为 （\hyperref[fielddesc:I2CSCLSTARTHOLDTIME]{I2C\_SCL\_START\_HOLD\_TIME} +1）个模块时钟周期。仅控制器工作在主机模式时有意义。
+
+\item  \hyperref[fielddesc:I2CSCLLOWPERIOD]{I2C\_SCL\_LOW\_PERIOD}
+SCL 低电平持续时间。SCL 低电平时间为 （\hyperref[fielddesc:I2CSCLLOWPERIOD]{I2C\_SCL\_LOW\_PERIOD} + 1） 个模块时钟周期。但是 如果外设拉低 SCL ，I2C 控制器执行 END 命令拉低 SCL，或者控制器发生 SCL 延展传输则可能会导致 SCL 低电平时间变长。仅控制器工作在主机模式时有意义。
+
+\item \hyperref[fielddesc:I2CSCLWAITHIGHPERIOD]{I2C\_SCL\_WAIT\_HIGH\_PERIOD}
+等待 SCL 线拉高的模块时钟周期数。请确保在该时间内 SCL 线可以完成上拉。否则会导致 SCL 高电平持续时间不可预测。仅控制器工作在主机模式时有意义。
+
+\item \hyperref[fielddesc:I2CSCLHIGHPERIOD]{I2C\_SCL\_HIGH\_PERIOD}
+SCL 线拉高后维持高电平的模块时钟周期数。仅控制器工作在主机模式时有意义。
+当 SCL 线在 \hyperref[fielddesc:I2CSCLWAITHIGHPERIOD]{I2C\_SCL\_WAIT\_HIGH\_PERIOD} + 1 个模块时钟内完成上拉，则 SCL 线的频率为：
+
+\[
+    f_{scl}=\frac{f_{\textrm{I2C\_CLK}}}
+    {\textrm{\hyperref[fielddesc:I2CSCLLOWPERIOD]{I2C\_SCL\_LOW\_PERIOD}+1+\hyperref[fielddesc:I2CSCLHIGHPERIOD]{I2C\_SCL\_HIGH\_PERIOD}+\hyperref[fielddesc:I2CSCLWAITHIGHPERIOD]{I2C\_SCL\_WAIT\_HIGH\_PERIOD}}}
+\]
+
+\item \hyperref[fielddesc:I2CSDASAMPLETIME]{I2C\_SDA\_SAMPLE\_TIME}
+SCL 上升沿到采样 SDA 线电平值的时间间隔。推荐设置在 SCL 高电平持续时间的中间值，以保证能够正确采样到 SDA 线上电平。控制器工作在主机模式及从机模式时都有意义。
+
+\item \hyperref[fielddesc:I2CSDAHOLDTIME]{I2C\_SDA\_HOLD\_TIME}
+SDA 输出数据变化与 SCL 下降沿的时间间隔。控制器工作在主机模式及从机模式时都有意义。
+
+\end{enumerate}
+
+
+
+
+SCL 及 SDA 线采用 open-drain 的驱动方式。 I2C 控制器有两种配置方式实现 open-drain 驱动方式：
+\begin{enumerate}
+\item 置位 \hyperref[fielddesc:I2CSCLFORCEOUT]{I2C\_SCL\_FORCE\_OUT}、I2C\_SDA\_FORCE \_OUT 并配置相应 SCL 及 SDA PAD 的 \hyperref[fielddesc:GPIOPINNPADDRIVER]{GPIO\_PIN\regindex{n}\_PAD\_DRIVER} 寄存器为open-drain 驱动。
+\item 清零 \hyperref[fielddesc:I2CSCLFORCEOUT]{I2C\_SCL\_FORCE\_OUT} 以及 \hyperref[fielddesc:I2CSDAFORCEOUT]{I2C\_SDA\_FORCE\_OUT}。
+\end{enumerate}
+
+
+SCL 和 SDA 配置成开漏方式时，从低电平转向高电平的时间会较长，这个转变时间由线上的上拉电阻以及电容共同决定。开漏模式下，I2C 的输出频率受限于 SCL 和 SDA 上拉速度，主要受 SCL 的速度限制。
+
+另外，在 \hyperref[fielddesc:I2CSCLFORCEOUT]{I2C\_SCL\_FORCE\_OUT} 和 \hyperref[fielddesc:I2CSCLPDEN]{I2C\_SCL\_PD\_EN} 置 1 时，可以强制拉低 SCL 线;在 \hyperref[fielddesc:I2CSDAFORCEOUT]{I2C\_SDA\_FORCE\_OUT} 和 \hyperref[fielddesc:I2CSDAPDEN]{I2C\_SDA\_PD\_EN} 置 1 时，可以强制拉低 SDA 线。
+
+\section{典型应用}
+
+为了便于描述，下文所有图示中的 I2C Master 和 Slave 都假定为 I2C 外设控制器。
+
+\subsection{\texorpdfstring{I2C 主机写入从机，7-bit 寻址，单次命令序列}{I2C 主机写入从机，7-bit 寻址，单次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MWS7}
+    \caption{I2C Master写 7-bit 寻址的 Slave}
+    \label{Figure:I2C_MWS7}
+\end{figure}
+
+图 \ref{Figure:I2C_MWS7} 为 I2C Master 采用 7-bit 寻址写 N 个字节数据到 I2C Slave 的命令寄存器及 RAM。如图 \ref{Figure:I2C_MWS7} 所示，主机 RAM 中第一个字节数据为 7-bit Slave 地址 + 1-bit 读写标志位，其中读写标志位为 0 时表示写操作， 接下来的连续空间存储待发送的数据。cmd 框中包含了相应的命令序列。
+
+对于主机，在软件配置好命令序列以及 RAM 数据后，置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START} 寄存器启动控制器进行数据传输。控制器的行为可分为四步：
+\begin{enumerate}
+    \item 控制器会等待 SCL 线为高电平，以避免 SCL 线被其他 Master 或者 Slave 占用。
+    \item 控制器执行 RSTART 命令发送 START 位。
+    \item 控制器执行 WRITE 命令从 RAM 的首地址开始取出 N+1 个字节并依次发送给从机，其中第一个字节为地址。
+    \item 发送 STOP。当 I2C Master 完成 STOP 位的传输后，会产生 I2C\_TRANS\_COMPLETE\_INT 中断。
+\end{enumerate}
+
+当需要传输的数据量太大，超过 32 字节时，可以对 RAM 使用乒乓操作。在控制器发送数据的同时，软件更新已发送的数据。当 I2C Master 的 RAM 中剩下的待发送数据字节数小于 \hyperref[fielddesc:I2CTXFIFOWMTHRHD]{I2C\_TXFIFO\_WM\_THRHD} 时，会产生 I2C\_TXFIFO\_WM\_INT 中断。
+
+软件在检测到该中断后，向使用完的 RAM 区域更新新的数据。当 RAM 采用 non-FIFO 访问时，软件可以配置 \hyperref[fielddesc:I2CTXUPDATE]{I2C\_TX\_UPDATE} 锁存已发送数据在 RAM 中的首末地址，通过读取 \hyperref[regdesc:I2CFIFOSTREG]{I2C\_FIFO\_ST\_REG} 寄存器中 \hyperref[fielddesc:I2CTXFIFOSTARTADDR]{I2C\_TXFIFO\_START\_ADDR} 段及 \hyperref[fielddesc:I2CTXFIFOENDADDR]{I2C\_TXFIFO\_END\_ADDR} 得到已发送数据在 RAM 中的首末地址，从而更新 RAM 中的旧数据。当 RAM 采用 FIFO 访问时，直接通过 \hyperref[regdesc:I2CDATAREG]{I2C\_DATA\_REG} 寄存器写入新的数据就可以。
+
+有如下两种情况会打断控制器执行命令序列：
+
+\begin{enumerate}
+\item 当 I2C Master WRITE 命令中的 ack\_check\_en 配置为 1 时，I2C Master 会在发送完每个字节之后进行 ACK 检测。 如果接收的 ACK 值与 WRITE 命令中的 ack\_exp 电平不一致时，I2C Master 会产生 I2C\_NACK\_INT 中断，停止发送数据并且产生 STOP。
+
+\item I2C Master 在 SCL 为高电平期间，检测到  SDA 输入值 与 SDA 输出值不等时，则 I2C Master 会产生 I2C\_ARBITRATION\_LOST\_INT 中断，并停止命令序列的执行返回 IDLE 状态，释放对 SCL 及 SDA 线的控制。
+
+\end{enumerate}
+
+I2C Slave 在检测到 I2C Master 发送的 START 位之后，开始接收地址并进行地址匹配。当 I2C Slave 接收的地址与其 \hyperref[fielddesc:I2CSLAVEADDR]{I2C\_SLAVE\_ADDR}[6:0] 的值不匹配时，I2C Slave 停止接收数据。当地址匹配后，I2C Slave 将接下来接收的数据按照顺序存储到 RAM 中。
+
+当需要接收的数据量太大，超过 32 字节时，可以对 RAM 使用乒乓操作。在控制器接收数据的同时，软件回收已接收的数据。当 I2C Slave 的 RAM 中接收的待回收的数据字节数大于等于 \hyperref[fielddesc:I2CRXFIFOWMTHRHD]{I2C\_RXFIFO\_WM\_THRHD} 时，会产生 I2C\_RXFIFO\_WM\_INT 中断。
+
+软件在检测到该中断后，需要回收相应的 RAM 区域数据。当 RAM 采用 non-FIFO 访问时，软件可以配置 I2C\\\_RX\_UPDATE 锁存已待回收数据在 RAM 中的首末地址，通过读取 RD\_FIFO\_ST\_REG 寄存器中 RXFIFO\_START\_ADDR 段及 RXFIFO\_END\_ADDR 得到已发送数据在 RAM 中的首末地址，从而回收 RAM 中的接收数据。当 RAM 采用 FIFO 访问时，直接通过 \hyperref[regdesc:I2CDATAREG]{I2C\_DATA\_REG} 寄存器回收数据就可以。
+
+
+\subsection{\texorpdfstring{I2C 主机写入从机，10-bit 寻址，单次命令序列}{I2C 主机写入从机，10-bit 寻址，单次命令序列}}\label{subsubsection:I2C 10-BIT 单次操作}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MWS10}
+    \caption{I2C Master写 10-bit 寻址的 Slave}
+    \label{Figure:I2C_MWS10}
+\end{figure}
+
+假设从机地址为 SLV\_ADDR 。 ESP32-S2 I2C 控制器可以使用 7-bit 寻址（SLV\_ADDR[6:0])，也可以使用 10-bit 寻址（SLV\_ADDR[9:0]) 。
+
+图 \ref{Figure:I2C_MWS10} 为 I2C Master 写 N 个字节到 10-bit 地址 I2C Slave 的配置图。主机模式下，相比于 7-bit 寻址，10-bit 寻址需要发送两字节地址段。将从机地址的第一个 7 bits slave\_addr\_first\_7bits 和读写标志位存入 RAM 的 addr0 地址，  slave\_addr\_first\_7bits 的值应该配置为 (\hexprefix{}78 | SLV\_ADDR[9:8])。接着将  slave\_addr\_second\_byte 存入 RAM 的 addr1 地址， slave\_addr\_second\_byte 的值为 SLV\_ADDR[7:0] 。
+
+在从机中，可以通过配置 \hyperref[fielddesc:I2CADDR10BITEN]{I2C\_ADDR\_10BIT\_EN} 寄存器开启 10-bit 寻址模式。 \hyperref[fielddesc:I2CSLAVEADDR]{I2C\_SLAVE\_ADDR} 用于配置 I2C Slave 地址。\hyperref[fielddesc:I2CSLAVEADDR]{I2C\_SLAVE\_ADDR}[14:7] 的值应配置为 SLV\_ADDR[7:0] ，  \hyperref[fielddesc:I2CSLAVEADDR]{I2C\_SLAVE\_ADDR}[6:0] 的值应配置为 (\hexprefix{}78 | SLV\_ADDR[9:8]) 。       由于 10-bit Slave 地址比 7-bit 地址多一个字节, 所以 WRITE 命令对应的 byte\_num 以及 RAM 中数据数量都相应增加 1。
+
+
+\subsection{\texorpdfstring{I2C 主机写入从机，7-bit 双地址寻址，单次命令序列}{I2C 主机写入从机，7-bit 双地址寻址，单次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MWS7_M}
+    \caption{I2C Master写 7-bit 寻址 Slave的 M 地址 RAM}
+    \label{Figure:I2C_MWS7_M}
+\end{figure}
+
+控制器处于 slave 模式时，还支持双地址访问方式。双地址的第一个地址是 I2C 从机地址，第二个地址是 I2C 从机的内存地址。双地址模式下，RAM 必须采用 non-FIFO 方式访问。
+通过置位 \hyperref[fielddesc:I2CFIFOADDRCFGEN]{I2C\\\_FIFO\_ADDR\_CFG\_EN} 来使能双地址访问功能。如图 \ref{Figure:I2C_MWS7_M} 所示，I2C Slave 将接收到的数据 byte0 \verb+~+ byte(N-1) 从 Slave RAM 中的 addrM 开始依次存储。当超出地址 31 后会从地址0开始继续存储。
+
+\subsection{\texorpdfstring{I2C 主机写入从机，7-bit 寻址，多次命令序列}{I2C 主机写入从机，7-bit 寻址，多次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MWS_END}    \caption{I2C Master 分段写 7-bit 寻址的 Slave}
+    \label{Figure:I2C_MWS_END}
+\end{figure}
+
+RAM 的大小只有 32 字节，对于大量的数据传输当 RAM 乒乓操作也不能满足要求时，建议使用多次命令序列进行分段传输。每次命令序列以 END 命令结尾，这样控制器会执行 END 命令拉低  SCL 线，软件此时可以更新命令序列寄存器和 RAM 的内容以用于下一次命令序列的传输。
+
+以两段和三段传输为例，如图 \ref{Figure:I2C_MWS_END} 所示为 I2C Master 分成三段或者两段写 Slave。首先配置 I2C Master 的命令序列如第一段所示，并且在 Master 的 RAM 中准备好数据，置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START}，I2C Master 即开始数据传输。 在执行到 END 命令后，I2C Master 会关闭 SCL 时钟，并将 SCL 线拉低来防止其他设备占用 I2C 总线。此时控制器产生 I2C\_END\_DETECT\_INT 中断。
+
+在检测到 I2C\_END\_DETECT\_INT 中断后，软件可以更新命令序列 以及 RAM 中的内容如第二段所示，并清除 I2C\_END\_DETECT\_INT 中断。当第二段中 cmd1 为 STOP 时，不需要第三段, 即为两段写 Slave。 置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START} 后，I2C Master 继续发送数据，并在最后发送 STOP 位。当为三段写 Slave 时,I2C Master 在第二段发送完数据，并检测到 I2C Master 的 I2C\_END\_DETECT\_INT 中断后，即可配置 cmd 如第三段所示。置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START} 后，I2C Master 即产生 STOP 位，从而停止传输。
+
+请注意，在两个分段之间，I2C 总线上的其他 Master 设备不会占用总线。 只有在发送了 STOP 信号后总线才会被释放。任何情况下，置位 \hyperref[fielddesc:I2CFSMRST]{I2C\_FSM\_RST} 可复位 I2C 控制器，硬件自清 \hyperref[fielddesc:I2CFSMRST]{I2C\_FSM\_RST}。
+
+在 I2C Master 处于空闲状态时，置位 \hyperref[fielddesc:I2CSCLRSTSLVEN]{I2C\_SCL\_RST\_SLV\_EN}, 硬件会发送 I2C\_
+SCL\_RST\_SLV\_NUM 个 SCL 脉冲，之后硬件会自清 \hyperref[fielddesc:I2CSCLRSTSLVEN]{I2C\_SCL\_RST\_SLV\_EN} 位。
+
+需要注意的是，总线上其他 Master 或者 Slave 的操作可能与 ESP32-S2 I2C 外设有所不同， 具体请参考各个 I2C 设备的技术规格书。
+
+\subsection{\texorpdfstring{I2C 主机读取从机，7-bit 寻址，单次命令序列}{I2C 主机读取从机，7-bit 寻址，单次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MRS7}
+    \caption{I2C Master 读 7-bit 寻址的 Slave}
+    \label{Figure:I2C_MRS7}
+\end{figure}
+
+图 \ref{Figure:I2C_MRS7} I2C Master 从 7-bit 寻址 I2C Slave 读取 N 个字节数据的的命令寄存器及 RAM 的值。cmd1 为 WRITE 命令， I2C Master 会将 I2C Slave 的地址发送出去。该命令发送的字节是7-bit I2C Slave 地址以及读写标志位。读写标志位为 1 表示读操作。I2C Slave 在地址匹配成功之后即开始发送数据给 I2C Master。I2C Master 根据 READ 命令中设置的 ack\_value ，在接收完一个字节的数据之后回复 ACK。
+
+图 \ref{Figure:I2C_MRS7} 中 READ 分成两次，I2C Master 对 cmd2 中 N-1 个数据均回复 ACK，对 cmd3 中的数据即传输的最后一个数据回复 NACK ，实际使用时可以根据需要进行配置。在存储接收的数据时，I2C Master 从 RAM 的首地址开始存储，图中红色 byte0 会覆盖第一个字节的内容（Slave 地址+1-bit 读写位）。
+
+
+\subsection{\texorpdfstring{I2C 主机读取从机，10-bit 寻址，单次命令序列}{I2C 主机读取从机，10-bit 寻址，单次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MRS10}
+    \caption{I2C Master 读 10-bit 寻址的 Slave}
+    \label{Figure:I2C_MRS10}
+\end{figure}
+
+图 \ref{Figure:I2C_MRS10} 为 I2C Master 从 10-bit  寻址的 I2C Slave 中读取数据的命令寄存器及 RAM 的值。相比于 7-bit 寻址，I2C Master 的第一写命令的字节数为 2 字节，相应 RAM 中存储 2 个字节的 I2C Slave 10-bit 地址。相比于 7-bit 寻址， I2C Slave 需要置位 \hyperref[fielddesc:I2CADDR10BITEN]{I2C\_ADDR\_10BIT\_EN} 和 \hyperref[fielddesc:I2CSLAVEADDR]{I2C\_SLAVE\_ADDR}[14：0]。具体配置方式与 \ref{subsubsection:I2C 10-BIT 单次操作} 小节的相同。
+
+\subsection{\texorpdfstring{I2C 主机读取从机，7-bit 双寻址，单次命令序列}{I2C 主机读取从机，7-bit 双寻址，单次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MRS7_M}
+    \caption{I2C Master 从 7-bit 寻址 Slave 的 M 地址读取 N 个数据}
+    \label{Figure:I2C_MRS7_M}
+\end{figure}
+
+图 \ref{Figure:I2C_MRS7_M} 为 I2C Master 从 I2C Slave 中指定地址读取数据的命令寄存器及 RAM 的值。配置流程如下：
+
+\begin{enumerate}
+\item 在 I2C Slave 中置位 \hyperref[fielddesc:I2CFIFOADDRCFGEN]{I2C\_FIFO\_ADDR\_CFG\_EN} 并在其 RAM 中准备好待发送的数据。
+\item 在 I2C Master 中准备好 I2C Slave 的地址以及其指定的寄存器地址 M。
+\item 置位 I2C Master 的 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START}，I2C Slave 会将从 RAM 中 M 地址开始取 N 个数据 发送给 I2C Master。
+\end{enumerate}
+
+\subsection{\texorpdfstring{I2C 主机读取从机，7-bit 寻址，多次命令序列}{I2C 主机读取从机，7-bit 寻址，多次命令序列}}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/I2C_MRS_END}
+    \caption{I2C Master 分段读 7-bit 寻址的 Slave}
+    \label{Figure:I2C_MRS_END}
+\end{figure}
+
+图 \ref{Figure:I2C_MRS_END} 为 I2C Master 通过 END 命令分三段或者分两段，从 I2C Slave 读取 N+M 个数据的配置图。配置的流程如下：
+\begin{enumerate}
+    \item 首先配置命令寄存器和RAM的内容，如第一段所示。
+    \item 接着在 Slave 的 RAM 中准备好数据，置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START}，I2C 即开始工作。当执行到 END 命令时，I2C Master 可以更新命令寄存器和RAM的内容， 如第二段所示,并且清零其对应的 I2C\_END\_DETECT\_INT 中断。当第二段中 cmd2 为 STOP 时，即两段读 I2C Slave,置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START}，I2C Master 继续传输数据,最后发送 STOP 位来停止传输。
+    \item 当第二段中 cmd2 为 END 时，在 I2C Master 完成第二次数据传输，并检测到  I2C Master 的 I2C\_END\_DETECT\_INT 中断后，配置 cmd 如第三段所示。置位 \hyperref[fielddesc:I2CTRANSSTART]{I2C\_TRANS\_START}，I2C Master 发送 STOP 位停止传输。
+\end{enumerate}
+
+\subsection {SCL 延展传输}
+从机模式下，可以通过 SCL 线拉低，以给软件足够的时间进行处理。置位 \hyperref[fielddesc:I2CSLAVESCLSTRETCHEN]{I2C\_SLAVE\_SCL\_STRETCH\_EN} 位使能延展传输，置位 \hyperref[fielddesc:I2CSTRETCHPROTECTNUM]{I2C\_STRETCH\_PROTECT\_NUM} 位配置延展传输时长。出现以下三种情况会拉低 SCL 线：
+\begin{enumerate}
+\item 地址命中：从机模式下，I2C 控制器的地址与 SDA 线发送的地址相匹配。
+\item 写满：从机模式下，I2C 控制器的 RX RAM 为满。
+\item 读空：从机模式下，I2C 控制器的 TX RAM 为空。
+\end{enumerate}
+SCL 线拉低后，可读取 \hyperref[fielddesc:I2CSTRETCHCAUSE]{I2C\_STRETCH\_CAUSE} 位获取延展传输的原因。置位 \hyperref[fielddesc:I2CSLAVESCLSTRETCHCLR]{I2C\_SLAVE\_SCL\_STRETCH\_CLR} 位关闭 SCL 延展传输。
+
+\section{中断}\label{5.3.7}
+\begin{itemize}
+\item \label{I2CEXTSLAVESTRETCHINT}I2C\_SLAVE\_STRETCH\_INT:当I2C 从机将SCL线拉低时产生此中断。
+\item \label{I2CEXTDETSTARINT}I2C\_DET\_START\_INT：当检测到I2C START位时，触发此中断。
+\item \label{I2CEXTSCLMAINSTTOINT}I2C\_SCL\_MAIN\_ST\_TO\_INT:当I2C主状态机SCL\_MAIN\_FSM保持某个状态超过 \hyperref[fielddesc:I2CSCLMAINSTTO]{I2C\_SCL\_MAIN\_ST\_TO}[23:0]个模块时钟周期时，触发此中断。
+\item \label{I2CEXTSCLSTTOINT}I2C\_SCL\_ST\_TO\_INT:当I2C状态机SCL\_FSM保持某个状态超过 \hyperref[fielddesc:I2CSCLSTTO]{I2C\_SCL\_ST\_TO}[23:0]个模块时钟周期时，触发此中断。
+\item \label{int:I2CEXTRXFIFOUDFINT}I2C\_RXFIFO\_UDF\_INT: 直接地址访问模式下，当 I2C 接收\hyperref[fielddesc:I2CNONFIFORXTHRES]{I2C\_NONFIFO\_RX\_THRES} 个数据，即触发该中断。
+\item \label{int:I2CEXTTXFIFOOVFINT}I2C\_TXFIFO\_OVF\_INT: 每当 I2C 发送\hyperref[fielddesc:I2CNONFIFOTXTHRES]{I2C\_NONFIFO\_TX\_THRES} 个数据，即触发该中断。
+\item \label{int:I2CEXTNACKINT}I2C\_NACK\_INT: 当 I2C 配置为 Master 时，接收到的 ACK 与命令中期望的 ACK 值不一致时，即触发该中断；当 I2C 配置为 Slave 时，接收到的 ACK 值为 1 时即触发该中断。
+\item \label{int:I2CEXTTRANSSTARTINT}I2C\_TRANS\_START\_INT: 当 I2C 发送一个 START 位时，即触发该中断。
+\item \label{int:I2CEXTTIMEOUTINT}I2C\_TIME\_OUT\_INT: 在传输过程中，当 I2C SCL 保持为高或为低电平的时间超过 \hyperref[fielddesc:I2CTIMEOUT]{I2C\_TIME\_OUT} 个模块时钟后，即触发该中断。
+\item \label{int:I2CEXTTRANSCOMPLETEINT}I2C\_TRANS\_COMPLETE\_INT: 当 I2C 检测到 STOP 位时，即触发该中断。
+\item \label{int:I2CEXTMSTTXFIFOUDFINT}I2C\_MST\_TXFIFO\_UDF\_INT: 当 I2C 主机的TX FIFO 下溢时，触发此中断。
+\item \label{int:I2CEXTARBITRATIONLOSTINT}I2C\_ARBITRATION\_LOST\_INT: 当 I2C Master 的 SCL 为高电平，SDA 输出值与输入值不相等时，即触发该中断。
+\item \label{int:I2CEXTBYTETRANSDONEINT}I2C\_BYTE\_TRANS\_DONE\_INT: 当 I2C 发送或接收一个字节，即触发该中断。
+\item \label{int:I2CEXTENDDETECTINT}I2C\_END\_DETECT\_INT：当I2C 主机命令的op\_code为END，且检测到 I2C END 状态时，触发此中断。
+\item \label{int:I2CEXTRXFIFOOVFINT}I2C\_RXFIFO\_OVF\_INT：当I2C RX FIFO上溢时，触发此中断。
+\item \label{int:I2CEXTTXFIFOWMINT}I2C\_TXFIFO\_WM\_INT：I2C TX FIFO 水标中断。 当\hyperref[fielddesc:I2CFIFOPRTEN]{I2C\_FIFO\_PRT\_EN} 为1， 且 TX FIFO 指针小于 \hyperref[fielddesc:I2CTXFIFOWMTHRHD]{I2C\_TXFIFO\_WM\_THRHD}[4:0]时，触发此中断。
+\item \label{int:I2CEXTRXFIFOWMINT}I2C\_RXFIFO\_WM\_INT：I2C RX FIFO 水标中断。 当\hyperref[fielddesc:I2CFIFOPRTEN]{I2C\_FIFO\_PRT\_EN} 为1， 且 RX FIFO 指针大于 \hyperref[fielddesc:I2CRXFIFOWMTHRHD]{I2C\_RXFIFO\_WM\_THRHD}[4:0]时，触发此中断。
+\end{itemize}
+
+\section{基地址}\label{subsection:I2C base address}
+用户可通过不同的寄存器基地址访问 I2C 控制器，如表 \ref{table:I2C base address} 所示。更多信息，请访问章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+\begin{longtable}{|l|l|c|}
+\caption{I2C 控制器基地址}
+\label{table:I2C base address}\\\hline
+\rowcolor{lightgray}
+模块 & 访问总线 &  基地址\\
+\hline
+\multirow{2}*{I2C0}& PeriBUS1 & \hexprefix{}3F413000 \\\cline{2-3}
+& PeriBUS2 & \hexprefix{}60013000 \\\hline
+\multirow{2}*{I2C1}& PeriBUS1 & \hexprefix{}3F427000 \\\cline{2-3}
+& PeriBUS2 & \hexprefix{}60027000 \\\hline
+\end{longtable}
+
+\hypertarget{i2c-reg-summ}{}
+\section{寄存器列表}
+
+请注意，下表的地址指相对于 I2C 控制器基地址的偏移量（相对地址）。更多有关 I2C 控制器基地址的信息，请前往 \ref{subsection:I2C base address}  章节。
+\subfile{\modulefiles/i2c_summary_cn_1114.tex}
+
+\section{寄存器}
+\subfile{\modulefiles/i2c_reg_cn_1114.tex}
+
+\end{document}

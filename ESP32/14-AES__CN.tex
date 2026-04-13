@@ -1,0 +1,391 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./14-AES}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+\hypertarget{aes}{}
+\chapter{AES 加速器 (AES)}
+\label{mod:aes}
+
+\section{概述}
+
+ESP32 内置 AES（高级加密标准）加速器，相比于只用软件进行 AES 运算，AES 加速器能够极大地提高运算速度。AES 加速器支持 FIPS PUB 197 标准，能够实现 AES-128，AES-192，AES-256 加密与解密运算。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 支持 AES-128 加解密运算
+    \item 支持 AES-192 加解密运算
+    \item 支持 AES-256 加解密运算
+    \item 支持 4 种密钥字节序和 4 种文本字节序
+\end{itemize}
+
+
+\section{功能描述}
+
+
+\subsection{运算模式}
+
+AES 加速器支持 AES-128/192/256 加解密 6 种运算。
+配置寄存器 AES\_MODE\_REG 以实现不同运算。
+寄存器 AES\_MODE\_REG 的值与各种运算的对应关系如表 \ref{table:AESOperation} 所示。
+
+\begin{longtable}[c]{ |p{7cm}|p{8cm}| }
+\caption{运算模式}
+\label{table:AESOperation}
+\\\hline
+\rowcolor{lightgray}
+AES\_MODE\_REG[2:0]     & 运算\\\hline
+    0                       & AES-128 加密    \\
+    \hline
+    1                       & AES-192 加密    \\
+    \hline
+    2                       & AES-256 加密    \\
+    \hline
+    4                       & AES-128 解密    \\
+    \hline
+    5                       & AES-192 解密    \\
+    \hline
+    6                       & AES-256 解密    \\
+        \hline
+\end{longtable}
+
+
+\subsection{密钥、明文、密文}
+
+寄存器 AES\_KEY\_\textcolor{red}{\it{n}}\_REG 存放密钥。每个寄存器位宽都是 32 位，共有 8 个寄存器。如果为 AES-128 加解密运算，则 128 位密钥在寄存器 AES\_KEY\_0\_REG \verb+~+ AES\_KEY\_3\_REG 中。
+如果为 AES-192 加解密运算，则 192 位密钥在寄存器 AES\_KEY\_0\_REG \verb+~+ AES\_KEY\_5\_REG 中。
+如果为 AES-256 加解密运算，则 256 位密钥在寄存器 AES\_KEY\_0\_REG \verb+~+ AES\_KEY\_7\_REG 中。
+
+寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG 存放明文或密文。每个寄存器位宽都是 32 位，共有 4 个寄存器。
+如果为 AES-128/192/265 加密运算，则运算开始之前用明文初始化寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG。运算完成之后，AES 加速器将把密文更新入寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG。
+如果为 AES-128/192/256 解密运算，则运算开始之前用密文初始化寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG。运算完成之后，AES 加速器将把明文更新入寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG。
+
+
+\subsection{字节序}
+
+\textbf{密钥字节序}
+
+寄存器 AES\_ENDIAN\_REG 的 Bit 0、Bit 1 控制密钥的字节序，具体见表 \ref{table:AES128KeyEndian}、表 \ref{table:AES192KeyEndian}、表 \ref{table:AES256KeyEndian}。
+表 \ref{table:AES128KeyEndian} 中的 w[0] \verb+~+ w[3]、
+表 \ref{table:AES192KeyEndian} 中的 w[0] \verb+~+ w[5]、
+表 \ref{table:AES256KeyEndian} 中的 w[0] \verb+~+ w[7] 皆为标准 FIPS PUB 197 中“5.2 Key Expansion”所述“the first Nk words of the expanded key”。
+Bit 一列指明 w[0] \verb+~+ w[7] 每个 word 中的各个字节。
+三张表表明了在四种不同字节序下，寄存器 AES\_KEY\_\textcolor{red}{\it{n}}\_REG 中的每个字节如何构成“the first Nk words of the expanded key”。
+
+\textbf{文本字节序}
+
+寄存器 AES\_ENDIAN\_REG 的 Bit 2、Bit 3 控制输入文本的字节序，Bit 4、Bit 5 控制输出文本的字节序。
+输入文本在 AES-128/192/256 加密运算时指的是明文，在 AES-128/192/256 解密运算时指的是密文。
+输出文本在 AES-128/192/256 加密运算时指的是密文，在 AES-128/192/256 解密运算时指的是明文。
+具体见表 \ref{table:AESPlaintextCiphertextEndian}。
+表 \ref{table:AESPlaintextCiphertextEndian} 中的 State 为标准 FIPS PUB 197 中“3.4 The State”所述“the AES algorithm's operations are performed on a tow-dimensional array of bytes called the State”。
+此表表明了在四种不同字节序下，寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG 中的每个字节所存放的明文或密文如何构成 State。
+
+\begin{tiny}
+\begin{longtable}[c]
+{ |p{2cm}|p{2cm}|p{0.5cm}|p{0.5cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|}
+\caption{AES 文本字节序}\label{table:AESPlaintextCiphertextEndian}\\
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[3]/[5] &  AES\_ENDIAN\_REG[2]/[4]	& \multicolumn{6}	{c|}{Plaintext/Ciphertext}	\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[3]/[5] &  AES\_ENDIAN\_REG[2]/[4]	&\multicolumn{6}{c|}{Plaintext/Ciphertext}	\\\hline
+\endhead
+\endfoot
+\multirow{6}{4cm}{0} 	&	\multirow{6}{4cm}{0}	&\multicolumn{2}{c|}{\multirow{2}{*}{State}}	&\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{} 	&	\multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}{r} & 0 & AES\_TEXT\_3\_REG[31:24]	&	AES\_TEXT\_2\_REG[31:24]	& AES\_TEXT\_1\_REG[31:24]	&	AES\_TEXT\_0\_REG[31:24]\\
+\cline{4-8}
+&& &1		&	AES\_TEXT\_3\_REG[23:16]	&	AES\_TEXT\_2\_REG[23:16] 	&	AES\_TEXT\_1\_REG[23:16]	&	AES\_TEXT\_0\_REG[23:16]\\
+\cline{4-8}
+&& &2	&	AES\_TEXT\_3\_REG[15:8]	&	AES\_TEXT\_2\_REG[15:8] 	&	AES\_TEXT\_1\_REG[15:8]	&	AES\_TEXT\_0\_REG[15:8]\\
+\cline{4-8}
+&& &3	&	AES\_TEXT\_3\_REG[7:0]	&	AES\_TEXT\_2\_REG[7:0] 	&	AES\_TEXT\_1\_REG[7:0]	&	AES\_TEXT\_0\_REG[7:0]\\
+\hline
+\multirow{6}{4cm}{0} 	&	\multirow{6}{4cm}{1}	&\multicolumn{2}{c|}{\multirow{2}{*}{State}}	&\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{} 	&	\multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &AES\_TEXT\_3\_REG[7:0]	&	AES\_TEXT\_2\_REG[7:0] 	&	AES\_TEXT\_1\_REG[7:0]	&	AES\_TEXT\_0\_REG[7:0]\\
+\cline{4-8}
+&& &1		&	AES\_TEXT\_3\_REG[15:8]	&	AES\_TEXT\_2\_REG[15:8] 	&	AES\_TEXT\_1\_REG[15:8]	&	AES\_TEXT\_0\_REG[15:8]\\
+\cline{4-8}
+&& &2	&	AES\_TEXT\_3\_REG[23:16]	&	AES\_TEXT\_2\_REG[23:16] 	&	AES\_TEXT\_1\_REG[23:16]	&	AES\_TEXT\_0\_REG[23:16]\\
+\cline{4-8}
+&& &3	&	AES\_TEXT\_3\_REG[31:24]	&	AES\_TEXT\_2\_REG[31:24]	& AES\_TEXT\_1\_REG[31:24]	&	AES\_TEXT\_0\_REG[31:24]\\
+\hline
+\multirow{6}{4cm}{1} 	&	\multirow{6}{4cm}{0}	&\multicolumn{2}{c|}{\multirow{2}{*}{State}}	&\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{} 	&	\multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &AES\_TEXT\_0\_REG[31:24]	&	AES\_TEXT\_1\_REG[31:24]	& AES\_TEXT\_2\_REG[31:24]	&	AES\_TEXT\_3\_REG[31:24]\\
+\cline{4-8}
+&& &1		&	AES\_TEXT\_0\_REG[23:16]	&	AES\_TEXT\_1\_REG[23:16] 	&	AES\_TEXT\_2\_REG[23:16]	&	AES\_TEXT\_3\_REG[23:16]\\
+\cline{4-8}
+&& &2	&	AES\_TEXT\_0\_REG[15:8]	&	AES\_TEXT\_1\_REG[15:8] 	&	AES\_TEXT\_2\_REG[15:8]	&	AES\_TEXT\_3\_REG[15:8]\\
+\cline{4-8}
+&& &3	&	AES\_TEXT\_0\_REG[7:0]	&	AES\_TEXT\_1\_REG[7:0] 	&	AES\_TEXT\_2\_REG[7:0]	&	AES\_TEXT\_3\_REG[7:0]\\
+\hline
+\multirow{6}{4cm}{1} 	&	\multirow{6}{4cm}{1}	&\multicolumn{2}{c|}{\multirow{2}{*}{State}}	&\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{} 	&	\multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &AES\_TEXT\_0\_REG[7:0]	&	AES\_TEXT\_1\_REG[7:0] 	&	AES\_TEXT\_2\_REG[7:0]	&	AES\_TEXT\_3\_REG[7:0]\\
+\cline{4-8}
+&& &1		&	AES\_TEXT\_0\_REG[15:8]	&	AES\_TEXT\_1\_REG[15:8] 	&	AES\_TEXT\_2\_REG[15:8]	&	AES\_TEXT\_3\_REG[15:8]\\
+\cline{4-8}
+&& &2	&	AES\_TEXT\_0\_REG[23:16]	&	AES\_TEXT\_1\_REG[23:16] 	&	AES\_TEXT\_2\_REG[23:16]	&	AES\_TEXT\_3\_REG[23:16]\\
+\cline{4-8}
+&& &3	&	AES\_TEXT\_0\_REG[31:24]	&	AES\_TEXT\_1\_REG[31:24]	& AES\_TEXT\_2\_REG[31:24]	&	AES\_TEXT\_3\_REG[31:24]\\
+\hline
+\end{longtable}
+\end{tiny}
+
+\newgeometry{left=1cm,right=1cm,top=2cm,bottom=2cm}
+\begin{landscape}
+
+\begin{tiny}
+\begin{longtable}[c]
+{ |p{2cm}|p{2cm}|p{1cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|}
+\caption{AES-128 密钥字节序}\label{table:AES128KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3]	\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3]	\\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\cline{3-7}
+&&	[23:16] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-7}
+&&	[15:8]	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-7}
+&&	[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\cline{3-7}
+&&	[23:16] 	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-7}
+&&	[15:8] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-7}
+&&	[7:0]	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24]\\
+\cline{3-7}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16]\\
+\cline{3-7}
+&&	[15:8]	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]\\
+\cline{3-7}
+&&	[7:0]	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]\\
+\cline{3-7}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]\\
+\cline{3-7}
+&&	[15:8] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16]\\
+\cline{3-7}
+&&	[7:0]	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24]\\
+\hline
+\end{longtable}
+\begin{longtable}[c]
+{ |p{1.5cm}|p{1.5cm}|p{0.5cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|}
+\caption{AES-192 密钥字节序}\label{table:AES192KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3] 	&	w[4] 	&	w[5]	\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3] 	&	w[4] 	&	w[5]	\\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_5\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24] 	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\cline{3-9}
+&&	[23:16] 	&	AES\_KEY\_5\_REG[23:16]	&	AES\_KEY\_4\_REG[23:16] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-9}
+&&	[15:8]	&	AES\_KEY\_5\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-9}
+&&	[7:0]	&	AES\_KEY\_5\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	&	AES\_KEY\_5\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0] 	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\cline{3-9}
+&&	[23:16] 	&	AES\_KEY\_5\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8] 	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-9}
+&&	[15:8] 	&	AES\_KEY\_5\_REG[23:16]	&	AES\_KEY\_4\_REG[23:16] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-9}
+&&	[7:0]	&	AES\_KEY\_5\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24]		&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24] 	&	AES\_KEY\_4\_REG[31:24]	&	AES\_KEY\_5\_REG[31:24]\\
+\cline{3-9}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16] 	&	AES\_KEY\_4\_REG[23:16]	&	AES\_KEY\_5\_REG[23:16]\\
+\cline{3-9}
+&&	[15:8]	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_5\_REG[15:8]\\
+\cline{3-9}
+&&	[7:0]	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_5\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_5\_REG[7:0]\\
+\cline{3-9}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8] 	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_5\_REG[15:8]\\
+\cline{3-9}
+&&	[15:8] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16] 	&	AES\_KEY\_4\_REG[23:16]	&	AES\_KEY\_5\_REG[23:16]\\
+\cline{3-9}
+&&	[7:0]	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24]	&	AES\_KEY\_5\_REG[31:24]\\
+\hline
+\end{longtable}
+\begin{longtable}[c]
+{ |p{1.5cm}|p{1.5cm}|p{0.5cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|}
+\caption{AES-256 密钥字节序}\label{table:AES256KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3] 	&	w[4] 	&	w[5]&	w[6] 	&	w[7]	\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+AES\_ENDIAN\_REG[1]	&	AES\_ENDIAN\_REG[0]	&	Bit	&	w[0]	&	w[1]	&	w[2] 	&	w[3] 	&	w[4] 	&	w[5]&	w[6] 	&	w[7]	\\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_7\_REG[31:24]	&	AES\_KEY\_6\_REG[31:24] 	& AES\_KEY\_5\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24] 	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\cline{3-11}
+&&	[23:16] 	&AES\_KEY\_7\_REG[23:16]	&	AES\_KEY\_6\_REG[23:16] 	&	AES\_KEY\_5\_REG[23:16]	&	AES\_KEY\_4\_REG[23:16] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-11}
+&&	[15:8]	&	AES\_KEY\_7\_REG[15:8]	&	AES\_KEY\_6\_REG[15:8]	&AES\_KEY\_5\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-11}
+&&	[7:0]	&	AES\_KEY\_7\_REG[7:0]	&	AES\_KEY\_6\_REG[7:0]	&AES\_KEY\_5\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{0} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	& AES\_KEY\_7\_REG[7:0]	&	AES\_KEY\_6\_REG[7:0] 	&	AES\_KEY\_5\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0] 	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_2\_REG[7:0] 	&	AES\_KEY\_1\_REG[7:0]	&	AES\_KEY\_0\_REG[7:0]\\
+\cline{3-11}
+&&	[23:16] 	&	AES\_KEY\_7\_REG[15:8]	&	AES\_KEY\_6\_REG[15:8] 	&AES\_KEY\_5\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8] 	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_2\_REG[15:8] 	&	AES\_KEY\_1\_REG[15:8]	&	AES\_KEY\_0\_REG[15:8]\\
+\cline{3-11}
+&&	[15:8] 	&	AES\_KEY\_7\_REG[23:16]	&	AES\_KEY\_6\_REG[23:16] 	&AES\_KEY\_5\_REG[23:16]	&	AES\_KEY\_4\_REG[23:16] 	&	AES\_KEY\_3\_REG[23:16]	&	AES\_KEY\_2\_REG[23:16] 	&	AES\_KEY\_1\_REG[23:16]	&	AES\_KEY\_0\_REG[23:16]\\
+\cline{3-11}
+&&	[7:0]	&	AES\_KEY\_7\_REG[31:24]	&	AES\_KEY\_6\_REG[31:24]		&AES\_KEY\_5\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24]		&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_2\_REG[31:24]	& AES\_KEY\_1\_REG[31:24]	&	AES\_KEY\_0\_REG[31:24]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{0}	&	[31:24] 	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24] 	&	AES\_KEY\_4\_REG[31:24]	&	AES\_KEY\_5\_REG[31:24]&	AES\_KEY\_6\_REG[31:24]	&	AES\_KEY\_7\_REG[31:24]\\
+\cline{3-11}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16] 	&	AES\_KEY\_4\_REG[23:16]	&	AES\_KEY\_5\_REG[23:16]	&	AES\_KEY\_6\_REG[23:16]	&	AES\_KEY\_7\_REG[23:16]\\
+\cline{3-11}
+&&	[15:8]	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8]	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_5\_REG[15:8]
+&	AES\_KEY\_6\_REG[15:8]	&	AES\_KEY\_7\_REG[15:8]\\
+\cline{3-11}
+&&	[7:0]	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_5\_REG[7:0]&	AES\_KEY\_6\_REG[7:0]	&	AES\_KEY\_7\_REG[7:0]\\
+\hline
+\multirow{4}{4cm}{1} 	&	\multirow{4}{4cm}{1}	&	[31:24] 	&	AES\_KEY\_0\_REG[7:0]	&	AES\_KEY\_1\_REG[7:0] 	&	AES\_KEY\_2\_REG[7:0]	&	AES\_KEY\_3\_REG[7:0]	&	AES\_KEY\_4\_REG[7:0]	&	AES\_KEY\_5\_REG[7:0]
+&	AES\_KEY\_6\_REG[7:0]	&	AES\_KEY\_7\_REG[7:0]\\
+\cline{3-11}
+&&	[23:16] 	&	AES\_KEY\_0\_REG[15:8]	&	AES\_KEY\_1\_REG[15:8] 	&	AES\_KEY\_2\_REG[15:8]	&	AES\_KEY\_3\_REG[15:8] 	&	AES\_KEY\_4\_REG[15:8]	&	AES\_KEY\_5\_REG[15:8] 	&	AES\_KEY\_6\_REG[15:8]	&	AES\_KEY\_7\_REG[15:8]\\
+\cline{3-11}
+&&	[15:8] 	&	AES\_KEY\_0\_REG[23:16]	&	AES\_KEY\_1\_REG[23:16] 	&	AES\_KEY\_2\_REG[23:16]	&	AES\_KEY\_3\_REG[23:16] 	&	AES\_KEY\_4\_REG[23:16]	&	AES\_KEY\_5\_REG[23:16]&	AES\_KEY\_6\_REG[23:16]	&	AES\_KEY\_7\_REG[23:16]\\
+\cline{3-11}
+&&	[7:0]	&	AES\_KEY\_0\_REG[31:24]	&	AES\_KEY\_1\_REG[31:24]	& AES\_KEY\_2\_REG[31:24]	&	AES\_KEY\_3\_REG[31:24]	&	AES\_KEY\_4\_REG[31:24]	&	AES\_KEY\_5\_REG[31:24]&	AES\_KEY\_6\_REG[31:24]	&	AES\_KEY\_7\_REG[31:24]\\
+\hline
+\end{longtable}
+\end{tiny}
+\end{landscape}
+\restoregeometry
+
+\subsection{加密与解密运算}
+
+\textbf{单次运算}
+
+\begin{enumerate}
+    \item 初始化寄存器 AES\_MODE\_REG、AES\_KEY\_\textcolor{red}{\it{n}}\_REG、AES\_TEXT\_\textcolor{red}{\it{m}}\_REG、AES\_ENDIAN\_REG。
+    \item 对寄存器 AES\_START\_REG 写入 1。
+    \item 轮询寄存器 AES\_IDLE\_REG，直到从寄存器 AES\_IDLE\_REG 读出1。
+    \item 从寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG 读取结果。
+\end{enumerate}
+
+\textbf{连续运算}
+
+每次运算完成之后，只有寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG 会被 AES 加速器更新，
+即寄存器 AES\_MODE\_REG、\\AES\_KEY\_\textcolor{red}{\it{n}}\_REG、AES\_ENDIAN\_REG 中的内容不会变化。
+所以进行连续运算时可以简化初始化操作。
+
+\begin{enumerate}
+    \item 更新寄存器 AES\_MODE\_REG、AES\_KEY\_\textcolor{red}{\it{n}}\_REG、AES\_ENDIAN\_REG 中需要更新的，其余不做变动。
+    \item 更新寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG。
+    \item 对寄存器 AES\_START\_REG 写入 1。
+    \item 轮询寄存器 AES\_IDLE\_REG，直到从寄存器 AES\_IDLE\_REG 读出 1。
+    \item 从寄存器 AES\_TEXT\_\textcolor{red}{\it{m}}\_REG 读取结果。
+\end{enumerate}
+
+\subsection{运行效率}
+AES 每加密一个信息块需要 11 \verb+~+ 15 个时钟周期，每解密一个信息块需要 21 或 22 个时钟周期。
+
+\hypertarget{aes-reg-summ}{}
+\section{寄存器列表}\label{sec:aes-reg-summ}
+
+\subfile{\modulefiles/aes_reg_summary_cn}
+
+\section{寄存器}
+\subfile{\modulefiles/aes_reg_cn}
+\end{document}

@@ -51,7 +51,7 @@ class PythonGitlabNotes():
                 Language (language_links)
                     PDF link
         """
-        # Get MR labels to check for 'Release'
+        # Get MR labels to check for 'release'
         mr = self.project.mergerequests.get(self.mr_iid)
         labels = [label.lower() for label in mr.labels]
         has_release_label = 'release' in labels
@@ -63,7 +63,7 @@ class PythonGitlabNotes():
             if os.path.isfile(file_path) and filename.startswith('doc-url-3-'):
                 if has_release_label and not filename.endswith('-1.txt'):
                     continue
-                # Skip the file if it doesn't end with '-1.txt' when Release label is present
+                # Skip the file if it doesn't end with '-1.txt' when release label is present
                 with open(file_path, "r") as file:
                     desc_url = file.readline()
                     file.close()

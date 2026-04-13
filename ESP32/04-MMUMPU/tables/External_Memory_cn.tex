@@ -1,0 +1,352 @@
+\subsubsection{片外存储器}\label{para:external_Memory}
+
+对片外闪存和片外 SPI RAM 的访问 通过 Cache 实现，并且由 MMU 管理。根据进程的 PID 以及运行该进程的 CPU，Cache MMU 可以实现不同的映射，做法类似于片上存储器 MMU。即，对于存储器的每个虚地址页，都有对应寄存器详细说明该虚地址页应映射到哪一个实地址页。但管理片上存储器的 MMU 和 Cache MMU 之间存在差异。首先，Cache MMU 具有固定的页面大小（片外闪存页大小为 64 KB，片外 RAM 页大小为 32 KB）；其次，Cache MMU 具有用于每个 PID 和处理器内核的显式映射表，不通过 MMU 配置项来控制访问权限。在下文中，MMU 映射配置寄存器将被统称为“配置项”。这些寄存器只能由 PID 为 0 或 1 的进程访问；PID 为 2 到 7 的进程必须通过 PID 为 0 或 1 的进程来改变它们的 MMU 设置。
+
+如上所述，MMU 配置项用于将对存储器虚地址页的访问映射到对存储器实地址页的访问。MMU 控制虚地址空间的五个区域，详见表 \ref{table:Virtual_Address_for_External_Memory}。地址范围 $VAddr_1$ 到 $VAddr_4$ 用于访问片外闪存，$VAddr_{\mathrm{RAM}}$ 用于访问片外 RAM。注意 $VAddr_4$ 是 $VAddr_0$ 的子集。
+
+
+\begin{table}[H]
+  
+    \caption{片外存储器的虚地址}
+    \label{table:Virtual_Address_for_External_Memory}
+    \begin{tabular}[h]{ |p{3cm}|p{2cm}|p{3.5cm}|p{3.5cm}|p{3cm}|}
+    
+  
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{边界地址} & \\
+        \cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{大小} & 低 & 高 & \multirow{-2}*{页数量} \\
+        \hline
+        $\mathrm{VAddr}_{0}$ & 4 MB & 0x3F40\_0000 & 0x3F7F\_FFFF & 64 \\
+        \hline
+        $\mathrm{VAddr}_{1}$ & 4 MB & 0x4000\_0000 & 0x403F\_FFFF & 64* \\
+        \hline
+        $\mathrm{VAddr}_{2}$ & 4 MB & 0x4040\_0000 & 0x407F\_FFFF & 64 \\
+        \hline
+        $\mathrm{VAddr}_{3}$ & 4 MB & 0x4080\_0000 & 0x40BF\_FFFF & 64 \\
+        \hline
+        $\mathrm{VAddr}_{4}$ & 1 MB & 0x3F40\_0000 & 0x3F4F\_FFFF & 16 \\
+        \hline
+        $VAddr_{\mathrm{RAM}}$ & 4 MB & 0x3F80\_0000 & 0x3FBF\_FFFF & 128 \\
+        \hline
+    \end{tabular}\\
+      \\
+    {*} 此处为了表述方便将地址范围写作 0x4000\_0000 \verb+~+ 0x403F\_FFFF 这样一个完整的 4 MB 地址空间。但其中部分地址范围无法访问。地址范围 0x4000\_0000 \verb+~+ 0x400C\_1FFF 
+只访问片上存储器。即 $VAddr_1$ 的某些配置项不会被使用。
+\end{table}
+
+\subparagraph{片外闪存}
+表 \ref{table:MMU_Entry_Numbers_PRO_CPU} 和 \ref{table:MMU_Entry_Numbers_APP_CPU} 详细描述了配置项号，虚拟存储器范围和 PID 的关系。这两个表格
+列出了每个存储器区域和 PID 组合所对应的管理映射的第一个 MMU 配置项。 表格中的数字是指管理第一个地址页的 MMU 配置项； “数量”一列表示页的数量，此为对应的存储器地址范围占用的页数量。
+
+这两个表本质上是相同的，区别在于 APP\_CPU 的配置项号比对应的 PRO\_CPU 配置项号大 2048。注意，地址范围 $VAddr_0$ 和 $VAddr_1$ 只能由 PID 为 0 或 1 的进程访问，$VAddr_4$ 只能由 PID 为 2 到 7 的进程访问。
+
+\begin{table}[H]
+    \centering
+    \caption{PRO\_CPU 的 MMU 配置项号}
+    \label{table:MMU_Entry_Numbers_PRO_CPU}
+    \begin{tabular}[h]{|p{2.5cm}|p{1.5cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|}
+    \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{7}{c|}{PID 对应的第一个 MMU 配置项} \\
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{数量} & 0/1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+        \hline
+        $\mathrm{VAddr}_{0}$ & 64 & 0 & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{1}$ & 64 & 64 & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{2}$ & 64 & 128 & 256 & 384 & 512 & 640 & 768 & 896 \\
+        \hline
+        $\mathrm{VAddr}_{3}$ & 64 & 192 & 320 & 448 & 576 & 704 & 832 & 960 \\
+        \hline
+        $\mathrm{VAddr}_{4}$ & 16 & - & 1056 & 1072 & 1088 & 1104 & 1120 & 1136\\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{APP\_CPU 的 MMU 配置项号}
+    \label{table:MMU_Entry_Numbers_APP_CPU}
+    \begin{tabular}[h]{|p{2.5cm}|p{1.5cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{7}{c|}{PID 对应的第一个 MMU 配置项} \\
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{数量} & 0/1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+        \hline
+        $\mathrm{VAddr}_{0}$ & 64 & 2048 & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{1}$ & 64 & 2112 & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{2}$ & 64 & 2176 & 2304 & 2432 & 2560 & 2688 & 2816 & 2944 \\
+        \hline
+        $\mathrm{VAddr}_{3}$ & 64 & 2240 & 2368 & 2496 & 2624 & 2752 & 2880 & 3008 \\
+        \hline
+        $\mathrm{VAddr}_{4}$ & 16 & - & 3104 & 3120 & 3136 & 3152 & 3168 & 3184 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+如以上表格所示，虚地址 $\mathrm{VAddr}_{1}$ 只能由 PID 为 0 或 1 的进程使用。为此专门有一种模式使得 PID 为 2 到 7 的进程能够通过地址 $\mathrm{VAddr}_{1}$ 读取片外闪存。当寄存器 DPORT\_PRO\_CACHE\_CTRL\_REG中的DPORT\_PRO\_ SINGLE\_IRAM\_ENA 位置 1 时，MMU 进入此特殊模式使得 PRO\_CPU 访问存储器。同理，当寄存器 DPORT\_APP\_ CACHE\_CTRL\_REG 中的 DPORT\_APP\_SINGLE\_IRAM\_ENA 位为 1 时，APP\_CPU 在此种模式下访问存储器。在这种模式下，MMU 的每个配置项所支持的进程和虚地址页不同。
+具体参考表 \ref{table:MMU_Entry_Numbers_PRO_CPU_Special_Mode} 和 表  \ref{table:MMU_Entry_Numbers_APP_CPU_Special_Mode}。如这些表格所示，在此特殊模式下，不能使用 $\mathrm{VAddr}_{2}$ 和 $\mathrm{VAddr}_{3}$ 访问片外闪存。
+
+\begin{table}[H]
+    \centering
+    \caption{PRO\_CPU 的MMU 配置项号（特殊模式）}
+    \label{table:MMU_Entry_Numbers_PRO_CPU_Special_Mode}
+   \begin{tabular}[h]{|p{2.5cm}|p{1.5cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{7}{c|}{PID 对应的第一个 MMU 配置项} \\
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{数量} & 0/1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+        \hline
+        $\mathrm{VAddr}_{0}$ & 64 & 0 & - & - & - & - & - & -\\
+        \hline
+        $\mathrm{VAddr}_{1}$ & 64 & 64 & 256 & 384 & 512 & 640 & 768 & 896 \\
+        \hline
+        $\mathrm{VAddr}_{2}$ & 64 & - & - & - & - & - & - & -\\
+        \hline
+        $\mathrm{VAddr}_{3}$ & 64 & - & - & - & - & - & - & -\\
+        \hline
+        $\mathrm{VAddr}_{4}$ & 16 & - & 1056 & 1072 & 1088 & 1104 & 1120 & 1136\\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{APP\_CPU 的MMU 配置项号（特殊模式）}
+    \label{table:MMU_Entry_Numbers_APP_CPU_Special_Mode}
+   \begin{tabular}[h]{|p{2.5cm}|p{1.5cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{7}{c|}{PID 对应的第一个 MMU 配置项} \\
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{数量} & 0/1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+        \hline
+        $\mathrm{VAddr}_{0}$ & 64 & 2048 & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{1}$ & 64 & 2112 & 2304 & 2432 & 2560 & 2688 & 2816 & 2944 \\
+        \hline
+        $\mathrm{VAddr}_{2}$ & 64 & - & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{3}$ & 64 & - & - & - & - & - & - & - \\
+        \hline
+        $\mathrm{VAddr}_{4}$ & 16 & - & 3104 & 3120 & 3136 & 3152 & 3168 & 3184 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+MMU 的每个配置项将 CPU 进程的虚地址页映射到实地址页。 每个配置项位宽为 32。其中，0 到 7 号位 表示由虚地址页映射去的实地址页。MMU 配置项有效时必须清除 8 号位。8 号位置 1 的配置项不会将任何实地址映射到虚地址。10 号位到 32 号位 不使用，应写为零。由于 MMU 项中有 8 个地址位，片外闪存的页大小为 64 KB，因此支持的最大片外闪存 256 × 64 KB = 16 MB。
+
+\subparagraph{示例}
+
+示例 1：PID 为 1 的 PRO\_CPU 进程需要通过虚地址 0x3F70\_2375 读取片外闪存地址 0x07\_2375。MMU 不处于特殊模式。
+\begin{itemize}
+\itemsep-0.5em
+\item 根据表 \ref{table:Virtual_Address_for_External_Memory}，虚地址 0x3F70\_2375 位于 $\mathrm{VAddr}_0$ 的 0x30 号页。
+\item 根据表 \ref{table:MMU_Entry_Numbers_PRO_CPU}，PID 为 0/1 时，对于 PRO\_CPU，$\mathrm{VAddr}_0$ 的 MMU 配置项从 0 开始。
+\item 被更改的 MMU 配置项为 0 + 0x30 = 0x30。
+
+\item 地址 0x07\_2375 位于 7 号 64 KB 页上。
+
+\item MMU 配置项 0x30 需要设置为 7，并通过将 8 号位置为 0 来标记为有效，因此，将 0x007 写入 MMU 配置项 0x30。
+\end{itemize}
+
+
+示例 2：PID 为 4 的 APP\_CPU 进程需要通过虚地址 0x4044\_048C 读取片外闪存地址 0x44\_048C。MMU 不处于特殊模式。
+
+\begin{itemize}
+\itemsep-0.5em
+\item 根据表 \ref{table:Virtual_Address_for_External_Memory}，虚地址 0x4044\_048C 位于 $\mathrm{VAddr}_{2}$ 的 0x4 号页。
+\item 根据表 \ref{table:MMU_Entry_Numbers_APP_CPU}，PID 为 4 时，对于 APP\_CPU，$\mathrm{VAddr}_{2}$ 的 MMU 配置项从 2560 开始。
+\item 被更改的 MMU 配置项是 2560 + 0x4 = 2564。
+\item 地址 0x44\_048C 位于 0x44 号 64 KB 页上。
+\item MMU 配置项 2564 需要设置为 0x44 并且通过将 8 号位置为 0 来标记为有效，因此，将 0x044 写入 MMU 配置项 2564。
+\end{itemize}
+
+\subparagraph{片外 RAM}
+
+在 PRO\_CPU 和 APP\_CPU 上运行的进程可以通过缓存读写片外 SRAM，读写地址为虚地址范围 $VAddr_{\mathrm{RAM}}$，即 0x3F80\_0000 \verb+~+ 0x3FBF\_FFFF。与闪存 MMU 一样，地址空间和物理存储器被分成页。 对于片外 RAM MMU，页大小为 32 KB，并且 MMU 能够将 256 个实地址页映射到虚地址空间，允许映射 32 KB × 256 = 8 MB 的片外 RAM 实地址。
+
+该地址范围的虚地址页映射取决于 MMU 所处的模式：低-高模式，偶-奇模式或正常模式。在所有情况下，寄存器 DPORT\_PRO\_CACHE\_CTRL\_REG 中的 DPORT\_PRO\_DRAM\_HL 位和 DPORT\_PRO\_DRAM\_SPLIT 位，DPORT \_APP\_CACHE\_CTRL\_REG 中的 DPORT\_APP\_DRAM\_HL 位和 DPORT\_APP\_DRAM\_SPLIT 位共同决定片外\\SRAM 的虚地址模式，具体参考表 \ref{table:Virtual_Address_Mode_for_External_SRAM}。如果需要 PRO\_CPU 和 APP\_CPU 的映射不同，则应选择正常模式，因为它是唯一可以达到此要求的模式。如果允许 PRO\_CPU 和 APP\_CPU 共享相同的映射，使用高-低或偶-奇模式可以在两个 CPU 频繁访问存储器时提高速度。
+ 
+APP\_CPU Cache 关闭时，0x4007\_8000 到 0x4007\_FFFF 的区域用作正常的片上 RAM，各种 Cache 模式的可用性有所变化。正常模式下，可以在 PRO\_CPU 访问片外 RAM 的同时保持 Cache 正常运行，但 APP\_CPU 无法访问片外 RAM。高-低模式下，两个 CPU 都可以使用片外 RAM，但只能使用 0x3F80\_0000 到 0x3F9F\_FFFF 的 2 MB 存储器虚地址。不建议在 APP\_CPU Cache 区域关闭的情况下使用奇-偶模式。
+
+
+\begin{table}[H]
+    \centering
+    \caption{片外 SRAM 的虚拟地址模式}
+    \label{table:Virtual_Address_Mode_for_External_SRAM}
+     \begin{tabular}[h]{|p{4cm}|p{5.5cm}|p{5.5cm}|}
+        \hline
+        \rowcolor{lightgray}
+       模式 &
+        \makecell{DPORT\_PRO\_DRAM\_HL\\DPORT\_APP\_DRAM\_HL} &
+        \makecell{DPORT\_PRO\_DRAM\_SPLIT\\DPORT\_APP\_DRAM\_SPLIT} \\
+        \hline
+        低-高 & 1 & 0 \\
+        \hline
+        偶-奇 & 0 & 1 \\
+        \hline
+        正常 & 0 & 0 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+在正常模式下，两个 CPU 的虚地址页到实地址页的映射可以是不同的。通过 $VAddr_{\mathrm{RAM}}$ 的 MMU 配置项设置 PRO\_CPU 的页映射；通过 $VAddr_{\mathrm{RAM}}$ 的 MMU 配置项设置 APP\_CPU 的页映射。在这一模式下，$^{L}VAddr \quad ^{R}VAddr$ 的 128 页都被使用，从而能够映射最大为 8 MB 的内存。其中 4 MB 映射到 PRO\_CPU 地址，4 MB 映射到 APP\_CPU 地址，如表 \ref{table:Virtual_Address_for_External_SRAM_Normal_Mode} 所示。
+
+
+\begin{table}[H]
+    \centering
+    \caption{片外 SRAM 的虚地址（正常模式）}
+    \label{table:Virtual_Address_for_External_SRAM_Normal_Mode}
+    \begin{tabular}[h]{|p{3cm}|p{2cm}|p{5cm}|p{5cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{PRO\_CPU 地址} \\
+        \cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{虚拟地址} & \multirow{-2}*{大小} & 低 & 高 \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        4 MB & 0x3F80\_0000 & 0x3FBF\_FFFF \\
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{APP\_CPU 地址} \\
+        \cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{虚拟地址} & \multirow{-2}*{大小} & 低 & 高 \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        4 MB & 0x3F80\_0000 & 0x3FBF\_FFFF \\
+        \hline
+    \end{tabular}
+\end{table}
+
+在低-高模式下，PRO\_CPU 以及 APP\_CPU 使用相同的映射配置项。在这种模式下，$^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 用于虚地址空间的低 2 MB，而 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 用于虚地址空间的高 2 MB。这也意味着 $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 的高 64 个 MMU 配置项以及 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 的低 64 个配置项未使用。表 \ref{table:Virtual_Address_for_External_SRAM_Low_High_Mode} 详细描述了这些地址范围。
+
+
+\begin{table}[H]
+    \centering
+    \caption{片外 SRAM 的虚地址（低-高模式）}
+    \label{table:Virtual_Address_for_External_SRAM_Low_High_Mode}
+    \begin{tabular}[h]{|p{3cm}|p{2cm}|p{5cm}|p{5cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{PRO\_CPU/APP\_CPU 地址} \\
+        \cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{虚拟地址} & \multirow{-2}*{大小} & 低 & 高 \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        2 MB & 0x3F80\_0000 & 0x3F9F\_FFFF \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        2 MB & 0x3FA0\_0000 & 0x3FBF\_FFFF \\
+        \hline
+    \end{tabular}
+\end{table}
+
+在偶-奇存储器中，VRAM 被拆分为 32 字节的块。偶数块通过 MMU 配置项分散到 $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$，奇数块通过 MMU 配置项分散到 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$。 一般来说，$^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 和 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 的 MMU 配置项将被设置为相同的值，因此虚地址页可以映射到物理存储器的一个连续区域。表 \ref{table:Virtual_Address_for_External_SRAM_Even_Odd_Mode} 详细说明了这种模式。
+
+
+\begin{table}[H]
+    \centering
+    \caption{片外 SRAM 的虚地址（偶–奇模式）}
+    \label{table:Virtual_Address_for_External_SRAM_Even_Odd_Mode}
+  \begin{tabular}[h]{|p{3cm}|p{2cm}|p{5cm}|p{5cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{PRO\_CPU/APP\_CPU 地址} \\
+        \cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{虚拟地址} & \multirow{-2}*{大小} & 低 & 高 \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3F80\_0000 & 0x3F80\_001F \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3F80\_0020 & 0x3F80\_003F \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3F80\_0040 & 0x3F80\_005F \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3F80\_0060 & 0x3F80\_007F \\
+        \hline
+        \multicolumn{4}{|c|}{...} \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3FBF\_FFC0 & 0x3FBF\_FFDF \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ &
+        32 字节 & 0x3FBF\_FFE0 & 0x3FBF\_FFFF \\
+        \hline
+    \end{tabular}
+\end{table}
+
+片外 RAM MMU 配置项的位配置与闪存相同：配置项为 32 位寄存器，使用低 9 位。0 号位到 7 号位包含配置项需要映射其对应虚地址页的实地址页。如果配置项有效，则 8 号位被清除；如果配置项无效，则 8 号位置 1。表 \ref{table:MMU_Entry_Numbers_RAM} 详细说明 $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 和 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 对应所有 PID 的第一个 MMU 配置项号。
+
+\begin{table}[H]
+    \centering
+    \caption{片外 RAM 的 MMU 配置项号}
+    \label{table:MMU_Entry_Numbers_RAM}
+    \begin{tabular}[h]{|p{2.5cm}|p{1.5cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|p{1.25cm}|}
+        \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{7}{c|}{PID 对应的第一个 MMU 配置项} \\
+        \rowcolor{lightgray}
+        \multirow{-2}*{地址} & \multirow{-2}*{页数量} & 0/1 & 2 & 3 & 4 & 5 & 6 & 7 \\
+        \hline
+        $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ & 128 & 1152 & 1280 & 1408 & 1536 & 1664 & 1792 & 1920 \\
+        \hline
+        $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ & 128 & 3200 & 3328 & 3456 & 3584 & 3712 & 3840 & 3968 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\subparagraph{示例}
+
+示例 1：PRO\_CPU 上运行的 PID 为 7 的进程需要通过虚地址 0x3FA7\_2375 读取或写入片外 RAM 地址 0x7F\_A375。MMU 处于低-高模式。
+\begin{itemize}
+\itemsep-0.5em
+\item 根据表 \ref{table:Virtual_Address_for_External_Memory}，虚地址 0x3FA7\_2375 位于 $VAddr_{\mathrm{RAM}}$ 的 0x4E 号 32 KB 页上。
+\item 根据表 \ref{table:Virtual_Address_for_External_SRAM_Low_High_Mode}，虚地址 0x3FA7\_2375 由  $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 管理。
+\item 根据表 \ref{table:MMU_Entry_Numbers_RAM} 对于 PRO\_CPU 上运行的 PID 为 7 的进程， $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 对应的 MMU 配置项始于 3968。
+\item 被修改的 MMU 配置项为 3968 + 0x4E = 4046。
+\item 地址 0x7F\_A375 位于 255 号 32 KB 页上。
+\item MMU 配置项 4046 需要被置为 255，并通过清除 8 号位 来标记为有效，因此，将 0x0FF 写入 MMU 配置项 4046。
+\end{itemize}
+
+示例 2：APP\_CPU 上运行的 PID 为 5 的进程需要从虚地址 0x3F85\_5805 开始读取或写入片外 RAM 地址范围 0x55\_5805 到 0x55\_5823。MMU 处于奇-偶模式。
+\begin{itemize}
+\itemsep-0.5em
+\item 根据表 \ref{table:Virtual_Address_for_External_Memory}，虚地址 0x3F85\_5805 位于 $\mathrm{VAddr}_{\mathrm{RAM}}$ 的 0x0A 号 32 KB 页上。
+\item 根据表 \ref{table:Virtual_Address_for_External_SRAM_Even_Odd_Mode}，要读取或写入的地址范围包含了 $^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 和 $^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 中的各 32 字节的区域。
+\item 根据表 \ref{table:MMU_Entry_Numbers_RAM}，对于 PID 5，$^{\mathrm{L}}\mathrm{VAddr}_{\mathrm{RAM}}$ 的 MMU 配置项始于 1664。
+\item 根据表 \ref{table:MMU_Entry_Numbers_RAM}，对于PID 5，$^{\mathrm{R}}\mathrm{VAddr}_{\mathrm{RAM}}$ 的 MMU 配置项始于 3712。
+\item 被修改的 MMU 配置项为 1664 + 0x0A = 1674 和 3712 + 0x0A = 3722。
+\item 地址范围 0x55\_5805 到 0x55\_5823 位于 0xAA 号 32 KB 页上。
+\item
+MMU 配置项 1674 和 3722 需要被设置为 0xAA，并且通过将 8 号位置为 0 来标记为有效，因此，将 0x0AA 写入 MMU 配置项 1674 和 3722。该映射适用于 PRO\_CPU 以及 APP\_CPU。
+\end{itemize}
+
+示例 3：PRO\_CPU 上运行的 PID 为 1 的进程和 APP\_CPU 上运行的 PID 为 1 的进程需要使用虚地址 0x3F80\_0876 读取或写入片外 RAM。PRO\_CPU 需要该虚地址来访问实地址 0x10\_0876，而 APP\_CPU 需要通过该虚地址访问实地址 0x20\_0876。MMU 处于正常模式。
+\begin{itemize}
+\itemsep-0.5em
+\item 根据表 \ref{table:Virtual_Address_for_External_Memory}，虚拟地址 0x3F80\_0876 位于 $\mathrm{VAddr}_{\mathrm{RAM}}$ 的 0 号 32 KB 页上。
+\item 根据表 \ref{table:MMU_Entry_Numbers_RAM}, 对于 PRO\_CPU 上运行的 PID 为 1 的进程，MMU 配置项始于 1152。
+\item 根据表 \ref{table:MMU_Entry_Numbers_RAM}, 对于 APP\_CPU 上运行的 PID 为 1 的进程，MMU 配置项始于 3200。
+\item 对于 PRO\_CPU，被修改的 MMU 配置项为 1152 + 0 = 1152，对于 APP\_CPU，被修改的 MMU 配置项为 3200 + 0 = 3200。
+\item 地址 0x10\_0876 位于 0x20 号 32 KB 页上。
+\item 地址 0x20\_0876 位于 0x40 号 32 KB 页上。
+\item 对于 PRO\_CPU, MMU 配置项 1152 需要被置为 0x20 并且通过清除 8 号位来标记有效，所以将 0x020 写入 MMU 配置项 1152。
+\item 对于 APP\_CPU，MMU 配置项 3200 需要被置为 0x40 并且通过清除 8 号位来标记有效，所以将 0x040 写入 MMU 配置项 3200。
+\item 这样 PRO\_CPU 和 APP\_CPU 就可以通过相同的虚地址访问不同的物理内存区域。
+\end{itemize}

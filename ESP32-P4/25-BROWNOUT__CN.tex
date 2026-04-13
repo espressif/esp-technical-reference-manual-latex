@@ -1,0 +1,339 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./25-BROWNOUT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[10pt]{article}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{brownout}{}
+\chapter{欠压检测器}
+\label{mod:brownout}
+
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+\chipname{} 的欠压检测器可以检查管脚 VDD\_ANA，VDD\_BAT 的电压，在电压快速下落至预设阈值（默认为 \untagged{ESP32-P4-latest}{2.7} \tagged{ESP32-P4-latest}{2.4} V）以下时发出触发信号，并进行相应处理，从而关闭部分耗电模块（主要是 flash 模块），为数字模块争取更多时间，用以保存、转移重要数据。
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:brownout-features}
+
+\begin{itemize}
+    \item 支持 2 种管脚欠压检测
+       \begin{itemize}
+        \item 支持模拟电源管脚 VDD\_ANA 欠压检测
+        \item 支持电池电源管脚 VDD\_BAT 欠压检测
+    \end{itemize}
+    \item 支持两种检测模式
+        \begin{itemize}
+        \item 模式 0：当欠压计数器达到设定的阈值后触发中断，并根据配置选择复位方式
+        \item 模式 1：欠压发生后直接触发系统复位
+    \end{itemize}
+    \item 支持监控阈值与噪声过滤的配置
+    \item 支持欠压后的复位等级选择
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:brownout-arch-overview}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/brownout.pdf}
+    \caption{欠压检测模块结构图}
+    \label{fig:brownout-detector-overview}
+\end{figure}
+
+ \begin{itemize}
+     \item 检测源头选择：欠压检测器可通过配置 \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA} 选择检测电源；其中 RTC\_VGOOD\_VBAT 是 VDD\_BAT 的检测结果，RTC\_VGOOD\_VDDA 是 VDD\_ANA 的检测结果。
+     \item 欠压检测器 (Brown Out)：模拟电路，用于检测电源管脚电压并产生欠压信号，它将电源管脚电压与预设电压阈值进行比较，当电源管脚电压低于该阈值时，输出欠压信号。
+     \item 欠压计数器 (brownout cnt)：用于过滤被检测电源管脚上的电压噪声，当接收到欠压信号时，该计数器将基于时钟 LP\_DYN\_FAST\_CLK 进行计数，计数过程中若欠压信号失效，计数器将被直接清零。也可以通过配置 \hyperref[fielddesc:LPANABODMODE0CNTCLR]{LP\_ANA\_BOD\_MODE0\_CNT\_CLR} 清空计数器。
+    \item 中断比较器 (cmp0)：根据欠压计数器的值与配置的阈值比较产生中断，当欠压计数器的计数值大于配置的阈值后将产生中断信号 bod\_mode0\_int。如果使能了 \hyperref[fielddesc:LPANABODMODE0CLOSEFLASHENA]{LP\_ANA\_BOD\_MODE0\_CLOSE\_FLASH\_ENA}，将会触发 bod\_mode0\_close\_flash 使 flash 进入 SUSPEND 状态。
+     \item 复位比较器 (cmp1)：根据欠压计数器的值与配置的阈值比较产生复位，当欠压计数器的计数值大于配置的阈值后将产生复位信号。
+ \end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:brownout-func-descr}
+
+\begin{itemize}
+    \item 被检测管脚
+    \begin{itemize}
+        \item VDD\_ANA: 模拟电路供电管脚，支持模式 0 与模式 1。
+        \item VDD\_BAT: 电池供电管脚，支持模式 0 与模式 1，且存在两个可配置的电压检测阈值:
+        \begin{itemize}
+        \item VBAT\_BOD：用作 VDD\_BAT 的欠压检测
+        \item VBAT\_CHARGER：用于检测 VDD\_BAT 连接的电池是否需要充电
+        \end{itemize}
+        这两个阈值分别触发不同的中断。
+    \end{itemize}
+
+    \item 检测模式 \\
+    根据欠压检测器检测到欠压信号后的处理方法，分为两种检测模式：
+    \begin{itemize}
+        \item 模式 0：使能该模式后，内置的欠压计数器将在模拟产生欠压信号后开始计数，当欠压计数器达到 \hyperref[fielddesc:LPANABODMODE0RESETWAIT]{LP\_ANA\_BOD\_MODE0\_RESET\_WAIT} 和 \hyperref[fielddesc:LPANABODMODE0INTRWAIT]{LP\_ANA\_BOD\_MODE0\_INTR\_WAIT} 中设定的阈值后将分别产生复位与中断信号，以此过滤掉一些被检测电源上的噪声。配置 \hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL} 可选择复位方式：
+        \begin{itemize}
+            \item 0：将触发芯片复位。
+            \item 1：将触发系统复位。
+        \end{itemize}
+        \item 模式 1：直接触发系统复位，默认为该模式。
+    \end{itemize}
+
+    \item 电压监控阈值\\
+    电压监控阈值由模拟 I2C 控制器直接配置模拟电路实现。阈值配置寄存器如下：BIAS 为模拟 I2C 控制器的从机，从机地址为 0x6a。如下 REGXX 为 BIAS 的寄存器地址，[x:x] 为该寄存器的 bit 位。\\
+        \begin{itemize}
+        \item BIAS\_OR\_DREFL\_VBAT (REG08[7:5])：释放 VDD\_BAT 欠压状态的阈值\\
+        \item BIAS\_OR\_DREFH\_VBAT (REG08[4:2])：VDD\_BAT 的欠压检测阈值\\
+        \item BIAS\_OR\_DREFL\_VDDA (REG09[7:5])：释放 VDD\_ANA 欠压状态的阈值\\
+        \item BIAS\_OR\_DREFH\_VDDA (REG09[4:2])：VDD\_ANA 的欠压检测阈值\\
+        \item BIAS\_OR\_DREFL\_VBAT\_CHARGER (REG10[7:5])：释放 VDD\_BAT 连接电池欠压状态的阈值\\
+        \item BIAS\_OR\_DREFH\_VBAT\_CHARGER (REG10[4:2])：VDD\_BAT 连接电池的欠压检测阈值\\
+        \end{itemize}
+
+        \untagged{ESP32-P4-latest}{
+            阈值配置与电压的关系如下：
+            \begin{itemize}
+            \item 0: 2.52 V
+            \item 1: 2.57 V
+            \item 2: 2.63 V
+            \item 3: 2.68 V
+            \item 4: 2.74 V
+            \item 5: 2.78 V
+            \item 6: 2.83 V
+            \item 7: 2.89 V
+            \end{itemize}
+        }
+
+    \tagged{ESP32-P4-latest}{
+        VBAT 和 VDDA 阈值配置与电压的关系如下：
+        \begin{itemize}
+            \item 0: 2.0 V
+            \item 1: 2.1 V
+            \item 2: 2.2 V
+            \item 3: 2.3 V
+            \item 4: 2.4 V
+            \item 5: 2.5 V
+            \item 6: 2.6 V
+            \item 7: 2.7 V
+        \end{itemize}
+        VBAT\_CHARGER 阈值配置与电压的关系如下：
+        \begin{itemize}
+            \item 0: 2.2 V
+            \item 1: 2.3 V
+            \item 2: 2.4 V
+            \item 3: 2.5 V
+            \item 4: 2.6 V
+            \item 5: 2.7 V
+            \item 6: 2.8 V
+            \item 7: 2.9 V
+        \end{itemize}
+    }
+
+ \item 电压监控滤波\\
+    针对 VDD\_BAT 的两个阈值检测输出结果添加了专用的毛刺过滤器，如下图所示：
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/brownout_filter.pdf}
+    \caption{欠压检测模块结构图}
+    \label{fig:sar-adc-functional-overvie}
+\end{figure}
+
+      \begin{itemize}
+          \item vdd\_cnt：欠压计数器计数值。
+          \item bod\_source：欠压检测源，这里指 VDD\_BAT。
+          \item vdd\_undervoltage\_flag：欠压指示标志。
+      \end{itemize}
+    \begin{itemize}
+        \item 阶段 0 \verb+~+ 1：当 bod\_source 为 1，表示电压正常，欠压计数器（vdd\_cnt）保持为 0。
+        \item 阶段 1 \verb+~+ 2：当 bod\_source 为 0，表示电压异常，欠压计数器将开始计数，当计数器值达到欠压计数阈值后，拉高欠压标志信号，并产生中断。
+        \item 阶段 2 \verb+~+ 3 : 当欠压标志信号为高时，欠压计数器将不再计数，并稳定在寄存器 \hyperref[fielddesc:LPANAVDDBATUNDERVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UNDERVOLTAGE\_TARGET} 的值。
+        \item 阶段 3 \verb+~+ 4 \verb+~+ 5：若 bod\_source 短暂的恢复正常，欠压计数器将向下计数，但由于计数值未低于 \hyperref[fielddesc:LPANAVDDBATUPVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UPVOLTAGE\_TARGET}，则欠压标志信号不翻转。
+        \item 阶段 6 \verb+~+ 7：当 bod\_source 彻底恢复正常，欠压计数器向下计数到 \hyperref[fielddesc:LPANAVDDBATUPVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UPVOLTAGE\_TARGET}，欠压标志信号拉低，计数器清零。
+    \end{itemize}
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的欠压检测模块可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item LP\_ANAPERI\_INT
+    \end{itemize}
+
+上述中断信号由欠压检测模块的内部中断源生成。
+
+\begin{itemize}
+\item \label{int:LPANAVDDBATCHARGEUPVOLTAGEINT}LP\_ANA\_VDDBAT\_CHARGE\_UPVOLTAGE\_INT：当管脚 VDD\_BAT 的电压恢复至预设的充电阈值时触发。
+\item \label{int:LPANAVDDBATCHARGEUNDERVOLTAGEINT}LP\_ANA\_VDDBAT\_CHARGE\_UNDERVOLTAGE\_INT：当管脚 VDD\_BAT 的电压下降至预设的充电阈值时触发。
+\item \label{int:LPANAVDDBATUPVOLTAGEINT}LP\_ANA\_VDDBAT\_UPVOLTAGE\_INT：当管脚 VDD\_BAT 的电压恢复至预设的欠压阈值时触发。
+\item \label{int:LPANAVDDBATUNDERVOLTAGEINT}LP\_ANA\_VDDBAT\_UNDERVOLTAGE\_INT：当管脚 VDD\_BAT 的电压下降至预设的欠压阈值时触发。
+\item \label{int:LPANABODMODE0INT}LP\_ANA\_BOD\_MODE0\_INT：模式 0 时，当欠压计数器达到设定的阈值时触发该中断。
+\end{itemize}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:brownout-reg-summ} \textit{\nameref{sec:brownout-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%
+%%% 配置流程 %%%
+%%%%%%%%%%%%%%%
+\section{配置流程}
+
+\begin{itemize}
+    \item 模式 0
+
+    \begin{itemize}
+        \item 配置 \hyperref[fielddesc:LPANABODMODE0RESETWAIT]{LP\_ANA\_BOD\_MODE0\_RESET\_WAIT} 决定产生复位的计数器阈值。
+        \item 配置 \hyperref[fielddesc:LPANABODMODE0INTRWAIT]{LP\_ANA\_BOD\_MODE0\_INTR\_WAIT} 决定产生中断的计数器阈值。
+        \item 配置 \hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL} 选择模式 0 下的复位方式。
+
+        \item 配置 \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA} 使能需要检测的管脚。
+        \item 置位 \hyperref[fielddesc:LPANABODMODE0RESETENA]{LP\_ANA\_BOD\_MODE0\_RESET\_ENA} 使能欠压复位功能。
+        \item 置位 \hyperref[fielddesc:LPANABODMODE0INTRENA]{LP\_ANA\_BOD\_MODE0\_INTR\_ENA} 使能噪声过滤计数器与中断功能。
+    \end{itemize}
+
+    \item 模式 1
+
+    \begin{itemize}
+        \item 配置 \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA} 使能需要检测的管脚。
+    \end{itemize}
+
+\end{itemize}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{brownout-reg-summ}{}
+\section{寄存器列表}
+\label{sec:brownout-reg-summ}
+
+本小节的所有地址均为相对于欠压检测器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+\subfile{\modulefiles/25-BROWNOUT-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于欠压检测器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/25-BROWNOUT-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,1012 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./39-CAMLCDCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{camlcdctrl}{}
+\chapter{LCD 与 Camera 控制器 (LCD\_CAM)}
+\label{mod:camlcdctrl}
+
+\section{概述}
+
+\chipname{} 的 LCD\_CAM 控制器包含一个独立的 LCD 控制模块和 Camera（摄像头）控制模块，可以外接 LCD 和摄像头设备，功能灵活多样。
+
+LCD 模块提供了一个 LCD 接口，可以连接兼容 RGB、Motorola 6800 (MOTO6800) 和 Intel 8080 (I8080) 的 LCD 设备。LCD 模块负责将视频数据发送到 LCD 设备。
+
+Camera 模块提供一个并行摄像头接口，用于连接 DVP 摄像头，支持 8/16 位模式。Camera 模块可以管理与摄像头的通信，接收图像或视频帧。
+
+\chipname{} 的 LCD\_CAM 模块特别适用于需要屏幕显示和视频处理的开发项目。
+
+\section{特性}
+
+LCD\_CAM 模块具有以下主要特性：
+
+\begin{itemize}
+    \item 支持以下工作模式：
+        \begin{itemize}
+        \item LCD 主机发送模式
+        \item Camera 从机接收模式
+        \item Camera 主机接收模式
+        \end{itemize}
+    \item 支持同时外接 LCD 和摄像头设备
+    \item 当外接 LCD 设备时，支持：
+        \begin{itemize}
+        \item 8/16/24 位并行输出模式
+        \item RGB、MOTO6800、I8080 多种 LCD 模式
+        \item LCD 数据可由 GDMA 取自内部或外部存储器
+        \end{itemize}
+    \item 当外接摄像头设备（即 DVP 图像传感器）时，支持：
+        \begin{itemize}
+        \item 8/16 位并行输入模式
+        \item 视频数据可由 GDMA 存入内部或外部存储器
+        \end{itemize}
+    \item 支持 LCD\_CAM 接口中断
+\end{itemize}
+
+\section{功能描述}
+
+\subsection{功能框图}
+图 \ref{Figure:lcdcam_arch} 是 \chipname{} LCD\_CAM 模块的结构框图，包含：
+\begin{itemize}
+    \item 一个发送控制单元 (LCD\_Ctrl)
+    \item 一个接收控制单元 (Camera\_Ctrl)
+    \item 一个发送异步 FIFO (Async TX FIFO)，用于与外部设备如 LCD 进行交互
+    \item 一个接收异步 FIFO (Async RX FIFO)，用于与外部设备如摄像头进行交互
+    \item 两个时钟生成模块（LCD\_Clock Generator 和 CAM\_Clock Generator），用于生成对应模块的时钟
+    \item 两个格式转换模块 (RGB/YUV Converter)，用于各种格式的视频数据互相转换
+\end{itemize}
+
+\begin{figure}[H]
+    \centering    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/ESP32-P4_LCD_CAM.pdf}}
+     \textcolor{black}{\textbf{- ->}}：控制信号
+     \textcolor{black}{\textbf{=>}}：数据流
+    \caption{LCD\_CAM 功能框图}
+    \label{Figure:lcdcam_arch}
+\end{figure}
+
+\subsection{信号描述}
+
+表 \ref{tab:lcdcam-signal-description} 列出了 LCD\_CAM 工作所需的输入和输出信号。
+
+三种工作模式的解释如下：
+\begin{itemize}
+    \item \textbf{Camera 从机接收模式：}在此模式下，Camera 模块作为通讯接收方输入控制信号。
+    \item \textbf{Camera 主机接收模式：}在此模式下，Camera 模块向从机发送时钟信号，从机收到时钟信号后向 Camera 模块发送数据。
+    \item \textbf{LCD 主机发送模式：}在此模式下，LCD 模块作为通讯发起方向从机发送控制信号。
+\end{itemize}
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] LCD\_CAM 的所有信号均需要经过 GPIO 交换矩阵映射到芯片管脚。更多信息请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+    \item[2] 输入信号位宽 8 或 16 时，则 \textcolor{red}{\it{N}} 分别为 7 或 15。输入信号位宽 8、16 或 24 时，\textcolor{red}{\it{M}} 分别为 7、15 或 23。
+    \item[3] \hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN} 为 1（VSYNC + HSYNC 模式）时：VSYNC、HSYNC、DE 线同时控制数据有效，因此用户需要接 VSYNC、HSYNC、DE 信号线。\hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN} 为 0（DE 模式）时：VSYNC、DE 线同时控制数据有效，HSYNC 线可以不接。但是在此模式下，Camera 的 YUV-RGB 转换功能将不可用。
+\end{TableNotes}
+
+\begin{longtable}[c]{ | p{3.2cm} | l | c | p{8cm} | }
+    \caption{信号描述}
+    \label{tab:lcdcam-signal-description}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{工作模式} & \textbf{信号\tnote{1}} & \textbf{方向} & \textbf{功能} \\\hline
+    \endfirsthead
+
+    \multicolumn{4}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{工作模式} & \textbf{信号\tnote{1}} & \textbf{方向} & \textbf{功能} \\\hline
+    \endhead
+
+    \multicolumn{4}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \insertTableNotes
+    \endlastfoot
+
+    % table contents
+    \multirow{5}*{Camera 从机接收模式} & CAM\_PCLK & 输入 & 像素时钟输入信号\\\cline{2-4}
+    & CAM\_VSYNC & 输入& 帧同步输入信号 (VSYNC)\tnote{3}\\\cline{2-4}
+    & CAM\_HSYNC & 输入& 行同步输入信号 (HSYNC)\tnote{3}\\\cline{2-4}
+    & CAM\_DE & 输入 & 数据有效输入信号 (DE)\tnote{3}\\\cline{2-4}
+    & CAM\_Data\_in[\textcolor{red}{\it{N}}:0]\tnote{2} & 输入 & 并行输入数据总线，支持 8/16 位并行数据输入\\\hline
+    \multirow{6}*{Camera 主机接收模式} & CAM\_PCLK & 输入 & 像素时钟输入信号\\\cline{2-4}
+    & CAM\_CLK & 输出& 主机时钟输出信号\\\cline{2-4}
+    & CAM\_VSYNC & 输入& 帧同步输入信号\tnote{3}\\\cline{2-4}
+    & CAM\_HSYNC & 输入& 行同步输入信号\tnote{3}\\\cline{2-4}
+    & CAM\_DE & 输入 & 数据有效输入信号\tnote{3} \\\cline{2-4}
+    & CAM\_Data\_in[\textcolor{red}{\it{N}}:0]\tnote{2} & 输入 & 并行输入数据总线，支持 8/16 位并行数据输入\\\hline
+    \multirow{7}*{LCD 主机发送模式} & LCD\_PCLK & 输出 & LCD 像素时钟输出信号 \\\cline{2-4}
+    & LCD\_HSYNC & 输出& RGB 格式下，用作行同步信号  \\\cline{2-4}
+    & LCD\_VSYNC & 输出 & RGB 格式下，用作帧同步信号 \\\cline{2-4}
+    & LCD\_DE & 输出 & RGB 格式下，用作数据有效信号 \\\cline{2-4}
+    & LCD\_CD & 输出 & I8080 格式下，用作命令和数据信号 (CD)\\\cline{2-4}
+    & LCD\_CS & 输出 & I8080/MOTO6800 格式下，用作片选信号 (CS)\\\cline{2-4}
+    & LCD\_Data\_out[\textcolor{red}{\it{M}}:0]\tnote{2} & 输出 & 并行输出数据总线，支持 8/16/24 位并行数据输出\\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+\subsection{LCD\_CAM 模块时钟}\label{sec:lcdcam-module-clk}
+
+\subsubsection{LCD 时钟}\label{sec:lcdcam-lcd-clock}
+
+时钟源经时钟生成模块处理后生成 LCD 模块所需的时钟，如图 \ref{Figure:lcd_clk} 所示。其中，
+\begin{itemize}
+    \item LCD\_CLK 为 LCD 模块的主时钟，由时钟源分频获得；
+    \item LCD\_PCLK 为像素时钟，由 LCD\_CLK 分频获得。
+\end{itemize}
+
+\hyperref[fielddesc:HPSYSCLKRSTLCDCLKEN]{HP\_SYS\_CLKRST\_LCD\_CLK\_EN} 用于使能 LCD\_CLK\_SRC（时钟源），\hyperref[fielddesc:HPSYSCLKRSTLCDCLKSRCSEL]{HP\_SYS\_CLKRST\_LCD\_CLK\_SRC\_SEL} 用于选择时钟源：
+\begin{itemize}
+    \item 0：选择 XTAL\_CLK
+    \item 1：选择 PLL\_F160M\_CLK
+    \item 2：选择 APLL\_CLK
+    \item 3：关闭 LCD 时钟源
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{39-CAMLCDCTRL/figures/lcd_clock.pdf}}
+    \caption{LCD 时钟}
+    \label{Figure:lcd_clk}
+\end{figure}
+
+LCD\_CLK 的频率 $f_{\textrm{LCD\_CLK}}$ 与分频器时钟源频率 $f_{\textrm{LCD\_CLK\_SRC}}$ 间的关系如下：
+$$f_{\textrm{LCD\_CLK}}=\frac{f_{\textrm{LCD\_CLK\_SRC}}}{N + \frac{b}{a}}$$
+
+其中，\textit{N}、\textit{a}、\textit{b} 与 \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM}、\hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR}、\hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR} 的值相关，具体为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} = 0 时，\textit{N} = 1，\textit{a} 和 \textit{b} 的值无需关注，始终为 1 分频。
+    \item \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} >=1 时，\textit{N} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} + 1。
+    \begin{itemize}
+        \item 对于整数分频，请将 \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR} 和 \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR} 清零。
+        \item 对于小数分频，\textit{b} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR}，\textit{a} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR}，请保证 \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR} 的值小于 \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR} 的值。
+    \end{itemize}
+\end{itemize}
+
+LCD 模块的像素时钟 LCD\_PCLK 由 LCD\_CLK 分频获得。即：
+
+$$f_{\textrm{LCD\_PCLK}} = \frac{f_{\textrm{LCD\_CLK}}}{\textrm{MO}}$$
+
+
+其中，MO 由 \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} 和 \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N} 决定，具体为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} = 1 时，MO = 1。
+    \item \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} = 0 时，MO = \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N} + 1。
+\end{itemize}
+
+{\bfseries 注意：}
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N} 不可配置为 0。
+    \item 使用小数分频功能会产生时钟抖动。当 LCD\_CLK 和 LCD\_PCLK 无法通过 PLL\_F160M\_CLK 整数分频产生时，可使用 APLL\_CLK 作为时钟源，详情请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+\end{itemize}
+
+\subsubsection{Camera 时钟}
+
+时钟源经时钟生成模块处理后生成 Camera 模块所需的时钟，如图 \ref{Figure:camera_clk} 所示。其中，
+\begin{itemize}
+    \item CAM\_CLK 为 Camera 模块的主机时钟输出，由时钟源分频获得。
+    \item CAM\_PCLK 为像素时钟，从 Camera 从机输入获得。
+\end{itemize}
+
+\hyperref[fielddesc:HPSYSCLKRSTCAMCLKEN]{HP\_SYS\_CLKRST\_CAM\_CLK\_EN} 用于使能 CAM\_CLK\_SRC（时钟源），\hyperref[fielddesc:HPSYSCLKRSTCAMCLKSRCSEL]{HP\_SYS\_CLKRST\_CAM\_CLK\_SRC\_SEL} 用于选择时钟源：
+\begin{itemize}
+    \item 0：XTAL\_CLK
+    \item 1：PLL\_F160M\_CLK
+    \item 2：APLL\_CLK
+    \item 3：关闭 Camera 时钟源
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{39-CAMLCDCTRL/figures/cam_clock.pdf}}
+    \caption{Camera 时钟}
+    \label{Figure:camera_clk}
+\end{figure}
+
+CAM\_CLK 的频率 $f_{\textrm{CAM\_CLK}}$ 与分频器时钟源频率 $f_{\textrm{CAM\_CLK\_SRC}}$ 间的关系如下：
+$$f_{\textrm{CAM\_CLK}}=\frac{f_{\textrm{CAM\_CLK\_SRC}}}{N + \frac{b}{a}}$$
+
+其中，2 <= \textit{N} <= 256，\textit{N} 对应为 \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} 的值，具体为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} = 0 时，\textit{N} = 256。
+    \item \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} = 1 时，\textit{N} = 2。
+    \item \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} 为其它值时，\textit{N} = \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} 的值。
+
+\end{itemize}
+
+\textit{b} 对应 \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} 的值，\textit{a} 对应 \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_DENOMINATOR} 的值。
+\begin{itemize}
+    \item 对于整数分频，\hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} 和 \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} 都清零。
+    \item 对于小数分频，\hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} 的值应小于 \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_DENOMINATOR} 的值。
+\end{itemize}
+
+\subsection{LCD\_CAM 模块复位} \label{sec:lcdcam_reset}
+
+LCD\_CAM 模块共包含下列可应用于不同范围的复位寄存器：
+
+\begin{itemize}
+\item \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM}：配置该复位寄存器，可以复位 LCD\_CAM 模块中的所有子模块。
+\item \hyperref[fielddesc:LCDCAMLCDRESET]{LCD\_CAM\_LCD\_RESET}：配置该寄存器可复位所有 LCD 通路部分，包括发送控制单元 (LCD\_Ctrl)、LCD 格式转换模块 (RGB/YUV Converter) 和 Async TX FIFO。配置该寄存器不会影响 Camera 部分的正常运行。
+\item \hyperref[fielddesc:LCDCAMCAMRESET]{LCD\_CAM\_CAM\_RESET}：配置该寄存器可复位所有 Camera 通路部分，包括接收控制单元 (Camera\_Ctrl)、Camera 格式转换模块 (RGB/YUV Converter) 和 Async RX FIFO。配置该寄存器不会影响 LCD 通路的正常运行。
+\item \hyperref[fielddesc:LCDCAMLCDAFIFORESET]{LCD\_CAM\_LCD\_AFIFO\_RESET}：配置该寄存器可以复位 Async TX FIFO，而不影响任何其他模块的运行。例如，可以在 LCD 每次发送完一帧时配置该复位寄存器，以防止前一帧的数据传输错误影响到下一帧的发送。
+\item \hyperref[fielddesc:LCDCAMCAMAFIFORESET]{LCD\_CAM\_CAM\_AFIFO\_RESET}：配置该寄存器可以复位 Async RX FIFO，而不影响任何其他模块的运行。例如，可以在 Camera 每次接收完一帧时配置该复位寄存器，以防止前一帧的数据传输错误影响到下一帧的接收。
+\end{itemize}
+
+{\bfseries 注意：}
+\begin{itemize}
+    \item 复位寄存器 \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM} 不是硬件自清，即写 1 使能复位，写 0 释放复位。
+    \item 上述复位寄存器除 \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM} 以外均为硬件自清，即写 1 后，硬件会生成一个复位脉冲，并自动清零该寄存器。
+    \item 在模块和 FIFO 复位之前，需要先配置模块时钟 LCD\_CLK 和 CAM\_CLK。
+\end{itemize}
+
+\subsection{LCD\_CAM 数据格式控制}
+\subsubsection{LCD 数据格式控制} \label{lcd_data_control}
+在使用 LCD 发送数据时，数据会经过三个阶段的处理过程：
+\begin{enumerate}
+    \item 阶段一：数据预处理\\
+    从 GDMA 获取输入数据，并进行数据预处理，处理完成后将数据输出给 YUV-RGB 格式转换模块。
+    \item 阶段二：数据色彩空间转换\\
+    在 YUV-RGB 格式转换模块中进行数据处理（如果不开启 YUV-RGB 格式转换模块，这一阶段的数据将不发生任何改变）。
+    \item 阶段三：数据后处理\\
+    LCD 模块从 YUV-RGB 格式转换模块取得数据，并进行数据后处理，处理完成后发送到 GPIO。
+
+\end{enumerate}
+
+
+\begin{tiplisting}
+每一阶段的输出数据，均为下一阶段的输入数据。
+\end{tiplisting}
+
+以下详细介绍每个阶段的配置。
+
+\textbf{阶段一：数据预处理} \\
+
+在阶段一中，配置以下寄存器可以调整来自 GDMA 的数据的位宽、数据位顺序和字节序：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBYTEMODE]{LCD\_CAM\_LCD\_BYTE\_MODE}
+    \begin{itemize}
+        \item 0：LCD 从 GDMA 输入的数据位宽为 8 个比特
+        \item 1：LCD 从 GDMA 输入的数据位宽为 16 个比特
+        \item 2：LCD 从 GDMA 输入的数据位宽为 24 个比特
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBITORDER]{LCD\_CAM\_LCD\_BIT\_ORDER}
+    \begin{itemize}
+        \item 0：不反转
+        \item 1：反转输入数据的数据位顺序
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBYTEORDER]{LCD\_CAM\_LCD\_BYTE\_ORDER}
+    \begin{itemize}
+        \item 0：不反转
+        \item 1：反转数据字节顺序。仅在输入数据位宽为 16 比特或 24 比特时有效。
+    \end{itemize}
+
+\end{itemize}
+
+具体配置方式见下表。
+
+\begin{table}[H]
+    \centering
+    \caption{LCD 数据格式控制－阶段一}
+    \label{tab:bit-byte-order-control-of-lcd-data}
+    \begin{threeparttable}
+    \begin{tabular}{|p{3cm}|p{2.4cm}|p{2.5cm}|p{2.5cm}|p{4.6cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{GDMA 数据字节序列\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMLCDBYTEMODE]{LCD\_CAM\_LCD\newline\_BYTE\_MODE}}  & \textbf{\hyperref[fielddesc:LCDCAMLCDBITORDER]{LCD\_CAM\_LCD\newline\_BIT\_ORDER}}  & \textbf{\hyperref[fielddesc:LCDCAMLCDBYTEORDER]{LCD\_CAM\_LCD\newline\_BYTE\_ORDER}\tnote{2}} & \textbf{阶段一输出数据序列\tnote{3,4}}
+    \\ \hline
+    \multirow{10}*{B0,B1,B2,B3,B4,B5} & \multirow{2}*{0} & \multirow{1}*{0} & 0 & \{B0\}\{B1\}\{B2\}\{B3\}\{B4\}\{B5\}       \\\cline{3-5}
+     &                  & \multirow{1}*{1} & 0 & \{B0'\}\{B1'\}\{B2'\}\{B3'\}\{B4'\}\{B5'\} \\\cline{2-5}
+     & \multirow{4}*{1} & \multirow{2}*{0} & 0 & \{B1,B0\}\{B3,B2\}\{B5,B4\}                \\\cline{4-5}
+     &                  &                  & 1 & \{B0,B1\}\{B2,B3\}\{B4,B5\}                \\\cline{3-5}
+     &                  & \multirow{2}*{1} & 0 & \{B1',B0'\}\{B3',B2'\}\{B5',B4'\}          \\\cline{4-5}
+     &                  &                  & 1 & \{B0',B1'\}\{B2',B3'\}\{B4',B5'\}          \\\cline{2-5}
+     & \multirow{4}*{2} & \multirow{2}*{0} & 0 & \{B2,B1,B0\}\{B5,B4,B3\}                   \\\cline{4-5}
+     &                  &                  & 1 & \{B0,B1,B2\}\{B3,B4,B5\}                   \\\cline{3-5}
+     &                  & \multirow{2}*{1} & 0 & \{B2',B1',B0'\}\{B5',B4',B3'\}             \\\cline{4-5}
+     &                  &                  & 1 & \{B0',B1',B2'\}\{B3',B4',B5'\}             \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] GDMA 数据字节序列中的 B0 \verb+~+ B5 每一个代表一个字节的数据，靠左的数据对应低地址，即 B0 \verb+~+ B5 的地址为从低到高。
+        \item[2] 只有表格中的配置组合是有效的，所有表格所示之外的配置组合可能会导致不可预期的数据错误。
+        \item[3] 输出数据序列中，每个 \{\} 中的数据为大端并行数据，各个 \{\} 中的数据为串行关系，输出顺序为从左至右。以 \{B0\}\{B1\}\{B2\}\{B3\} 为例，\{B0\} 中的各个数据位之间为并行关系，而 \{B0\} 中的数据与 \{B1\}、\{B2\}、\{B3\} 的数据为串行关系。输出顺序为先输出 \{B0\}。
+        \item[4] 输出数据序列中，B{\textcolor{red}{n}}'[7:0] = B{\textcolor{red}{n}}[0:7]，其中 n = 0,1,2,3,4,5。
+    \end{tablenotes}
+    \end{threeparttable}
+
+\end{table}
+
+\textbf{阶段二：数据色彩空间转换} \\
+在阶段二中，数据进行色彩空间转换，配置方式请参考章节 \ref{sec:yuvrgb_config}。
+
+\begin{tiplisting}
+用户可以通过将 \hyperref[fielddesc:LCDCAMLCDCONVENABLE]{LCD\_CAM\_LCD\_CONV\_ENABLE} 配置为 0 跳过阶段二，这种情况下，阶段一的输出将会直接成为阶段三的输入。
+\end{tiplisting}
+
+\textbf{阶段三：数据后处理} \\
+在阶段三中，配置以下寄存器可以对将要输出的数据进行数据位顺序调整和字节重排列：
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDWIREMODE]{LCD\_CAM\_LCD\_WIRE\_MODE}
+    \begin{itemize}
+        \item 0：LCD 输出到 GPIO 的数据位宽为 8 个比特
+        \item 1：LCD 输出到 GPIO 的数据位宽为 16 个比特
+        \item 2：LCD 输出到 GPIO 的数据位宽为 24 个比特
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDDOUTBITORDER]{LCD\_CAM\_LCD\_DOUT\_BIT\_ORDER}
+    \begin{itemize}
+        \item 0：不反转
+        \item 1：反转输出数据每个字节的数据位顺序
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEENABLE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_ENABLE}
+    \begin{itemize}
+        \item 0：不开启 LCD 输出数据字节重排列功能。
+        \item 1：开启 LCD 输出数据字节重排列功能，配置寄存器 \hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEMODE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_MODE} 以调整重排列模式，各个重排列模式的具体效果请参考表格 \ref{tab:lcd-byte-swizzle-mode}。
+    \end{itemize}
+\end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{LCD 输出数据重排列功能模式}
+    \label{tab:lcd-byte-swizzle-mode}
+    \begin{threeparttable}
+    \begin{tabular}{|p{4cm}|p{8cm}|p{4cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{阶段三输入数据字节序列\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEMODE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_MODE}\tnote{2}} & \textbf{阶段三输出数据字节序列\tnote{3}}
+    \\ \hline
+    \multirow{6}*{B0,B1,B2,B3,B4,B5} & 0 & B1,B0,B3,B2,B5,B4       \\\cline{2-3}
+     & 1 & B0,B2,B1,B3,B5,B4       \\\cline{2-3}
+     & 2 & B1,B0,B2,B4,B3,B5       \\\cline{2-3}
+     & 3 & B1,B2,B0,B4,B5,B3       \\\cline{2-3}
+     & 4 & B2,B0,B1,B5,B3,B4       \\\cline{2-3}
+     & 5 & B2,B1,B0,B5,B4,B3       \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 输入数据字节序列中的 B0 \verb+~+ B5 每一个代表一个字节的数据，这表示把输入数据按照小端排列为字节序列。例如输入数据有效数据位宽为 16 比特时，原始输入数据序列 \{B1,B0\}\{B3,B2\}\{B5,B4\} 转换为输入数据字节序列后为 \{B0,B1,B2,B3,B4,B5\}。
+
+        \item[2] 只有表格中的配置值是有效的，所有表格所示之外的配置值可能会导致不可预期的数据错误。
+
+        \item[3] 最终发送到 GPIO 的发送数据序列可以由阶段三输出数据字节序列和发送数据位宽转换得到，例如阶段三输出数据字节序列为 B1,B0,B2,B4,B3,B5 时，若发送数据位宽为 16 比特，则发送数据序列为 \{B0,B1\}\{B4,B2\}\{B5,B3\}。其中，每个 \{\} 中的数据为大端并行数据，各个 \{\} 中的数据为串行关系，发送顺序为从左至右。在本例的发送数据序列中，\{B0,B1\} 中的各个数据位之间为并行关系，而 \{B0,B1\} 中的数据与 \{B4,B2\}、\{B5,B3\} 的数据为串行关系。发送顺序为先发送 \{B0,B1\}。
+
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsubsection{Camera 数据格式控制} \label{sec:cam_data_control}
+
+在使用 Camera 接收数据时，配置以下寄存器可以调整送往 GDMA 的数据的数据位顺序和字节顺序：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAM2BYTEEN]{LCD\_CAM\_CAM\_2BYTE\_EN}
+    \begin{itemize}
+        \item 0：接收数据的位宽为 8 个比特
+        \item 1：接收数据的位宽为 16 个比特
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAMBITORDER]{LCD\_CAM\_CAM\_BIT\_ORDER}
+    \begin{itemize}
+        \item 0：不反转
+        \item 1：反转数据位顺序：
+        \begin{itemize}
+            \item 在 8 位模式下，CAM\_DATA\_in[7:0] 反转为 CAM\_DATA\_in[0:7]；
+            \item 在 16 位模式下，CAM\_DATA\_in[15:0] 反转为 CAM\_DATA\_in[0:15]。
+        \end{itemize}
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAMBYTEORDER]{LCD\_CAM\_CAM\_BYTE\_ORDER}
+    \begin{itemize}
+        \item 0：不反转
+        \item 1：反转数据字节顺序。仅在 16 位模式下有效。
+    \end{itemize}
+\end{itemize}
+
+具体配置方式见下表。
+
+\begin{table}[H]
+    \centering
+    \caption{Camera 数据格式控制}
+    \label{tab:bit-byte-order-control-of-cam-data}
+    \begin{threeparttable}
+    \begin{tabular}{|p{2.7cm}|p{2.6cm}|p{2.6cm}|p{2.6cm}|p{2.7cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{接收数据序列\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMCAM2BYTEEN]{LCD\_CAM\_CAM\newline\_2BYTE\_EN}}  & \textbf{\hyperref[fielddesc:LCDCAMCAMBITORDER]{LCD\_CAM\_CAM\newline\_BIT\_ORDER}\tnote{2}}  & \textbf{\hyperref[fielddesc:LCDCAMCAMBYTEORDER]{LCD\_CAM\_CAM\newline\_BYTE\_ORDER}\tnote{2}} & \textbf{GDMA 数据序列\tnote{3,4}}
+    \\ \hline
+    \multirow{2}*{\{B0\}\{B1\}\{B2\}\{B3\}} & \multirow{2}*{0} &        0         & 0 & B0,B1,B2,B3     \\\cline{3-5}
+    &                  &        1         & 0 & B0',B1',B2',B3' \\\hline
+    \multirow{4}*{\{B1,B0\}\{B3,B2\}}       & \multirow{4}*{1} & \multirow{2}*{0} & 0 & B0,B1,B2,B3     \\\cline{4-5}
+    &                  &                  & 1 & B1,B0,B3,B2     \\\cline{3-5}
+    &                  & \multirow{2}*{1} & 0 & B0',B1',B2',B3' \\\cline{4-5}
+    &                  &                  & 1 & B1',B0',B3',B2' \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 接收数据序列中，每个 \{\} 中的数据为大端并行数据，各个 \{\} 中的数据为串行关系，接收顺序为从左至右。以 \{B0\}\{B1\}\{B2\}\{B3\} 为例，\{B0\} 中的各个数据位之间为并行关系，而 \{B0\} 中的数据与 \{B1\}、\{B2\}、\{B3\} 的数据为串行关系。接收顺序为先接收 \{B0\}。
+        \item[2] 只有表格中的配置组合是有效的，所有表格所示之外的配置组合可能会导致不可预期的数据错误。
+        \item[3] GDMA 数据序列中的 B0 \verb+~+ B3 每一个代表一个字节的数据，靠左的数据对应低地址，即 B0 \verb+~+ B3 的地址为从低到高。
+        \item[4] GDMA 数据序列中，B{\textcolor{red}{n}}'[7:0] = B{\textcolor{red}{n}}[0:7]，其中 n = 0,1,2,3。
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\begin{tiplisting}
+当接收序列为每次接收 1 个字节数据时，CAM\_Data\_in[7:0] 为有效数据，因此用户需要将 CAM\_Data\_in[7:0] 与主机相连。
+\end{tiplisting}
+
+\subsection{YUV-RGB 数据格式转换}
+\label{sec:yuvrgb_config}
+\chipname{} 的 LCD\_CAM 模块支持 YUV-RGB 数据格式互相转换。LCD 模块以及 Camera 模块各有一个数据格式转换模块，其功能包括：
+\begin{itemize}
+    \item 支持在 BT601 和 BT709 两种标准下进行格式转换
+    \untagged{ESP32-P4-latest}{\item RGB565 (full/limited range) 格式与 YUV422/420/411 (full/limited range) 格式的互相转换}
+    \tagged{ESP32-P4-latest}{\item RGB565 格式到 YUV422/420/411 (full/limited range) 格式的转换}
+    \untagged{ESP32-P4-latest}{\item YUV422/420/411 (full/limited range) 各种格式的互相转换}
+    \tagged{ESP32-P4-latest}{\item YUV422/YUV411 (full/limited range) 格式到 RGB565 格式的转换}
+    \tagged{ESP32-P4-latest}{\item YUV422/411 (full/limited range) 各种格式的转换}
+\end{itemize}
+
+    LCD 模块的 YUV-RGB 数据格式转换模块还支持:
+    \begin{itemize}
+        \item YUV422/\untagged{ESP32-P4-latest}{420/}411 (full/limited range) 格式到 RGB888 (full/limited range) 格式的转换
+        \item RGB565 \untagged{ESP32-P4-latest}{(full/limited range)} 格式到 YUV444 (full/limited range) 格式的转换
+        \tagged{ESP32-P4-latest}{\item RGB888 (full/limited range) 格式与 RGB565 格式的转换}
+        \item YUV422/\untagged{ESP32-P4-latest}{420/}411 (full/limited range) 格式到 YUV444 (full/limited range) 格式的转换
+    \end{itemize}
+
+\subsubsection{YUV 数据流格式}
+在 \chipname{} LCD\_CAM 模块中我们作以下规定：
+
+假设 8 个依次待传输像素点对应的 YUV 数据为 [$Y_i$, $U_i$, $V_i$] (i = 1 \verb+~+ 8)，则在：
+\begin{itemize}
+    \item YUV422 模式下，LCD 依次发送或 Camera 依次接收如下数据：
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $V_2$ & $Y_3$ & $U_3$ & $Y_4$ & $V_4$ & $Y_5$ & $U_5$ & $Y_6$ & $V_6$ & $Y_7$ & $U_7$ & $Y_8$ & $V_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+    \untagged{ESP32-P4-latest}{
+    \item YUV420 模式下，LCD 依次发送或 Camera 依次接收如下数据：
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $Y_3$ & $U_3$ & $Y_4$ & $Y_5$ & $V_5$ & $Y_6$ & $Y_7$ & $V_7$ & $Y_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+    }
+    \tagged{ESP32-P4-latest}{
+    \item YUV420 模式下，LCD 和 CAM 不参与格式转换。
+    }
+    \item YUV411 模式下，LCD 依次发送或 Camera 依次接收如下数据：
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $Y_3$ & $V_3$ & $Y_4$ & $Y_5$ & $U_5$ & $Y_6$ & $Y_7$ & $V_7$ & $Y_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+\end{itemize}
+
+\subsubsection{格式转换模块配置流程}
+
+Camera 模块中的格式转换模块与 LCD 模块中的格式转换模块几乎完全相同。因此，下文以 LCD 模块中的格式转换模块为例说明配置流程：
+
+\begin{enumerate}
+    \item 置位 \hyperref[fielddesc:LCDCAMLCDCONVENABLE]{LCD\_CAM\_LCD\_CONV\_ENABLE} 使能 YUV-RGB 格式转换模块；
+    \item 通过 \hyperref[fielddesc:LCDCAMLCDCONVMODE8BITSON]{LCD\_CAM\_LCD\_CONV\_MODE\_8BITS\_ON} 配置输入数据的有效位宽：
+    \begin{itemize}
+        \item 0：输入数据的有效数据位宽为 16 bit
+        \item 1：输入数据的有效数据位宽为 8 bit
+
+    \end{itemize}
+    \item 配置输出数据有效位宽：
+    \begin{itemize}
+        \item 对于 Camera 模块中的格式转换模块：输出数据的有效数据位宽永远等于输入数据的有效数据位宽
+        \item 对于 LCD 模块中的格式转换模块，当 \hyperref[fielddesc:LCDCAMLCDWIREMODE]{LCD\_CAM\_LCD\_WIRE\_MODE} 的值为：
+        \begin{itemize}
+            \item 2 时，格式转换模块的输出数据的有效数据位宽为 24 bit
+            \item 其他时，格式转换模块的输出数据的有效数据位宽等于输入数据的有效数据位宽
+
+        \end{itemize}
+    \end{itemize}
+    \item 通过 \hyperref[fielddesc:LCDCAMLCDCONVPROTOCOLMODE]{LCD\_CAM\_LCD\_CONV\_PROTOCOL\_MODE} 配置标准：
+    \begin{itemize}
+        \item 0：使用 BT601 标准
+        \item 1：使用 BT709 标准
+    \end{itemize}
+    \item 配置转换模式：
+    \begin{itemize}
+        \item 在 24 位输出时：
+          \untagged{ESP32-P4-latest}{
+            \begin{table}[H]
+            \caption{24 位输出时的转换模式配置}
+            \centering
+            \begin{threeparttable}
+            \begin{tabular}{|l|c|c|c|}
+            \hline
+            \rowcolor{lightgray}
+            \textbf{转换模式} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} \\ \hline
+            RGB565 -> YUV444 & 1 & - & 3 \\ \hline
+            YUV422 -> RGB888 & 0 & 0 & 3 \\ \hline
+            YUV420 -> RGB888 & 0 & 1 & 3 \\ \hline
+            YUV411 -> RGB888 & 0 & 2 & 3 \\ \hline
+            YUV422 -> YUV444 & 1 & 0 & 0/1/2 \\ \hline
+            YUV420 -> YUV444 & 1 & 1 & 0/1/2 \\ \hline
+            YUV411 -> YUV444 & 1 & 2 & 0/1/2 \\ \hline
+            \end{tabular}
+          }
+          \tagged{ESP32-P4-latest}{
+            \begin{table}[H]
+                \caption{24 位输出时的转换模式配置}
+                \centering
+                \begin{threeparttable}
+                \begin{tabular}{|l|c|c|c|c|}
+                \hline
+                \rowcolor{lightgray}
+                \textbf{转换模式} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} & 
+                \textbf{\hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{RGB2RGB\_MODE}}\tnote{4} \\ \hline
+                RGB565 -> YUV444 & 1 & - & 3 & - \\ \hline
+                RGB565 -> RGB888 & 0 & - & - & 1 \\ \hline
+                YUV422 -> RGB888 & 0 & 0 & 3 & - \\ \hline
+                YUV411 -> RGB888 & 0 & 2 & 3 & - \\ \hline
+                YUV422 -> YUV444 & 1 & 0 & 0/1/2 & - \\ \hline
+                YUV411 -> YUV444 & 1 & 2 & 0/1/2 & - \\ \hline
+                \end{tabular}
+            }
+            \begin{tablenotes}
+                \item[1] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_TRANS\_MODE} 的值
+                \item[2] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV\_MODE} 的值
+                \item[3] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV2YUV\_MODE} 的值
+                \tagged{ESP32-P4-latest}{
+                \item[4] 对应 \hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{LCD\_CAM\_LCD\_CONV\_RGB2RGB\_MODE} 的值
+                }
+            \end{tablenotes}
+            \end{threeparttable}
+            \end{table}
+        \item 在非 24 位输出时：
+          \untagged{ESP32-P4-latest}{
+            \begin{table}[H]
+            \caption{非 24 位输出时的转换模式配置}
+            \centering
+            \begin{threeparttable}
+            \begin{tabular}{|l|c|c|c|}
+            \hline
+            \rowcolor{lightgray}
+            \textbf{转换模式} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} \\ \hline
+            RGB565 -> YUV422 & 1 & 0 & 3 \\ \hline
+            RGB565 -> YUV420 & 1 & 1 & 3 \\ \hline
+            RGB565 -> YUV411 & 1 & 2 & 3 \\ \hline
+            YUV422 -> RGB565 & 0 & 0 & 3 \\ \hline
+            YUV420 -> RGB565 & 0 & 1 & 3 \\ \hline
+            YUV411 -> RGB565 & 0 & 2 & 3 \\ \hline
+            YUV422 -> YUV420 & 1 & 0 & 1 \\ \hline
+            YUV422 -> YUV411 & 1 & 0 & 2 \\ \hline
+            YUV420 -> YUV422 & 1 & 1 & 0 \\ \hline
+            YUV420 -> YUV411 & 1 & 1 & 2 \\ \hline
+            YUV411 -> YUV422 & 1 & 2 & 0 \\ \hline
+            YUV411 -> YUV420 & 1 & 2 & 1 \\ \hline
+            \end{tabular}
+          }
+          \tagged{ESP32-P4-latest}{
+            \begin{table}[H]
+                \caption{非 24 位输出时的转换模式配置}
+                \centering
+                \begin{threeparttable}
+                \begin{tabular}{|l|c|c|c|c|}
+                \hline
+                \rowcolor{lightgray}
+                \textbf{转换模式} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} &
+                \textbf{\hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{RGB2RGB\_MODE}}\tnote{4} \\ \hline            
+                RGB565 -> YUV422 & 1 & 0 & 3 & - \\ \hline
+                RGB565 -> YUV420 & 1 & 1 & 3 & - \\ \hline
+                RGB565 -> YUV411 & 1 & 2 & 3 & - \\ \hline
+                RGB888 -> RGB565 & 0 & - & - & 1 \\ \hline
+                YUV422 -> RGB565 & 0 & 0 & 3 & - \\ \hline
+                YUV411 -> RGB565 & 0 & 2 & 3 & - \\ \hline
+                YUV422 -> YUV420 & 1 & 0 & 1 & - \\ \hline
+                YUV422 -> YUV411 & 1 & 0 & 2 & - \\ \hline
+                YUV411 -> YUV422 & 1 & 2 & 0 & - \\ \hline
+                YUV411 -> YUV420 & 1 & 2 & 1 & - \\ \hline
+                \end{tabular}
+            }
+            \begin{tablenotes}
+                \item[1] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_TRANS\_MODE} 的值
+                \item[2] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV\_MODE} 的值
+                \item[3] 对应 \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV2YUV\_MODE} 的值
+                \tagged{ESP32-P4-latest}{
+                \item[4] 对应 \hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{LCD\_CAM\_LCD\_CONV\_RGB2RGB\_MODE} 的值
+                }
+            \end{tablenotes}
+            \end{threeparttable}
+            \end{table}
+    \end{itemize}
+
+    \item 配置输入数据色彩空间：配置 \hyperref[fielddesc:LCDCAMLCDCONVDATAINMODE]{LCD\_CAM\_LCD\_CONV\_DATA\_IN\_MODE} 为：
+    \begin{itemize}
+        \item 0：有限色彩空间 (limited range)\hyperref[limited-color-range-note]{$^1$}
+        \item 1：全色彩空间 (full range)\hyperref[full-color-range-note]{$^2$}
+    \end{itemize}
+
+    \item 配置输出数据色彩空间：配置 \hyperref[fielddesc:LCDCAMLCDCONVDATAOUTMODE]{LCD\_CAM\_LCD\_CONV\_DATA\_OUT\_MODE} 为：
+    \begin{itemize}
+        \item 0：有限色彩空间 (limited range)\hyperref[limited-color-range-note]{$^1$}
+        \item 1：全色彩空间 (full range)\hyperref[full-color-range-note]{$^2$}
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item \label{limited-color-range-note} 如果选择有限色彩空间，则\begin{itemize}
+        \item RGB 的取值范围为：16 \verb+~+ 240；
+        \item YUV 的取值范围为：
+        \begin{itemize}
+            \item Y：16 \verb+~+ 240；
+            \item U-V：16 \verb+~+ 235。
+        \end{itemize}
+
+    \end{itemize}
+    \item \label{full-color-range-note} 如果选择全色彩空间，则 RGB 或 YUV 的取值范围为：0 \verb+~+ 255；
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{LCD\_CAM 时序}
+
+\subsubsection{LCD 时序 (RGB 格式）}\label{sec:lcd_timing}
+
+图 \ref{fig:lcd_frame} 所示为 LCD RGB 格式的视频帧结构：
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{39-CAMLCDCTRL/figures/lcd_frame_structure}
+    \caption{LCD 视频帧结构}
+    \label{fig:lcd_frame}
+\end{figure}
+
+如图所示，视频帧结构由以下寄存器配置：
+
+    \begin{itemize}
+        \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_VT\_HEIGHT}
+        \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_VA\_HEIGHT}
+        \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_HB\_FRONT}
+        \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_LCD\_HT\_WIDTH}
+        \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_LCD\_HA\_WIDTH}
+        \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_VB\_FRONT}
+
+    \end{itemize}
+
+图 \ref{fig:lcd_timing} 显示了一个完整帧的时序。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/lcd_timing}}
+    \caption{LCD 时序（RGB 格式）}
+    \label{fig:lcd_timing}
+\end{figure}
+
+\begin{tiplisting}
+配置上图所示的时序参数时，请特别注意参数值等于寄存器值 + 1。例如，如果希望 VSYNC 宽度为 1，则需要配置 \hyperref[fielddesc:LCDCAMLCDVSYNCWIDTH]{LCD\_CAM\_LCD\_VSYNC\_WIDTH} 为 0。更多信息见寄存器描述部分。
+\end{tiplisting}
+
+\subsubsection{LCD 时序（I8080/MOTO6800 格式）}
+
+图 \ref{fig:lcd_i8080_timing} 为 LCD I8080/MOTO6800 格式的时序图。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/LCD_I8080_Timg}}
+    \caption{LCD 时序（I8080/MOTO6800 格式）}
+    \label{fig:lcd_i8080_timing}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}\label{sec:lcdcam-interrupts}
+
+\chipname{} 的 LCD\_CAM 可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item LCD\_CAM\_INTR
+    \end{itemize}
+
+这个中断信号可由 LCD\_CAM 的以下内部中断源生成：
+
+\begin{itemize}
+    \item \label{int:LCDCAMCAMHSINT}LCD\_CAM\_CAM\_HS\_INT：当 Camera 模块接收行数大于等于 \hyperref[fielddesc:LCDCAMCAMLINEINTNUM] {LCD\_CAM\_CAM\_LINE\_INT\_NUM} + 1 时触发。
+    \item \label{int:LCDCAMCAMVSYNCINT}LCD\_CAM\_CAM\_VSYNC\_INT：当 Camera 模块接收到帧指示信号 VSYNC（即接收完一帧数据）时触发。
+    \item \label{int:LCDCAMLCDTRANSDONEINT}LCD\_CAM\_LCD\_TRANS\_DONE\_INT：当 LCD 模块完成数据发送时触发。
+    \item \label{int:LCDCAMLCDVSYNCINT}LCD\_CAM\_LCD\_VSYNC\_INT：当 LCD 模块发送帧指示信号 VSYNC（即发送完一帧数据）时触发。
+\end{itemize}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:camlcdctrl-reg-summ} \textit{\nameref{sec:camlcdctrl-reg-summ}}。
+
+\section{软件配置流程}
+
+\begin{tiplisting}
+LCD 模块和 Camera 模块的寄存器相关配置，均需要通过置位对应的 \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} 和 \hyperref[fielddesc:LCDCAMCAMUPDATE]{LCD\_CAM\_CAM\_\\UPDATE} 的方式来进行更新，从而将 LCD 寄存器数据从 APB 时钟域同步到 LCD/Camera 时钟域。见下文示例。
+\end{tiplisting}
+\vspace{-2em}
+\subsection{软件配置 LCD（RGB 格式）发送流程}
+软件配置 LCD 以 RGB 格式发送的流程如下：
+
+\begin{enumerate}
+    \item 配置时钟，详见章节 \ref{sec:lcdcam-module-clk}。
+    \item 配置信号管脚，详见表 \ref{tab:lcdcam-signal-description} 和章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+
+    \item \label{LCDCAM-TX-INTERRUPT1} 使能相应的中断，详见章节 \ref{sec:lcdcam-interrupts}。
+
+    \item 置位 \hyperref[fielddesc:LCDCAMLCDRGBMODEEN]{LCD\_CAM\_LCD\_RGB\_MODE\_EN}，使能 RGB 格式；
+
+    \item 配置帧结构，详见章节 \ref{sec:lcd_timing}。
+
+    \item 置位 \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} 使配置生效。
+
+    \item 复位发送控制单元 LCD\_Ctrl 和 Async TX FIFO，详见章节 \ref{sec:lcdcam_reset}。
+
+    \item 配置 GDMA 发送链表，详见章节 \ref{mod:vdma} \textit{\nameref{mod:vdma}}。
+
+    \item 开始发送数据：
+    \begin{itemize}
+        \item 等待 LCD 从设备配置完成；
+        \item 置位 \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} 开始发送数据。
+    \end{itemize}
+
+    \item 等待步骤 \ref{LCDCAM-TX-INTERRUPT1} 设置的中断信号；
+
+    \item 在数据发送的帧间隔，检查 \hyperref[fielddesc:LCDCAMLCDNEXTFRAMEEN]{LCD\_CAM\_LCD\_NEXT\_FRAME\_EN} 是否被置位：
+        \begin{itemize}
+        \item 如果被置位，则继续发送下一帧数据：置位 \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE}，重复上述步骤；
+        \item 如果没有被置位，则 LCD 停止发送数据。
+        \end{itemize}
+
+    \item 若数据发送完成，则清零 \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START}。
+\end{enumerate}
+
+\subsection{软件配置 LCD（I8080/MOTO6800 格式）发送流程}
+
+软件配置 LCD 以 I8080/MOTO6800 格式发送的流程如下：
+
+\begin{enumerate}
+    \item 配置时钟，详见章节 \ref{sec:lcdcam-module-clk}。
+    \item 配置信号管脚，详见表 \ref{tab:lcdcam-signal-description} 和章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+
+    \item 使能相应的中断，详见章节 \ref{sec:lcdcam-interrupts}。\label{LCDCAM-TX-INTERRUPT}
+
+    \item 清零 \hyperref[fielddesc:LCDCAMLCDRGBMODEEN]{LCD\_CAM\_LCD\_RGB\_MODE\_EN} 关闭 RGB 格式。
+    \item 配置 CMD 阶段，包括 \hyperref[fielddesc:LCDCAMLCDCMD]{LCD\_CAM\_LCD\_CMD}、\hyperref[fielddesc:LCDCAMLCDCMD2CYCLEEN]{LCD\_CAM\_LCD\_CMD\_2\_CYCLE\_EN}、\hyperref[fielddesc:LCDCAMLCDFIRSTCMDVALUE]{LCD\_CAM\_LCD\_FIRST\_CMD\_VALUE} 和 \hyperref[fielddesc:LCDCAMLCDLATTERCMDVALUE]{LCD\_CAM\_LCD\_LATTER\_CMD\_VALUE}。
+
+    \item 配置 DUMMY 阶段，包括 \hyperref[fielddesc:LCDCAMLCDDUMMY]{LCD\_CAM\_LCD\_DUMMY}、\hyperref[fielddesc:LCDCAMLCDDUMMYCYCLELEN]{LCD\_CAM\_LCD\_DUMMY\_CYCLELEN}。
+    \item 配置 DOUT 阶段，包括 \hyperref[fielddesc:LCDCAMLCDDOUT]{LCD\_CAM\_LCD\_DOUT}，根据输出模式不同进行以下配置：
+\begin{itemize}
+    \item 定长输出模式\hyperref[camlcdctrl-note-1]{$^a$}，在 \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN} 中配置数据长度。
+    \item 持续输出模式\hyperref[camlcdctrl-note-2]{$^b$}，则需置位 \hyperref[fielddesc:LCDCAMLCDALWAYSOUTEN]{LCD\_CAM\_LCD\_ALWAYS\_OUT\_EN} 使能持续输出模式，不需要配置 \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN}。
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item \label{camlcdctrl-note-1} 定长输出模式是指：LCD 发送完成 \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN} 中配置的数据长度即结束 LCD 发送。
+    \item \label{camlcdctrl-note-2} 持续输出模式是指：LCD 持续发送数据，直到
+    \begin{enumerate}
+        \item \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} 被清零；
+        \item 或 \hyperref[fielddesc:LCDCAMLCDRESET]{LCD\_CAM\_LCD\_RESET} 被置位；
+        \item 或 GDMA 中所有数据被发送完。
+    \end{enumerate}
+\end{enumerate}
+\end{tiplisting}
+
+\end{itemize}
+    \item 配置 CD 信号模式，包括 CD 信号的默认值以及在各阶段的值，详见寄存器 \hyperref[regdesc:LCDCAMLCDMISCREG]{LCD\_CAM\_LCD\_MISC\_REG} 描述。
+
+    \item 置位 \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} 使配置生效。
+
+    \item 复位发送控制单元 (LCD\_Ctrl) 和 Async TX FIFO，详见章节 \ref{sec:lcdcam_reset}。
+
+    \item 配置 GDMA 发送链表，详见章节 \ref{mod:vdma} \textit{\nameref{mod:vdma}}。
+
+    \item 开始发送数据：
+    \begin{itemize}
+        \item 等待 LCD 从设备配置完成；
+        \item 置位 \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} 开始发送数据。
+    \end{itemize}
+
+    \item 等待步骤 \ref{LCDCAM-TX-INTERRUPT} 设置的中断信号；
+
+    \item 若数据发送完成，则清零 \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START}。
+\end{enumerate}
+
+\textbf{注意：}\\
+无论 LCD 配置为 RGB 格式，还是 I8080/MOTO6800 格式，访问内部和外部存储器时均应注意以下限制：
+
+\begin{itemize}
+    \item 如果 LCD 数据总线设置为 8 位并行输出时，则
+    \begin{itemize}
+        \item 像素时钟 LCD\_PCLK 频率需小于 80 MHz；
+        \item 如果同时使用了 YUV-RGB 格式转换，则 LCD\_PCLK 频率需小于 60 MHz。
+    \end{itemize}
+    \item 如果 LCD 数据总线设置为 16 位并行输出时，则
+    \begin{itemize}
+        \item 像素时钟频率需小于 40 MHz；
+        \item 如果同时使用了 YUV-RGB 格式转换，则 LCD\_PCLK 频率需小于 30 MHz。
+    \end{itemize}
+\end{itemize}
+
+\subsection{软件配置 Camera 接收流程}
+软件配置 Camera 接收模式的流程如下：
+
+\begin{enumerate}
+    \item 根据章节 \ref{sec:lcdcam-module-clk} 的描述，配置时钟。注意，在从机模式下，模块时钟频率需要大于 2 倍的图形传感器的 PCLK 频率。
+
+    \item 配置信号管脚，详见表 \ref{tab:lcdcam-signal-description} 和章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+
+    \item 根据控制信号 HSYNC 置位或清零 \hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN}。
+
+    \item 配置接收数据格式，详见章节 \ref{sec:cam_data_control}。
+
+    \item 置位 \hyperref[fielddesc:LCDCAMCAMUPDATE]{LCD\_CAM\_CAM\_UPDATE} 使配置生效。
+
+    \item 复位接收控制单元 Camera\_Ctrl 和 Async Rx FIFO，详见章节 \ref{sec:lcdcam_reset}。
+
+    \item 使能相应的中断，详见章节 \ref{sec:lcdcam-interrupts}。\label{LCDCAM-RX-INTERRUPT}
+
+    \item 配置 GDMA 接收链表，并在 \hyperref[fielddesc:LCDCAMCAMRECDATABYTELEN]{LCD\_CAM\_CAM\_REC\_DATA\_BYTELEN} 中配置接收数据长度。
+
+    \item 开始接收数据：
+    \begin{itemize}
+        \item 在主机模式下，等待从机准备好后，置位 \hyperref[fielddesc:LCDCAMCAMSTART]{LCD\_CAM\_CAM\_START} 开始接收数据；
+        \item 在从机模式下，置位 \hyperref[fielddesc:LCDCAMCAMSTART]{LCD\_CAM\_CAM\_START}，等待主机提供时钟和控制信号后开始接收数据。
+    \end{itemize}
+    \item 接收数据，并存到 GDMA。最终产生步骤 \ref{LCDCAM-RX-INTERRUPT} 中设置的中断。
+\end{enumerate}
+
+\textbf{注意：}
+\begin{itemize}
+    \item 无论 Camera 模块配置为主机模式还是从机模式，均应注意以下限制：
+\begin{itemize}
+
+    \item 如果选择 8 位并行输入，则
+        \begin{itemize}
+        \item 像素时钟 CAM\_PCLK 频率需小于 80 MHz；
+        \item 如果同时使用了 YUV-RGB 格式转换，则 CAM\_PCLK 频率需小于 60 MHz。
+    \end{itemize}
+    \item 如果选择 16 位并行输入，则
+        \begin{itemize}
+        \item CAM\_PCLK 频率需小于 40 MHz；
+        \item 如果同时使用了 YUV-RGB 格式转换，则 CAM\_PCLK 频率需小于 30 MHz。
+    \end{itemize}
+
+\end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+对于 LCD\_CAM 模块，如果同时外接了 LCD 和摄像头，则访问内部/外部存储器时，需保证接口上最大的数据吞吐率小于 GDMA 总数据带宽。此处默认 APB\_CLK 频率为 80 MHz，更多有关 APB\_CLK 的信息请见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+\end{tiplisting}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{camlcdctrl-reg-summ}{}
+\section{寄存器列表}
+\label{sec:camlcdctrl-reg-summ}
+
+本小节的所有地址均为相对于 LCD\_CAM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/39-CAMLCDCTRL-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 LCD\_CAM 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/39-CAMLCDCTRL-reg__CN}
+
+
+\end{document}

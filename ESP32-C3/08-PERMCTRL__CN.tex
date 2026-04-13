@@ -1,0 +1,1272 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./08-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{权限管理 (PMS)}
+\label{mod:permctrl}
+\hypertarget{permctrl}{}
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+
+\section{概述}
+
+\chipname{} 芯片内置了一个权限控制模块 (Permission Controller, PMS)， 可以将硬件资源（内存和外设）分配给不同环境，从而实现特权环境和非特权环境的分离。
+
+\begin{itemize}
+    \item 特权环境：
+    \begin{itemize}
+        \item 可以访问所有的外设和存储空间。
+        \item 主要执行所有需要保密的操作，如用户认证、安全通信和数据加解密等。
+    \end{itemize}
+    \item 非特权环境：
+    \begin{itemize}
+        \item 只能访问部分的外设和存储空间。
+        \item 执行其他操作，如用户操作系统、各种应用程序等。
+    \end{itemize}
+\end{itemize}
+
+
+此外，\chipname{} 芯片的 RISC-V CPU 内核还包含一个物理存储器保护 (PMP) 单元，可以供软件设置存储器访问特权（读、写、执行权限），但存在以下限制：
+    \begin{itemize}
+        \item 最多可配置 16 个区域，在某些场景下无法完全支持 \chipname{} 丰富的外设和不同类型的存储器。
+        \item 仅能够限制 CPU 的访问，无法管控 GDMA 的访问。
+    \end{itemize}
+
+为了解决这些问题，\chipname{} 专门增加了权限管理模块 (PMS) ，作为对 CPU 物理存储器保护 (PMP) 单元的补充，为用户提供完善的权限管理选项。
+
+芯片在进行权限管理时的主要流程如下（可参考图 \ref{fig:pms_overview}）：
+\begin{enumerate}
+    \item 检查 PMP 权限
+    \begin{itemize}
+        \item 如通过，则继续检查 PMS 权限
+        \item 如不通过，则直接触发访问错误异常，不继续检查 PMS 权限
+    \end{itemize}
+    \item 检查 PMS 权限
+    \begin{itemize}
+        \item 如通过，则允许访问
+        \item 如不通过，则触发中断
+    \end{itemize}
+\end{enumerate}
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=0.5\textwidth]{./08-PERMCTRL/figures/c3_pms_pmp_new.pdf}
+        \caption{Permission Control Overview}
+        \label{fig:pms_overview}
+\end{figure}
+
+有关 PMP 物理存储器保护单元的介绍，请前往章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} 中的第 \ref{sec:riscvcpu-pmp-overview} 小节。有关世界控制器的介绍，请前往章节 \ref{mod:wctrl} \textit{\nameref{mod:wctrl}}。本章节主要介绍 \chipname{} 的 PMS 权限管理模块。
+
+
+\section{主要特性}\label{sec:}
+
+\chipname{} 的权限控制模块具有以下特性：
+
+\begin{itemize}
+    \item 支持特权环境和非特权环境下的独立权限管理
+    \item 支持片内存储器的权限管理，包括：
+    \begin{itemize}
+        \item CPU 对片内存储器的访问权限控制
+        \item GDMA 对片内存储器的访问权限控制
+    \end{itemize}
+    \item 支持片外存储器的权限管理
+    \begin{itemize}
+        \item CPU 通过 SPI1 访问外部存储器的权限控制
+        \item CPU 通过 Cache 访问外部存储器的权限控制
+    \end{itemize}
+    \item 支持外设空间的权限管理
+    \begin{itemize}
+        \item 各外设空间均支持独立的权限控制
+        \item 支持非对齐访问的监测
+    \end{itemize}
+    \item 支持自定义地址段权限管理
+    \item 内置权限寄存器锁保护机制
+    \item 内置权限监测中断机制
+\end{itemize}
+
+\section{特权环境与非特权环境}\label{sec:permctrl-privileged-mode}
+
+\chipname{} 芯片在检查 PMS 权限时：
+\begin{itemize}
+    \item 当芯片处于特权环境时，则检查特权环境对应的权限寄存器
+    \item 当芯片处于非特权环境时，则检查非特权环境对应的权限寄存器
+\end{itemize}
+
+用户使芯片进入特权环境有两种方法：
+
+\begin{itemize}
+    \item 配置世界控制器的世界切换
+    \begin{itemize}
+        \item 切换至安全世界：即进入特权环境
+        \item 切换至非安全世界：即退出特权环境
+    \end{itemize}
+    \item 配置 CPU 的特权模式
+    \begin{itemize}
+        \item 切换至机器模式：即进入特权环境
+        \item 切换至用户模式：即退出特权环境
+    \end{itemize}
+\end{itemize}
+
+具体通过配置 \hyperref[fielddesc:PMSPRIVILEGEMODESEL]{PMS\_PRIVILEGE\_MODE\_SEL} 进行选择：
+\begin{itemize}
+    \item 0（默认）：选择通过配置世界控制器，具体步骤详见 \ref{mod:wctrl} \textit{\nameref{mod:wctrl}}
+    \item 1：选择通过配置 CPU 的特权模式，具体步骤详见 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}
+\end{itemize}
+
+下面将详细介绍如何配置芯片在不同特权模式下对不同区域的权限。
+
+
+\section{片内存储器的权限管理}
+
+\chipname{} 片内存储器的主要包括：
+\begin{itemize}
+    \item ROM：共 384 KB，分为 256 KB Internal ROM0 和 128 KB Internal ROM1。
+    \item SRAM：共 400 KB，分为 16 KB Internal SRAM0 和 384 KB Internal SRAM1。
+    \item RTC 快速内存：共 8 KB，可由分割线分为高、低两个片区，各片区可独立配置权限。
+\end{itemize}
+
+本节将依次介绍 \chipname{} 中有关片内存储资源访问权限管理。
+
+\subsection{ROM 的访问权限管理}\label{sec:permctrl-PC-for-ROM}
+
+\chipname{} 的 ROM 允许 CPU 通过指令总线 IBUS 和数据总线 DBUS 进行访问，具体允许访问的地址空间范围请见下方表 \ref{tab:permctrl-ROM_block_address}。
+
+\begin{table}[H]
+    \centering
+    \caption{ROM 地址范围}
+    \label{tab:permctrl-ROM_block_address}
+
+    \begin{tabular}{|*{5}{c|} }
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{2}{c|}{\textbf{IBUS 地址}} & \multicolumn{2}{c|}{\textbf{DBUS 地址}} \\\cline{2-5}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{ROM}} & \textbf{起始地址} & \textbf{结束地址} & \textbf{起始地址} & \textbf{结束地址} \\\hline
+
+        % table contents
+        Internal ROM0  & 0x4000\_0000 & 0x4003\_FFFF & - & - \\\hline
+        Internal ROM1  & 0x4004\_0000 & 0x4005\_FFFF & 0x3FF0\_0000 & 0x3FF1\_FFFF \\\hline
+        \end{tabular}
+    \end{table}
+
+
+\chipname{} 使用下方表 \ref{tab:permctrl-rom_permconfig} 中的寄存器，控制 CPU 的指令总线 (IBUS) 和数据总线 (DBUS) 在机器模式和用户模式下对 ROM 的执行 (X)、写入 (W) 和读取 (R) 权限。注意，针对 ROM 的权限一旦配置，同时对 ROM0 和 ROM1 生效，不可单独配置：
+
+\begin{table}[H]
+    \centering
+    \caption{ROM 的权限配置（含 ROM0 和 ROM1）}
+    \label{tab:permctrl-rom_permconfig}
+    \begin{threeparttable}
+    \begin{tabular}{|l|l|l|l|}
+        \hline
+        \rowcolor{lightgray}
+        \textbf{总线} & \textbf{所处的模式} & \textbf{ROM 权限配置寄存器\tnote{A}}                         & \textbf{权限设置顺序} \\ \hline
+                     & 特权环境      & \hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN2REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_2\_REG   {[}20:18{]}}\tnote{B} & X/W/R           \\ \cline{2-4}
+        \multirow{-2}{*}{IBUS} & 非特权环境 & \hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_1\_REG {[}20:18{]}}\tnote{B}    & X/W/R \\ \hline
+                     & 特权环境      & \hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_DRAM0\_PMS\_CONSTRAIN\_1\_REG   {[}25:24{]}}\tnote{C} & W/R             \\ \cline{2-4}
+        \multirow{-2}{*}{DBUS} & 非特权环境 & \hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_DRAM0\_PMS\_CONSTRAIN\_1\_REG   {[}27:26{]}} & W/R   \\ \hline
+        \end{tabular}
+        \begin{tablenotes}
+        \item[A] 配置为 1 表示具有对应权限，配置为 0 表示不具有对应权限。
+        \item[B] 举例而言，配置该寄存器为 0b101 代表 CPU 的 IBUS 总线在非特权环境下对 ROM 具有执行和读取权限，但没有写入权限。
+        \item[C] 举例而言，配置该寄存器为 0b01 代表 CPU 的 DBUS 总线在特权环境下对 ROM 具有读取权限，但没有写入权限。
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+
+\subsection{SRAM}
+
+\chipname{} 的 SRAM 允许 CPU 通过指令总线 IBUS 或数据总线 DBUS 进行访问，具体允许访问的地址空间范围请见下方表 \ref{tab:permctrl-SRAM_block_address}。
+
+\begin{table}[H]
+    \centering
+    \caption{SRAM Block 地址范围}
+    \label{tab:permctrl-SRAM_block_address}
+    \begin{tabular}{ |*{6}{c|}}
+    \hline
+        \rowcolor{lightgray}
+        & & \multicolumn{2}{c|}{\textbf{IBUS 地址}} & \multicolumn{2}{c|}{\textbf{DBUS 地址}} \\\cline{3-6}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{SRAM}} & \multirow{-2}*{\textbf{Block}} & \textbf{起始地址} & \textbf{结束地址} & \textbf{起始地址} & \textbf{结束地址} \\\hline
+        % table contents
+        \multirow{1}*{Internal SRAM0}  & - & 0x4037\_C000 & 0x4037\_FFFF & - & - \\\hline
+    \multirow{3}*{Internal SRAM1}
+        & Block0 & 0x4038\_0000 & 0x4039\_FFFF & 0x3FC8\_0000 & 0x3FC9\_FFFF \\\cline{2-6}
+        & Block1 & 0x403A\_0000 & 0x403B\_FFFF & 0x3FCA\_0000 & 0x3FCB\_FFFF \\\cline{2-6}
+        & Block2 & 0x403C\_0000 & 0x403D\_FFFF & 0x3FCC\_0000 & 0x3FCD\_FFFF \\\hline
+        \end{tabular}
+    \end{table}
+
+本小节将依次介绍 Internal SRAM0 和 Internal SRAM1 的权限配置。
+\subsubsection{Internal SRAM0 的权限配置}\label{sec:permctrl_sram0}
+
+\chipname{} 可通过配置 \hyperref[fielddesc:PMSINTERNALSRAMUSAGECPUCACHE]{PMS\_INTERNAL\_SRAM\_USAGE\_CPU\_CACHE} 将Internal SRAM0 分配给 CPU 或者 ICACHE 单独使用：
+\begin{itemize}
+    \item 1: 分配给 CPU 使用
+    \item 0: 分配给 ICACHE 使用
+\end{itemize}
+
+当 CPU 获得使用权限时，\chipname{} 使用下方表 \ref{tab:permctrl-sram0_permconfig} 中的寄存器，控制 CPU 的指令总线 (IBUS) 在机器模式和用户模式下对 SRAM0 的执行 (X)、写入 (W) 和读取 (R) 权限：
+
+\begin{table}[H]
+    \centering
+    \caption{Internal SRAM0 的访问权限配置}
+    \label{tab:permctrl-sram0_permconfig}
+    \begin{threeparttable}
+    \begin{tabular}{ |l|l|l|l|}
+    \hline
+        \rowcolor{lightgray}
+        \textbf{总线\tnote{A}} & \textbf{所处的模式} & \textbf{配置寄存器\tnote{B}} & \textbf{权限设置顺序} \\\hline
+        \multirow{2}*{IBUS} & 特权环境   &
+        \scriptsize\hyperref[fielddesc:PMSCOREXIRAM0PMSCONSTRAINSRAMMMODECACHEDATAARRAYPMS0]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_SRAM\_M\_MODE\_CACHEDATAARRAY\_PMS\_0}\tnote{C} & X/W/R \\\cline{2-4}
+                            & 非特权环境 & \scriptsize\hyperref[fielddesc:PMSCOREXIRAM0PMSCONSTRAINSRAMUMODECACHEDATAARRAYPMS0]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_SRAM\_U\_MODE\_CACHEDATAARRAY\_PMS\_0 } & X/W/R \\\hline
+        \end{tabular}
+        \begin{tablenotes}
+            \item[A] CPU 必须同时拥有使用权限和访问权限才能访问 Internal SRAM0。
+            \item[B] 配置为 1 表示具有对应权限，配置为 0 表示不具有对应权限。
+            \item[C] 举例而言，配置该寄存器为 0b101 代表 CPU 的 IBUS 总线在特权环境下对 SRAM0 具有执行和读取权限，没有写入权限。
+        \end{tablenotes}
+        \end{threeparttable}
+    \end{table}
+
+\subsubsection{Internal SRAM1 权限配置 }\label{sec:permctrl_sram1}
+
+\chipname{} 的 Internal SRAM1 分为 Block0 \verb+~+ Block2（详见表 \ref{tab:permctrl-SRAM_block_address}）：
+\begin{itemize}
+    \item CPU 的数据总线 DBUS、指令总线 IBUS 和 GDMA 均可访问，且允许同时进行访问。
+    \item 支持自定义地址段，可实现灵活的权限控制。
+\end{itemize}
+\chipname{} 允许用户通过 5 条分割线将 SRAM1 分割为 6 个自定义地址段，每个区域可以分别配置权限。
+
+具体来说，Internal SRAM1 可由 IRam0\_DRam0\_split\_line 划分为指令空间和数据空间。
+\begin{itemize}
+    \item 指令空间 (Instruction Region)：
+    \begin{itemize}
+    \item 指令空间应配置为仅可由 IBUS 访问
+    \item 且可以由 IRam0\_split\_line\_0 和 IRam0\_split\_line\_1 进一步划分为 3 个分割区域
+    \end{itemize}
+    \item 数据空间 (Data Region)：
+    \begin{itemize}
+        \item 数据空间应配置为仅可由 DBUS 访问
+        \item 且可由 DRam0\_split\_line\_0 和 DRam0\_split\_line\_1 进一步划分为 3 个分割区域
+    \end{itemize}
+\end{itemize}
+
+请见下方图 \ref{fig:permctrl_region_split} 和表 \ref{tab:permctrl_region_split} 所示。
+
+\begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.7\textwidth]{./08-PERMCTRL/figures/split_line.eps}
+        \caption{Internal SRAM1 的区域分割示意图}
+        \label{fig:permctrl_region_split}
+    \end{figure}
+
+\begin{table}[H]
+\caption{Internal SRAM1 的区域分割}
+\label{tab:permctrl_region_split}
+
+\centering
+\begin{threeparttable}
+\begin{tabular}{|L{3cm}|L{6cm}|L{6cm}|}
+\hline
+\rowcolor{lightgray}
+\textbf{内存}\tnote{A}                     & \textbf{空间}                                & \textbf{区域\tnote{B}}             \\ \hline
+\multirow{6}{*}{SRAM1} & \multirow{3}{*}{Instruction Region} & Instr\_Region\_0 \\ \cline{3-3}
+                       &                                     & Instr\_Region\_1 \\ \cline{3-3}
+                       &                                     & Instr\_Region\_2 \\ \cline{2-3}
+                       & \multirow{3}{*}{Data Region}      & Data\_Region\_0  \\ \cline{3-3}
+                       &                                     & Data\_Region\_1  \\ \cline{3-3}
+                       &                                     & Data\_Region\_2  \\ \hline
+\end{tabular}
+    \begin{tablenotes}
+        \item[A] 各细分区域的权限可分别配置，请见下方表 \ref{tab:permctrl_sram1_inst_permsplit} 和 \ref{tab:permctrl_sram1_data_permsplit}。
+        \item[B] 有关分割线的具体配置，请见下方的描述。
+    \end{tablenotes}
+\end{threeparttable}
+\end{table}
+
+
+\subparagraph{划分区域}\label{sec:permctrl-split-line}
+
+\chipname{} 允许用户自行配置分割线的位置，每条分割线均有自己对应的配置寄存器。
+\begin{itemize}
+    \item 指令和数据空间分割线 IRam0\_DRam0\_split\_line 配置寄存器：
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN1REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_CONSTRAIN\_1\_REG}
+    \end{itemize}
+    \item 指令空间内部分割线 IRam0\_split\_line\_0  配置寄存器：
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN2REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_CONSTRAIN\_2\_REG}
+    \end{itemize}
+    \item 指令空间内部分割线 IRam0\_split\_line\_1  配置寄存器：
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN3REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_CONSTRAIN\_3\_REG}
+    \end{itemize}
+    \item 数据空间内部分割线 DRam0\_split\_line\_0  配置寄存器：
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN4REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_CONSTRAIN\_4\_REG}
+    \end{itemize}
+    \item 数据空间内部分割线 DRam0\_split\_line\_1  配置寄存器：
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN5REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_CONSTRAIN\_5\_REG}
+    \end{itemize}
+\end{itemize}
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=0.5\textwidth]{./08-PERMCTRL/figures/split_line_category.eps}
+        \caption{分割线 Category 分配示意图}
+        \label{fig:PERMCTRL_category_config}
+\end{figure}
+每条分割线在配置时应：
+\begin{enumerate}
+    \item 首先配置分割线所处的 Block：
+    \begin{itemize}
+        \item 将分割线所处 Block 对应的 Category\_\regindex{x} 域配置为 0x1 或者 0x2（没有区别）；
+        \item 之前所有 Block 对应的 Category\_0 \verb+~+ Category\_\regindex{x-1} 域全被配置为 0x0；
+        \item 之后所有 Block 对应的 Category\_\regindex{x+1} \verb+~+ Category\_2 域全部配置为 0x3。
+    \end{itemize}
+        举例而言，假设分割线位于 Block1，则应将 Block1 对应的 Category\_1 域配置为 0x1 或者 0x2；将 Block0 对应的 Category\_0 域全部配置为 0x0；将 Block2 对应的 Category\_2 域全部配置为 0x3。可参考图 \ref{fig:PERMCTRL_category_config}。反过来，查询到 Category\_1 域为 0x1 或者 0x2 也可以了解分割线处于 Block1。
+    \item 配置分割线在所处 Block 中的位置：
+    \begin{itemize}
+        \item 将需要分割的 IBUS 或 DBUS 访问地址的 [16:9] 位写入分割线对应配置寄存器的 \hyperref[fielddesc:PMSCOREXIRAM0SRAMLINE0SPLITADDR]{SPLITADDR} 域中。
+        \item 注意分割地址必须配置为与 512 Byte 对齐，也就是说必须是 0x200 的整数倍。
+    \end{itemize}
+        举例而言，假设需要分割的 DBUS 地址为 0x3fc88000，则应将该地址的 [16:9] 位，即 0b01000000 写入该分割线对应配置寄存器的 \hyperref[fielddesc:PMSCOREXIRAM0SRAMLINE0SPLITADDR]{SPLITADDR} 域。
+        \item 分割线可基于 IBUS 地址段或者 DBUS 地址段，其地址是等价的。比如 DBUS 地址 0x3fc88000 和 IBUS 地址 0x40388000 处于相同位置，其 [16:9] 都是 0b01000000。
+\end{enumerate}
+
+
+
+
+值得注意的是，用户在配置 5 条分割线时还应遵循以下原则：
+
+ \begin{itemize}
+     \item 位置要求
+     \begin{itemize}
+         \item 指令和数据空间分割线可以配置为 SRAM1 的任何位置
+         \item 指令空间中的 2 条内部分割线不能超出指令空间，相对位置无要求。
+         \item 数据空间中的 2 条内部分割线不能超出数据空间，相对位置无要求。
+     \end{itemize}
+     \item 各分割线可以相互重合，相当于不存在。举例而言：
+     \begin{itemize}
+         \item 数据空间中的 2 条内部分隔线如果不重合，则相当于将数据空间分为 3 个细分区域；
+         \item 数据空间中的 2 条内部分隔线如果重合，则相当于仅将数据空间分为 2 个细分区域；
+         \item 数据空间中的 2 条内部分隔线如果本身 两两重合，且与指令和数据空间分割线重合，则相当于对数据空间内部不做细分，仅有一个数据空间区域。
+     \end{itemize}
+     \end{itemize}
+
+\subparagraph{配置权限}
+
+完成对分割线的配置后，用户可通过下表中的寄存器，独立配置 CPU 的 IBUS、DBUS 和 GDMA 外设对细分指令空间和数据空间的访问权限。
+
+对细分指令空间的配置如表 \ref{tab:permctrl_sram1_inst_permsplit} 所示：
+
+\begin{table}[H]
+    \centering
+    \caption{Internal SRAM1 的访问权限控制 -- 指令空间}
+    \label{tab:permctrl_sram1_inst_permsplit}
+
+    \begin{threeparttable}
+    \begin{tabular}{ |l|l|l|c|c|c|l| }
+    \hline
+    \rowcolor{lightgray}
+        & & & \multicolumn{3}{c|}{\textbf{指令空间}} &  \textbf{权限设}\\\cline{4-6}
+    \rowcolor{lightgray}
+    \multirow{-2}*{\textbf{总线}}   & \multirow{-2}*{\textbf{所处的模式}} & \multirow{-2}*{\textbf{配置寄存器}} & \scriptsize{\textbf{instr\_region\_0}} & \scriptsize{\textbf{instr\_region\_1}} & \scriptsize{\textbf{instr\_region\_2}} & \textbf{置顺序}   \\\hline
+    \multirow{2}*{IBUS}             & 特权环境        & \scriptsize{\hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN2REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_2\_REG}} & [2:0] & [5:3] & [8:6] & X/W/R \\\cline{2-7}
+                                    & 非特权环境      & \scriptsize{\hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_1\_REG}} & [2:0] & [5:3] & [8:6] & X/W/R \\\hline
+
+     \multirow{2}*{DBUS}            & 特权环境        &                                                                             & \multicolumn{3}{c|}{[13:12]\tnote{A}} & W/R \\ \cline{2-2} \cline{4-7}
+                                    & 非特权环境      & \multirow{-2}*{\scriptsize{\hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN1REG]{PMS\_Core\_X\_DRAM0\_PMS\_CONSTRAIN\_1\_REG}}}      & \multicolumn{3}{c|}{[1:0]\tnote{A}}  & W/R \\\hline
+    GDMA   \tnote{C}                     & \regindex{XX} 外设   \tnote{D}           & \scriptsize{\hyperref[regdesc:PMSDMAAPBPERISPI2PMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_\regindex{XX}\_PMS\_CONSTRAIN\_1\_REG}}  &   \multicolumn{3}{c|}{[1:0]\tnote{B}}   & W/R \\\hline
+    \end{tabular}
+        \begin{tablenotes}
+            \item [A] 可配置 DBUS 数据总线在指令空间中的访问权限，但建议将 DBUS 对指令空间的权限配置为 0。
+            \item [B] 可配置 GDMA 在指令空间中的访问权限，但建议不要配置 GDMA 对指令空间的权限。
+            \item [C] GDMA 没有特权环境和非特权环境。
+            \item [D] \chipname{} 共有 6 个外设（分别为 SPI2、UCHI0、I2S、AES、SHA、ADC）可通过 GDMA 访问 Internal SRAM 1，所有的外设都有独立的权限寄存器控制其访问权限。
+
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+
+对细分数据空间的配置如表 \ref{tab:permctrl_sram1_data_permsplit} 所示：
+
+\begin{table}[H]
+    \centering
+    \caption{Internal SRAM1 的访问权限控制 -- 数据空间}
+    \label{tab:permctrl_sram1_data_permsplit}
+
+    \begin{threeparttable}
+    \begin{tabular}{ |l|l|l|c|c|c|l| }
+    \hline
+    \rowcolor{lightgray}
+        & & & \multicolumn{3}{c|}{\textbf{数据空间}} & \textbf{权限设} \\\cline{4-6}
+    \rowcolor{lightgray}
+    \multirow{-2}*{\textbf{总线}}   & \multirow{-2}*{\textbf{所处的模式}} & \multirow{-2}*{\textbf{配置寄存器}} & \scriptsize{\textbf{data\_region\_0}} & \scriptsize{\textbf{data\_region\_1}} & \scriptsize{\textbf{data\_region\_2}} & \textbf{置顺序}   \\\hline
+     \multirow{2}*{IBUS}            & 特权环境        &  \scriptsize{\hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN2REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_2\_REG}}                                                                                        & \multicolumn{3}{c|}{[11:9]\tnote{A}}  & X/W/R \\ \cline{2-7}
+                                    & 非特权环境      & \scriptsize{\hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_1\_REG}}      & \multicolumn{3}{c|}{[11:9]\tnote{A}}  & X/W/R \\\hline
+    \multirow{2}*{DBUS}             & 特权环境        &                                                                                    & [3:2] & [5:4] & [7:6] & W/R \\\cline{2-2} \cline{4-7}
+                                    & 非特权环境      & \multirow{-2}*{\scriptsize{\hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN1REG]{PMS\_Core\_X\_DRAM0\_PMS\_CONSTRAIN\_1\_REG}}} & [15:14] & [17:16] & [19:18] & W/R \\\hline
+    GDMA \tnote{B}                   & \regindex{XX} 外设\tnote{C}              & \scriptsize{\hyperref[regdesc:PMSDMAAPBPERISPI2PMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_\regindex{XX}\_PMS\_CONSTRAIN\_1\_REG}}  &  [3:2] & [5:4] & [7:6]    & W/R \\\hline
+
+    \end{tabular}
+        \begin{tablenotes}
+            \item [A] 可配置 IBUS 指令总线在数据空间中的访问权限，但建议将数据空间的权限配置为 0。
+            \item [B] GDMA 没有特权环境和非特权环境。
+            \item [C] \chipname{} 共有 6 个外设（分别为 SPI2、UCHI0、I2S、AES、SHA、ADC）可通过 GDMA 访问 Internal SRAM 1，所有的外设都有独立的权限寄存器控制其访问权限。
+            \end{tablenotes}
+     \end{threeparttable}
+\end{table}
+有关分割线的具体配置，请见第 \ref{sec:permctrl-split-line}。
+
+\begin{tiplisting}
+ESP-IDF 在 bootloader 中为用户默认启用片内存储器的访问权限保护，此功能自动将 SRAM 内存拆分为数据和指令段，并为指令部分（在拆分地址以下）设置读/执行权限，为数据部分（在拆分地址以上）设置读/写权限。内存保护对通过 IRAM0 和 DRAM0 总线的所有访问都有效。参见：{\it{\href{https://docs.espressif.com/projects/esp-idf/zh_CN/v4.3-beta1/esp32c3/api-reference/kconfig.html#memory-protection}{ESP-IDF api-reference Memory protection}}}。
+\end{tiplisting}
+
+\subsection{RTC 快速内存 (FAST Memory) 的权限管理}
+
+\chipname{} 的 RTC FAST Memory的存储空间大小为 8 KB，访问地址范围如下：
+
+\begin{longtable}[c]{ |c|l|l| }
+\caption{地址范围}
+\label{tab:fast-memory-address}
+\\\hline
+\rowcolor{lightgray}
+    \textbf{内存} &  \textbf{起始地址}  &  \textbf{结束地址}\\
+    \hline
+    RTC 快速内存           & 0x5000\_0000 &  0x5000\_1FFF   \\
+    \hline
+\end{longtable}
+
+为了实现更细化的权限管理，\chipname{} 允许用户使用 1 条分割线将 RTC 快速存储空间分割为 2 个区域，每个区域都有独立的权限管理寄存器。
+
+分割线的配置如下表所示：
+\begin{table}[H]
+    \centering
+    \caption{RTC 快速内存的分割}
+    \label{tab:rtc_fast_mem_split}
+    \begin{threeparttable}
+    \begin{tabular}{|l|l|l|} \hline
+    \rowcolor{lightgray}
+     & \textbf{特权环境} & \textbf{非特权环境} \\\hline
+    \textbf{分割地址配置寄存器}\tnote{1} & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN9REG]{PIF\_PMS\_CONSTRAN\_9\_REG} [10:0]  & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN9REG]{PIF\_PMS\_CONSTRAN\_9\_REG} [21:11] \\\hline
+    \end{tabular}
+        \begin{tablenotes}
+        \item[1] 此处写入的分割地址是相对于 RTC 快速内存基地址偏移量的字大小。举例而言，用户如需设置 0x5000\_1000 作为分割线地址，应将该偏移量 0x1000 对应的字大小 0x400 写入相应寄存器中。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+分割后各区域的权限配置如下表所示：
+\begin{table}[H]
+    \centering
+    \caption{RTC 快速内存的权限配置}
+    \label{tab:rtc_fast_mem_config}
+    \begin{threeparttable}
+    \begin{tabular}{|l|l|l|l|l|} \hline
+    \rowcolor{lightgray}
+     & & \multicolumn{2}{c|}{\textbf{权限配置寄存器}}& \\\cline{3-4}
+    \rowcolor{lightgray}
+    \multirow{-2}*{\textbf{总线}}   & \multirow{-2}*{\textbf{RTC 快速内存}}  & \textbf{特权环境} & \textbf{非特权环境} & \multirow{-2}*{\textbf{配置顺序}\tnote{A}} \\\hline
+     外设总线    & 高地址段                       &   \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN10REG]{PIF\_PMS\_CONSTRAN\_10\_REG} [5:3] \tnote{B}               &    \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN10REG]{PIF\_PMS\_CONSTRAN\_10\_REG} [11:9]  & \\\cline{2-4}
+      (PIF) & 低地址段 & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN10REG]{PIF\_PMS\_CONSTRAN\_10\_REG} [2:0] & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN10REG]{PIF\_PMS\_CONSTRAN\_10\_REG} [8:6]  & \multirow{-2}*{X/R/W}  \\\hline
+    \end{tabular}
+        \begin{tablenotes}
+        \item[A] 配置为 1 表示具有对应权限，配置为 0 表示不具有对应权限。
+        \item[B] 举例而言，配置该寄存器为 0b101 代表 CPU 的 PIF 外设总线在特权环境下对 RTC 快速内存的高地址段有执行和读取权限，但没有写入权限。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\section{外设权限管理}
+\subsection{外设空间权限控制}\label{sec:permctrl-peri-address}
+
+\chipname{} 的模块和外设的权限大多均可独立控制，仅有部分外设共用一套权限管理寄存器，详见下表 \ref{tab:sysmem-base-address}。
+用户可通过配置相应寄存器（\hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN1REG]{PMS\_CORE\_0\_PIF\_PMS\_CONSTRAN\_\regindex{n}\_REG}），配置 CPU 在特权环境和非特权环境下对相应模块或外设的读写权限（从高到低为 R/W）。当 CPU 对外设发起的访问类型与所配置类型不一致时，该访问将被拒绝，具体表现为读操作仅能得到 0，写操作直接失败。
+
+
+关于 \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN1REG]{PMS\_CORE\_0\_PIF\_PMS\_CONSTRAN\_\regindex{n}\_REG} 的说明：
+\begin{itemize}
+    \item \regindex{n} 可为 1 \verb+~+ 8，其中 1 \verb+~+ 4 用于配置机器模式下的权限，5 \verb+~+ 8 用于配置用户模式下的权限。
+\end{itemize}
+
+举例而言，用户可配置 \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN1REG]{PMS\_CORE\_0\_PIF\_PMS\_CONSTRAIN\_1\_REG [1:0]} 数值为 0x2，代表 CPU 在机器模式下对 UART0 只有读权限，但无写权限。此时，CPU 如在执行代码过程中尝试修改 UART0 的内部寄存器数值，将不会成功。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+\item[1]：多个外设共用
+\item[2]：加速器包括 AES、SHA、RSA、数字签名、HMAC
+\item[3]: 配置顺序为 R/W
+\item[4]: 省略部分 ** 为PMS\_CORE\_0\_PIF
+\end{TableNotes}
+
+\begin{longtable}[c]{ |l|l|l|l| }
+    \caption{外设权限管理寄存器}
+    \label{tab:sysreg-peripheral-controlling-bit1}
+    \\\hline\rowcolor{lightgray}
+    \textbf{外设}    & \textbf{特权环境下权限配置寄存器} & \textbf{非特权环境下权限配置寄存器} & \textbf{位}\\\hline
+    \endfirsthead
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+        \textbf{外设}    & \textbf{特权环境下权限配置寄存器} & \textbf{非特权环境下权限配置寄存器} & \textbf{位}\tnote{3}\\\hline
+    \endhead
+    \multicolumn{3}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+    \insertTableNotes
+    \endlastfoot
+    GDMA  & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [7:6] \\\hline
+    eFuse 控制器 \& PMU\tnote{1} & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [15:14] \\\hline
+    IO\_MUX & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [17:16] \\\hline
+    GPIO & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [7:6] \\\hline
+    中断矩阵 & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [21:20] \\\hline
+    系统定时器 & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [31:30] \\\hline
+    定时器组 0 & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [27:26] \\\hline
+    定时器组 1 & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [29:28] \\\hline
+    系统寄存器 & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [17:16] \\\hline
+    权限控制寄存器 & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [19:18] \\\hline
+    Debug Assist & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [27:26] \\\hline
+    加速器 \tnote{2} & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [5:4] \\\hline
+    Cache \& XTS\_AES\tnote{1} & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [25:25] \\\hline
+    UART 0 & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [1:0] \\\hline
+    UART 1 & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [31:30] \\\hline
+    SPI 0 & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [5:4] \\\hline
+    SPI 1 & **\_PMS\_CONSTRAN\_1\_REG & **\_PMS\_CONSTRAN\_5\_REG & [3:2] \\\hline
+    SPI 2 & **\_PMS\_CONSTRAN\_3\_REG & **\_PMS\_CONSTRAN\_7\_REG & [1:0] \\\hline
+    I2C 0 & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [5:4] \\\hline
+    I2S 1 & **\_PMS\_CONSTRAN\_3\_REG & **\_PMS\_CONSTRAN\_7\_REG & [15:14] \\\hline
+    USB OTG Core & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [15:14] \\\hline
+    TWAI 控制器 & **\_PMS\_CONSTRAN\_3\_REG & **\_PMS\_CONSTRAN\_7\_REG & [11:10] \\\hline
+    UHCI 0  & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [7:6] \\\hline
+    LED PWM 控制器  & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [17:16] \\\hline
+    红外遥控  & **\_PMS\_CONSTRAN\_2\_REG & **\_PMS\_CONSTRAN\_6\_REG & [11:10] \\\hline
+    APB 控制器 & **\_PMS\_CONSTRAN\_3\_REG & **\_PMS\_CONSTRAN\_7\_REG & [5:4] \\\hline
+    ADC 控制器 & **\_PMS\_CONSTRAN\_4\_REG & **\_PMS\_CONSTRAN\_8\_REG & [9:8] \\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+
+\subsection{自定义地址段权限管理}
+
+
+\chipname{} 中除了支持以\hyperref[sec:permctrl-peri-address]{上述外设地址范围}为单位的权限检查外，还允许用户进一步将具体某个外设地址范围，分割为 7 个地址段（即 Peri Region0 \verb+~+ Peri Region6），实现更细化的权限管理。
+
+举例而言，GDMA 控制器寄存器包括：
+\begin{itemize}
+    \item 针对每个接收通道，共 3 套；
+    \item 针对每个发送通道，共 3 套；
+    \item 共用配置寄存器，共 1 套。
+\end{itemize}
+
+可以看到，GDMA 控制器从硬件设计上已经将寄存器地址划分为 7 个地址段，因此可以实现对不同 GDMA 通道的权限管理。
+
+用户可通过 \hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_\regindex{n}\_REG} 寄存器，配置 CPU 在特权环境和非特权环境下对具体地址段的读写权限（从高到低为 R/W）。
+
+关于 \hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_\regindex{n}\_REG} 的说明：
+\begin{itemize}
+    \item \regindex{n} 可为 1 \verb+~+ 10，其中
+    \begin{itemize}
+        \item \hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} 用于配置特权环境下对相应地址段的权限。
+        \item \hyperref[regdesc:PMSREGIONPMSCONSTRAIN2REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} 用于配置非特权环境下对相应地址段的权限。
+        \item \hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_\regindex{n}\_REG}（\regindex{n} = 3 \verb+~+ 10），用于配置每个地址段的起始地址。注意，每个地址段的起始地址，也是上一个地址段的结束地址。
+    \end{itemize}
+\end{itemize}
+
+
+\begin{table}[H]
+    \centering
+    \caption{针对地址段的权限管理}
+    \label{tab:perpheral_region_config}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & & \multicolumn{2}{c|}{\textbf{权限配置}} \\\cline{3-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{地址段}} & \multirow{-2}*{\textbf{起始地址配置}} & \textbf{特权环境} & \textbf{非特权环境}\\\hline
+        Peri Region0 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_3\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG}} [1:0]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [1:0]}\\\hline
+        Peri Region1 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_4\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [3:2]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [3:2]}\\\hline
+        Peri Region2 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_5\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [5:4]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [5:4]}\\\hline
+        Peri Region3 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_6\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [7:6]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [7:6]}\\\hline
+        Peri Region4 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_7\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [9:8]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [9:8]}\\\hline
+        Peri Region5 & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_8\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [11:10]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [11:10]}\\\hline
+        Peri Region6\tnote{*} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_9\_REG}} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_1\_REG} [13:12]} & \scriptsize{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAN\_2\_REG} [13:12]}\\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[*] Peri Region6 的结束地址由 \hyperref[regdesc:PMSREGIONPMSCONSTRAIN3REG]{PMS\_REGION\_PMS\_CONSTRAN\_10\_REG} 配置。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\section{片外存储器权限管理}
+
+在 \chipname{} 中，存在两条访问外部存储器的数据路径，如图 \ref{Figure:datapath-access-external-memory} 所示：
+
+\begin{itemize}
+    \item CPU 通过 SPI1 访问
+    \item CPU 通过 Cache 访问
+\end{itemize}
+
+\begin{figure}[!ht]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/data-path_acs_extmem.eps}
+\centering
+\caption{外部存储器访问路径示意图}
+\label{Figure:datapath-access-external-memory}
+\end{figure}
+
+其中，
+\begin{itemize}
+    \item 虚线框 0 检查 SPI 和 Cache 对外部 flash 的权限
+    \item 虚线框 1 检查 CPU 对 Cache 的权限
+\end{itemize}
+
+
+\subsection{SPI 和 Cache 对外部 flash 的权限}
+\subsubsection{地址空间划分}
+
+\chipname{} 可以将外部存储器 (flash) 的实地址划分为 4 个区域，从而实现更细化的权限控制：
+\begin{itemize}
+    \item Flash 划分为 4 个区域，每个区域的长度均为 64 KB 的倍数。
+    \item 此外，各区域的起始地址也均需以 64 KB 对齐。
+\end{itemize}
+
+用户可以通过下列寄存器配置这 4 个区域的地址范围：
+
+\begin{table}[H]
+    \centering
+    \caption{外部存储器的区域范围配置}
+    \label{tab:extern_mem_region_config}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{2}{c|}{\textbf{区域范围的配置\tnote{3}}} \\\cline{2-3}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{地址段}} & \textbf{起始地址}\tnote{1} & \textbf{长度}\tnote{2}\\\hline
+        Flash 区域 \regindex{n} (\regindex{n}: 0\verb+~+3) & \hyperref[regdesc:SYSCONFLASHACEnADDRREG]{SYSCON\_FLASH\_ACE\regindex{n}\_ADDR\_REG} & \hyperref[regdesc:SYSCONFLASHACEnSIZEREG]{SYSCON\_FLASH\_ACE\regindex{n}\_SIZE\_REG} \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 配置区域 \regindex{n} 的起始地址，为实地址，需要与 64 KB 对齐。
+        \item[2] 配置区域 \regindex{n} 的长度。注意，Flash 的 4 个细分区域的总长度不得超过 16 MB。
+        \item[3] 各区域不允许相互重合。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsubsection{权限配置}
+
+Flash 的 4 个区域均可单独配置权限。用户可通过\textbf{访问属性列表} 对每个区域的具体权限进行配置。
+软件可以通过寄存器  \hyperref[regdesc:SYSCONFLASHACEnATTRREG]{SYSCON\_FLASH\_ACE\regindex{n}\_ATTR} 配置 Flash 对应区域的权限。
+
+\begin{table}[H]
+    \centering
+    \caption{外部存储器的权限配置}
+    \label{tab:rtc_slow1_mem_pms}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{3}{c|}{\textbf{权限配置}} \\\cline{2-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{地址段}} & \textbf{权限配置寄存器} & \textbf{Cache} & \textbf{SPI 权限}\\\hline
+        Flash 区域 \regindex{n} (\regindex{n}: 0 \verb+~+ 3) & \hyperref[regdesc:SYSCONFLASHACEnATTRREG]{SYSCON\_FLASH\_ACE\regindex{n}\_ATTR} & [1:0]\tnote{A} & [3:2]\tnote{B}\\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[A] 配置顺序为 R/X。举例而言，配置该寄存器为 2'b10 代表 Cache 对 Flash 的 \regindex{n} 区域有读权限，但没有执行权限。
+        \item[B] 配置顺序为 W/R。举例而言，配置该寄存器为 2'b01 代表 SPI 对 Flash 的 \regindex{n} 区域有读权限，但没有写入权限。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsection{CPU 对 Cache 的权限}
+
+\chipname{} 的 CPU 以虚地址形式访问 Cache。CPU 访问 Cache 的虚地址所组成的地址范围被称为“虚地址空间”，如下表所示。
+
+ \begin{longtable}[c]{|p{3cm}|c|c|r|c| }
+  \caption{Cache 虚地址空间}
+  \label{tab:sysmem-external-memory1}
+  \\\hline
+  \rowcolor{lightgray}
+  & \multicolumn{2}{c|}{\textbf{Cache 虚地址空间}} & & \\ \cline{2-3}
+  \rowcolor{lightgray}
+  \multirow{-2}*{\textbf{总线类型}} & \textbf{起始地址} & \textbf{结束地址} & \multirow{-2}*{\textbf{长度(MB)}} & \multirow{-2}*{\textbf{目标}} \\\hline
+  \endfirsthead
+  \multicolumn{5}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\
+  \hline
+  \rowcolor{lightgray}
+  & \multicolumn{2}{c|}{\textbf{虚地址空间}} & & \\ \cline{2-3}
+  \rowcolor{lightgray}
+  \multirow{-2}*{\textbf{总线类型}} & \textbf{起始地址} & \textbf{结束地址} & \multirow{-2}*{\textbf{长度 (MB)}} & \multirow{-2}*{\textbf{目标}} \\\hline
+  \endhead
+  \multicolumn{5}{r}{\textbf{接下页}} \\
+  \endfoot
+  \hline
+  \endlastfoot
+    DBus (read-only)        & 0x3C00\_0000 & 0x3C7F\_FFFF &  8 & Uniform Cache \\\hline
+    IBus                    & 0x4200\_0000 & 0x427F\_FFFF &  8 & Uniform Cache \\\hline
+\end{longtable}
+
+
+\subsubsection{地址空间划分}
+
+\chipname{} 还允许用户将 DBUS 和 IBUS Cache 虚地址空间划分为 4 个区域，从而实现更细化的权限控制。
+
+\begin{table}[H]
+    \centering
+    \caption{IBUS Cache 虚地址的分割配置}
+    \label{tab:ibus_acs_cache_region_config}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{2}{c|}{\textbf{分割区域配置}} \\\cline{2-3}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{分割区域}\tnote{1}} & \textbf{起始地址} & \textbf{结束地址}\\\hline
+        IBUS Region0  & 0x4200\_0000                                                                          & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY0REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY0\_REG}\tnote{2} \\\hline
+        IBUS Region1  & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY0REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY0\_REG}\tnote{2} & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY1REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY1\_REG}\tnote{2} \\\hline
+        IBUS Region2  & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY1REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY1\_REG}\tnote{2} & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY2REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY2\_REG}\tnote{2} \\\hline
+        IBUS Region3  & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY2REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY2\_REG}\tnote{2} & 0x4280\_0000 \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 每个区域的地址范围均为 [起始地址，结束地址)。
+        \item[2] 表示的地址为“0x4200\_0000 + 0x1000 * \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY1REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY\regindex{n}\_REG}”。举例而言，假设配置 \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY1REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY0\_REG} 为 2，则IBUS Region0 的地址范围为 [0x4200\_0000, 0x4200\_2000)。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\begin{table}[H]
+    \centering
+    \caption{DBUS Cache 虚地址的分割配置}
+    \label{tab:dbus_acs_cache_region_config}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{2}{c|}{\textbf{分割区域配置}} \\\cline{2-3}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{分割区域}\tnote{1}} & \textbf{起始地址} & \textbf{结束地址}\\\hline
+        DBUS Region0  & 0x3C00\_0000                                                                          & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY0REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY0\_REG}\tnote{2} \\\hline
+        DBUS Region1  & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY0REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY0\_REG}\tnote{2} & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY1REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY1\_REG}\tnote{2} \\\hline
+        DBUS Region2  & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY1REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY1\_REG}\tnote{2} & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY2REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY2\_REG}\tnote{2} \\\hline
+        DBUS Region3  & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY2REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY2\_REG}\tnote{2} & 0x3C80\_0000 \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] 每个区域的地址范围均为 [起始地址，结束地址)。
+        \item[2] 表示的地址为 “0x3C00\_0000 + 0x1000 * \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY1REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY\regindex{n}\_REG}”。举例而言，假设配置 \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY1REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY\regindex{n}\_REG} 为 2，则IBUS Region0 的地址范围为 [0x3C00\_0000, 0x3C00\_2000)。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+
+
+\subsection{CPU 访问 Cache 权限管理}
+
+每个分割区域均可单独配置权限，具体可见下方表 \ref{tab:ibus_acs_cache_pms} 和表 \ref{tab:dbus_acs_cache_pms}。
+
+\begin{table}[H]
+    \centering
+    \caption{IBUS 分割区域的权限配置}
+    \label{tab:ibus_acs_cache_pms}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{3}{c|}{\textbf{权限配置}} \\\cline{2-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{分割区域}} & \textbf{权限配置寄存器} & \textbf{特权环境} \tnote{A}& \textbf{非特权环境}\tnote{A}\\\hline
+        IBUS Region0\tnote{C}  & - & - & -\\\hline
+        IBUS Region1  & \hyperref[regdesc:EXTMEMIBUSPMSTBLATTRREG]{EXTMEM\_IBUS\_PMS\_TBL\_ATTR\_REG} & [1:0]\tnote{B} & [3:2]\\\hline
+        IBUS Region2  & \hyperref[regdesc:EXTMEMIBUSPMSTBLATTRREG]{EXTMEM\_IBUS\_PMS\_TBL\_ATTR\_REG} & [5:4] & [7:6]\\\hline
+        IBUS Region3\tnote{C}  & - & - & -\\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[A] 配置顺序为 R/X。
+        \item[B] 举例而言，配置该寄存器为 2'b10 代表 CPU 的 IBUS 在特权环境中对 Cache 的 IBUS Region1 有读权限，但没有执行权限。
+        \item[C] IBUS 禁止访问 Region0 和 Region3，无法配置。所有访问均将被拒绝。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+
+\begin{table}[H]
+    \centering
+    \caption{DBUS 分割区域的权限配置}
+    \label{tab:dbus_acs_cache_pms}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | l |}
+    \hline
+        \rowcolor{lightgray}
+         & \multicolumn{3}{c|}{\textbf{权限配置}} \\\cline{2-4}
+        \rowcolor{lightgray}
+        \multirow{-2}*{\textbf{分割区域}} & \textbf{权限配置寄存器} & \textbf{特权环境}\tnote{A} & \textbf{非特权环境}\tnote{A}\\\hline
+        DBUS Region0\tnote{C}  & - & - & -\\\hline
+        DBUS Region1  & \hyperref[regdesc:EXTMEMDBUSPMSTBLATTRREG]{EXTMEM\_DBUS\_PMS\_TBL\_ATTR\_REG} & [0] \tnote{B}& [1]\\\hline
+        DBUS Region2  & \hyperref[regdesc:EXTMEMDBUSPMSTBLATTRREG]{EXTMEM\_DBUS\_PMS\_TBL\_ATTR\_REG} & [2] & [3]\\\hline
+        DBUS Region3\tnote{C}  & - & - & -\\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[A] 仅可配置读权限。
+        \item[B] 举例而言，配置该寄存器为 1'b1 代表 CPU 的 DBUS 在特权环境中对 Cache 的 DBUS Region1 有读权限。
+        \item[C] DBUS 禁止访问 Region0 和 Region3，无法配置。所有访问均将被拒绝。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\section{非法访问与中断}
+
+当访问类型与配置允许访问的类型不一致时，\chipname{} 将视其为\textbf{非法访问}，并进行如下处理：
+
+\begin{itemize}
+    \item 过滤该访问请求，并返回默认值，具体表现为：
+    \begin{itemize}
+        \item 执行和读取操作返回 0（非法访问片内存储器和外设存储空间）或 0xdeadbeaf （非法访问片外存储器的默认值）
+        \item 写入操作无效
+    \end{itemize}
+    \item 触发相应中断（如相应中断已使能），详见下文介绍。
+\end{itemize}
+
+本章节介绍的所有权限管理中断仅记录第一次发生中断的信息，因此建议用户检查到该中断信号后及时处理，并在处理后及时置位中断清除信号，从而保证下一次中断的顺利记录。
+
+
+\subsection{IBUS 总线非法访问中断}
+
+\chipname{} 可经过配置，在 IBUS 总线非法访问 ROM 和 SRAM 时触发相应中断，并记录非法访问的信息。注意，此中断一经使能，对所有区域生效，不能单独使能针对某细分区域的非法访问中断。此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 PMS\_IBUS\_VIO\_INTR中断源。
+
+\begin{table}[H]
+    \centering
+    \caption{IBUS 总线的非法访问中断寄存器}
+    \label{tab:permctrl_intr_ibus}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+        \multirow{2}*{\hyperref[regdesc:PMSCORE0IRAM0PMSMONITOR1REG]{PMS\_CORE\_0\_IRAM0\_PMS\_MONITOR\_1\_REG}} & [0] & 清除中断信号 \\\cline{2-3}
+                & [1] & 使能中断 \\\hline
+        \multirow{5}*{\hyperref[regdesc:PMSCORE0IRAM0PMSMONITOR2REG]{PMS\_CORE\_0\_IRAM0\_PMS\_MONITOR\_2\_REG}} & [0] & 存储中断信号 \\\cline{2-3}
+        & [1] & 存储访问方向 \\\cline{2-3}
+        & [2] & 存储指令访问方向 \\\cline{2-3}
+        & [4:3] & 存储中断发生时的特权模式 \\\cline{2-3}
+        & [28:5] & 存储非法访问的地址 \\\hline
+    \end{tabular}
+    \end{threeparttable}
+\end{table}
+
+\subsection{DBUS 总线非法访问中断}
+
+\chipname{} 可经过配置，在 DBUS 总线非法访问 ROM 和 SRAM 时触发相应中断，并记录非法访问的信息。注意，此中断一经使能，对所有区域生效，不能单独使能针对某细分区域的非法访问中断。此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 PMS\_DBUS\_VIO\_INTR中断源。
+
+
+
+\begin{table}[H]
+    \centering
+    \caption{DBUS 总线的非法访问中断寄存器}
+    \label{tab:permctrl_intr_dbus}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+        \multirow{2}*{\hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR1REG]{PMS\_CORE\_0\_DRAM0\_PMS\_MONITOR\_1\_REG}}         & [0] & 清除中断信号 \\\cline{2-3}
+                & [1] & 使能中断 \\\hline
+        \multirow{4}*{\hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR2REG]{PMS\_CORE\_0\_DRAM0\_PMS\_MONITOR\_2\_REG}} & [0] & 存储中断信号 \\\cline{2-3}
+        & [1] & 原子访问标志 \\\cline{2-3}
+        & [3:2] & 存储中断发生时的特权模式  \\\cline{2-3}
+        & [25:4] & 存储非法访问的地址 \\\hline
+        \multirow{2}*{\hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR3REG]{PMS\_CORE\_0\_DRAM0\_PMS\_MONITOR\_3\_REG}} & [0] & 存储访问方向 \\\cline{2-3}
+        & [25:4] & 存储非法访问的字节信息 \\\hline
+    \end{tabular}
+    \end{threeparttable}
+\end{table}
+
+
+
+\subsection{外部存储器中断}
+
+\chipname{} 可在非法访问外部存储器时触发中断，并记录异常的类型，具体使用 \hyperref[regdesc:SYSCONSPIMEMPMSCTRLREG]{SYSCON\_SPI\_MEM\_PMS\_CTRL\_REG} 寄存器。此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 SPI\_MEM\_REJECT\_INTR 中断源。
+
+
+\begin{table}[H]
+    \centering
+    \caption{外部存储器的非法访问中断寄存器}
+    \label{tab:permctrl_intr_external_memory}
+    \begin{tabular}{ | l | l | l| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+                        & [0] & 存储异常信号\\\cline{2-3}
+                        & [1] & 清除异常信号和记录\\\cline{2-3}
+                        & [2] & 非法执行\\\cline{2-3}
+                        & [3] & 非法读\\\cline{2-3}
+                        & [4] & 非法写\\\cline{2-3}
+                        & [5] & 访问落入多个有效区域（区域重叠）\\\cline{2-3}
+    \multirow{-7}*{\hyperref[regdesc:SYSCONSPIMEMPMSCTRLREG]{SYSCON\_SPI\_MEM\_PMS\_CTRL\_REG}}    & [6] & 访问没有落入有效区域\\\hline
+    \end{tabular}
+\end{table}
+
+\subsection{GDMA 中断}
+\chipname{} 可经过配置，在 GDMA 非法访问内部存储器时触发相应中断，并记录非法访问信息。此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 PMS\_DMA\_VIO\_INTR 中断源。
+
+
+\begin{table}[H]
+    \centering
+    \caption{DMA 非法访问中断寄存器}
+    \label{tab:permctrl_intr_dma}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+        \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR1REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_1\_REG}}         & [0] & 清除中断信号 \\\cline{2-3}
+                & [1] & 使能中断 \\\hline
+        \multirow{3}*{\hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR2REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_2\_REG}} & [0] & 存储中断信号 \\\cline{2-3}
+        & [2:1] & 存储中断发生时的特权模式  \\\cline{2-3}
+        & [24:3] & 存储非法访问的地址 \\\hline
+        \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR3REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_3\_REG}} & [0] & 存储访问方向 \\\cline{2-3}
+        & [16:1] & 存储非法访问地址 \\\hline
+    \end{tabular}
+    \end{threeparttable}
+\end{table}
+
+
+\subsection{PIF 外设总线中断}
+
+\chipname{} 可经过配置，在 PIF 外设总线非法访问 RTC 快速内存和外设空间时触发中断，并记录非法访问信息。注意，此中断一经使能，对所有区域生效，不能单独设置仅对 RTC 快速内存或外设空间生效。此中断对应此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 PMS\_PERI\_VIO\_INTR 中断源。
+
+
+\begin{table}[H]
+    \centering
+    \caption{PIF 总线的非法访问中断寄存器}
+    \label{tab:permctrl_intr_pif}
+    \begin{tabular}{ | l | l | L{8cm} | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+                        & [1] & 中断使能信号，通过将该比特置位使中断处于使能状态\\\cline{2-3}
+    \multirow{-2}*{\hyperref[regdesc:PMSCORE0PIFPMSMONITOR1REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_1\_REG}}    & [0] & 中断清除信号，通过将该比特置位清除当前的中断信号及中断记录信息\\\cline{2-3} \hline
+
+        & [7:6] & 记录中断发生时所处的特权模式。1 表示机器模式；2 表示用户模式 \\\cline{2-3}
+        & [5] & 记录中断发生时的访问方向。0 表示读；1 表示写 \\\cline{2-3}
+        & [4:2] & 记录中断发生时的访问数据类型。0：字节访问；1：半字访问；2：字访问\\\cline{2-3}
+    \multirow{-4}*{\hyperref[regdesc:PMSCORE0PIFPMSMONITOR2REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_2\_REG}}    & [1] & 记录中断发生时的访问类型。0：指令访问；1：数据访问 \\\cline{2-3}
+        & [0] & 记录中断源信息。0：没有中断发生；1：有中断发生\\\cline{2-3} \hline
+    \hyperref[regdesc:PMSCORE0PIFPMSMONITOR3REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_3\_REG}  & [31:0] & 记录中断发生时的访问地址信息\\\cline{2-3} \hline
+    \end{tabular}
+\end{table}
+
+特别地，PIF 外设总线还可以针对错误的访问对齐方式进行检查，并触发中断，请见下节介绍。
+
+
+\subsection{非字对齐访问检查}
+\chipname{} 的所有模块/外设均仅支持\textbf{字对齐}访问，详见表 \ref{tab:sysmem-base-address}。对此，\chipname{} 可以监控对模块/外设的\textbf{非字对齐访问}，并在发现此类访问时（详见表 \ref{tab:permctrl-Non_aligned_access_peripheral}）触发中断信号。此中断对应章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} 表
+\ref{tab:peripheral-interrupt-config-status-source} 中的 PMS\_PERI\_VIO\_SIZE\_INTR中断源。
+
+由于处理器会将部分软件代码中的非对齐访问处理成对齐的访问发出，此时硬件监控系统便不会产生中断信号。下表列出了软件代码中所有可能发出的访问以及产生的结果（中断使能情况下），其中 {\bfseries INTR} 表示会产生中断，{\bfseries $\surd$} 表示访问可以正常通过。
+
+\begin{table}[H]
+    \caption{非字对齐访问外设情况汇总}
+    \centering
+    \label{tab:permctrl-Non_aligned_access_peripheral}
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \rowcolor{lightgray}
+        \textbf{访问地址} & \textbf{访问数据类型} & \textbf{读访问} & \textbf{写访问} \\
+        \multirow{3}*{0x0} & 字节 & $\surd$ & INTR \\\cline{2-4}
+        & 半字 & $\surd$ & INTR \\\cline{2-4}
+        & 字 & $\surd$ & $\surd$ \\\hline
+        \multirow{3}*{0x1} & 字节 & $\surd$ & INTR \\\cline{2-4}
+        & 半字 & $\surd$ & INTR \\\cline{2-4}
+        & 字 & $\surd$ & INTR \\\hline
+        \multirow{3}*{0x2} & 字节 & $\surd$ & INTR \\\cline{2-4}
+        & 半字 & $\surd$ & INTR \\\cline{2-4}
+        & 字 & $\surd$ & INTR \\\hline
+        \multirow{3}*{0x3}  & 字节 & $\surd$ & INTR \\\cline{2-4}
+        & 半字 & $\surd$ & INTR \\\cline{2-4}
+        & 字 & $\surd$ & INTR \\\hline
+    \end{tabular}
+\end{table}
+具体中断配置信息如下：
+
+\begin{table}[H]
+    \centering
+    \caption{非字对齐中断寄存器}
+    \label{tab:nonword_intr}
+    \begin{tabular}{ | l | l | L{8cm}| }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{寄存器} & \textbf{位} & \textbf{描述} \\\hline
+                               & [1] & 中断使能信号，通过将该比特置位使中断处于使能状态\\\cline{2-3}
+    \multirow{-2}*{\hyperref[regdesc:PMSCORE0PIFPMSMONITOR4REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_4\_REG}}     & [0] & 中断清除信号，通过将该比特置位清除当前的中断信号及中断记录信息\\\hline
+
+
+        & [4:3] & 记录中断发生时所处的特权模式。1 表示机器模式；2 表示用户模式\\\cline{2-3}
+        & [2:1] & 记录中断发生时的访问数据类型。0：字节访问；1：半字访问；2：字访问\\\cline{2-3}
+    \multirow{-4}*{\hyperref[regdesc:PMSCORE0PIFPMSMONITOR5REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_5\_REG}}     & [0] & 记录中断源信息。0：没有中断发生；1：有中断发生\\\hline
+    \hyperref[regdesc:PMSCORE0PIFPMSMONITOR6REG]{PMS\_CORE\_0\_PIF\_PMS\_MONITOR\_6\_REG}
+        & [31:0] & 记录中断发生时的访问地址信息\\\hline
+    \end{tabular}
+\end{table}
+
+
+\clearpage
+\section{寄存器锁}
+\chipname{} 所有的权限寄存器都支持锁保护，即每一个权限寄存器都有对应的 lock 寄存器，当 lock 寄存器配置为 1 时，则相应的权限寄存器和 lock 寄存器本身都会被锁定，无法再次更改。当且仅当 CPU 复位时，lock 寄存器才会重新恢复成 0，允许更改权限。
+
+权限寄存器和 lock 寄存器并非一一对应关系，具体见表 \ref{table:lock reg}。
+
+\begin{longtable}[h]{|L{8.5cm}|L{9cm}|}
+    \caption{寄存器锁保护配置}
+    \label{table:lock reg}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{寄存器锁寄存器} & \textbf{适用范围} \\
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{寄存器锁寄存器} & \textbf{适用范围} \\
+    \hline
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+
+
+
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{特权模式配置寄存器锁}} \\ \hline
+    \multirow{2}*{\hyperref[regdesc:PMSPRIVILEGEMODESELLOCKREG]{PMS\_PRIVILEGE\_MODE\_SEL\_LOCK\_REG}} & \hyperref[regdesc:PMSPRIVILEGEMODESELLOCKREG]{PMS\_PRIVILEGE\_MODE\_SEL\_LOCK\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSPRIVILEGEMODESELREG]{PMS\_PRIVILEGE\_MODE\_SEL\_REG} \\\hline
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{内部 SRAM 使用与权限配置寄存器锁}} \\ \hline
+    \multirow{3}*{\hyperref[regdesc:PMSINTERNALSRAMUSAGE0REG]{PMS\_INTERNAL\_SRAM\_USAGE\_0\_REG}} & \hyperref[regdesc:PMSINTERNALSRAMUSAGE0REG]{PMS\_INTERNAL\_SRAM\_USAGE\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSINTERNALSRAMUSAGE1REG]{PMS\_INTERNAL\_SRAM\_USAGE\_1\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSINTERNALSRAMUSAGE4REG]{PMS\_INTERNAL\_SRAM\_USAGE\_4\_REG} \\\hline
+
+
+    \multirow{3}*{\hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN0REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN0REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_1\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCOREXIRAM0PMSCONSTRAIN2REG]{PMS\_CORE\_X\_IRAM0\_PMS\_CONSTRAIN\_2\_REG} \\
+    \hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSCORE0IRAM0PMSMONITOR0REG]{PMS\_CORE\_\regindex{m}\_IRAM0\_PMS\_MONITOR\_0\_REG}} & \hyperref[regdesc:PMSCORE0IRAM0PMSMONITOR0REG]{PMS\_CORE\_\regindex{m}\_IRAM0\_PMS\_MONITOR\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCORE0IRAM0PMSMONITOR1REG]{PMS\_CORE\_\regindex{m}\_IRAM0\_PMS\_MONITOR\_1\_REG} \\\hline
+
+
+    \multirow{2}*{\hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN0REG]{PMS\_CORE\_X\_DRAM0\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN0REG]{PMS\_CORE\_X\_DRAM0\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCOREXDRAM0PMSCONSTRAIN1REG]{PMS\_CORE\_X\_DRAM0\_PMS\_CONSTRAIN\_1\_REG} \\\hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR0REG]{PMS\_CORE\_\regindex{m}\_DRAM0\_PMS\_MONITOR\_0\_REG}} & \hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR0REG]{PMS\_CORE\_\regindex{m}\_DRAM0\_PMS\_MONITOR\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCORE0DRAM0PMSMONITOR1REG]{PMS\_CORE\_\regindex{m}\_DRAM0\_PMS\_MONITOR\_1\_REG} \\\hline
+
+    \hline
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{内部 SRAM 分割线配置寄存器锁}} \\ \hline
+
+     & \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE}\\
+    \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE\_} & \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{\_CONSTRAIN\_0\_REG}\\\cline{2-2}
+    \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{CONSTRAIN\_0\_REG} & \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{PMS\_CORE\_X\_IRAM0\_DRAM0\_DMA\_SPLIT\_LINE}\\
+    & \hyperref[regdesc:PMSCOREXIRAM0DRAM0DMASPLITLINECONSTRAIN0REG]{\_CONSTRAIN\_\regindex{n}\_REG (\regindex{n}: 1 - 5)}\\\hline
+
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{外设权限配置寄存器锁}} \\\hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN0REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN0REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN1REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_CONSTRAIN\_\regindex{n}\_REG (\regindex{n}: 1 - 14)} \\\hline
+
+    \multirow{3}*{\hyperref[regdesc:PMSREGIONPMSCONSTRAIN0REG]{PMS\_REGION\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSREGIONPMSCONSTRAIN0REG]{PMS\_REGION\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSREGIONPMSCONSTRAIN1REG]{PMS\_REGION\_PMS\_CONSTRAIN\_\regindex{n}\_REG (\regindex{n}: 1 - 14)} \\\hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSCORE0PIFPMSMONITOR0REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_MONITOR\_0\_REG}} & \hyperref[regdesc:PMSCORE0PIFPMSCONSTRAIN0REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSCORE0PIFPMSMONITOR1REG]{PMS\_CORE\_\regindex{m}\_PIF\_PMS\_MONITOR\_1\_REG (\regindex{n}: 1 - 6)} \\\hline
+
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{GDMA 外设访问 Internal SRAM 权限配置寄存器}} \\ \hline
+
+
+    \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERISPI2PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_SPI2\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSDMAAPBPERISPI2PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_SPI2\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERISPI2PMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_SPI2\_PMS\_CONSTRAIN\_1\_REG} \\\hline
+
+    \hyperref[regdesc:PMSDMAAPBPERIUCHI0PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_UCHI0\_PMS\_CONSTRAIN\_0} & \hyperref[regdesc:PMSDMAAPBPERIUCHI0PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_UCHI0\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    \hyperref[regdesc:PMSDMAAPBPERIUCHI0PMSCONSTRAIN0REG]{\_REG} & \hyperref[regdesc:PMSDMAAPBPERIUCHI0PMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_UCHI0\_PMS\_CONSTRAIN\_1\_REG} \\\hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERII2S0PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_I2S0\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSDMAAPBPERII2S0PMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_I2S0\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERII2S0PMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_I2S0\_PMS\_CONSTRAIN\_1\_REG} \\\hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERIAESPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_AES\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSDMAAPBPERIAESPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_AES\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERIAESPMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_AES\_PMS\_CONSTRAIN\_1\_REG} \\
+    \hline
+
+    \multirow{2}*{\hyperref[regdesc:PMSDMAAPBPERISHAPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_SHA\_PMS\_CONSTRAIN\_0\_REG}} & \hyperref[regdesc:PMSDMAAPBPERISHAPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_SHA\_PMS\_CONSTRAIN\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERISHAPMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_SHA\_PMS\_CONSTRAIN\_1\_REG} \\
+    \hline
+
+    & \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_ADC\_DAC\_PMS\_CONSTRAIN\_0} \\
+    \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN0REG]{PMS\_DMA\_APBPERI\_ADC\_DAC\_PMS\_CONSTRAIN\_0} & \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN0REG]{\_REG} \\\cline{2-2}
+    \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN0REG]{\_REG} & \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN1REG]{PMS\_DMA\_APBPERI\_ADC\_DAC\_PMS\_CONSTRAIN\_1}\\
+    & \hyperref[regdesc:PMSDMAAPBPERIADCDACPMSCONSTRAIN1REG]{\_REG}\\\hline
+
+
+    \multirow{4}*{\hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR0REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_0\_REG}} & \hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR0REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR1REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_1\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR2REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_2\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:PMSDMAAPBPERIPMSMONITOR3REG]{PMS\_DMA\_APBPERI\_PMS\_MONITOR\_3\_REG} \\\hline
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|l|}{\textbf{CPU 访问 Cache 的权限配置寄存器}} \\ \hline
+    \multirow{4}*{\hyperref[regdesc:EXTMEMDBUSPMSTBLLOCKREG]{EXTMEM\_DBUS\_PMS\_TBL\_LOCK\_REG}} & \hyperref[regdesc:EXTMEMDBUSPMSTBLATTRREG]{EXTMEM\_DBUS\_PMS\_TBL\_ATTR\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY0REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY1REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY1\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMDBUSPMSTBLBOUNDARY2REG]{EXTMEM\_DBUS\_PMS\_TBL\_BOUNDARY2\_REG} \\\hline
+
+    \multirow{4}*{\hyperref[regdesc:EXTMEMIBUSPMSTBLLOCKREG]{EXTMEM\_IBUS\_PMS\_TBL\_LOCK\_REG}} & \hyperref[regdesc:EXTMEMIBUSPMSTBLATTRREG]{EXTMEM\_IBUS\_PMS\_TBL\_ATTR\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY0REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY0\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY1REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY1\_REG} \\\cline{2-2}
+    & \hyperref[regdesc:EXTMEMIBUSPMSTBLBOUNDARY2REG]{EXTMEM\_IBUS\_PMS\_TBL\_BOUNDARY2\_REG} \\\hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+
+\begin{landscape}
+\hypertarget{permctrl-reg-summ}{}
+
+\section{寄存器列表}
+\label{sec:permctrl-reg-summ}
+
+本小节的所有以 PMS 开头的寄存器地址均为相对于权限管理基地址的地址偏移量（相对地址），所有以 APB 开头的寄存器地址均为相对于 APB 控制寄存器基地址的地址偏移量（相对地址），所有以 EXTMEM 开头的寄存器地址均为相对于 Configure Cache 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/08-PERMCTRL-reg-summ__CN}
+\subfile{\modulefiles/apb_ctrl_reg_summ__CN}
+\subfile{\modulefiles/08-PERMCTRL-extmem_reg_summ__CN}
+
+
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+
+\clearpage
+\section{寄存器}
+
+本小节的所有以 PMS 开头的寄存器地址均为相对于权限管理基地址的地址偏移量（相对地址），所有以 APB 开头的寄存器地址均为相对于 APB 控制寄存器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+
+\subfile{\modulefiles/08-PERMCTRL-reg__CN}
+\subfile{\modulefiles/apb_ctrl_reg__CN}
+\subfile{\modulefiles/08-PERMCTRL-extmem_reg__CN}
+
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\end{document}

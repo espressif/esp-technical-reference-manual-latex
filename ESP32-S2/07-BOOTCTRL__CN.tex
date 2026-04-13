@@ -1,0 +1,231 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./07-BOOTCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{bootctrl}{}
+\chapter{芯片 Boot 控制 (BOOTCTRL)}
+\label{mod:bootctrl}
+
+
+\section{概述}
+
+ESP32-S2 共有三个 Strapping 管脚：
+\begin{itemize}
+    \item GPIO0
+    \item GPIO45
+    \item GPIO46
+\end{itemize}
+
+软件可以从 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 寄存器中读取这三个 Strapping 管脚的值。在上电复位、RTC 看门狗 复位、欠压复位、模拟超级看门狗 (analog super watchdog) 复位、晶振时钟毛刺检测复位过程中，请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}，硬件将采样 Strapping 管脚电平存储到锁存器中，并一直保持到芯片掉电或关闭。
+
+GPIO0、GPIO45 和 GPIO46 默认连接内部上拉/下拉。如果这些管脚没有外部连接或者连接的外部线路处于高阻抗状态，内部弱上拉/下拉将决定这几个管脚输入电平的默认值，如表 \ref{table:pull_up_down} 所示。
+
+\begin{longtable}[c]{|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|}
+\caption{Strapping管脚默认上拉/下拉}
+\label{table:pull_up_down} \\
+    \hline
+    \rowcolor{lightgray}
+  管脚 & GPIO0 & GPIO45 & GPIO46 \\ \hline
+  默认值 & 上拉 & 下拉 & 下拉 \\ \hline
+  \hline
+\end{longtable}
+
+如需改变 Strapping 管脚的值，用户可以应用外部下拉/上拉电阻，或者应用主机 MCU 的 GPIO 来控制 ESP32-S2 上电复位时的 Strapping 管脚电平。复位释放后，Strapping 管脚和普通管脚功能相同。
+
+\begin{tiplisting}
+以下小节介绍了芯片复位时的功能以及控制该功能使用到的 Strapping 组合模式。请使用本章节所介绍的组合，其它组合可能会导致不可控结果。
+\end{tiplisting}
+
+\section{Boot 控制}
+
+复位释放后，GPIO0 和 GPIO46 共同控制 Boot 模式。
+
+
+\begin{table}[H]
+\centering
+\caption{系统启动模式}
+\label{table:boot_mode}
+\begin{tabular}{|p{1.5cm}|p{2.5cm}|p{4.5cm}|}
+\hline
+\rowcolor{lightgray}
+管脚 & SPI Boot 模式 & Download Boot 模式 \\ \hline
+GPIO0 & 1 & 0 \\ \hline
+GPIO46 & x & 0 \\ \hline
+\end{tabular}
+\end{table}
+
+
+表 \ref{table:boot_mode} 列出了 GPIO0 和 GPIO46 的 Strapping 值及其对应的系统启动模式。此处 "x" 表示该项为无关项。ESP32-S2 芯片当前仅支持 SPI Boot 模式和 Download Boot 模式。GPIO0、GPIO46 组合为 (0, 1) 不可使用。
+
+在 SPI Boot 模式下，CPU 通过从 SPI Flash 中读取程序来启动系统；在 Download Boot 模式下，用户可以通过 UART0、UART1、QPI 或 USB 接口将代码下载到 SRAM 或 flash 中，或者将程序加载到 SRAM 中并在 Download Boot 模式下执行程序。
+
+下面几个 eFuse 可用于控制启动模式的具体行为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDISFORCEDOWNLOAD]{EFUSE\_DIS\_FORCE\_DOWNLOAD}
+    \begin{itemize}
+        \item 如果此 eFuse 设置为 0（默认），软件可通过配置 \hyperref[fielddesc:RTCCNTLFORCEDOWNLOADBOOT]{RTC\_CNTL\_FORCE\_DOWNLOAD\_BOOT}，触发 CPU 复位，将芯片启动模式强制从 SPI Boot 模式切换至 Download Boot 模式。这种情况下，硬件会将 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}[3:2] 的值从 ``1x" 覆盖为 ``00"；
+        \item 如果此 eFuse 设置为 1，则禁用 \hyperref[fielddesc:RTCCNTLFORCEDOWNLOADBOOT]{RTC\_CNTL\_FORCE\_DOWNLOAD\_BOOT}，\hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值不受影响 。 
+    \end{itemize}
+
+    \item \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{EFUSE\_DIS\_DOWNLOAD\_MODE}
+
+
+如果此 eFuse 设置为 1，则关闭 Download Boot 模式。\hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值则不受 \hyperref[fielddesc:RTCCNTLFORCEDOWNLOADBOOT]{RTC\_CNTL\_FORCE\_DOWNLOAD\_BOOT} 的影响。
+    \item \hyperref[fielddesc:EFUSEENABLESECURITYDOWNLOAD]{EFUSE\_ENABLE\_SECURITY\_DOWNLOAD}
+    
+    如果此 eFuse 设置为 1，则在 Download Boot 模式下，只允许读取、写入和擦除明文 flash，不支持 SRAM 或寄存器操作。如已禁用 Download Boot 模式，请忽略此 eFuse。
+\end{itemize}
+
+\section{ROM 日志打印控制}
+
+系统启动过程中，ROM 代码日志可打印至：
+
+\begin{itemize}
+    \item \textbf{（默认）UART0}
+    \item UART1
+\end{itemize}
+
+\hyperref[fielddesc:EFUSEUARTPRINTCHANNEL]{EFUSE\_UART\_PRINT\_CHANNEL} 控制 ROM 日志打印至 UART0 或 UART1。
+
+\begin{itemize}
+    \item 0: UART0
+    \item 1: UART1
+\end{itemize}
+
+\hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL} 与 GPIO46 一起控制 \textbf{UART} ROM 日志打印。
+
+\begin{table}[H]
+    \centering
+    \caption{UART ROM 日志打印控制}
+    \label{table:ROM_CODE_CONTROL}
+
+    \begin{threeparttable}
+
+    \begin{tabular}{ | l | c | C{1.3cm} |}
+    \hline
+
+    \rowcolor{lightgray}
+    \textbf{UART ROM 日志打印} & \textbf{EFUSE\_UART\_PRINT\_CONTROL} &   \textbf{GPIO46}  \\\hline
+
+    \multirow{3}{*}{\textbf{使能}} & \textbf{0} & 忽略 \\ \cline{2-3}
+     & 1 & 0 \\ \cline{2-3}
+     & 2 & 1 \\ \hline
+    \multirow{3}{*}{关闭} & 1 & 1 \\ \cline{2-3}
+     & 2 & 0 \\ \cline{2-3}
+     & 3 & 忽略 \\ \hline
+
+    \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] \textbf{加粗}表示默认值和默认配置。
+        \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+
+\section{VDD\_SPI 电压}
+
+芯片复位时，GPIO45 可用于选择 VDD\_SPI 电压：
+
+\begin{itemize}
+    \item GPIO45 = 0 时，VDD\_SPI 由 VDD3P3\_RTC\_IO 通过电阻 R$_{SPI}$ 后供电（电压典型值
+为 3.3 V）；
+    \item GPIO45 = 1 时，VDD\_SPI 可选择由内置 LDO 供电（电压为 1.8 V）。
+\end{itemize}
+
+\hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} 设置为 1 时，可关闭上述功能。此时 VDD\_SPI 电压由 \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} 的值决定：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} = 1 且 \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} = 0 时，VDD\_SPI 连接 1.8 V LDO；
+    \item \hyperref[fielddesc:EFUSEVDDSPIFORCE]{EFUSE\_VDD\_SPI\_FORCE} = 1 且 \hyperref[fielddesc:EFUSEVDDSPITIEH]{EFUSE\_VDD\_SPI\_TIEH} = 1 时，VDD\_SPI 连接 VDD3P3\_RTC\_IO。
+\end{itemize}
+
+\end{document}

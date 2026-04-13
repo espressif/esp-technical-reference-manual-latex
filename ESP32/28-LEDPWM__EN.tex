@@ -1,0 +1,264 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./28-LEDPWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ledpwm}{}
+\chapter{LED PWM Controller (LEDC)}
+\label{mod:ledpwm}
+
+\section{Introduction}
+
+The LED\_PWM controller is primarily designed to control the intensity of LEDs, although it can be used to generate PWM signals for other purposes as well. It has 16 channels which can generate independent waveforms that can be used to drive RGB LED devices. For maximum flexibility, the high-speed as well as the low-speed channels can be driven from one of four high-speed/low-speed timers. The PWM controller also has the ability to automatically increase or decrease the duty cycle gradually, allowing for fades without any processor interference. To increase resolution, the LED\_PWM controller is also able to dither between two values, when a fractional PWM value is configured.
+
+The LED\_PWM controller has eight high-speed and eight low-speed PWM generators. In this document, they will be referred to as hsch\textcolor{red}{\it{n}} and lsch\textcolor{red}{\it{n}}, respectively. These channels can be driven from four timers which will be indicated by h\_timer\textcolor{red}{\it{x}} and l\_timer\textcolor{red}{\it{x}}.
+\vspace{-2em}
+
+\section{Functional Description}
+
+\subsection{Architecture}
+
+Figure \ref{Figure:led_pwm_architecture} shows the architecture of the LED\_PWM controller. As can be seen in the figure, the LED\_PWM controller contains eight high-speed and eight low-speed channels. There are four high-speed clock modules for the high-speed channels, from which one h\_timer\textcolor{red}{\it{x}} can be selected. There are also four low-speed clock modules for the low-speed channels, from which one l\_timer\textcolor{red}{\it{x}} can be selected.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{./28-LEDPWM/figures/led_pwm_architecture}
+    \caption{LED\_PWM Architecture}
+    \label{Figure:led_pwm_architecture}
+\end{figure}
+
+Figure \ref{Figure:led_pwm_high_speed_channel} illustrates a PWM channel with its selected timer; in this instance a high-speed channel and associated high-speed timer.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.65\textwidth]{./28-LEDPWM/figures/led_pwm_high_speed_channel}
+    \caption{LED\_PWM High-speed Channel Diagram}
+    \label{Figure:led_pwm_high_speed_channel}
+\end{figure}
+
+\subsection{Timers}\label{ledc_timers}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./28-LEDPWM/figures/ledc_frag_div}}
+    \caption{LED\_PWM Divider}
+    \label{Figure:led_pwm_divider}
+\end{figure}
+
+The clock of each high-speed timer, LEDC\_CLK\regindex{x}, has two clock sources: REF\_TICK or APB\_CLK. For more information on the clock sources, please see Chapter \hyperref[mod:resclk]{Reset And Clock}. The input clock is divided down by a divider first. The division factor is specified by LEDC\_CLK\_DIV\_NUM\_HSTIMER\textcolor{red}{\it{x}} which contains a fixed point number: the highest 10 bits represent the integer portion A, while the lowest eight bits contain the fractional portion B. The effective division factor LEDC\_CLK\_DIV\regindex{x} is as follows:
+\begin{center}
+$LEDC\_CLK\_DIV\regindex{x} =A + \frac{B}{256}$
+\end{center}
+The division factor ranges from 1 $\sim$ 1023.
+
+When the fractional part B is not 0, the input and output clock of the divider is shown as in figure \ref{Figure:led_pwm_divider}. Among the 256 output clocks, B of them are divided by (A+1), whereas the remaining (256-B) are divided by A. Output clocks divided by (A+1) are evenly distributed in the total 256 output clocks.
+
+The output clock of the divider is the base clock for the counter which will count up to the value specified in LEDC\_HSTIMER\textcolor{red}{\it{x}}\_DUTY\_RES. An overflow interrupt will be generated once the counting value reaches\\ $2^{LEDC\_HSTIMER\textcolor{red}{x}\_DUTY\_RES}-1$, at which point the counter restarts counting from 0. It is also possible to reset, suspend, and read the values of the counter by software.
+
+The output signal of the timer is the 20-bit value generated by the counter. The cycle period of this signal defines the frequency of the signals of any PWM channels connected to this timer.
+
+The frequency of a PWM generator output signal, sig\_out\regindex{n}, depends on the frequency of the timer’s clock source LEDC\_CLK\regindex{x}, the division factor of the divider LEDC\_CLK\_DIV\regindex{x}, as well as the duty resolution (counter width) LEDC\_HSTIMER\regindex{x}\_DUTY\_RES:
+
+    \[
+    f_{\textrm{sig\_out\regindex{n}}}=\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+                        {\textrm{LEDC\_CLK\_DIV\regindex{x}}\cdot 2^{\textrm{LEDC\_HSTIMER}\regindex{x}\_\textrm{DUTY\_RES}}}
+    \]
+
+Based on the formula above, the desired duty resolution can be calculated as follows:
+
+    \[
+    \textrm{LEDC\_HSTIMER}\regindex{x}\_\textrm{DUTY\_RES}
+    =\log_2\left(\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+    {f_{\textrm{sig\_out\regindex{n}}}\cdot \textrm{LEDC\_CLK\_DIV\regindex{x}}}\right)
+    \]
+
+Table \ref{tab:ledc-common-freq-res} lists the commonly-used frequencies and their corresponding resolutions.
+
+\begin{ThreePartTable}
+
+    \begin{TableNotes}
+
+        \item[1] The highest resolution is calculated when the clock divisor LEDC\_CLK\_DIV\regindex{x} is 1 and rounded down. If the highest resolution calculated by the formula is higher than the counter's width 20 bits, then the highest resolution should be 20 bits.
+
+        \item[2] The lowest resolution is calculated when the clock divisor LEDC\_CLK\_DIV\regindex{x} is $1023+\frac{255}{256}$ and rounded up. If the lowest resolution calculated by the formula is lower than 0, then the lowest resolution should be 1.
+
+    \end{TableNotes}
+
+\begin{longtable}[c]{ | l | l | l | l | }
+\caption{Commonly-used Frequencies and Resolutions}
+\label{tab:ledc-common-freq-res}
+\\\hline
+\rowcolor{lightgray}
+LEDC\_CLK\regindex{x} & PWM Frequency & Highest Resolution (bit) \tnote{1} & Lowest Resolution (bit) \tnote{2} \\\hline
+
+\endhead
+\insertTableNotes
+\endfoot
+
+APB\_CLK (80 MHz) & 1 kHz & 16 & 7 \\\hline
+APB\_CLK (80 MHz) & 5 kHz & 13 & 4 \\\hline
+APB\_CLK (80 MHz) & 10 kHz & 12 & 3 \\\hline
+RC\_FAST\_CLK (8 MHz) & 1 kHz & 12 & 3 \\\hline
+RC\_FAST\_CLK (8 MHz) & 2 kHz & 11 & 2 \\\hline
+REF\_TICK (1 MHz) & 1 kHz & 9 & 1 \\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+
+
+
+The low-speed timers l\_timer\textcolor{red}{\it{x}} on the low-speed channel differ from the high-speed timers h\_timer\textcolor{red}{\it{x}} in two aspects:
+
+\begin{enumerate}
+    \item Where the high-speed timer clock source can be clocked from REF\_TICK or APB\_CLK, the low-speed timers are sourced from either REF\_TICK or SLOW\_CLOCK. The SLOW\_CLOCK source can be either APB\_CLK (80 MHz) or 8 MHz, and can be selected using LEDC\_APB\_CLK\_SEL.
+    \item The high-speed counter and divider are glitch-free, which means that if the software modifies the maximum counter or divisor value, the update will come into effect after the next overflow interrupt. In contrast, the low-speed counter and divider will update these values only when LEDC\_LSTIMER\textcolor{red}{\it{x}}\_PARA\_UP is set.
+\end{enumerate}
+
+\subsection{Channels}\label{LEDCchannel}
+
+A channel takes the 20-bit value from the counter of the selected high-speed timer and compares it to a set of two values in order to set the channel output. The first value it is compared to is the content of LEDC\_HPOINT\_HSCH\textcolor{red}{\it{n}}; if these two match, the output will be latched high. The second value is the sum of LEDC\_HPOINT\_HSCH\textcolor{red}{\it{n}} and LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}}[24..4]. When this value is reached, the output is latched low. By using these two values, the relative phase and the duty cycle of the PWM output can be set. Figure \ref{Figure:led_pwm_fixed_duty} illustrates this.
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{./28-LEDPWM/figures/led_pwm_fixed_duty}}
+    \caption{LED PWM Output Signal Diagram}
+    \label{Figure:led_pwm_fixed_duty}
+\end{figure}
+
+\label{ledcfd:dithering}
+LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}} is a fixed-point register with four fractional bits. As mentioned before, when LEDC\_DUTY\_\\HSCH\textcolor{red}{\it{n}}[24..4] is used in the PWM calculation directly, LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}}[3..0] can be used to dither the output. If this value is non-zero, with a statistical chance of
+LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}}[3..0]/16, the actual PWM pulse will be one cycle longer. This effectively increases the resolution of the PWM generator to 25 bits, but at the cost of a slight jitter in the duty cycle.
+
+The channels also have the ability to automatically fade from one duty cycle value to another. This feature is enabled by setting LEDC\_DUTY\_START\_HSCH\textcolor{red}{\it{n}}. When this bit is set, the PWM controller will automatically increment or decrement the value in LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}}, depending on whether the bit LEDC\_DUTY\_INC\_HSCH\textcolor{red}{\it{n}} is set or cleared, respectively. The speed the duty cycle changes is defined as such: every time the LEDC\_DUTY\_CYCLE\_\\HSCH\textcolor{red}{\it{n}} cycles, the content of LEDC\_DUTY\_SCALE\_HSCH\textcolor{red}{\it{n}} is added to or subtracted from LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}}[24..4]. The length of the fade can be limited by setting LEDC\_DUTY\_NUM\_HSCH\textcolor{red}{\it{n}}: the fade will only last that number of cycles before finishing. A finished fade also generates an interrupt.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{./28-LEDPWM/figures/led_pwm_unfixed_duty}}
+    \caption{Output Signal Diagram of Fading Duty Cycle}
+    \label{Figure:led_pwm_unfixed_duty}
+\end{figure}
+
+Figure \ref{Figure:led_pwm_unfixed_duty} is an illustration of this. In this configuration, LEDC\_DUTY\_NUM\_HSCH\textcolor{red}{\it{n}}\_R increases by LEDC\_DUTY\_\\SCALE\_HSCH\textcolor{red}{\it{n}} for every LEDC\_DUTY\_CYCLE\_HSCH\textcolor{red}{\it{n}} clock cycles, which is reflected in the duty cycle of the output signal.
+
+{\bfseries Notes}
+\begin{itemize}
+\item When the LEDC is in fade mode, it is not supported to perform operations (e.g., pause) on the process or configure the following registers:
+    \begin{itemize}
+    \item LEDC\_HPOINT\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_START\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_INC\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_NUM\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_CYCLE\_H/LSCH\textcolor{red}{\it{n}}
+    \item LEDC\_DUTY\_SCALE\_H/LSCH\textcolor{red}{\it{n}}
+    \end{itemize}
+Configure the second fade only after LEDC\_DUTY\_CHNG\_END\_HSCH\textcolor{red}{\it{n}} or LEDC\_DUTY\_CHNG\_END\_LSCH\textcolor{red}{\it{n}} interrupt is generated.
+\item When LEDC is in decremental fade mode and LEDC\_DUTY\_HSCH\textcolor{red}{\it{n}} is 2$ ^{LEDC\_HSTIMER\textcolor{red}{\it{x}}\_DUTY\_RES}$, LEDC\_\\DUTY\_SCALE\_HSCH\textcolor{red}{\it{n}} cannot be set to 1. When LEDC is in decremental fade mode and LEDC\_DUTY\_LSCH\textcolor{red}{\it{n}} is 2$^ {LEDC\_LSTIMER\textcolor{red}{\it{x}}\_DUTY\_RES}$, LEDC\_DUTY\_SCALE\_LSCH\textcolor{red}{\it{n}} cannot be set to 1.
+\end{itemize}
+
+\subsection{Interrupts}
+\begin{itemize}
+\item \label{int:LEDCDUTYCHNGENDLSCHnINT}LEDC\_DUTY\_CHNG\_END\_LSCH\textcolor{red}{\it{n}}\_INT: Triggered when a fade on a low-speed channel has finished.
+\item \label{int:LEDCDUTYCHNGENDHSCHnINT}LEDC\_DUTY\_CHNG\_END\_HSCH\textcolor{red}{\it{n}}\_INT: Triggered when a fade on a high-speed channel has finished.
+\item \label{int:LEDCHSTIMERxOVFINT}LEDC\_HS\_TIMER\textcolor{red}{\it{x}}\_OVF\_INT: Triggered when a high-speed timer has reached its maximum counter value.
+\item \label{int:LEDCLSTIMERxOVFINT}LEDC\_LS\_TIMER\textcolor{red}{\it{x}}\_OVF\_INT: Triggered when a low-speed timer has reached its maximum counter value.
+\end{itemize}
+
+\hypertarget{ledpwm-reg-summ}{}
+\section{Register Summary}\label{sec:ledpwm-reg-summ}
+
+The addresses in this section are relative to the LED PWM base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/ledc_reg_summary_en.tex}
+{\clearpage}
+
+\section{Registers}
+
+The addresses in this section are relative to the LED PWM base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:ledpwm-reg-summ} \textit{\nameref{sec:ledpwm-reg-summ}}. 
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+
+\subfile{\modulefiles/ledc_reg_en.tex}
+
+\end{document}

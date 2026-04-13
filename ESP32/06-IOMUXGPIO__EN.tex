@@ -1,0 +1,437 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./06-IOMUXGPIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\setenglishformatting
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{iomuxgpio}{}
+\chapter{IO MUX and GPIO Matrix (GPIO, IO MUX)}
+\label{mod:iomuxgpio}
+
+\section{Overview} \label{sec:iomux-overview}
+The ESP32 chip features 34 physical GPIO pins. Each pin can be used as a general-purpose I/O, or be connected to an internal peripheral signal. The IO MUX \footnote{MUX: Multiplexer. The ESP32 chip integrates multiple peripherals that require communication with the outside world. To keep the chip package size reasonably small, the number of available pins has to be limited. So the only way to route all the incoming and outgoing signals is through pin multiplexing. Pin muxing is controlled via software programmable registers such as IO\_MUX\_\regindex{x}\_REG.}, RTC IO MUX and the GPIO matrix are responsible for routing signals from the peripherals to GPIO pins. Together these systems provide highly configurable I/O.
+
+{\bfseries Note that the I/O GPIO pins are 0-19, 21-23, 25-27, 32-39, while the output GPIOs are 0-19, 21-23, 25-27, 32-33. GPIO pins 34-39 are input-only.}
+
+{\bfseries GPIO20 serves as a valid input and output only on ESP32-PICO-V3 and ESP32-PICO-V3-02. Please refer to \href{https://www.espressif.com/sites/default/files/documentation/esp32-pico_series_datasheet_en.pdf}{\textit{ESP32-PICO Series Datasheet}} for more information.}
+
+This chapter describes the signal selection and connection between the digital pins (FUN\_SEL, IE, OE, WPU, WDU, etc.), 162 peripheral input and 176 output signals (control signals: SIG\_IN\_SEL, SIG\_OUT\_SEL, IE, OE, etc.), fast peripheral input/output signals (control signals: IE, OE, etc.), and RTC IO MUX.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{./06-IOMUXGPIO/figures/IO_diagram_20181017.eps}
+    \caption{IO MUX, RTC IO MUX and GPIO Matrix Overview}
+\end{figure}
+
+\begin{enumerate}
+
+\item The IO MUX contains one register per GPIO pin. Each pin can be configured to perform a ``GPIO" function (when connected to the GPIO Matrix) or a direct function (bypassing the GPIO Matrix). Some high-speed digital functions (Ethernet, SDIO, SPI, JTAG, UART) can bypass the GPIO Matrix for better high-frequency digital performance. In this case, the IO MUX is used to connect these pins directly to the peripheral.)
+
+See Section \ref{sec:iomux_pads} for a list of IO MUX functions for each I/O pin.
+
+\item The GPIO Matrix is a full-switching matrix between the peripheral input/output signals and the pins.
+\begin{itemize}
+\item For input to the chip: Each of the 162 internal peripheral inputs can select any GPIO pin as the input source.
+\item For output from the chip: The output signal of each of the 34 GPIO pins can be from one of the 176 peripheral output signals.
+\end{itemize}
+
+See Section \ref{sec:peripheral_signals} for a list of GPIO Matrix peripheral signals.
+
+\item RTC IO MUX\index{RTC IO MUX} is used to connect GPIO pins to their low-power and analog functions. Only a subset of GPIO pins have these optional ``RTC" functions.
+
+See Section \ref{sec:rtcmux_pins} for a list of RTC IO MUX functions.
+
+\end{enumerate}
+
+Figure \ref{fig:pad-overview} shows the internal structure of a pad, which is an electrical interface between the chip logic and the GPIO pin. The structure is applicable to all 31 GPIO pins and can be controlled using IE, OE, WPU, and WPD signals.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./06-IOMUXGPIO/figures/pad-overview_20210815.eps}    \caption{Internal Structure of a Pad}
+    \label{fig:pad-overview}
+\end{figure}
+
+\begin{itemize}
+    \item IE: input enable
+    \item OE: output enable
+    \item WPU: internal weak pull-up resistor
+    \item WPD: internal weak pull-down resistor
+    \item Bonding pad: a terminal point of the chip logic used to make a physical connection from the chip die to GPIO pin in the chip package
+\end{itemize}
+
+\section{Peripheral Input via GPIO Matrix}
+
+
+\subsection{Summary}
+
+To receive a peripheral input signal via the GPIO Matrix, the GPIO Matrix is configured to source the peripheral signal's input index (0-18, 23-36, 39-58, 61-90, 95-124, 140-155, 164-181, 190-195, 198-206) from one of the 34 GPIOs (0-19, 21-23, 25-27, 32-39).
+
+The input signal is read from the GPIO pin through the IO MUX. The IO MUX must be configured to set the chosen pin to ``GPIO" function. This causes the GPIO pin input signal to be routed into the GPIO Matrix, which in turn routes it to the selected peripheral input.
+
+\subsection{Functional Description}
+\label{sec:inputconfig}
+Figure \ref{Figure:gpio_matrix_input} shows the logic for input selection via GPIO Matrix.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./06-IOMUXGPIO/figures/iomux-input-via-gpio-matrix_20200617}}
+    \caption{Peripheral Input via IO MUX, GPIO Matrix}
+    \label{Figure:gpio_matrix_input}
+\end{figure}
+
+To read GPIO pin \textcolor{red}{\it{X}} into peripheral signal \textcolor{red}{\it{Y}}, follow the steps below:
+
+\begin{enumerate}
+    \item Configure the GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL\_CFG register corresponding to peripheral signal \textcolor{red}{\it{Y}} in the GPIO Matrix:
+    \begin{itemize}
+        \item Set GPIO\_SIG\textcolor{red}{\it{y}}\_IN\_SEL to enable peripheral signal input via GPIO matrix.
+        \item Set the GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL field in this register, corresponding to the GPIO pin \textcolor{red}{\it{X}} to read from.
+    \end{itemize}
+    \item Configure the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG register and clear the GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field corresponding to GPIO pin \textcolor{red}{\it{X}} in the GPIO Matrix:
+    \begin{itemize}
+        \item Set the GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL bit in the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG register to force the pin's output state to be determined always by the GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field.
+        \item The GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field is a bit in either GPIO\_ENABLE\_REG (GPIOs 0-31) or GPIO\_ENABLE1\_REG (GPIOs 32-39). Clear this bit to disable the output driver for the GPIO pin.
+    \end{itemize}
+    \item Configure the IO MUX to select the GPIO Matrix. Set the IO\_MUX\_\textcolor{red}{\it{x}}\_REG register corresponding to GPIO pin \textcolor{red}{\it{X}} as follows:
+    \begin{itemize}
+        \item Set the function field (MCU\_SEL) to the IO MUX function corresponding to GPIO \textcolor{red}{\it{X}} (this is Function 2---numeric value 2---for all pins).
+        \item Enable the input by setting the FUN\_IE bit.
+        \item Set or clear the FUN\_WPU and FUN\_WPD bits, as desired, to enable/disable internal pull-up/pull-down resistors.
+    \end{itemize}
+\end{enumerate}
+
+{\bfseries Notes:}
+\begin{itemize}
+\item One input pin can be connected to multiple input\_signals.
+\item The input signal can be inverted with GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_INV\_SEL.
+\item It is possible to have a peripheral read a constantly low or constantly high input value without connecting this input to a pin. This can be done by selecting a special GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL input, instead of a GPIO number:
+\begin {itemize}
+\item When GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL is 0x30, input\_signal\_\textcolor{red}{\it{x}} is always 0.
+\item When GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL is 0x38, input\_signal\_\textcolor{red}{\it{x}} is always 1.
+\end {itemize}
+\end{itemize}
+
+For example, to connect RMT peripheral channel 0 input signal (RMT\_SIG\_IN0\_IDX, signal index 83) to GPIO 15, please follow the steps below. Note that GPIO 15 is also named the MTDO pin:
+
+\begin{enumerate}
+\item  Set the GPIO\_FUNC83\_IN\_SEL\_CFG register field GPIO\_FUNC83\_IN\_SEL value to 15.
+\item As this is an input-only signal, set GPIO\_FUNC15\_OEN\_SEL bit in GPIO\_FUNC15\_OUT\_SEL\_CFG\_REG.
+\item  Clear bit 15 of GPIO\_ENABLE\_REG (field GPIO\_ENABLE\_DATA[15]).
+\item  Set the IO\_MUX\_GPIO15 register MCU\_SEL field to 2 (GPIO function) and also set the FUN\_IE bit (input mode).
+\end{enumerate}
+
+\subsection{Simple GPIO Input}\label{IOMUXSimpleGPIOInput}
+
+The GPIO\_IN\_REG/GPIO\_IN1\_REG register holds the input values of each GPIO pin.
+
+The input value of any GPIO pin can be read at any time without configuring the GPIO Matrix for a particular peripheral signal. However, it is necessary to enable the input in the IO MUX by setting the FUN\_IE bit in the IO\_MUX\_\textcolor{red}{\it{x}}\_REG register corresponding to pin \textcolor{red}{\it{X}}, as mentioned in Section \ref{sec:inputconfig}.
+
+\vspace{-2em}
+
+\section{Peripheral Output via GPIO Matrix}
+
+\subsection{Summary}
+
+To output a signal from a peripheral via the GPIO Matrix, the GPIO Matrix is configured to route the peripheral output signal (0-18, 23-37, 61-121, 140-125, 224-228) to one of the 28 GPIOs (0-19, 21-23, 25-27, 32-33).
+
+The output signal is routed from the peripheral into the GPIO Matrix. It is then routed into the IO MUX, which is configured to set the chosen pin to ``GPIO" function. This causes the output GPIO signal to be connected to the pin.
+
+\begin{tiplisting}
+The peripheral output signals 224 to 228 can be configured to be routed in from one GPIO and output directly from another GPIO.
+\end{tiplisting}
+
+\subsection{Functional Description}\label{IOMUXPeripheralOutput}
+
+One of the 176 output signals can be selected to go through the GPIO matrix into the IO MUX and then to a pin. Figure \ref{Figure:gpio_matrix_output} illustrates the configuration.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./06-IOMUXGPIO/figures/iomux-output-via-gpio-matrix-20181017}}
+    \caption{Output via GPIO Matrix}
+    \label{Figure:gpio_matrix_output}
+\end{figure}
+
+To output peripheral signal \textcolor{red}{\it{Y}} to particular GPIO pin \textcolor{red}{\it{X}}, follow these steps:
+
+\begin{enumerate}
+    \item Configure the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG register and GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field corresponding to GPIO \textcolor{red}{\it{X}} in the GPIO Matrix:
+    \begin{itemize}
+        \item Set the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL field in GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG to the numeric index (\textcolor{red}{\it{Y}}) of desired peripheral output signal \textcolor{red}{\it{Y}}.
+        \item If the signal should always be enabled as an output, set the GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL bit in the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG register and the GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field in the GPIO\_ENABLE\_REG register corresponding to GPIO pin \textcolor{red}{\it{X}}. To have the output enable signal decided by internal logic, clear the GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL bit instead.
+        \item The GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] field is a bit in either GPIO\_ENABLE\_REG (GPIOs 0-31) or GPIO\_ENABLE1\_REG (GPIOs 32-39). Clear this bit to disable the output driver for the GPIO pin.
+    \end{itemize}
+    \item For an open drain output, set the GPIO\_PIN\textcolor{red}{\it{x}}\_PAD\_DRIVER bit in the GPIO\_PIN\textcolor{red}{\it{x}} register corresponding to GPIO pin \textcolor{red}{\it{X}}. For push/pull mode (default), clear this bit.
+    \item Configure the IO MUX to select the GPIO Matrix. Set the IO\_MUX\_\textcolor{red}{\it{x}}\_REG register corresponding to GPIO pin \textcolor{red}{\it{X}} as follows:
+    \begin{itemize}
+        \item Set the function field (MCU\_SEL) to the IO MUX function corresponding to GPIO \textcolor{red}{\it{X}} (this is Function 2---numeric value 2---for all pins).
+        \item Set the FUN\_DRV field to the desired value for output strength (0-3). The higher the drive strength, the more current can be sourced/sunk from the pin.
+\item If using open drain mode, set/clear the FUN\_WPU and FUN\_WPD bits to enable/disable the internal pull-up/down resistors.
+    \end{itemize}
+\end{enumerate}
+
+{\bfseries Notes:}
+\begin{itemize}
+\item The output signal from a single peripheral can be sent to multiple pins simultaneously.
+\item Only the 28 GPIOs can be used as outputs.
+\item The output signal can be inverted by setting the GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_INV\_SEL bit.
+\end{itemize}
+
+\subsection{Simple GPIO Output}
+
+The GPIO Matrix can also be used for simple GPIO output – setting a bit in the GPIO\_OUT\_DATA register will write to the corresponding GPIO pin.
+
+To configure a pin as simple GPIO output, the GPIO Matrix GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL register is configured with a special peripheral index value (0x100).
+
+\section{Direct I/O via IO MUX}
+
+\subsection{Summary}
+
+Some high speed digital functions (Ethernet, SDIO, SPI, JTAG, UART) can bypass the GPIO Matrix for better high-frequency digital performance. In this case, the IO MUX is used to connect these pins directly to the peripheral.
+
+Selecting this option is less flexible than using the GPIO Matrix, as the IO MUX register for each GPIO pin can only select from a limited number of functions. However, better high-frequency digital performance will be maintained.
+
+\subsection{Functional Description}\label{direct io via iomux}
+
+Two registers must be configured in order to bypass the GPIO Matrix for peripheral I/O:
+
+\begin{enumerate}
+\item IO MUX for the GPIO pin must be set to the required pin function. (Please refer to section \ref{sec:iomux_pads} for a list of pin functions.)
+\item For inputs, the SIG\_IN\_SEL register must be cleared to route the input directly to the peripheral.
+\end{enumerate}
+
+\section{RTC IO MUX for Low Power and Analog I/O}\index{RTC IO MUX}
+
+\subsection{Summary}
+
+18 GPIO pins have low power capabilities (RTC domain) and analog functions which are handled by the RTC subsystem of ESP32. The IO MUX and GPIO Matrix are not used for these functions; rather, the RTC\_MUX is used to redirect the I/O to the RTC subsystem.
+
+When configured as RTC GPIOs, the output pins can still retain the output level value when the chip is in Deep-sleep mode, and the input pins can wake up the chip from Deep-sleep.
+
+Section \ref{sec:rtcmux_pins} has a list of RTC\_MUX pins and their functions.
+
+\subsection{Analog Function Description}\label{sec:rtc_gpio_analog_func}
+
+The RTC function and analog function of RTC\_GPIOs can only be selected one at a time. For the RTC\_GPIO8 to RTC\_GPIO17 pins, their analog outputs can be directed to the IO MUX, controlled by the \hyperref[regdesc:RTCIOTOUCHPADnREG]{RTC\_IO\_TOUCH\_PAD\textcolor{red}{\it{n}}/\textcolor{red}{\it{m}}\_TO\_GPIO} bit. If the bit is set to 1, the analog output is enabled, allowing the signal to be routed to IO MUX through analog function. On the other hand, if the bit is set to 0, the input signal from the pin is output to IO MUX through digital function.
+
+\section{Light-sleep Mode Pin Functions}
+
+Pins can have different functions when the ESP32 is in Light-sleep mode. If the SLP\_SEL bit in the IO MUX register for a GPIO pin is set to 1, a different set of registers is used to control the pin when the ESP32 is in Light-sleep mode:
+
+
+\input{./06-IOMUXGPIO/tables/iomux_sleep_functions_en.tex}
+
+If SLP\_SEL is set to 0, the pin functions remain the same in both normal execution and Light-sleep mode.
+
+\section{pin Hold Feature}\label{PadHold}
+
+Each IO pin (including the RTC pins) has an individual hold function controlled by a RTC register. When the pin is set to hold, the state is latched at that moment and will not change no matter how the internal signals change or how the IO MUX configuration or GPIO configuration is modified. Users can use the hold function for the pins to retain the pin state through a core reset triggered by watchdog time-out or Deep-sleep events.
+
+The Hold state of each pin is controlled by the result of OR operation of the pin's Hold enable signal and the global Hold enable signal.
+
+\begin{itemize}
+    \item \textbf{Digital Pins} (GPIO18 \verb+~+ GPIO19, GPIO21 \verb+~+ GPIO23, GPIO25 \verb+~+ GPIO27, GPIO32 \verb+~+ GPIO39)
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCIODIGPADHOLDREG] {RTCIO\_DIG\_PAD\_HOLD\_REG[\regindex{n}]}, controls the Hold enable signal of each digital pin. See Table \ref{tab:hold-bit-mapping} for the bit mapping for the pins.
+        \item \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD}, controls the global Hold signal of all digital pins.
+    \end{itemize}
+To use this feature, follow the steps below:
+    \begin{itemize}
+        \item To maintain the pin's input/output status in Deep-sleep, set \hyperref[regdesc:RTCIODIGPADHOLDREG] {RTCIO\_DIG\_PAD\_HOLD\_REG[\regindex{n}]} (\regindex{n} = 0 \verb+~+ 31) before power off. See Table \ref{tab:hold-bit-mapping} for the bit mapping for the pins. To disable the Hold function of each pin after the chip is woken up, clear the bits above.
+        \item Alternatively, set \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD} to hold the values of all digital pins, or set \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_UNHOLD} to disable the hold function of all digital pins.
+    \end{itemize}
+    \item \textbf{RTC Pins} (GPIO0 \verb+~+ GPIO17)
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCCNTLHOLDFORCEREG]{RTC\_CNTL\_HOLD\_FORCE\_REG[\regindex{n}]}(\regindex{n} = 0 \verb+~+ 17), controls the Hold enable signal of each RTC pins (GPIO0 \verb+~+ GPIO17).
+        \item \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD}, controls the global Hold signal of all RTC pins.
+    \end{itemize}
+    
+To use this feature, follow the steps below:
+
+    \begin{itemize}
+        \item To maintain the pin's input/output status in Deep-sleep, set \hyperref[regdesc:RTCCNTLHOLDFORCEREG]{RTC\_CNTL\_HOLD\_FORCE\_REG[\regindex{n}]}. \regindex{n} ranges from 0 to 17, corresponding to GPIO0 \verb+~+ GPIO17, respectively. To disable the Hold function of each pin after the chip is woken up, clear the bits above.
+        \item Alternatively, set \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD} to hold the values of all RTC pins, or set \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_UNHOLD} to disable the hold function of all RTC pins.
+    \end{itemize}
+\end{itemize}
+
+
+\section{I/O Pin Power Supplies}\label{I/O Pad Power Supplies}
+
+Figure \ref{ESP32_Power_Sources_TRM_66} and \ref{ESP32_Power_Sources_TRM_55} show the IO pin power supplies.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.72\textwidth]{./06-IOMUXGPIO/figures/ESP32_Power_Sources_TRM_66}}
+    \caption{ESP32 I/O Pin Power Sources (QFN 6*6, Top View)}
+    \label{ESP32_Power_Sources_TRM_66}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.72\textwidth]{./06-IOMUXGPIO/figures/ESP32_Power_Sources_TRM_55}}
+    \caption{ESP32 I/O Pin Power Sources (QFN 5*5, Top View)}
+    \label{ESP32_Power_Sources_TRM_55}
+\end{figure}
+
+
+\begin{itemize}
+\item Pins marked blue are RTC pins that have their individual analog function and can also act as normal digital IO pins. For details, please see Section \ref{sec:rtcmux_pins}.
+\item Pins marked yellow and green have digital functions only.
+\item Pins marked green can be powered externally or internally via VDD\_SDIO (see below).
+\end{itemize}
+
+\subsection{VDD\_SDIO Power Domain}
+
+VDD\_SDIO\index{VDD\_SDIO} can source or sink current, allowing this power domain to be powered externally or internally. To power VDD\_SDIO externally, apply the same power supply of VDD3P3\_RTC to the VDD\_SDIO pin.
+
+Without an external power supply, the internal regulator will supply VDD\_SDIO. The VDD\_SDIO voltage can be configured to be either 1.8V or the same as VDD3P3\_RTC\index{VDD3P3\_RTC|seealso{VDD\_SDIO}}, depending on the state of the MTDI pin at reset – a high level configures 1.8V and a low level configures the voltage to be the same as VDD3P3\_RTC. Setting the efuse bit determines the default voltage of the VDD\_SDIO. In addition, software can change the voltage of the VDD\_SDIO by configuring register bits.
+
+\begin{landscape}
+\section{Peripheral Signal List}
+\label{sec:peripheral_signals}
+
+
+Table \ref{table:peripheral_signals} shows the peripheral input/output signals via GPIO matrix.
+
+Please pay attention to the configuration of the bit \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL}:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 1: the output enable is controlled by the corresponding bit \regindex{n} of \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}:
+    \begin{itemize}
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 0: output is disabled.
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 1: output is enabled.
+    \end{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0: use the output enable signal from peripheral, for example SPIQ\_oe in the column ``Output Enable of Output Signals" of Table \ref{table:peripheral_signals}. Note that the signals such as SPIQ\_oe can be 1 (1'd1) or 0 (1'd0), depending on the configuration of corresponding peripherals. If it's 1'd1 in column ``Output Enable of Output Signals", it indicates that once \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} is cleared, the output signal is always enabled by default.
+\end{itemize}
+
+\begin{tiplisting}
+Signals are numbered consecutively, but not all signals are valid.
+\vspace{-1em}
+\begin{itemize}
+    \item Only the signals with a name assigned in the column ``Input signal" in Table \ref{table:peripheral_signals} are valid input signals.
+    \item Only the signals with a name assigned in the column ``Output signal" in Table \ref{table:peripheral_signals} are valid output signals.
+\end{itemize}
+\end{tiplisting}
+
+\input{./06-IOMUXGPIO/tables/102-ESP32_GPIO_Matrix__EN.tex}
+\end{landscape}
+
+\section{IO MUX Pin List}
+\label{sec:iomux_pads}
+Table \ref{table:iomux_pads} shows the IO MUX functions for each I/O pin:
+
+\input{./06-IOMUXGPIO/tables/iomux_pad_summary_en.tex}
+
+\textbf{Reset Configurations}
+
+"Reset" column shows each pin's default configurations after reset:
+
+\begin{itemize}
+\item \textbf{0} - IE=0 (input disabled).
+\item \textbf{1} - IE=1 (input enabled).
+\item \textbf{2} - IE=1, WPD=1 (input enabled, pull-down resistor).
+\item \textbf{3} - IE=1, WPU=1 (input enabled, pull-up resistor).
+\end{itemize}
+
+\textbf{Notes}
+
+\begin{itemize}
+\item \textbf{R} - Pin has RTC/analog functions via RTC\_MUX.
+\item \textbf{I} - Pin can only be configured as input GPIO. These input-only pins do not feature an output driver or internal pull-up/pull-down circuitry.
+\end{itemize}
+
+Please refer to the ESP32 Pin Lists in \doclinkcdEN for more details.
+
+
+\section{RTC\_MUX Pin List}
+\label{sec:rtcmux_pins}
+
+Table \ref{table:rtcmux pads} shows the RTC pins and how they correspond to GPIO pins:
+
+\input{./06-IOMUXGPIO/tables/rtcmux_pad_summary_20191119_en.tex}
+
+\hypertarget{iomuxgpio-reg-summ}{}
+\section{Register Summary}
+\label{section:4.12}
+
+\subsection{GPIO Matrix Register Summary}\label{sec:gpio-reg-summ}
+\subfile{\modulefiles/gpio_reg_summary_en}
+
+\subsection{IO MUX Register Summary}\label{sec:iomux-reg-summ}
+\subfile{\modulefiles/pad_reg_summary_en}
+
+\subsection{RTC IO MUX Register Summary}\label{sec:rtcio-reg-summ}
+\subfile{\modulefiles/rtc_io_reg_summary_en}
+
+\section{Registers}
+\label{section:4.13}
+\subsection{GPIO Matrix Registers}
+The addresses in parenthesis besides register names are the register addresses relative to the GPIO base address provided in Table \ref{table:Peripheral_Address_Mapping} \textit{Peripheral Address Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:gpio-reg-summ} \textit{\nameref{sec:gpio-reg-summ}}.
+
+\subfile{\modulefiles/gpio_reg_en}
+
+\subsection{IO MUX Registers}
+
+\clearpage
+\subfile{\modulefiles/pad_reg_en}
+
+\subsection{RTC IO MUX Registers}
+The addresses in parenthesis besides register names are the register addresses relative to (the RTC base address + 0x0400 = 0x3FF4\_8400). The RTC base address is provided in Table \ref{table:Peripheral_Address_Mapping} \textit{Peripheral Address Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:rtcio-reg-summ} \textit{\nameref{sec:rtcio-reg-summ}}.
+\subfile{\modulefiles/rtc_io_reg_en}
+
+\end{document}

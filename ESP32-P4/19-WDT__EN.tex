@@ -1,0 +1,297 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-P4/19-WDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{wdt}{}
+\chapter{Watchdog Timers (WDT)}
+\label{mod:wdt}
+
+\section{Overview}
+
+Watchdog timers are hardware timers used to detect and recover from malfunctions. They must be periodically fed (reset) to prevent a timeout. A system/software that is behaving unexpectedly (e.g., is stuck in a software loop or in overdue events) will fail to feed the watchdog, thus the watchdog timer will time out and trigger an interrupt or reset, directing the system to a known state for exception handling or a restart.  Therefore, watchdog timers are useful for detecting and handling erroneous system/software behavior.
+
+As shown in Figure \ref{fig:wdt-timers-overview}, \chipname{} contains three digital watchdog timers: one in each of the two timer groups in Chapter \ref{mod:timg} \textit{\nameref{mod:timg}} (called Main System Watchdog Timers, or MWDT) and one in the LP system (called the RTC Watchdog Timer, or RWDT). Each digital watchdog timer allows for four separately configurable stages, and each stage can be programmed to take one action upon timeout, unless the watchdog is fed or disabled. MWDT supports three timeout actions: interrupt, HP CPU reset, and HP core reset, while RWDT supports four timeout actions: interrupt, HP CPU reset, HP core reset, and system reset (see details in Section \ref{sec:wdt-timeout} \textit{\nameref{sec:wdt-timeout}}). A timeout value can be set for each stage individually.
+
+In SPI Boot mode, RWDT and the MWDT in timer group 0 are enabled automatically in order to detect errors that may occur during the flash boot process and facilitate recovery.
+
+\chipname{} also has one analog watchdog timer: Super watchdog (SWD). It is an ultra-low-power circuit in analog domain that helps to prevent the system from operating in a sub-optimal state and resets the system if required.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/wdt-overview-lp}
+    \caption{Watchdog Timers Overview}
+    \label{fig:wdt-timers-overview}
+\end{figure}
+
+
+Note that while this chapter provides the functional descriptions of the watchdog timer's, MWDT register descriptions are detailed in Chapter \ref{mod:timg} \textit{\nameref{mod:timg}}, and the RWDT and SWD register descriptions are detailed in Section \ref{sec:wdt-reg-summ} \textit{\nameref{sec:wdt-reg-summ}}.
+
+
+\section{Digital Watchdog Timers}
+\subsection{Features}
+Watchdog timers have the following features:
+
+\begin{itemize}
+    \item Four stages, each with a separately programmable timeout value and timeout action
+    \item Timeout actions:
+        \begin{itemize}
+            \item MWDT: interrupt, HP CPU reset, HP core reset
+            \item RWDT: interrupt, HP CPU reset, HP core reset, system reset
+        \end{itemize}
+    \item Flash boot protection under SPI Boot mode at stage 0:
+        \begin{itemize}
+            \item MWDT0: HP core reset upon timeout
+            \item RWDT: system reset upon timeout
+        \end{itemize}
+    \item Write protection that makes WDT register read only unless unlocked
+    \item 32-bit timeout counter
+    \item Clock source:
+        \begin{itemize}
+            \item MWDT: PLL\_F80M\_CLK, RC\_FAST\_CLK or XTAL\_CLK
+            \item RWDT: LP\_DYN\_SLOW\_CLK
+        \end{itemize}
+
+\end{itemize}
+
+\subsection{Functional Description}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.88\textwidth]{\modulefiles/figures/761wdt.pdf}
+    \caption{Digital Watchdog Timers in \chipname{}}
+    \label{fig:wdt-timers}
+\end{figure}
+
+Figure \ref{fig:wdt-timers} shows the three watchdog timers in \chipname{} digital systems.
+
+\subsubsection{Clock Source and 32-Bit Counter}
+
+At the core of each watchdog timer is a 32-bit counter.
+
+Take MWDT0 as an example:
+
+\begin{itemize}
+    \item MWDT0 can select between the PLL\_F80M\_CLK, RC\_FAST\_CLK or XTAL\_CLK (external) clock as its clock source by setting the \hyperref[fielddesc:HPSYSTG0WDTCLKSEL]{HP\_SYS\_TIMERGRP0\_WDT\_SRC\_SEL} field of the \hyperref[regdesc:HPSYSTIMERGROUP0WDTCLKCONFREG]{HP\_SYS\_CLKRST\_PERI\_CLK\_CTRL20\_REG} register.
+
+    \item The selected clock is switched on by setting \hyperref[fielddesc:HPSYSTG0WDTCLKEN]{HP\_SYS\_TIMERGRP0\_WDT\_CLK\_EN} field of the \hyperref[regdesc:HPSYSTIMERGROUP0WDTCLKCONFREG]{HP\_SYS\_CLKRST\_PERI\_CLK\_CTRL20\_REG} register to 1 and switched off by setting it to 0. Then the selected clock is divided by a 16-bit configurable prescaler. See more details in Table \ref{tab:resclk-cpu-clk-src} of Chapter \ref{mod:resclk}.
+
+    \item The 16-bit prescaler for MWDT is configured via the \hyperref[fielddesc:TIMGWDTCLKPRESCALE]{TIMG\_WDT\_CLK\_PRESCALE} field of \hyperref[regdesc:TIMGWDTCONFIG1REG]{TIMG\_WDTCONFIG1\_REG}. When \hyperref[fielddesc:TIMGWDTDIVCNTRST]{TIMG\_WDT\_DIVCNT\_RST} field is set, the prescaler is reset and it can be re-configured at once.
+
+\end{itemize}
+
+In contrast, the clock source of RWDT is derived directly from LP\_DYN\_SLOW\_CLK (see details in Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}).
+
+MWDT and RWDT are enabled by setting the \hyperref[fielddesc:TIMGWDTEN]{TIMG\_WDT\_EN} and  \hyperref[fielddesc:RTCWDTEN]{RTC\_WDT\_EN} fields respectively. When enabled, the 32-bit counters of the watchdog will increment on each source clock cycle until the timeout value of the current stage is reached (i.e., timeout of the current stage). When this occurs, the current counter value is reset to zero and the next stage will become active. If a watchdog timer is fed by software, the timer will return to stage 0 and reset its counter value to zero. Software can feed a watchdog timer by writing any value to \hyperref[regdesc:TIMGWDTFEEDREG]{TIMG\_WDTFEED\_REG} for MDWT and by writing 1 to \hyperref[fielddesc:RTCWDTFEED]{RTC\_WDT\_FEED} for RWDT.
+
+
+\subsubsection{Stages and Timeout Actions}\label{sec:wdt-timeout}
+
+Timer stages allow for a timer to have a series of different timeout values and corresponding timeout action. When one stage times out, the timeout action is triggered, the counter value is reset to zero, and the next stage becomes active.
+
+MWDT/RWDT offers four stages (referred to as stages 0 to 3). The watchdog timers will progress through each stage in a loop (i.e., from stage 0 to 3, then back to stage 0).
+
+Timeout values of each stage for MWDT are configured in \hyperref[regdesc:TIMGWDTCONFIG2REG]{TIMG\_WDTCONFIG\textcolor{red}{\it{i}}\_REG} (where \textcolor{red}{\it{i}} ranges from 2 to 5), whilst timeout values for RWDT are configured using \hyperref[fielddesc:RTCWDTSTG3HOLD]{RTC\_WDT\_STG\textcolor{red}{\it{j}}\_HOLD} field (where \textcolor{red}{\it{j}} ranges from 0 to 3).
+
+Please note that the timeout value of stage 0 for RWDT (T\textsubscript{hold0}) is determined by the combination of the \\ \hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} field of eFuse register \hyperref[regdesc:EFUSERDREPEATDATA0REG]{EFUSE\_RD\_REPEAT\_DATA0\_REG} and  \hyperref[fielddesc:RTCWDTSTG0HOLD]{RTC\_WDT\_STG0\_HOLD} field. The relationship is as follows:
+
+\begin{displaymath}
+T_{hold0} = \hyperref[fielddesc:RTCWDTSTG0HOLD]{RTC\_WDT\_STG0\_HOLD}   << (\hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} + 1)
+\end{displaymath}
+
+where $<<$ is a left-shift operator. For example, if \hyperref[fielddesc:RTCWDTSTG0HOLD]{RTC\_WDT\_STG0\_HOLD} is configured as 100 and \hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} is 1, the T\textsubscript{hold0} will be 400 cycles.
+
+Upon the timeout of each stage, one of the following timeout actions will be executed:
+
+\begin{table}[H]
+\centering
+\caption{Timeout Actions}
+\label{tab:wdt-timeout-action}
+
+\begin{tabular}{|l|m{12cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{Timeout Action} & \textbf{Description} \\\hline
+
+
+    Interrupt &  Trigger an interrupt \\ \hline
+    HP CPU reset &  Reset the HP CPU0 and HP CPU1 \\ \hline
+    HP core reset &  HP core reset resets HP CPU0, HP CPI1, HP peripherals, HP GPIO, etc. \\ \hline
+    System reset &  Reset the whole digital system, including the LP system. \\ \hline
+    Disabled &  No effect on the system \\ \hline
+
+\end{tabular}
+\end{table}
+
+For MWDT, the timeout action of all stages is configured in \hyperref[regdesc:TIMGWDTCONFIG0REG]{TIMG\_WDTCONFIG0\_REG}. Likewise for RWDT, the timeout action is configured in \hyperref[regdesc:RTCWDTCONFIG0REG]{RTC\_WDT\_CONFIG0\_REG}.
+
+\subsubsection{Write Protection}
+Watchdog timers are critical to detecting and handling erroneous system/software behavior, thus should not be disabled easily (e.g., due to a misplaced register write). Therefore, MWDT and RWDT incorporate a write protection mechanism that prevent the watchdogs from being disabled or tampered with due to an accidental write.
+
+The write protection mechanism is implemented using a write-key field for each timer (\hyperref[fielddesc:TIMGWDTWKEY]{TIMG\_WDT\_WKEY} for MWDT, \hyperref[fielddesc:RTCWDTWKEY]{RTC\_WDT\_WKEY} for RWDT). The value 0x50D83AA1 must be written to the watchdog timer's write-key field before any other register of the same watchdog timer can be changed. Any attempts to write to a watchdog timer's registers (other than the write-key field itself) whilst the write-key field's value is not 0x50D83AA1 will be ignored. The recommended procedure for accessing a watchdog timer is as follows:
+
+\begin{enumerate}
+\item Disable the write protection by writing the value 0x50D83AA1 to the timer's write-key field.
+\item Make the required modification of the watchdog such as feeding or changing its configuration.
+\item Re-enable write protection by writing any value other than 0x50D83AA1 to the timer's write-key field.
+\end{enumerate}
+
+\subsubsection{Flash Boot Protection}
+Under the SPI boot mode, MWDT0 as well as RWDT, are automatically enabled. Stage 0 for the enabled MWDT0 is automatically configured as HP core reset action upon timeout, known as HP core reset. Likewise, stage 0 for RWDT is configured to system reset, which resets the main system and RTC when it times out. After SPI booting, \hyperref[fielddesc:TIMGWDTFLASHBOOTMODEN]{TIMG\_WDT\_FLASHBOOT\_MOD\_EN} and \hyperref[fielddesc:RTCWDTFLASHBOOTMODEN]{RTC\_WDT\_FLASHBOOT\_MOD\_EN} should be cleared to stop the flash boot protection procedure for both MWDT0 and RWDT respectively. After this, MWDT0 and RWDT can be configured by software.
+
+
+
+
+\section{Super Watchdog}\label{sec:wdt-swdt}
+Super watchdog (SWD) is an ultra-low-power circuit in analog domain that helps to prevent the system from operating in a sub-optimal state and resets the system (system reset) if required. SWD contains a watchdog circuit that needs to be fed for at least once during its timeout period, which is slightly less than one second. About 100 ms before watchdog timeout, it will also send out a WD\_INTR signal as a request to remind the system to feed the watchdog.
+
+If the system doesn't respond to SWD feed request and watchdog finally times out, SWD will generate a system level signal SWD\_RSTB to reset whole digital circuits on the chip (system reset) .
+
+The source of the clock for SWD is constant and can not be selected.
+
+\subsection{Features}
+SWD has the following features:
+\begin{itemize}
+    \item Ultra-low power
+    \item Interrupt to indicate that the SWD is about to time out
+    \item Various dedicated methods for software to feed SWD, which enables SWD to monitor the working state of the whole operating system
+\end{itemize}
+
+\subsection{Super Watchdog Controller}
+\subsubsection{Structure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/swd_pic_thicker}
+    \caption{Super Watchdog Controller Structure}
+    \label{fig:wdt}
+\end{figure}
+
+\subsubsection{Workflow}
+In normal state:
+\begin{itemize}
+    \item SWD controller receives feed request from SWD.
+    \item SWD controller can send an interrupt to main CPU.
+    \item Main CPU can feed SWD directly by setting \hyperref[fielddesc:RTCWDTSWDFEED]{RTC\_WDT\_SWD\_FEED}.
+    \item When trying to feed SWD, CPU needs to disable SWD controller's write protection by writing 0x50D83AA1 to \hyperref[fielddesc:RTCWDTSWDWKEY]{RTC\_WDT\_SWD\_WKEY}. This prevents SWD from being fed by mistake when the system is operating in sub-optimal state.
+    \item If setting \hyperref[fielddesc:RTCWDTSWDAUTOFEEDEN]{RTC\_WDT\_SWD\_AUTO\_FEED\_EN} to 1, SWD controller can also feed SWD itself without any interaction with CPU.
+\end{itemize}
+
+After reset:
+\begin{itemize}
+    \item Check \hyperref[fielddesc:LPAONCLKRSTLPCORERESETCAUSE]{LP\_AONCLKRST\_LPCORE\_RESET\_CAUSE}[4:0] for the cause of HP CPU reset.\\
+	If \hyperref[fielddesc:LPAONCLKRSTLPCORERESETCAUSE]{LP\_AONCLKRST\_LPCORE\_RESET\_CAUSE}[4:0] == 0x12, it indicates that the cause is SWD reset.
+	\item Set \hyperref[fielddesc:RTCWDTSWDRSTFLAGCLR]{RTC\_WDT\_SWD\_RST\_FLAG\_CLR} to clear the SWD reset flag.
+\end{itemize}
+
+\section{Interrupts}
+
+For watchdog timer interrupts, please refer to Section \ref{sec:timg-interrupt} \textit{\nameref{sec:timg-interrupt}} in Chapter \ref{mod:timg} \textit{\nameref{mod:timg}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Register Summary}\label{sec:wdt-reg-summ}
+
+The addresses in this section are relative to RTC\_WDT base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/19-WDT-rwdt-reg-summ__EN}
+
+\section{Registers}
+
+MWDT registers are part of the timer submodule and are described in Section \ref{sec:timg-reg-summ} \textit{\nameref{sec:timg-reg-summ}} in Chapter \ref{mod:timg} \textit{\nameref{mod:timg}}.
+
+The addresses of RWDT and SWD registers in this section are relative to RTC\_WDT base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+
+
+\subfile{\modulefiles/19-WDT-rwdt-reg__EN}
+
+\end{document}
+
+

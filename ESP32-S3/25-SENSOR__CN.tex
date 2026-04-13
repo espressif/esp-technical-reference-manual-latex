@@ -1,0 +1,1081 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./25-SENSOR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sensor}{}
+\chapter{片上传感器与模拟信号处理}
+\label{mod:sensor}
+
+
+\section{概述}
+
+\chipname{} 搭载了以下片上传感器和模拟信号处理设备：
+
+\begin{itemize}
+    \item 14 个\hyperref[sec:touch-sensor]{电容式触摸传感器}：常用于手指触摸检测，支持 14 个通道电容检测、支持防潮功能、遇水保护功能和接近感应模式。
+    \item 温度传感器：用于测量 \chipname{} 芯片内部温度。
+    \item 两个 12 位逐次逼近型模数转换器 (SAR ADC)：支持 20 个通道的模拟信号检测。系统专门内置了五个专用控制器，可在转换模拟输入信号时支持高性能与低功耗两种模式。
+\end{itemize}
+
+\section{电容式触摸传感器}\label{sec:touch-sensor}
+
+\subsection{术语}
+
+为了更好地对电容式触摸传感器进行说明，本章及后续章节使用了以下术语。
+
+\begin{itemize}
+    \item 触摸管脚 (Touch Pin)：指 \chipname{} 芯片提供的具有触摸传感功能的 GPIO 接口。
+    \item 触摸传感器 (Touch Sensor)：指 \chipname{} 提供的实现触摸传感功能的内部电路。
+    \item 触摸板 (Touch Panel)：指芯片外部连接的用于接收触摸动作的设备。
+    \item 触摸传感器系统 (Touch Sensor System)：触摸管脚、触摸传感器、触摸板、以及连接各部分的电路共同构成触摸传感器系统。
+\end{itemize}
+\begin{tiplisting}
+   为方便描述，对触摸板进行采样、扫描、测量、充放电等操作，即表示对触摸管脚进行采样、扫描、测量、充放电等操作。
+\end{tiplisting}
+
+\subsection{概述}
+\chipname{} 内置电容式触摸传感器，通过触摸管脚外接触摸板，构成触摸传感器系统。触摸传感器系统主要应用于人机交互场景中，检测手指触碰或接近。其中，触摸板主要由三部分组成：
+\begin{itemize}
+    \item 电极 (Electrode)：手指触碰时，电极电容发生变化。
+    \item 基片 (Substrate)：基础材料，承载平面保护层、电极及接入相应通道需要的连接部件。
+    \item 平面保护层 (Protective cover)：将其余部件与外界环境隔开。
+\end{itemize}
+用户需自行设计触摸板，确定触摸板用材及排列方式等，具体信息可参考\href{https://github.com/espressif/esp-iot-solution/blob/release/v1.0/documents/touch_pad_solution/touch_sensor_design_cn.md}{触摸传感器应用方案简介}。触摸板经触摸管脚（通道）连接至 \chipname{} 提供的触摸传感器，如下图 \ref{fig:touch-sensor} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/touch-sensor-structure.pdf}}
+    \caption{触摸传感器}
+    \label{fig:touch-sensor}
+\end{figure}
+
+用户触碰保护层时，电极电容增加。如果该电极通过通道已连接至 \chipname{} 触摸传感器，则传感器将检测到电极的电容变化。电容变化超过阈值（可配置），传感器将触发中断。
+
+\subsection{主要特性}
+
+\begin{itemize}
+    \item 集成 14 个触摸传感器 (T1 \verb+~+ T14)，每个传感器通过专用通道，可连接至外部触摸板。触摸传感器 T0 为内部通道，无法外接触摸板，因此常用于噪声检测，详细信息见章节 \ref{sec:noise-detection}。
+    \item 触摸传感器由触摸有限状态机 (Touch FSM) 控制。Touch FSM 可由软件或专用硬件定时器触发，然后对某个触摸管脚执行测量操作，即采样某个触摸管脚。
+    \item 用户可配置 Touch FSM 按照特定顺序对多个触摸管脚进行采样，即扫描 (Scan) 模式。Scan 模式可用于同时监控多个触摸管脚。
+    \item 支持最多三个通道配置为接近感应模式。
+    \item 支持下面两种触摸动作检测方式，用于检测触摸管脚是否被触碰：
+    \begin{itemize}
+        \item 软件轮询触摸传感器采样值
+        \item 使用内置硬件算法
+    \end{itemize}
+    \item 触摸传感器可在 CPU 处于睡眠模式时正常工作。
+    \item 协助 \chipname{} 芯片在下面两种低功耗场景下工作：
+    \begin{itemize}
+        \item CPU 处于 Deep-sleep 模式时，可配置触摸管脚为唤醒源，详细信息见 \hyperref[fielddesc:RTCCNTLTOUCHSLPPAD]{RTC\_CNTL\_TOUCH\_SLP\\\_PAD}。如果 RTC 外设电源域关闭（参考表 \ref{tab:lpm-rtc-power-domains}），则只能将一个触摸管脚配置为唤醒源。
+        \item 触摸管脚可由 ULP 协处理器控制。配置 ULP 协处理器扫描多个触摸管脚，达到触摸阈值，ULP 协处理器唤醒主 CPU。
+    \end{itemize}
+    \item 防潮设计，可缓和小水滴对传感器的影响。
+    \item 遇水保护设计，如果检测到传感器触摸板阵列表面已被水覆盖，将触发软件关停传感器。
+    \item 内部噪声过滤
+\end{itemize}
+
+\begin{tiplisting}
+ESP32-S3 触摸传感器目前尚无法通过射频抗扰度测试系统 (CS) 认证，应用场景有所限制。
+\end{tiplisting}
+\vspace{-1em}
+
+\subsection{电容触摸管脚}
+
+\chipname{} 搭载 14 个电容触摸传感器 (T1 \verb+~+ T14)，通过芯片电容触摸管脚与外部触摸板连接，用于检测外部的触摸情况。对应的连接关系见表 \ref{tab:touch-pads}。另一个传感器 (T0) 未引出，可用于检测芯片内部的噪声变化，见章节 \ref{sec:noise-detection}。
+
+\begin{longtable}[c]{|p{3.5cm}|p{4.5cm}| }
+    \caption{\chipname{} 电容式触摸传感器的管脚}
+    \label{tab:touch-pads}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{触摸传感信号名称} & \textbf{管脚}\\
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{触摸传感信号名称} & \textbf{管脚}\\
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    T0  &  内部通道，无对应管脚 \\\hline
+    T1  &  GPIO1 \\\hline
+    T2  &  GPIO2 \\\hline
+    T3  &  GPIO3  \\\hline
+    T4  &  GPIO4  \\\hline
+    T5  &  GPIO5  \\\hline
+    T6  &  GPIO6  \\\hline
+    T7  &  GPIO7 \\\hline
+    T8  &  GPIO8 \\\hline
+    T9  &  GPIO9 \\\hline
+    T10 &  GPIO10 \\\hline
+    T11 &  GPIO11 \\\hline
+    T12 &  GPIO12 \\\hline
+    T13 &  GPIO13 \\\hline
+    T14 &  GPIO14 \\\hline
+
+\end{longtable}
+
+\subsection{触摸传感器工作原理和工作信号}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/touch-sensor-operating-principle}}
+    \caption{触摸传感器工作原理}
+    \label{fig:touch-sensor-operating-principle}
+\end{figure}
+
+图 \ref{fig:touch-sensor-operating-principle} 展示了触摸传感器的工作原理。手指触碰或靠近触摸管脚时，管脚电容增大。触摸传感器可检测到触摸管脚上的电容变化。
+
+触摸传感器使用固定电源对触摸管脚进行充放电，电压范围：参考高值 DREFH \verb+~+ 参考低值 DREFL。触摸管脚被触碰时，其电容增大，因此充放电时间延长。通过测量触摸管脚在固定周期内充放电所需时间，可判断管脚是否被触碰。
+
+每次电压变化，触摸传感器生成一个脉冲。一个 OUT 信号包含若干个脉冲。一次测量操作包括：对触摸管脚进行 N 次（固定次数，可配置）的充放电，然后测量 OUT 信号生成 N 个脉冲所需时间。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/touch-sensor-internal-structure.eps}}
+    \caption{触摸传感器的内部结构}
+    \label{fig:touch-sensor-internal-structure}
+\end{figure}
+
+图 \ref{fig:touch-sensor-internal-structure} 展示了触摸传感器的内部结构。每个触摸传感器均有一组输入输出信号，其中一些信号连接至 Touch FSM，见章节 \ref{sec:touch-fsm}。
+
+\begin{itemize}
+    \item START 信号：由 Touch FSM 产生，控制触摸传感器发起一次测量。Touch FSM 拉低 START 信号，测量结束。
+    \item OUT 信号：由触摸传感器产生，发送给 Touch FSM。Touch FSM 对 OUT 信号中脉冲进行计数，测量产生 N 个脉冲需要的时间。
+    \item TIE\_OPT 信号：控制触摸传感器的初始电压（DREFH 或 DREFL）。用户可以通过 \hyperref[fielddesc:RTCIOTOUCHPADNTIEOPT]{RTCIO\_TOUCH\_PAD\regindex{n}\_TIE\_\\OPT} (TIE\_OPT) 设置开始充放电的初始电压电平。
+    \item DAC 信号：触摸传感器斜率控制，用户可通过 \hyperref[regdesc:RTCCNTLTOUCHDACREG]{RTC\_CNTL\_TOUCH\_PAD\regindex{n}\_DAC} 来配置斜率。
+    \item XPD 信号：触摸传感器上电信号，由 RTCIO\_TOUCH\_PAD\regindex{n}\_XPD 控制。
+\end{itemize}
+
+
+\subsection{Touch FSM}
+\label{sec:touch-fsm}
+
+Touch FSM 负责执行测量操作，包括选择要测量的触摸传感器，为触摸传感器生成需要的信号，以及处理触摸传感器输出的信号等。Touch FSM 的内部结构见图 \ref{fig:touch-fsm}，时钟源为 RTC\_FAST\_CLK。关于 RTC\_FAST\_CLK 更多信息，请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/touch_fsm.eps}}
+    \caption{Touch FSM 的内部结构}
+    \label{fig:touch-fsm}
+\end{figure}
+
+Touch FSM 各个模块的功能如下：
+
+\begin{itemize}
+    \item SCAN\_CTRL 模块：SCAN 模式下，选择要测量的触摸管脚。
+    \item WORK\_UNIT 模块：测量过程中，负责驱动已选择的触摸管脚。
+    \item DENOISE\_UNIT 模块：与 WORK\_UNIT 结构几乎一样，但连接的是内部触摸传感器 T0。其它触摸传感器可使用 T0 的测量数据改善噪声带来的影响，见章节 \ref{sec:noise-detection}。
+    \item Filter 模块：使能此模块，则触摸传感器在测量时将使用 IIR 滤波器，返回的滤波值即为采样值。详细信息见章节 \ref{para:sampled-values}。
+\end{itemize}
+
+\subsubsection{测量过程}
+\label{para:measurement-process}
+
+触摸传感器的一次测量操作包括以下流程：
+
+\begin{enumerate}
+    \item Touch FSM 选择需要测量的触摸传感器对应的管脚，将相关信号发送到该传感器。
+    \item Touch FSM 发送 START 信号到触摸传感器，初始化测量操作。Touch FSM 启动内部触摸计数器 (touch counter) 记录测量持续时长。
+    \item Touch FSM 内部的脉冲计数器 (pulse counter) 开始对 OUT 信号的脉冲数量进行计数。
+    \item 脉冲计数器达到 \hyperref[fielddesc:RTCCNTLTOUCHMEASNUM]{RTC\_CNTL\_TOUCH\_MEAS\_NUM} 中设定的计数阈值，则测量结束。START 信号拉低，触摸计数器停止计数。触摸计数器的值即为对触摸管脚进行 \hyperref[fielddesc:RTCCNTLTOUCHMEASNUM]{RTC\_CNTL\_TOUCH\_MEAS\_NUM} 次充放电所需时间。
+\end{enumerate}
+
+采样值（测量值）为触摸计数器的值，表示为原始触摸数据 (touch\_raw\_data)。用户可从 \hyperref[fielddesc:SENSTOUCHPAD1DATA]{SENS\_TOUCH\_PAD\regindex{n}\_DATA} 中读取原始触摸数据的值。注意：\hyperref[fielddesc:SENSTOUCHPAD1DATA]{SENS\_TOUCH\_PAD\regindex{n}\_DATA} 返回的值也可能是滤波后的原始触摸数据，即平滑触摸数据 (touch\_smooth\_data) 和 基准数据 (benchmark)。用户可配置 \hyperref[fielddesc:SENSTOUCHDATASEL]{SENS\_TOUCH\_DATA\_SEL} 选择具体的返回值类型。有关采样值返回类型的详细信息以及如何使用这些数据判断触摸动作，请见章节 \ref{para:sampled-values}。
+
+注意：如果脉冲计数器长时间未达到设置的计数阈值，而触摸计数器达到 \hyperref[fielddesc:RTCCNTLTOUCHTIMEOUTNUM]{RTC\_CNTL\_TOUCH\_TIMEOUT\_NUM} 中设定的超时阈值，则将触发\hyperref[interrupt:TOUCHTIMEOUTINT]{ TOUCH\_TIME\_OUT\_INT} 超时中断，提示电路异常。如果已启用 TOUCH Timeout 作为睡眠模式的唤醒源，则同时触发唤醒信号（更多信息，参考小节 \ref{sec:lpm-wakeup-source}）。
+
+\subsubsection{测量操作的触发源}
+
+
+Touch FSM 通过发送 START 信号发起一次测量操作。START 信号可由软件触发，或由触摸定时器 (touch timer) 触发。使用触摸定时器可发起周期性测量，而无需软件介入。
+
+触摸定时器的时钟源为 RTC\_SLOW\_CLK，时长可设置为若干个 RTC\_SLOW\_CLK 周期。定时器过期则生成 START 信号。测量操作执行完毕后，定时器计数复位，开始重新计数，直至下次过期。
+
+\begin{itemize}
+    \item 配置 START 信号由软件触发：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:RTCCNTLTOUCHSTARTFORCE]{RTC\_CNTL\_TOUCH\_START\_FORCE}，选择 START 信号由软件触发。
+        \item 软件置位 \hyperref[fielddesc:RTCCNTLTOUCHSTARTEN]{RTC\_CNTL\_TOUCH\_START\_EN}，产生 START 信号，初始化一次测量操作。
+    \end{itemize}
+    \item 配置 START 信号由触摸定时器触发：
+    \begin{itemize}
+        \item 清零 \hyperref[fielddesc:RTCCNTLTOUCHSTARTFORCE]{RTC\_CNTL\_TOUCH\_START\_FORCE}。
+        \item 配置定时器过期时间（单位：RTC\_SLOW\_CLK 周期），见 \hyperref[fielddesc:RTCCNTLTOUCHSLEEPCYCLES]{RTC\_CNTL\_TOUCH\_SLEEP\_CYCLES}。
+        \item 置位 \hyperref[fielddesc:RTCCNTLTOUCHSLPTIMEREN]{RTC\_CNTL\_TOUCH\_SLP\_TIMER\_EN} 使能定时器。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{SCAN 模式}
+
+在 SCAN 模式下，Touch FSM 对多个触摸传感器按照一定顺序进行测量。每生成一个 START 信号，就选择一个触摸传感器进行测量。因此，利用多个 START 信号即可监控多个触摸管脚。具体的扫描过程见图 \ref{fig:touch-scan}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/touch_scan.eps}
+    \caption{TOUCH SCAN 时序图}
+    \label{fig:touch-scan}
+\end{figure}
+
+如需使能 SCAN 模式，请在寄存器 \hyperref[fielddesc:RTCCNTLTOUCHSCANPADMAP]{RTC\_CNTL\_TOUCH\_SCAN\_PAD\_MAP} 中指定已使能触摸管脚的位图。对于每个 START 信号，Touch FSM 将从位图中依次选择一个触摸管脚进行测量。一个 START 信号仅执行一次测量操作。经过多个 START 信号，Touch FSM 按照顺序依次对使能的触摸管脚进行测量。
+
+注意：如果使用触摸定时器生成 START 信号，则整个扫描过程无需软件介入。
+
+\subsection{触摸检测}
+
+\subsubsection{采样值}
+\label{para:sampled-values}
+
+如章节 \ref{para:measurement-process} 所述，用户可从
+\hyperref[fielddesc:SENSTOUCHPAD1DATA]{SENS\_TOUCH\_PAD\regindex{n}\_DATA} 中读取测量所得采样值。但 \hyperref[fielddesc:SENSTOUCHPAD1DATA]{SENS\_TOUCH\_PAD\regindex{n}\\\_DATA} 中所存储的具体采样值类型由 \hyperref[fielddesc:SENSTOUCHDATASEL]{SENS\_TOUCH\_DATA\_SEL} 决定。具体支持下面三种类型的采样值：
+
+\textbf{原始触摸数据} (touch\_raw\_data)：测量结束时，触摸计数器的计数值，表示对触摸管脚进行固定次数的充放电所需的时间，单位：RTC\_SLOW\_CLK 周期。
+
+\textbf{平滑触摸数据} (touch\_smooth\_data)：一系列来自某个触摸传感器的原始触摸数据经 IIR 滤波生成的移动平均线。平滑触摸数据不易被噪声或采样异常值干扰，因此常用于硬件触摸检测。生成平滑触摸数据的 IIR 滤波设置可在 \hyperref[fielddesc:RTCCNTLTOUCHSMOOTHLVL]{RTC\_CNTL\_TOUCH\_SMOOTH\_LVL}
+中配置。具体信息见表 \ref{tab:smooth-cal}。
+
+
+\textbf{基准数据} (benchmark)：同样由原始触摸数据经 IIR 滤波处理而生成。但基准数据的移动平均线窗口更广。因此基准数据常用于表示触摸管脚稳定读数，而不受触摸动作的影响。生成基准数据的 IIR 滤波设置可在 \hyperref[fielddesc:RTCCNTLTOUCHFILTERMODE]{RTC\_CNTL\_TO\\UCH\_FILTER\_MODE} 中配置，具体信息见表 \ref{tab:base-line-cal}。
+
+
+\begin{longtable}[c]{|p{6 cm}|p{1.5cm}|p{7cm}|}
+    \caption{平滑触摸数据算法}
+    \label{tab:smooth-cal}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:RTCCNTLTOUCHSMOOTHLVL]{RTC\_CNTL\_TOUCH\_SMOOTH\_LVL}} & \textbf{类型} & \textbf{公式}\\
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    0  & --- & touch\_raw\_data  \\\hline
+    1  & IIR 1/2 & 1/2 touch\_raw\_data + 1/2 touch\_smooth\_data \\\hline
+    2  & IIR 1/4 & 1/4 touch\_raw\_data + 3/4 touch\_smooth\_data \\\hline
+    3  & IIR 1/8 & 1/8 touch\_raw\_data + 7/8 touch\_smooth\_data \\\hline
+\end{longtable}
+
+\begin{longtable}[c]{|p{5.5 cm}|p{1.5cm}|p{8.5cm}|}
+    \caption{基准数据算法}
+    \label{tab:base-line-cal}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:RTCCNTLTOUCHFILTERMODE]{RTC\_CNTL\_TOUCH\_FILTER\_MODE}} & \textbf{类型} & \textbf{公式}\\
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    0  &  IIR 1/2 & 1/2 touch\_raw\_data + 1/2 benchmark \\\hline
+    1  &  IIR 1/4 & 1/4 touch\_raw\_data + 3/4 benchmark \\\hline
+    2  &  IIR 1/8 & 1/8 touch\_raw\_data + 7/8 benchmark \\\hline
+    3  &  IIR 1/16 & 1/16 touch\_raw\_data + 15/16 benchmark \\\hline
+    4  &  IIR 1/32 & 1/32 touch\_raw\_data + 31/32 benchmark \\\hline
+    5  &  IIR 1/64 & 1/64 touch\_raw\_data + 63/64 benchmark \\\hline
+    6  &  IIR 1/128 & 1/128 touch\_raw\_data + 127/128 benchmark \\\hline
+    7  &  JITTER & touch\_raw\_data +/- \hyperref[fielddesc:RTCCNTLTOUCHJITTERSTEP]{RTC\_CNTL\_TOUCH\_JITTER\_STEP} \\\hline
+\end{longtable}
+
+\subsubsection{硬件触摸检测}
+
+硬件触摸检测可检测到触摸动作或触摸释放动作，然后触发中断。如果采用硬件触摸检测，则不再需要指定触摸动作软件检测算法，也无需不断轮询采样值。
+
+使用硬件触摸检测，需定义\textbf{触碰阈值} (finger\_threshold) 和\textbf{噪声阈值} (active\_noise\_threshold)。当平滑触摸数据大于触碰阈值与\textbf{迟滞} (hysteresis) 的和，或小于触碰阈值与迟滞的差，将触发触摸中断。\textbf{触碰阈值}和\textbf{噪声阈值}均为基准数据的偏移，而不是绝对阈值。采用这种方法可以避免将原始触摸数据的渐变（缓慢变化）误测为触摸。多种环境因素，比如温度、电源、或噪声均有可能造成原始触摸数据的渐变。
+
+\begin{itemize}
+    \item 触碰阈值由寄存器 \hyperref[fielddesc:SENSTOUCHOUTTH1]{SENS\_TOUCH\_OUT\_TH\regindex{n}} 配置。
+    \item 噪声阈值由 \hyperref[fielddesc:RTCCNTLTOUCHNOISETHRES]{RTC\_CNTL\_TOUCH\_NOISE\_THRES} 配置，详见表 \ref{tab:noise-cal}。
+    \item 迟滞由 \hyperref[fielddesc:RTCCNTLTOUCHHYSTERESIS]{RTC\_CNTL\_TOUCH\_CONFIG3} 配置，详见表 \ref{tab:hysteresis-cal}。
+\end{itemize}
+
+\begin{longtable}[c]{|p{6 cm}|p{4cm}|}
+    \caption{噪声算法}
+    \label{tab:noise-cal}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:RTCCNTLTOUCHNOISETHRES]{RTC\_CNTL\_TOUCH\_NOISE\_THRES}} & \textbf{公式}\\
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    0  & 4/8 finger\_threshold \\\hline
+    1  & 3/8 finger\_threshold \\\hline
+    2  & 2/8 finger\_threshold \\\hline
+    3  & 1/8 finger\_threshold \\\hline
+\end{longtable}
+
+
+\begin{longtable}[c]{|p{6 cm}|p{4cm}|}
+    \caption{迟滞算法}
+    \label{tab:hysteresis-cal}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:RTCCNTLTOUCHHYSTERESIS]{RTC\_CNTL\_TOUCH\_CONFIG3}} & \textbf{公式}\\
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    0  & 1/8 finger\_threshold \\\hline
+    1  & 3/32 finger\_threshold \\\hline
+    2  & 1/32 finger\_threshold \\\hline
+    3  & 0 \\\hline
+\end{longtable}
+
+
+\subsection{噪声检测}
+\label{sec:noise-detection}
+
+触摸传感器 T0 未连接至 GPIO，即未连接至外部触摸板。因此，触摸传感器 T0 检测到的电容浮动可视为内部噪声。噪声检测功能使用触摸传感器 T0 用作噪声参考。当其它触摸传感器 T(N) (1 \verb+~+ 14) 执行测量操作时，触摸传感器 T0 也将同时进行测量。触摸传感器 T(N) 的采样值自动减去触摸传感器 0 的采样值，即可降低噪声带来的影响。
+
+噪声检测过程如下：
+
+\begin{itemize}
+    \item 用户可通过配置 \hyperref[fielddesc:RTCCNTLTOUCHREFC]{RTC\_CNTL\_TOUCH\_REFC} 调节触摸传感器 T0 的参考电容，从而调节其驱动强度。
+    \item 置位 \hyperref[fielddesc:RTCCNTLTOUCHDENOISEEN]{RTC\_CNTL\_TOUCH\_DENOISE\_EN}，其它触摸传感器 T(N) 开始执行测量操作时，触摸传感器 T0 同时开始测量。
+    \item 最终的采样值为：
+    \[
+    DATA(TOUCH[N]) - DATA(TOUCH0)
+    \]
+    其中，DATA(TOUCH[N]) 为触摸传感器 T(N) 的采样值，DATA(TOUCH0) 为触摸传感器 T0 的采样值，分辨率可配置为 12/10/8/4 位。具体配置见 \hyperref[fielddesc:RTCCNTLTOUCHDENOISERES]{RTC\_CNTL\_TOUCH\_DENOISE\_RES}。
+\end{itemize}
+
+
+\subsection{接近模式}
+
+物体靠近，但未接触触摸管脚时，触摸管脚电容将发生轻微变动，远小于物理触摸引起的电容变化。接近模式可用于检测电容轻微变动。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.2\textwidth]{\modulefiles/figures/touch_approach.eps}
+    \caption{感测面积示意图}
+    \label{fig:touch-approach}
+\end{figure}
+
+\begin{itemize}
+    \item 检测距离 (d) 最大为 16 cm（感应面积 (S) 为 20 cm$^{2}$），如图 \ref{fig:touch-approach} 所示。
+    \item 最多三个触摸管脚可同时配置为接近模式。
+\end{itemize}
+
+在接近模式下，触摸传感器进行固定次数的采样，然后累计采样值。如果最终累计采样值超出设定的阈值，则认为检测到了物体靠近，并触发中断。注意：由于是累计采样值，处于接近模式的触摸传感器不会生成跟章节 \ref{para:sampled-values} 所述一样的数值，即原始触摸数据、平滑触摸数据和基准数据。
+
+接近模式操作流程如下：
+
+\begin{itemize}
+    \item 通过配置 \hyperref[fielddesc:SENSTOUCHAPPROACHPAD0]{SENS\_TOUCH\_APPROACH\_PAD0}、\hyperref[fielddesc:SENSTOUCHAPPROACHPAD1]{SENS\_TOUCH\_APPROACH\_PAD1} 或 \hyperref[fielddesc:SENSTOUCHAPPROACHPAD2]{SENS\_TOUCH\_APPR\\OACH\_PAD2}，设置触摸传感器为接近模式。
+    \item 通过配置 \hyperref[fielddesc:RTCCNTLTOUCHAPPROACHMEASTIME]{RTC\_CNTL\_TOUCH\_APPROACH\_MEAS\_TIME}，设置采样次数，用于生成累计值。触摸传感器内置采样计数器，记录采样次数。
+    \item 配置寄存器 \hyperref[fielddesc:SENSTOUCHOUTTH1]{SENS\_TOUCH\_OUT\_TH\regindex{n}}，设置阈值。
+    \item 采样计数器达到 \hyperref[fielddesc:RTCCNTLTOUCHAPPROACHMEASTIME]{RTC\_CNTL\_TOUCH\_APPROACH\_MEAS\_TIME} 设置的采样次数：
+    \begin{itemize}
+        \item 如果累计值大于设定的阈值，则触发中断。
+        \item 采样计数器和累计值复位归零。触摸传感器重新开始累计采样值。
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{防潮功能和遇水保护功能}
+
+如果有小水珠，触摸传感器可能会误测为有触摸动作。\textbf{防潮设计}可缓和小水珠带来的影响。
+
+如果传感器触摸板阵列变潮，即大部分触摸板已浸水，触摸管脚将无法继续检测触摸动作。\textbf{遇水保护设计}可检测到阵列已浸水，可关停传感器阵列。
+
+
+\subsubsection{防潮功能}
+
+触摸板上的小水珠，如果面积大到足以连通两个或更多触摸板，则可能导致临近触摸板出现电耦合现象。耦合现象导致电容变化，因此耦合的触摸板可能会误测触摸动作。用户可配置使用防潮功能。具体设置如下：
+
+
+\begin{itemize}
+    \item 设置触摸传感器 T14 的驱动强度，见 \hyperref[fielddesc:RTCCNTLTOUCHBUFDRV]{RTC\_CNTL\_TOUCH\_BUFDRV}；
+    \item 使能触摸传感器 T14 用于防潮功能，见 \hyperref[fielddesc:RTCCNTLTOUCHSHIELDPADEN]{RTC\_CNTL\_TOUCH\_SHIELD\_PAD\_EN}。
+\end{itemize}
+
+\subsubsection{遇水保护功能}
+
+传感器阵列遇水后，全部或大部分触摸管脚因存在误测触摸动作的可能，因此不可用。
+
+用户可配置 \hyperref[fielddesc:RTCCNTLTOUCHOUTRING]{RTC\_CNTL\_TOUCH\_OUT\_RING} 选择用于遇水保护功能的触摸管脚。
+
+\section{SAR ADC}\label{sec:saradc}
+
+\subsection{概述}
+
+\chipname{} 内置了两个 12 位的 SAR ADC，可测量最多来自 20 个管脚的模拟信号。图 \ref{figure:sar adc overview} 所示为 SAR ADC 概图。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{25-SENSOR/figures/sar_adc_overview.pdf}}
+    \caption{SAR ADC 概图}
+    \label{figure:sar adc overview}
+\end{figure}
+
+如图 \ref{figure:sar adc overview} 所示，SAR ADC 由四个专用控制器控制，包括：
+
+\begin{itemize}
+    \item 一个数字控制器，支持高性能多通道扫描和 DMA 连续转换，包括：
+    \begin{itemize}
+        \item DIG ADC1 控制器 (Digital ADC1 Controller)
+    \end{itemize}
+    \item 两个 RTC 控制器，支持在低功耗模式下工作和单次转换，包括：
+    \begin{itemize}
+        \item RTC ADC1 控制器 (RTC ADC1 Controller)
+        \item RTC ADC2 控制器 (RTC ADC2 Controller)
+    \end{itemize}
+    \item 一个内部控制器，即 PWDET 控制器 (Power/Peak Detect Controller)，用于 RF 功率检测。注意，此控制器仅供 RF 内部使用。
+\end{itemize}
+
+\begin{tiplisting}
+\chipname{} 的 DIG ADC2 控制器无法正常工作，该章节中已删除其相关信息，详见 \href{\linkprefix\linkchiperrataCN}{\chipseries{} 系列芯片勘误表}。
+\end{tiplisting}
+
+\subsection{主要特性}
+SAR ADC 具有以下特性：
+\begin{itemize}
+\item 四个控制器均配有独立的 ADC Reader 模块，见图 \ref{fig:sar-adc-functional-overview}
+\item 支持 DIG ADC1 控制器和 RTC ADC1 控制器通过软件选择的方式获取 SAR ADC1 的控制权
+\item 支持 RTC ADC2 控制器和 PWDET 控制器通过仲裁的方式按照指定的仲裁方式，轮流获取 SAR ADC2 的控制权
+\item 支持 12 位采样分辨率
+\item 支持采集最多 20 个管脚上的模拟电压
+\item{RTC ADC1/2 控制器：}
+    \begin{itemize}
+        \item{支持单次转换}
+        \item{支持在低功耗模式下工作，如 Deep-sleep}
+        \item{可由 ULP 协处理器配置}
+    \end{itemize}
+\item DIG ADC1 控制器：
+    \begin{itemize}
+        \item 配有多通道扫描控制模块，支持多通道扫描模式
+        \item 提供模式控制模块，支持单 SAR ADC 采样模式
+        \item 在多通道扫描模式下，支持自定义扫描通道顺序
+        \item 提供两个滤波器，滤波系数可配
+        \item 支持阈值监控，采样值大于设置的高阈值或小于设置的低阈值将产生中断
+        \item 支持 DMA
+    \end{itemize}
+\item PWDET 控制器：用于 RF 功率检测（仅供内部使用）
+\end{itemize}
+
+
+\subsection{SAR ADC 架构}
+
+SAR ADC 的主要元件与连接情况见图 \ref{fig:sar-adc-functional-overview}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/adc_functional_blocks_20220906.png}
+    \caption{SAR ADC 的功能概况}
+    \label{fig:sar-adc-functional-overview}
+\end{figure}
+
+\vspace{-2em}
+\begin{itemize}
+    \item \textcolor{red}{\textbf{--->}}：时钟信号
+    \item
+    \begin{tikzpicture}
+\draw[rounded corners][red][dashed] (0,0) rectangle (1,0.5);
+\end{tikzpicture}
+：时钟分频器、多路器、以及时钟作用的模块
+    \end{itemize}
+
+如图 \ref{fig:sar-adc-functional-overview} 所示，SAR ADC 模块主要包括以下部分：
+
+\begin{itemize}
+    \item SAR ADC1：可对 10 个通道进行电压检测；
+    \item SAR ADC2：可对 10 个通道进行电压检测；
+    \item 时钟管理 (Clock Management)：对时钟源进行选择和分频：
+            \begin{itemize}
+                \item DIG ADC1 控制器时钟源：可选择 APB\_CLK 或 PLL\_D2\_CLK；
+                \item DIG ADC1 控制器分频时钟：
+                \begin{itemize}
+                    \item DIGADC\_SARCLK：SAR ADC1、SAR ADC2、Digital Reader1 的工作时钟；其中控制 DIGADC\_SARCLK 分频的 DIG\_SAR\_DIV 的分频系数至少是 2 分频，且 DIGADC\_SARCLK 的 频率不能超过 5 MHz，具体配置见 \hyperref[fielddesc:APBSARADCSARCLKDIV]{APB\_SARADC\_SAR\_CLK\_DIV}；
+                %
+                    \item DIGADC\_CLK：DIG ADC FSM1 的工作时钟。
+                \end{itemize}
+                \item RTC ADC 控制器时钟源：RTC\_FAST\_CLK
+                \item RTC ADC 控制器分频时钟：
+                \begin{itemize}
+                    \item RTCADC\_SARCLK：SAR ADC1、SAR ADC2、RTC Reader1 和 RTC Reader2 的工作时钟；其中控制 RTCADC\_SARCLK 分频的 RTC\_SAR\_DIV 的分频系数至少是 2 分频，且 RTCADC\_SARCLK 的频率不能超过 5 MHz；
+                    %
+                \end{itemize}
+            \end{itemize}
+    \item 仲裁器 (ADC2\_ARBIT)：用于选择使用 SAR ADC2 的控制器，可以是 RTC ADC2 控制器 或 PWDET 控制器。仲裁器不仅仲裁控制信号，还会根据授权的控制器选择 SAR ADC2 的时钟。
+    \item 定时器 (Timer)：DIG ADC1 专用定时器，可发起采样使能信号。
+    \item DIG ADC FSM1：用于
+    \begin{itemize}
+        \item 接收定时器提供的采样使能信号
+        \item 根据样式表生成 SAR ADC1 的采样配置
+        \item 驱动 Digital Reader1 模块读取 ADC 采样值
+        \item 并将采样值传输到滤波器、存储器等后续数据处理模块
+    \end{itemize}
+    \item Filter：滤波器 0 和滤波器 1，可对目标通道的采样数据进行滤波处理。
+    \item Threshold Monitor：阈值监控器 0 和阈值监控器 1。可在采样值大于设定的高阈值，或小于设定的低阈值时触发中断。
+    \item 模式控制模块 (MODE CNTL)：用于过滤定时器触发的采样信号，支持单 SAR ADC 采样模式。
+    \item \label{block:digital-reader0} Digital Reader1：由 DIG ADC FSM1 驱动，读取 SAR ADC1 的数值。
+    \item RTC Controller1/2：提供采样使能信号，根据配置驱动 RTC Reader1/2 模块读取 SAR ADC1/2 的采样值，并存储采样数据。
+    \item RTC Reader1/2：由 RTC Controller1/2 驱动，读取 SAR ADC1/2 的数值。
+\end{itemize}
+
+\subsection{输入信号}
+
+SAR ADC 需首先通过内部多路器选择待测量的模拟管脚，然后才能采样模拟信号。表 \ref{tab:adc-inputs} 列出了所有可能需要经过 SAR ADC1 或 SAR ADC2 处理的模拟信号。
+
+\begin{longtable}{ |p{4cm}|C{1cm}|p{2cm}| }
+    \caption{SAR ADC 的信号输入}
+    \label{tab:adc-inputs}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{管脚/信号} & \textbf{通道}  & \textbf{ADC 选择} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{管脚/信号} & \textbf{通道}  & \textbf{ADC 选择} \\\hline
+    \endhead
+    \hline
+    \endfoot
+    GPIO1       &  0  & \multirow{9}{*}{SAR ADC1} \\ \cline{1-2}
+    GPIO2       &  1  & \\ \cline{1-2}
+    GPIO3       &  2  & \\ \cline{1-2}
+    GPIO4       &  3  & \\ \cline{1-2}
+    GPIO5       &  4  & \\ \cline{1-2}
+    GPIO6       &  5  & \\ \cline{1-2}
+    GPIO7       &  6  & \\ \cline{1-2}
+    GPIO8       &  7  & \\ \cline{1-2}
+    GPIO9       &  8  & \\ \cline{1-2}
+    GPIO10      &  9  & \multirow{13}{*}{SAR ADC2} \\ \cline{1-3}
+    GPIO11      &  0  & \\ \cline{1-2}
+    GPIO12      &  1  & \\ \cline{1-2}
+    GPIO13      &  2  & \\ \cline{1-2}
+    GPIO14      &  3  & \\ \cline{1-2}
+    GPIO15      &  4  & \\ \cline{1-2}
+    GPIO16      &  5  & \\ \cline{1-2}
+    GPIO17      &  6  & \\ \cline{1-2}
+    GPIO18      &  7  & \\ \cline{1-2}
+    GPIO19      &  8  & \\ \cline{1-2}
+    GPIO20      &  9  &
+\end{longtable}
+
+\subsection{ADC 转换和衰减}
+
+SAR ADC 转换模拟信号时，转换分辨率（12 位）电压范围为 0 mV \verb+~+ \(V_{ref}\)。其中，\(V_{ref}\) 为 SAR ADC 内部参考电压，出厂设定为 1100 mV。因此，转换结果 (data) 可以使用以下公式转换成模拟电压输出 \(V_{data}\)：
+
+    \[
+    V_{data} = \frac{V_{ref}}{k}\times{\frac{data}{4095}}
+    \]
+
+其中 k 为衰减对应的系数。
+
+如需转换大于 \(V_{ref}\) 的电压，信号输入 SAR ADC 前可进行衰减。支持的衰减等级包括：
+
+\begin{itemize}
+    \item 0 dB (k≈100\%)
+    \item 2.5 dB (k≈75\%)
+    \item 6 dB (k≈50\%)
+    \item 12 dB (k≈25\%)
+\end{itemize}
+
+\subsection{RTC ADC 控制器}
+\label{sssec:rtcadc}
+
+RTC 电源域中的 SAR ADC 控制器（RTC ADC1 控制器和 RTC ADC2 控制器）可在低频状态下提供最小功耗 ADC 测量。
+
+RTC ADC1/2 控制器的具体功能概况见图 \ref{figure:sar adc ctrl}。转换是由 \hyperref[fielddesc:SENSMEAS1STARTSAR]{SENS\_SAR\_MEAS\regindex{n}\_START\_SAR} 触发，测量结果见 \hyperref[fielddesc:SENSMEAS1DATASAR]{SENS\_SAR\_MEAS\regindex{n}\_DATA\_SAR}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{25-SENSOR/figures/saradc_rtc_ctrl.pdf}}
+    \caption{RTC SAR ADC 的功能概况}
+    \label{figure:sar adc ctrl}
+\end{figure}
+
+ULP 协处理器与控制器之间的关系非常紧密，已经内置了指令来使用 ADC。很多情况下，控制器均需要与 ULP 协处理器协同工作，例如：
+
+\begin{itemize}
+    \item 可在 Deep-sleep 模式下对通道进行周期性检测。Deep-sleep 模式下，只能通过 ULP 协处理器触发 ADC 采样。ULP 协处理器可以通过配置 RTC 外设的寄存器，触发 ADC。
+    \item 可按一定顺序对通道进行连续性扫描。尽管控制器无法支持连续性扫描或 DMA，但协处理器可通过软件的方式协助实现这部分功能。
+\end{itemize}
+
+用户可配置 \hyperref[fielddesc:SENSSAR1ENPAD]{SENS\_SAR1/2\_EN\_PAD} 来选择采样通道。如果选用 ULP 专用指令触发，则需要清空 \hyperref[fielddesc:SENSSAR1ENPAD]{SENS\_SAR1/2\\\_EN\_PAD\_FORCE} 选择由 ULP 指令使能采样通道。
+
+\subsection{DIG ADC 控制器}
+
+
+DIG ADC1 控制器使用快速时钟，实现了采样速率大幅提升。控制器最高支持 12 位采样分辨率，支持专用定时器触发的多通道扫描。更多参数和性能信息见 \href{https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_cn.pdf}{《\chipname{} 系列芯片技术规格书》} 中的 ADC 特性章节。
+
+如果选择专用定时器驱动的多通道扫描，可采用如下配置。注意，在多通道扫描模式下，扫描序列可根据样式表的描述进行，样式表可配置。
+\begin{itemize}
+        \item 配置 \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET} 设置 DIG ADC 定时器的触发周期。当计数器计数到配置周期数的 2 倍时，触发采样。计数器的工作时钟见章节 \ref{sec:dig-adc-clock}；
+        \item 配置 \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} 使能定时器；
+        \item 定时器超时则将驱动 DIG ADC FSM 根据样式表进行采样；
+        \item 数据通过 DMA 自动存储到内存空间中，扫描完成将产生中断。
+\end{itemize}
+
+\subsubsection{DIG ADC 控制器时钟}\label{sec:dig-adc-clock}
+
+用户可配置 \hyperref[fielddesc:APBSARADCCLKSEL]{APB\_SARADC\_CLK\_SEL} 选择 DIG ADC1 控制器的时钟源：
+\begin{itemize}
+    \item 0：关闭时钟；
+    \item 1：选择 PLL\_D2\_CLK 用作时钟源。此时 DIG ADC1 的工作时钟为该时钟源的分频时钟：DIGADC\_CLK；
+    \item 2：选择 APB\_CLK 用作时钟源。
+\end{itemize}
+
+如果选择使用 DIGADC\_CLK，用户可配置 \hyperref[fielddesc:APBSARADCCLKMDIVNUM]{APB\_SARADC\_CLKM\_DIV\_NUM} 选择分频系数。
+
+注意，由于 SAR ADC 有速度限制，所以 Digital Reader1（包括 SAR ADC1）的工作时钟是 DIGADC\_SARCLK。DIGADC\_SARCLK 频率会影响采样精度。当 DIGADC\_SARCLK 的频率高于 5 MHz 时，采样精度会变低。DIGADC\_SARCLK 由 DIGADC\_CLK 经过专用分频器分频所得。分频系数通过 \hyperref[fielddesc:APBSARADCSARCLKDIV]{APB\_SARADC\_SAR\_CLK\_DIV} 配置。
+ADC 每采样一个数据需要 25 个 DIGADC\_SARCLK 时钟周期数，所以最大采样速率受到 DIGADC\_SARCLK 的频率限制。更多时钟信息，见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\subsubsection{DMA 支持}
+
+DIG ADC1 控制器允许通过外设 DMA 实现直接内存访问，由 DIG ADC1 专用定时器产生触发信号。用户可通过软件配置 \hyperref[fielddesc:APBSARADCAPBADCTRANS]{APB\_SARADC\_APB\_ADC\_TRANS} 将 DMA 的数据通路切换到 DIG ADC。关于 DMA 的具体配置，请参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+
+
+
+\subsubsection{DIG ADC FSM}
+
+DIG ADC FSM1 按照样式表指定顺序和通道号循环使用 SAR ADC1：
+\begin{itemize}
+    \item DIG ADC FSM1 接收定时器发出的采样使能信号；
+    \item 然后根据当前样式表指针 PR 所指的通道和衰减信息向 SAR ADC1 发起采样请求；
+    \item 采样完成后，更新指针 PR：
+    \begin{itemize}
+        \item 如果当前指针 PR 达到配置的 \hyperref[fielddesc:APBSARADCSAR1PATTLEN]{APB\_SARADC\_SAR1\_PATT\_LEN}，则 PR 归零，重新采样样式表第一项的指令。
+        \item 否则，PR 加 1，指向下一个样式指令。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{样式表结构}
+DIG ADC FSM1 包含一个独立样式表，由 \hyperref[regdesc:APBSARADCSAR1PATTTAB1REG]{APB\_SARADC\_SAR1\_PATT\_TAB\regindex{x}\_REG} 配置，其中 \regindex{x} 表示样式表的寄存器序号 1 \verb+~+ 4，如下图所示：
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd0}{6}{18}{{0x{}0000}}%
+\regfield{cmd1}{6}{12}{{0x{}0000}}%
+\regfield{cmd2}{6}{6}{{0x{}0000}}%
+\regfield{cmd3}{6}{0}{{0x{}0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 0 - 3)] 表示样式表中的样式，即样式 0 \verb+~+ 样式 3。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR1\_PATT\_TAB1\_REG 与样式 0 - 3}
+    \label{fig:pattern-tab-1}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd4}{6}{18}{{0x{}0000}}%
+\regfield{cmd5}{6}{12}{{0x{}0000}}%
+\regfield{cmd6}{6}{6}{{0x{}0000}}%
+\regfield{cmd7}{6}{0}{{0x{}0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 4 - 7)] 表示样式表中的样式，即样式 4 \verb+~+ 样式 7。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR1\_PATT\_TAB2\_REG 与样式 4 - 7}
+    \label{fig:pattern-tab-2}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd11}{6}{18}{{0x{}0000}}%
+\regfield{cmd10}{6}{12}{{0x{}0000}}%
+\regfield{cmd9}{6}{6}{{0x{}0000}}%
+\regfield{cmd8}{6}{0}{{0x{}0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 8 - 11)] 表示样式表中的样式，即样式 8 \verb+~+ 样式 11。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR1\_PATT\_TAB3\_REG 与样式 8 - 11}
+    \label{fig:pattern-tab-3}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd15}{6}{18}{{0x{}0000}}%
+\regfield{cmd14}{6}{12}{{0x{}0000}}%
+\regfield{cmd13}{6}{6}{{0x{}0000}}%
+\regfield{cmd12}{6}{0}{{0x{}0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{n} (\regindex{n} = 12 - 15)] 表示样式表中的样式，即样式 12 \verb+~+ 样式 15。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR1\_PATT\_TAB4\_REG 与样式 12 - 15}
+    \label{fig:pattern-tab-4}
+\end{figure}
+
+每个寄存器包含四个样式，每个样式长度为六位，共包括 2 个字段，分别存储通道和衰减信息，具体见图 \ref{tab:pattern-table-register}。
+
+\begin{figure}[H]
+\centering
+\regfield{ch\_sel}{4}{2}{{xx}}%
+\regfield{atten}{2}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{样式表中的样式结构}
+    \label{tab:pattern-table-register}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [atten] 衰减配置信息。0：0 dB；1：2.5 dB；2：6 dB；3：12 dB。
+\item [ch\_sel] 扫描通道选择信息，更多信息见表 \ref{tab:adc-inputs}。
+\end{reglist}\end{regdesc}
+
+
+\subsubsection{多通道扫描配置示例}
+
+例如，希望实现如下所示的 SAR ADC1 多通道扫描方式：
+\begin{itemize}
+    \item 扫描 SAR ADC1 的通道 2，且衰减配置为 12 dB（见图 \ref{fig:cmd-config-1}）；
+    \item 扫描 SAR ADC1 的通道 0，且衰减配置为 2.5 dB（见图 \ref{fig:cmd-config-2}）。
+\end{itemize}
+
+则具体的配置如下：
+\begin{itemize}
+    \item 配置 SAR ADC1
+    \begin{itemize}
+        \item 配置 SAR ADC1 第一个样式 cmd0（即 \hyperref[regdesc:APBSARADCSAR1PATTTAB1REG]{APB\_SARADC\_SAR1\_PATT\_TAB1\_REG}[5:0]），如下图所示：
+
+\centering
+\regfield{ch\_sel}{4}{2}{{2}}%
+\regfield{atten}{2}{0}{3}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{SAR ADC1 cmd0 配置示例}
+    \label{fig:cmd-config-1}
+\end{figure}
+\vspace{-2em}
+\item [atten] 配置该字段的值为 3，即衰减配置为 12 dB。
+\item [ch\_sel] 配置该字段的值为 2，即选择通道 2（见表 \ref{tab:adc-inputs}）。
+\end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+    \item 配置 SAR ADC1 第二个样式 cmd1（即 \hyperref[regdesc:APBSARADCSAR1PATTTAB1REG]{APB\_SARADC\_SAR1\_PATT\_TAB1\_REG}[11:6]），如下图所示：
+
+\centering
+\regfield{ch\_sel}{4}{2}{{0}}%
+\regfield{atten}{2}{0}{1}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{SAR ADC1 cmd1 配置示例}
+    \label{fig:cmd-config-2}
+\end{figure}
+\vspace{-2em}
+\item [atten] 配置该字段的值为 1，即衰减配置为 2.5 dB。
+\item [ch\_sel] 配置该字段的值为 0，即选择通道 0（见表 \ref{tab:adc-inputs}）。
+\end{reglist}\end{regdesc}
+\end{itemize}
+\end{itemize}
+
+
+
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:APBSARADCSAR1PATTLEN]{APB\_SARADC\_SAR1\_PATT\_LEN} 为 1，即选择使用上述配置好的 SAR ADC1 样式 0 和样式 1；
+    \item 使能定时器，则 DIG ADC1 控制器将根据上述样式配置，周期性采样 SAR ADC1 的通道 2 和通道 0。
+\end{itemize}
+
+\subsubsection{DMA 数据格式}
+
+ADC 最终向 DMA 传递 32 位数据，如下图所示：
+
+\begin{figure}[H]
+\centering
+\regfield{reserved}{16}{17}{{xx}}%
+\regfield{ch\_sel}{3}{13}{{xxx}}%
+\regfield{reserved}{1}{12}{{x}}%
+\regfield{data}{12}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{DMA 数据格式}
+    \label{fig:dma-data-format}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [data] ADC 转换结果，12 位
+\item [ch\_sel] 通道信息，3 位
+\end{reglist}\end{regdesc}
+
+
+\subsubsection{ADC 滤波器}
+DIG ADC1 控制器支持滤波功能，提供两个滤波器，可配置给 SAR ADC1 的任意两个通道，然后对目标通道的采样数据进行滤波。滤波公式如下所示：
+
+\[data_{cur} = \frac{(k-1)data_{prev}}{k}+\frac{data_{in}}{k}+0.5\]
+
+\begin{itemize}
+    \item \(data_{cur}\)：滤波后数据
+    \item \(data_{in}\)：ADC 采样值
+    \item \(data_{prev}\)：上次滤波数据
+    \item \(k\)：滤波系数
+\end{itemize}
+
+配置滤波器如下：
+\begin{itemize}
+\item 配置 \hyperref[fielddesc:APBSARADCFILTERCHANNEL0]{APB\_SARADC\_FILTER\_CHANNEL\regindex{x}} 设置滤波器 \regindex{x} 作用的 ADC 通道
+\item 配置 \hyperref[fielddesc:APBSARADCFILTERFACTOR0]{APB\_SARADC\_FILTER\_FACTOR\regindex{x}} 设置滤波器 \regindex{x} 的滤波系数
+\end{itemize}
+
+注意，这里的 \regindex{x} 为滤波器编号：\regindex{x} 为 0 表示滤波器 \regindex{0}；为 1 表示滤波器 \regindex{1}。
+
+\subsubsection{阈值监控}
+DIG ADC1 包含两个阈值监控器，可配置到 SAR ADC1 的任意通道上。当 ADC 采样值大于设定的高阈值，则触发高阈值中断；若采样值小于设定的低阈值，则触发低阈值中断。
+
+阈值监控配置如下：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:APBSARADCTHRES0EN]{APB\_SARADC\_THRES\regindex{x}\_EN} 使能阈值监控 \regindex{x} 的功能；
+    \item 配置 \hyperref[fielddesc:APBSARADCTHRES0LOW]{APB\_SARADC\_THRES\regindex{x}\_LOW} 设置低阈值；
+    \item 配置 \hyperref[fielddesc:APBSARADCTHRES0LOW]{APB\_SARADC\_THRES\regindex{x}\_HIGH} 设置高阈值；
+    \item 配置 \hyperref[fielddesc:APBSARADCTHRES0LOW]{APB\_SARADC\_THRES\regindex{x}\_CHANNEL} 设置监控的 SAR ADC 以及通道。
+\end{itemize}
+
+注意，这里的 \regindex{x} 为阈值监控器编号：\regindex{x} 为 0 表示阈值监控器 \regindex{0}；为 1 表示阈值监控器 \regindex{1}。
+
+\subsection{SAR ADC2 仲裁器}
+
+SAR ADC2 可选两种控制器：RTC ADC2 控制器或 PWDET 控制器。为防止出现冲突，同时提升 SAR ADC2 的使用效率，\chipname{} 提供了 SAR ADC2 的访问仲裁。仲裁器有公平仲裁和固定优先级仲裁两种模式可供选择。
+
+\begin{itemize}
+    \item 公平仲裁模式，即循环优先级仲裁。清零 \hyperref[fielddesc:APBSARADCADCARBFIXPRIORITY]{APB\_SARADC\_ADC\_ARB\_FIX\_PRIORITY} 即可进入公平仲裁模式。
+    \item 固定优先级仲裁模式下，配置 \hyperref[fielddesc:APBSARADCADCARBRTCPRIORITY]{APB\_SAR\\ADC\_ADC\_ARB\_RTC\_PRIORITY}（RTC ADC2 控制器）或 \hyperref[fielddesc:APBSARADCADCARBWIFIPRIORITY]{APB\_SARADC\_ADC\_ARB\_WIFI\_PRIORITY}（PWDET 控制器）可分别配置对应控制器的优先级。值越大，优先级越高。
+\end{itemize}
+
+
+仲裁器规定，无论低优先级控制器是否已开始转换数据，高优先级控制器均可随时开始自己的数据转换。如果 ADC 已经接受低优先级控制器的转换请求，开始转换数据，但高优先级控制器也需要转换数据，则可以中断或终止低优先级控制器的数据转换，开始高优先级控制器的数据转换。如果已经有高优先级控制器正在进行数据转换，而低优先级控制器则无法启动数据转换。
+
+转换中断或转换启动失败返回的转换数据无效，因此在返回的转换结果中增加数据标记位，表示转换是否有效。
+
+\begin{itemize}
+    \item RTC ADC2 CTRL 的数据标记位为 \hyperref[fielddesc:SENSMEAS2DATASAR]{SENS\_MEAS2\_DATA\_SAR} 的高两位
+    \begin{itemize}
+        \item 2'b10：数据转换中断
+        \item 2'b01：数据转换启动失败
+        \item 2'b00：转换数据有效
+    \end{itemize}
+    %
+    \item PWDET 控制器的数据标记位为采样结果的高两位
+
+    \begin{itemize}
+        \item 2'b10：数据转换中断
+        \item 2'b01：数据转换启动失败
+        \item 2'b00：转换数据有效
+    \end{itemize}
+\end{itemize}
+除了上述两种模式以外，用户可以通过配置 \hyperref[fielddesc:APBSARADCADCARBGRANTFORCE]{APB\_SARADC\_ADC\_ARB\_GRANT\_FORCE} 屏蔽仲裁器，配置\\ \hyperref[fielddesc:APBSARADCADCARBWIFIFORCE]{APB\_SARADC\_ADC\_ARB\_WIFI\_FORCE} 或 \hyperref[fielddesc:APBSARADCADCARBRTCFORCE]{APB\_SARADC\_ADC\_ARB\_RTC\_FORCE} 决定授权控制器。
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 屏蔽仲裁器时，只能有一个 APB\_SARADC\_ADC\_ARB\_XXX\_FORCE 位配置为 1。
+    \item 仲裁器的工作时钟为 APB\_CLK，当 APB\_CLK 时钟降低到 8 MHz 及以下时，必须屏蔽仲裁器。
+    \item 进入睡眠时，需要配置寄存器 \hyperref[regdesc:SENSSARMEAS2MUXREG]{SENS\_SAR\_MEAS2\_MUX\_REG} 的 \hyperref[fielddesc:SENSSAR2RTCFORCE]{SENS\_SAR2\_RTC\_FORCE} 位为1，屏蔽仲裁器以及除 RTC 控制器以外的所有控制器信号。
+\end{itemize}
+\end{tiplisting}
+
+
+\section{温度传感器}\label{sec:tsensor}
+\subsection{概述}
+\chipname{} 搭载了温度传感器可以实时监测温度。
+
+\subsection{主要特性}
+温度传感器的主要特性包括：
+\begin{itemize}
+    \item 支持在低功耗状态下，通过 ULP 协处理器实时监控
+    \item 支持软件和 ULP 触发
+    \item 可根据使用环境配置温度偏移，提高测试精度
+    \item 测量范围可调节
+\end{itemize}
+
+\subsection{功能描述}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/tsensor_struct.pdf}
+    \caption{温度传感器结构}
+    \label{fig:tsensor-struct}
+\end{figure}
+
+如图 \ref{fig:tsensor-struct} 所示，温度传感器的触发方式分为软件启动和 ULP-FSM 启动：
+\begin{itemize}
+   \item 软件启动，即由 CPU 或 ULP-RISC-V 通过配置寄存器启动：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:SENSTSENSPOWERUPFORCE]{SENS\_TSENS\_POWER\_UP\_FORCE}、\hyperref[fielddesc:SENSTSENSPOWERUP]{SENS\_TSENS\_POWER\_UP} 使能温度传感器；
+        \item 置位 \hyperref[fielddesc:SENSFORCEXPDSAR]{SENS\_FORCE\_XPD\_SAR} 强制开启 SAR ADC 电源，置位 \hyperref[fielddesc:SENSTSENSCLKEN]{SENS\_TSENS\_CLK\_EN} 使能温度传感器时钟；
+        \item 等待一段时间后（输出值会随着测量时间的增加而逐渐线性逼近真实的温度值），配置 \hyperref[fielddesc:SENSTSENSDUMPOUT]{SENS\_TSENS\\\_DUMP\_OUT}；
+      %
+        \item 等待 \hyperref[fielddesc:SENSTSENSREADY]{SENS\_TSENS\_READY}，读取 \hyperref[fielddesc:SENSTSENSOUT]{SENS\_TSENS\_OUT} 获取转换结果。
+    \end{itemize}
+    \item ULP-FSM 启动：
+    \begin{itemize}
+        \item 清空 \hyperref[fielddesc:SENSTSENSPOWERUPFORCE]{SENS\_TSENS\_POWER\_UP\_FORCE}；
+        \item ULP-FSM 内置高度集成的温度采集指令，所以只需要执行该指令即可完成温度采样，详见章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}。
+    \end{itemize}
+\end{itemize}
+
+温度传感器的输出值需要使用转换公式转换成实际的温度值(°C)。转换公式如下：
+
+\begin{centering}
+        T(°C) = 0.4386 * VALUE – 27.88 * offset – 20.52\\
+\end{centering}
+
+其中 VALUE 即温度传感器的输出值，offset 由温度偏移决定。 温度传感器在不同的实际使用环境（测量温度范围）下，温度偏移不同，见表 \ref{tab:tsensor-dac}。
+
+\begin{longtable}[c]{|l|r|}
+    \caption{温度测量范围与温度偏移}
+    \label{tab:tsensor-dac}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{测量范围 (°C)}  & \textbf{温度偏移} \\\hline
+    50 \verb+~+ 125 & –2 \\\hline
+    20 \verb+~+ 100 &  –1 \\\hline
+    –10 \verb+~+ 80 &  0 \\\hline
+    –30 \verb+~+ 50 &  1 \\\hline
+    –40 \verb+~+ 20 &  2 \\\hline
+\end{longtable}
+
+
+\section{中断}
+
+\begin{itemize}
+    \item \label{interreupt:APBSARADCTHRESxHIGHINT} APB\_SARADC\_THRES\regindex{x}\_HIGH\_INT：超过阈值监控器 \regindex{x} 的高阈值，即触发此中断；
+    \item \label{interreupt:APBSARADCTHRESxLOWINT} APB\_SARADC\_THRES\regindex{x}\_LOW\_INT：低于阈值监控器 \regindex{x} 的低阈值，即触发此中断。
+   \item \label{interreupt:SARADCDONEINT1}APB\_SARADC\_ADC1\_DONE\_INT：SAR ADC1 完成一次转换，即触发此中断；
+\end{itemize}
+更多 ULP-RISC-V 中断信息，请参考章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}中的 ULP-RISC-V 中断部分。
+\hypertarget{sensor-reg-summ}{}
+\section{寄存器列表}
+
+\begin{itemize}
+   \item SENSOR (ALWAYS\_ON) 为非掉电寄存器，寄存器不会随着 RTC\_PERI 的电源域掉电而复位。更多信息，见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+    \item SENSOR (RTC\_PERI) 处于 RTC\_PERI 电源域下，如果 RTC\_PERI 的电源域掉电，寄存器值将会被复位。更多信息，见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+    \item SENSOR (DIG\_PERI) 处于数字系统的电源域下，如果数字系统的电源域掉电，寄存器值将会被复位。更多信息，见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+\end{itemize}
+
+\subsection{SENSOR (ALWAYS\_ON) 寄存器列表}
+
+本小节的所有地址均为相对于[低功耗管理基地址]的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/25-SENSOR-always-on-reg-summ__CN}
+
+\subsection{SENSOR (RTC\_PERI) 寄存器列表}
+
+本小节的所有地址均为相对于[低功耗管理基地址 + 0x{}800] 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/25-SENSOR-saradc-reg-summ__CN}
+
+\subsection{SENSOR (DIG\_PERI) 寄存器列表}
+
+本小节的所有地址均为相对于 ADC 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/25-SENSOR-apb-saradc-reg-summ__CN}
+
+
+\section{寄存器}
+\label{section:registers}
+
+\subsection{SENSOR (ALWAYS\_ON) 寄存器}
+
+本小节的所有地址均为相对于[低功耗管理]基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/25-SENSOR-always-on-reg__CN}
+
+\subsection{SENSOR (RTC\_PERI) 寄存器}
+
+本小节的所有地址均为相对于[低功耗管理基地址 + 0x{}800] 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+\subfile{\modulefiles/25-SENSOR-saradc-reg__CN}
+
+\subsection{SENSOR (DIG\_PERI) 寄存器}
+
+本小节的所有地址均为相对于 ADC 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+\subfile{\modulefiles/25-SENSOR-apb-saradc-reg__CN}
+
+
+\end{document}

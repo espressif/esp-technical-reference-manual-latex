@@ -1,0 +1,667 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./60-BITSCRM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{bitscrm}{}
+\chapter{比特调节器}
+\label{mod:bitscrm}
+
+
+\chipname{} 中有大量支持 DMA（直接存储器访问）的外设，它们可以在 CPU 不参与的情况下将数据从存储器传输到外设或从外设传输到存储器，但这需要外设传输的数据格式与软件支持的数据格式相同，如果格式不同，则需要 CPU 重写数据格式，如交换字节、反转字节和左右移位数据。
+
+由于位操作通常相当耗费 CPU 资源，而设计 DMA 的初衷是在传输过程中避免使用 CPU，因此 \chipname{} 集成了两个比特调节器 (BitScrambler)，专门用于修改存储器和外设之间传输数据的格式，一个传输控制器用于存储器到外设（或存储器到存储器）方向的传输，另一个传输控制器用于外设到存储器方向的传输。除此之外，比特调节器还是一个灵活的可编程状态机，能够执行更高级的操作。
+
+\section{概述}
+
+在 \chipname{} 中，支持 DMA 的外设是指能够通过 DMA 通道直接从存储器读取数据和/或直接向存储器写入数据的外设。这些数据的读取/写入格式取决于外设，灵活性较低。对于 \chipname{} 中大多数支持 DMA 的外设来说，可以在这些路径中挂载比特调节器来提高灵活性。
+
+当某个外设挂载比特调节器后，比特传输器就可以修改与该外设连接的 DMA 通道上的任何数据。写入 DMA 通道的数据会出现在比特调节器的输入端，而比特调节器输出端的数据将沿着 DMA 通道继续传输。比特调节器内置指令存储器，存储的指令用于控制输入和输出数据格式的映射关系。因此，通过编写合适的比特调节器程序，可以让比特调节器改写源数据。
+
+\begin{figure}[H]
+\centering
+\includegraphics[scale=1.0,width=\textwidth/2]{60-BITSCRM/figures/blockdia_sys}
+\caption{比特调节器系统架构图}\label{fig:bitscrm-blockdia-sys}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{特性}
+\label{sec:bitscrm-features}
+
+比特调节器有以下特性：
+
+\begin{itemize}
+    \item 两个比特调节器，一个用于 RX（外设到存储器），一个用于 TX（存储器到外设）
+    \item 支持存储器到存储器的传输
+    \item 每个 DMA 时钟周期最多可处理 32 位数据
+    \item 数据路径由存储在指令存储器中的比特调节器程序控制
+    \item 输入寄存器每个时钟周期可读取 0、8、16 或 32 位
+    \item 输出寄存器：
+    \begin{itemize}
+        \item 每个时钟周期可写入 0、8、16 或 32 位
+        \item 输出寄存器位的数据源：64 位输入数据、两个计数器、LUT RAM 数据、上个周期的数据输出、比较器
+        \item 32 位输出寄存器位中的每一位可以来自数据源的任意位
+    \end{itemize}
+    \item 8 x 257 位指令存储器，用于存储八条指令，配置控制流和数据路径
+    \item 2048 字节查找表（LUT）存储器，可配置为不同的字宽
+\end{itemize}
+
+
+\section{架构}
+\label{sec:bitscrm-arch-overview}
+
+比特调节器可以分为数据路径、控制路径以及寄存器，CPU 可通过这些寄存器配置数据路径和控制路径。数据路径在 DMA 输入流、内部寄存器和 DMA 输出流之间传输比特。控制路径解析指令存储器中的指令，以控制数据路径，并处理程序流程。
+
+\subsection{数据路径}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[scale=1.0,width=\textwidth/2]{60-BITSCRM/figures/blockdia_data}
+\caption{比特调节器数据路径图}\label{fig:bitscrm-blockdia-data}
+\end{figure}
+
+比特调节器的数据路径从 DMA 输入流中获取数据，根据存储在指令存储器中的程序代码处理数据，然后将其写入 DMA 输出流中。数据从 DMA 输入流保存到一个 64 位寄存器中。在每个指令周期结束时，根据指令的配置从 DMA 输入流中读取 N 位（N 可以是 0、8、16 或 32）。然后，寄存器中的数据向寄存器的最低有效位（LSB）方向移动，最低有效位的 N 位消失。最后，将最新读取的数据保存在最高的 N 位。在比特调节器启动时，可以选择预先自动读取前 64 位到寄存器中。
+
+在比特调节器的另一端，数据存入一个 32 位输出寄存器。在每个指令周期结束时，根据指令的配置将最低的 0、8、16 或 32 位写入 DMA 输出流。
+
+比特调节器的名称来源于其可以将输入比特放置在输出中的任意位置，这是通过 32 个 128 选 1 多路复用器 (128-to-1 multiplexer) 来实现的。对于输出寄存器中的 32 位的每一位，都有一个多路复用器根据比特调节器控制路径的输出，从相应的数据源中选择输入信号。这些数据源包括：
+
+\begin{itemize}
+
+\item 从输入 FIFO 移入的 64 位数据（即图 \ref{fig:bitscrm-blockdia-data} 中左侧的 DMA FIFO 模块）。如前所述，来自 DMA 输入流的数据被存储在此处。为了便于使用循环来遍历输入的 64 位数据，指令可以启用相对寻址。在这种寻址模式下，任何从输入 FIFO 寄存器获取比特的多路复用器实际上会获取偏移计数器 A 寄存器值的比特（即图 \ref{fig:bitscrm-blockdia-data} 中的 CTR A）。
+
+\item 从上一个周期发送到输出的 32 位数据（即图 \ref{fig:bitscrm-blockdia-data} 中的 PREV OUTPUT 模块）。
+发送到输出寄存器的数据将在一个时钟周期后出现在这个寄存器中。这使得比特调节器可以在多个时钟周期中“记住”数据：即使某个比特没有发送到输出 FIFO，只要是输出到了输出寄存器，下一个时钟周期仍然可以通过选择这个寄存器来访问该比特。通过再次从这个寄存器中选择比特进行输出，可以实现比特的长期记忆，使它们在随后的周期中出现在此寄存器中。
+
+\item 由 LUT RAM 输出的 8、16 或 32 位数据。当 LUT 宽度为 32 位、16 位、8 位时，则数据地址分别是上一周期输出数据的第 16 到 24、25、26 位。LUT RAM 是比特调节器的一部分，它首先接收到某个地址，然后在 LUT RAM 中查找该地址对应的数据，最后输出该数据。比特调节器初始化时可填充 LUT RAM，但比特调节器不能修改 LUT RAM 。可根据需求将 LUT RAM 配置成以下模式进行初始化：
+
+\begin{itemize}
+    \item 512 x 32 位字
+    \item 1024 x 16 位字
+    \item 2048 x 8 位字
+
+\end{itemize}
+
+LUT RAM 可以用于数据的转换，例如用于某传感器的校准曲线，也可用于实现数学函数：将地址输入拆分成两个或两个以上的输入变量，数据输出作为函数的输出；存储器应加载每个输入值对应的函数输出。
+
+\item 2 x 16 位计数器提供的 32 位数据（即图 \ref{fig:bitscrm-blockdia-data} 中的 CTR A/B 模块）。
+该寄存器包含两个 16 位计数器，分别命名为计数器 A 和 B，可通过控制路径指令对它们进行加载、递增和递减等操作。
+
+\item 计数器 B 和之前输出数据（对应图 \ref{fig:bitscrm-blockdia-data} 中的 PREV OUT）之间的比较器中包含的 30 位数据，属于 AUX 模块的一部分
+比较结果可用于输出或程序流程，例如在解码游程编码流 (run-length encoded stream) 或生成 PWM 信号时非常有用。
+
+\item 2 位数据（属于图 \ref{fig:bitscrm-blockdia-data} 中的 AUX 模块），一位固定为高电平，一位固定为低电平。使用场景：某协议需要输出一个始终为高电平或低电平的位，不受输入数据影响。
+
+\end{itemize}
+
+请注意，某些数据源无法同时访问。具体而言，指令无法同时从输入 FIFO 源寄存器的高 32 位以及计数器寄存器中获取数据。当从 LUT 读取数据时，对于宽度为 N 的 LUT，输入 FIFO 寄存器的最高 N 位和计数器寄存器的最高 N 位不可用。
+
+\subsection{控制路径}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[scale=1.0,width=\textwidth/2]{60-BITSCRM/figures/blockdia_control}
+\caption{比特调节器控制路径图}
+\label{fig:bitscrm-blockdia-control}
+\end{figure}
+
+
+比特调节器的行为由存储在程序 RAM 中的程序控制。程序 RAM 最多可以存储 8 条指令，每条指令为 257 位。这些指令可配置该指令运行时钟周期内的数据路径，以及控制程序流程的操作码。
+
+比特调节器的程序和微处理器的程序类似，每个周期都会执行指令存储器中的下一条指令，除非操作码明确指示需要跳转到另一个位置。具体来说，这种行为是使用指令指针（IP，参见图 \ref{fig:bitscrm-blockdia-control}）来实现的，指向当前正在执行的指令。除此之外，操作码还可以影响计数器寄存器。
+
+在配置数据路径的指令位中，一些位用于配置 32 个多路复用器，另一些位用于配置计数器位或 LUT 输出是否可用。指令还可以将多路复用器设置为相对模式，在这种模式下，从 DMA FIFO 获取的比特的位置将被偏移计数器 B 位。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:bitscrm-func-descr}
+
+比特调节器是一种灵活的设备，其行为可通过加载到控制器内部的程序来控制。此外，一些配置寄存器也可以全局配置控制器的一些行为。因此，比特调节器程序包括 257 位 x 8 的指令 RAM 以及各种配置寄存器的设置，下文将对二者进行介绍。
+
+\subsection{指令}
+
+
+表 \ref{tab:bitscrm-instruction-struct} 为 257 位指令的结构。
+
+\begin{table}[H]
+\centering
+\caption{指令结构}
+\label{tab:bitscrm-instruction-struct}
+\begin{tabular}{ | l | l || l| l | }
+\hline\rowcolor{lightgray}
+位 & 域 & 位 & 域 \\
+\hline
+0 - 6 & CTL\_MUX\_SEL\_0 & 133 - 139 & CTL\_MUX\_SEL\_19 \\ \hline
+7 - 13 & CTL\_MUX\_SEL\_1 & 140 - 146 & CTL\_MUX\_SEL\_20 \\ \hline
+14 - 20 & CTL\_MUX\_SEL\_2 & 147 - 153 & CTL\_MUX\_SEL\_21 \\ \hline
+21 - 27 & CTL\_MUX\_SEL\_3 & 154 - 160 & CTL\_MUX\_SEL\_22 \\ \hline
+28 - 34 & CTL\_MUX\_SEL\_4 & 161 - 167 & CTL\_MUX\_SEL\_23 \\ \hline
+35 - 41 & CTL\_MUX\_SEL\_5 & 168 - 174 & CTL\_MUX\_SEL\_24 \\ \hline
+42 - 48 & CTL\_MUX\_SEL\_6 & 175 - 181 & CTL\_MUX\_SEL\_25 \\ \hline
+49 - 55 & CTL\_MUX\_SEL\_7 & 182 - 188 & CTL\_MUX\_SEL\_26 \\ \hline
+56 - 62 & CTL\_MUX\_SEL\_8 & 189 - 195 & CTL\_MUX\_SEL\_27 \\ \hline
+63 - 69 & CTL\_MUX\_SEL\_9 & 196 - 202 & CTL\_MUX\_SEL\_28 \\ \hline
+70 - 76 & CTL\_MUX\_SEL\_10 & 203 - 209 & CTL\_MUX\_SEL\_29 \\ \hline
+77 - 83 & CTL\_MUX\_SEL\_11 & 210 - 216 & CTL\_MUX\_SEL\_30 \\ \hline
+84 - 90 & CTL\_MUX\_SEL\_12 & 217 - 223 & CTL\_MUX\_SEL\_31 \\ \hline
+91 - 97 & CTL\_MUX\_SEL\_13 & 224 - 249 & OPCODE \\ \hline
+98 - 104 & CTL\_MUX\_SEL\_14 & 250 - 251 & CTL\_READ\_IN \\ \hline
+105 - 111 & CTL\_MUX\_SEL\_15 & 252 - 253 & CTL\_WR\_OUT \\ \hline
+112 - 118 & CTL\_MUX\_SEL\_16 & 254 & CTL\_MUX\_REL \\ \hline
+119 - 125 & CTL\_MUX\_SEL\_17 & 255 & CTL\_CTR\_SRC\_SEL \\ \hline
+126 - 132 & CTL\_MUX\_SEL\_18 & 256 & CTL\_LUT\_SRC\_SEL \\
+\hline
+\end{tabular}
+\end{table}
+
+
+下文介绍指令各域的含义。
+
+\begin{itemize}
+\item CTL\_MUX\_SEL\_n：包含 7 位，选择输出寄存器中第 n 位的来源。详情参见表 \ref{tab:bitscrm-ctrmuxsrc}。
+\item OPCODE：操作码，该字段的位格式请参见表 \ref{tab:bitscrm-instruction-opcode}。
+\item CTL\_READ\_IN：在指令结束时选择从输入 FIFO 读取的位数。
+
+\begin{itemize}
+\item 0：不读取任何数据
+\item 1：读取 8 位数据
+\item 2：读取 16 位数据
+\item 3：读取 32 位数据
+\end{itemize}
+
+\item CTL\_WR\_OUT：选择从输出寄存器写入到输出 FIFO 的位数：
+
+\begin{itemize}
+\item 0：不写入任何数据
+\item 1：写入 8 位数据
+\item 2：写入 16 位数据
+\item 3：写入 32 位数据
+\end{itemize}
+
+\item CTL\_MUX\_REL、CTL\_CTR\_SRC\_SEL 和 CTR\_LUT\_SRC\_SEL：配置哪些位可以通过 CTL\_MUX\_SEL 域来选择。
+
+\begin{itemize}
+    \item CTRL\_CTR\_SRC\_SEL（控制计数器源选择）配置计数器 A 和 B 的位是否可用。
+    \item CTL\_LUT\_SRC\_SEL（控制 LUT 源选择）配置 LUT RAM 的输出值是否可用。详见表 \ref{tab:bitscrm-ctrmuxsrc}。
+    \item 当 CTL\_MUX\_REL（控制多路复用器相对寻址）为 1 时，且 CTL\_MUX\_SEL\_n 小于等于 63 时， 比特调节器将使用计数器 A 重新计算有效的 CTL\_MUX\_SEL\_n。具体行为取决于 CTR\_SRC\_SEL，详见表 \ref{tab:bitscrm-ctrmuxrel}。
+\end{itemize}
+
+\end{itemize}
+
+
+\begin{table}[H]
+\centering
+\caption{当 CTL\_MUX\_REL 为 1 时 CTL\_MUX\_SEL\_n 生效的值}
+\label{tab:bitscrm-ctrmuxrel}
+\begin{tabular}{|l|l|}
+\hline\rowcolor{lightgray}
+条件 & CTL\_MUX\_SEL 生效的值\\
+\hline
+CTL\_MUX\_SEL\_n >= 64 & CTL\_MUX\_SEL（不变） \\
+CTL\_MUX\_SEL\_n < 64 and CTL\_CTR\_SRC\_SEL = 0 & (CTL\_MUX\_SEL\_n + CTRA) \& 63 \\
+CTL\_MUX\_SEL\_n < 31 and CTL\_CTR\_SRC\_SEL = 1 & (CTL\_MUX\_SEL\_n + CTRA) \& 31 \\
+32 <= CTL\_MUX\_SEL\_n < 64 and CTL\_CTR\_SRC\_SEL = 1 & ((CTL\_MUX\_SEL\_n + CTRA) \& 31) + 32 \\
+\hline
+\end{tabular}
+\end{table}
+
+这些域中，大部分是数据路径配置项，其中 OPCODE 是影响控制路径的配置项，但 CTL\_MUX\_REL、CTL\_CTR\_SRC\_SEL 和 CTR\_LUT\_SRC\_SEL 可通过调整 IF/IFN 操作码的来源来影响某些操作码的工作方式。
+
+CTL\_MUX\_SEL\_n: 每个 CTL\_MUX\_SEL\_n 域都可用于选择输出寄存器中与之相对应的位的来源。具体选择哪个位在一定程度上取决于 CTL\_MUX\_REL、CTL\_CTR\_SRC\_SEL 和 CTR\_LUT\_SRC\_SEL 的设置。假设 CTL\_MUX\_SRC 的值为 N，选择该位的方式如表 \ref{tab:bitscrm-ctrmuxsrc} 所示。请注意，IF/IFN 操作码的数据源选择也采用相同的方式。
+
+\begin{table}[H]
+\centering
+\caption{CTL\_MUX\_SEL 的值}
+\label{tab:bitscrm-ctrmuxsrc}
+\begin{tabular}{|l|L{13cm}|}
+\hline\rowcolor{lightgray}
+位 & 描述 \\
+\hline
+0-31 & 该位来自输入 FIFO 寄存器中的第 N 位。 \\
+\hline
+\multirow{4}{4em}{32-63} & 该位的来源取决于 CTL\_CTR\_SRC\_SEL 和 CTR\_LUT\_SRC\_SEL 的设置\\
+& 如果 CTL\_CTR\_SRC\_SEL = 0，该位来源于输入 FIFO 寄存器中的第 N 位。\\
+& 如果 CTL\_CTR\_SRC\_SEL = 1，该位来源于计数器寄存器中的第 N-32 位。具体来说，如果 N 是 32 到 47，则该位来源于计数器 A 的第 N-32 位；如果 N 是 48 到 63，则该位来源于计数器 B 的第 N-48 位。 \\
+& 如果 CTL\_LUT\_SRC\_SEL = 1，根据 LUT 的宽度（8、16 或 32 位），读取最高 8、16 或 32 位将返回来自 LUT 的数据，而不是 CTL\_CTR\_SRC\_SEL 选择的数据。具体来说，假定 LUT 宽度为 N，63 将返回 LUT 输出的第 N-1 位，62 将返回 LUT 输出的第 N-2 位，依此类推。\\
+\hline
+64 & CounterB[7:0] =< last[7:0] \\
+65 & CounterB[7:0] > last[7:0] \\
+66 & CounterB[7:0] = last[7:0] \\
+67 & CounterB[7:0] =< last[15:8] \\
+68 & CounterB[7:0] > last[15:8] \\
+69 & CounterB[7:0] = last[15:8] \\
+70 & CounterB[7:0] =< last[23:16] \\
+71 & CounterB[7:0] > last[23:16] \\
+72 & CounterB[7:0] = last[23:16] \\
+73 & CounterB[7:0] =< last[31:24] \\
+74 & CounterB[7:0] > last[31:24] \\
+75 & CounterB[7:0] = last[31:24] \\
+76 & CounterB[15:8] =< last[7:0] \\
+77 & CounterB[15:8] > last[7:0] \\
+78 & CounterB[15:8] = last[7:0] \\
+79 & CounterB[15:8] =< last[15:8] \\
+80 & CounterB[15:8] > last[15:8] \\
+81 & CounterB[15:8] = last[15:8] \\
+82 & CounterB[15:8] =< last[23:16] \\
+83 & CounterB[15:8] > last[23:16] \\
+84 & CounterB[15:8] = last[23:16] \\
+85 & CounterB[15:8] =< last[31:24] \\
+86 & CounterB[15:8] > last[31:24] \\
+87 & CounterB[15:8] = last[31:24] \\
+88 & CounterB[15:0] =< last[15:0] \\
+89 & CounterB[15:0] > last[15:0] \\
+90 & CounterB[15:0] = last[15:0] \\
+91 & CounterB[15:0] =< last[31:16] \\
+92 & CounterB[15:0] > last[31:16] \\
+93 & CounterB[15:0] = last[31:16] \\
+94 & 始终为 0 \\
+95 & 始终为 1 \\
+\hline
+96-127 & 这些位与上一周期结束时输出寄存器上的位相同\\
+\hline
+\end{tabular}
+\end{table}
+
+比特调节器可识别六种操作码，编码格式如表 \ref{tab:bitscrm-instruction-opcode} 所示。
+
+\bgroup
+\setlength{\tabcolsep}{0.4em}
+\begin{table}[H]
+\centering
+\caption{指令操作码}
+\label{tab:bitscrm-instruction-opcode}
+\begin{tabular}{|l|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|}
+\hline\rowcolor{lightgray}
+Bit & 25 & 24 & 23 & 22 & 21 & 20 & 19 & 18 & 17 & 16 & 15 & 14 & 13 & 12 & 11 & 10 & 9 & 8 & 7 & 6 & 5 & 4 & 3 & 2 & 1 & 0 \\
+\hline
+LOOP & 1 & c & \multicolumn{3}{|c|}{tgt} & \multicolumn{16}{|c|}{end\_val} & \multicolumn{5}{|c|}{ctr\_add}  \\
+\hline
+ADD & 0 & c & h & l & 0 & 0 & 0 & 0 & 0 & 0 & \multicolumn{16}{|c|}{ctr\_add} \\
+\hline
+IF & 0 & 0 & \multicolumn{3}{|c|}{tgt} & 0 & 0 & 0 & 0 & 1 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & \multicolumn{7}{|c|}{src} \\
+\hline
+IFN & 0 & 0 & \multicolumn{3}{|c|}{tgt} & 0 & 0 & 0 & 1 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & \multicolumn{7}{|c|}{src} \\
+\hline
+LDCTD & 0 & c & h & l & 0 & 0 & 0 & 0 & 1 & 1 & \multicolumn{16}{|c|}{ctr\_set} \\
+\hline
+LDCTI & 0 & c & h & l & 0 & 0 & 0 & 1 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+\hline
+\end{tabular}
+\end{table}
+\egroup
+
+操作码字段的定义如下：
+
+\begin{itemize}
+\item c：配置使用哪个计数器。
+\begin{itemize}
+    \item 0：计数器 A
+    \item 1：计数器 B
+\end{itemize}
+\item end\_val, ctr\_add, ctr\_set：16 位（或 5 位）值。这些字段的含义请参阅下面的指令描述。
+\item tgt：指令的位置。范围：0 到 7。
+\item h：如果需要将高 8 位写回计数器，则为 1。
+\item l：如果需要将低 8 位写回计数器，则为 1。
+\end{itemize}
+
+请注意，如果操作码没有指定 H 或 L，则默认需要将 16 位全部写回，此时 h 和 l 位都会为 1。
+
+下方表格主要介绍这六个操作码如何影响比特调节器的状态。
+
+\begin{table}[H]
+\caption{LOOP 操作码}
+\label{tab:bitscrm-loop-opcode}
+\begin{tabular}{|l|l|}
+\hline
+\multicolumn{2}{|l|}{\texttt{LOOPc end\_val, ctr\_add, tgt}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{使用 c 参数设置的计数器进行循环，将 ctr\_add 加到计数器中，并循环回到 tgt 位置，直到计数器达到 end\_val。当计数器达到 end\_val 时，重置计数器并继续执行。} \\
+\hline
+\multirow{4}{*}{参数} & c：计数器 A 或 B，表示要使用的计数器 \\
+& tgt：3 位值，表示目标指令地址\\
+& end\_val：16 位值，用于与计数器进行比较 \\
+& ctr\_add：5 位有符号值，用于加到计数器上 \\
+\hline
+\multirow{7}{*}{伪代码} & \texttt{if ((unsigned)ctrC < end\_val) begin} \\
+& \hspace*{4mm} \texttt{IP <= tgt} \\
+& \hspace*{4mm} \texttt{ctr\_c <= ctr\_c + sign\_extend(ctr\_add)} \\
+& \texttt{end else begin} \\
+& \hspace*{4mm} \texttt{IP <= IP + 1} \\
+& \hspace*{4mm} \texttt{ctr\_c <= 0} \\
+& \texttt{end} \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\caption{ADD 操作码}
+\label{tab:bitscrm-add-opcode}
+\begin{tabular}{|l|l|}
+\hline
+\multicolumn{2}{|l|}{\texttt{ADDc[H|L] ctr\_add}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{将立即数加到计数器上，可以选择只写回高 8 位或低 8 位。} \\
+\hline
+\multirow{4}{*}{参数} & c：计数器 A 或 B，表示要使用的计数器 \\
+& ctr\_add：16 位值，加到计数器上的值 \\
+& 如果操作码是 ADDcH，则只写回最高 8 位 \\
+& 如果操作码是 ADDcL，则只写回最低 8 位 \\
+& 如果操作码是 ADDc，则 16 位全部都将被写回（h=1，l=1）\\
+\hline
+\multirow{7}{*}{伪代码} & \texttt{tmp <= ctr\_c + ctr\_add} \\
+& \texttt{if (h) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[15:8] <= tmp[15:8]} \\
+& \texttt{end} \\
+& \texttt{if (l) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[7:0] <= tmp[7:0]} \\
+& \texttt{end} \\
+& \texttt{IP <= IP + 1} \\
+\hline
+说明 & NOP（无操作）伪操作码为 ``ADDA 0”。\\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\caption{IF 操作码}
+\label{tab:bitscrm-if-opcode}
+\begin{tabular}{|l|p{14cm}|}
+\hline
+\multicolumn{2}{|l|}{\texttt{IF ctl\_cond\_src, tgt}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{如果 src 字段对应的多路复用器值为 1，则跳转到目标。} \\
+\hline
+\multirow{2}{*}{参数} & ctl\_cond\_src：多路复用器来源，可参考表 \hyperref[tab:bitscrm-ctrmuxsrc]{CTR\_MUX\_SRC sources} \\
+& tgt：3 位值，表示目标指令地址  \\
+\hline
+\multirow{5}{*}{伪代码} & \texttt{if (ctl\_cond\_src) begin} \\
+& \hspace*{4mm} \texttt{IP <= tgt} \\
+& \texttt{end else begin} \\
+& \hspace*{4mm} \texttt{IP <= IP + 1} \\
+& \texttt{end} \\
+\hline
+说明 &  JMP（始终跳转）伪操作码为 ``IF 95,tgt”，使用 AUX 位中始终为 1 的位。\\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\caption{IFN 操作码}
+\label{tab:bitscrm-ifn-opcode}
+\begin{tabular}{|l|l|}
+\hline
+\multicolumn{2}{|l|}{\texttt{IFN ctl\_cond\_src, tgt}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{如果指定的多路复用器源位未设置，则跳转到目标（注：与 IF 操作相同，但条件取反）。} \\
+\hline
+\multirow{2}{*}{参数} & ctl\_cond\_src：多路复用器来源，可参考表 \hyperref[tab:bitscrm-ctrmuxsrc]{CTR\_MUX\_SRC sources} \\
+& tgt：3 位值，表示目标指令地址 \\
+\hline
+\multirow{5}{*}{伪代码} & \texttt{if (ctl\_cond\_src) begin} \\
+& \hspace*{4mm} \texttt{IP <= IP + 1} \\
+& \texttt{end else begin} \\
+& \hspace*{4mm} \texttt{IP <= tgt} \\
+& \texttt{end} \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\begin{table}[H]
+\caption{LDCTD 操作码}
+\label{tab:bitscrm-ldctd-opcode}
+\begin{tabular}{|l|l|}
+\hline
+\multicolumn{2}{|l|}{\texttt{LDCTDc[H|L] ctr\_set}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{将立即数直接加载到计数器，可以选择只加载计数器的高 8 位或低 8 位。} \\
+\hline
+\multirow{4}{*}{参数} & c：计数器 A 或 B，表示要使用的计数器 \\
+& ctr\_set：16 位值，要设置的计数器的值  \\
+& h：如果操作码是 LDCTDcH，则只设置最高 8 位 \\
+& l：如果操作码是 LDCTDcL，则只设置最低 8 位 \\
+& 如果操作码是 LDCTDc，则 16 位全部都将被设置（h=1，l=1）\\
+\hline
+\multirow{7}{*}{伪代码} & \texttt{if (h) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[15:8] <= ctr\_set[15:8]} \\
+& \texttt{end} \\
+& \texttt{if (l) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[7:0] <= ctr\_set[7:0]} \\
+& \texttt{end} \\
+& \texttt{IP <= IP + 1} \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\caption{LDCTI 操作码}
+\label{tab:bitscrm-ldcti-opcode}
+\begin{tabular}{|l|l|}
+\hline
+\multicolumn{2}{|l|}{\texttt{LDCTIc[H|L]}} \\
+\hline
+\multicolumn{2}{|L{17cm}|}{将多路复用器输出的高 16 位间接加载到计数器，可以选择只加载到计数器的高 8 位或低 8 位。} \\
+\hline
+\multirow{3}{*}{参数} & c：计数器 A 或 B，表示要使用的计数器 \\
+& h：如果操作码是 LDCTIcH，则只设置最高 8 位 \\
+& l：如果操作码是 LDCTIcL，则只设置最低 8 位 \\
+& 如果操作码是 LDCTIc，则 16 位全部都将被设置（h=1，l=1） \\
+\hline
+\multirow{7}{*}{伪代码} & \texttt{if (h) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[15:8] <= mux\_out[31:24]} \\
+& \texttt{end} \\
+& \texttt{if (l) begin} \\
+& \hspace*{4mm} \texttt{ctr\_c[7:0] <= mux\_out[23:16]} \\
+& \texttt{end} \\
+& \texttt{IP <= IP + 1} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{配置寄存器}
+
+比特调节器的配置是通过一组寄存器实现的。这些寄存器可向比特调节器写入程序、写入 LUT RAM、配置控制器行为、以及启动和停止控制器的操作，还可将控制器挂载到外设的 DMA 路径。
+
+\chipname{} 有两个比特调节器，一个可以放置在 TX 路径中（数据从存储器发送到外设），另一个可以放置在 RX 路径中（数据从外设发送到存储器）。两个比特调节器的配置寄存器是相同的，唯一的区别在于 TX 路径的比特调节器寄存器前缀为 BITSCRAMBLER\_TX\_，而 RX 路径的为 BITSCRAMBLER\_RX\_。
+
+\begin{tiplisting}
+为方便阐述，本节仅介绍 TX 比特调节器 路径，若想了解 RX 路径，只需替换描述中的前缀即可。
+\end{tiplisting}
+
+当比特调节器修改某外设的输入或输出时，需要挂载到该外设的 DMA 路径。为此，需将该外设的对应值写入 HP\_SYSTEM\_BITSCRAMBLER\_PERI\_SEL\_REG 寄存器的HP\_SYSTEM\_BITSCRAMBLER\_PERI\_TX\_SEL 域或 HP\_SYSTEM\_BITSCRAMBLER\_PERI\_RX\_SEL 域。
+
+比特调节器也可以在存储器到存储器模式下运行，但需要将 \hyperref[regdesc:BITSCRAMBLERSYSREG]{BITSCRAMBLER\_SYS\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERLOOPMODE]{BITSCRAMBLER\_LOOP\_MODE} 域置为 1。该模式下，TX 比特调节器进入环回模式，而 RX 比特调节器 则未使用且无法使用。并且比特调节器仍然需要连接到外设，但该外设无需配置，而且对应的外设 DMA 路径将无法使用。
+
+主处理器无法直接访问比特调节器的程序存储器和 LUT RAM，但可以间接访问，即在一个寄存器中设置地址，然后在另一个寄存器中写入数据。
+
+具体而言，对于 LUT RAM，地址写入 \hyperref[regdesc:BITSCRAMBLERTXLUTCFG0REG]{BITSCRAMBLER\_TX\_LUT\_CFG0\_REG} 的 \hyperref[fielddesc:BITSCRAMBLERTXLUTIDX]{BITSCRAMBLER\_TX\_LUT\_IDX} 域，数据写入或从 \hyperref[regdesc:BITSCRAMBLERTXLUTCFG1REG]{BITSCRAMBLER\_TX\_LUT\_CFG1\_REG} 寄存器读取数据。LUT 的位宽对比特调节器可见的，可以使用 \hyperref[fielddesc:BITSCRAMBLERTXLUTMODE]{BITSCRAMBLER\_TX\_LUT\_MODE} 域进行配置。需要注意的是，当主处理器以上述方式写入 LUT 时，地址和数据大小需要符合配置的 LUT 位宽。
+
+同样，对于指令存储器，地址写入 \hyperref[regdesc:BITSCRAMBLERTXINSTCFG0REG]{BITSCRAMBLER\_TX\_INST\_CFG0\_REG}，数据写入或从 \hyperref[regdesc:BITSCRAMBLERTXINSTCFG1REG]{BITSCRAMBLER\_TX\_INST\_CFG1\_REG} 中读取。由于比特调节器指令为 257 位，因此一个指令需要写入 9 个 32 位字，第 257 位位于第 9 个字的最低有效位。为此，\hyperref[regdesc:BITSCRAMBLERTXINSTCFG0REG]{BITSCRAMBLER\_TX\_INST\_CFG0\_REG} 寄存器被分为两个域，指令的位置写入 \hyperref[fielddesc:BITSCRAMBLERTXINSTIDX]{BITSCRAMBLER\_TX\_INST\_IDX} 域，而指令内的字偏移写入 \hyperref[fielddesc:BITSCRAMBLERTXINSTPOS]{BITSCRAMBLER\_TX\_INST\_POS} 域。
+
+
+由于比特调节器生成的数据可以比输入多也可以比输入少，所以它控制的 DMA 流可以以一种或两种方式结束。第一种情况是接收器（在 RX 比特调节器的情况下是存储器，而在 TX 比特调节器的情况下是外设）停止接收数据，因为它的配置是只接收一定数量的字节。这种情况比较简单，比特调节器因为无法再写入数据而停止。另一种方式是发射器（在 RX 比特调节器的情况下是外设，在 TX 比特调节器的情况下是存储器）停止发送数据。这种情况更加复杂，因为比特调节器可能正在处理需要写入输出的一些数据，也可能不在处理。
+
+\chipname{} 特调节器设计了两种方法来处理输入数据流结束后的一定数量的数据，目的是为了完整地处理这些数据。这两种方法依赖于 \hyperref[regdesc:BITSCRAMBLERRXTAILINGBITSREG]{BITSCRAMBLER\_RX\_TAILING\_BITS\_REG} 寄存器设置的具体值 N：
+
+
+\begin{itemize}
+\item EOF-on-N-reads（读取 N 字节后结束）：在输入数据流结束后，比特调节器从输入读取 N 个虚拟字节。这些字节的值为零。在读取完第 N 个字节后，比特调节器停止，DMA 流结束。
+
+\item EOF-on-N-writes（写入 N 字节后结束）：在输入数据流结束后，比特调节器允许向输出写入 N 个字节。在此期间，任何输入流上的读取都会返回值为零的虚拟字节。在写入完第 N 个字节后，比特调节器停止，DMA 流结束。
+\end{itemize}
+
+请按照下表内容配置上述两种模式。
+
+\begin{table}[H]
+\centering
+\caption{EOF 模式设置}
+\label{tab:bitscrm-settings-for-eof-modes}
+\begin{tabular}{|l|c|c|}
+\hline\rowcolor{lightgray}
+寄存器 & EOF-on-N-reads & EOF-on-N-writes \\
+\hline
+\hyperref[fielddesc:BITSCRAMBLERTXRDDUMMY]{BITSCRAMBLER\_TX\_RD\_DUMMY} & 1 & 1 \\ \hline
+\hyperref[fielddesc:BITSCRAMBLERTXFETCHMODE]{BITSCRAMBLER\_TX\_FETCH\_MODE} & 0 & 0 \\ \hline
+\hyperref[fielddesc:BITSCRAMBLERTXEOFMODE]{BITSCRAMBLER\_TX\_EOF\_MODE} & 1 & 0 \\ \hline
+\hyperref[fielddesc:BITSCRAMBLERTXHALTMODE]{BITSCRAMBLER\_TX\_HALT\_MODE} & 1 & 1 \\\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:bitscrm-prog-procedures}
+
+请注意，下文描述的是 TX 比特调节器的配置流程，TX 比特调节器位于存储器到外设方向的路径中，或者在环回模式下位于存储器到存储器方向的路径。对于外设到存储器方向的路径，则使用 RX 比特调节器。除非另作说明，否则将下文描述中的 TX 替换为 RX 即为 RX 比特调节器的配置流程。
+
+\begin{enumerate}
+    \item 配置 HP\_SYSTEM\_BITSCRAMBLER\_PERI\_SEL\_REG 寄存器中的 HP\_SYSTEM\_BITSCRAMBLER\_PERI\_TX\_SEL 域将比特调节器挂载到外设。请注意，即使在环回模式下，此步骤也是必须的。
+    \item 配置 \hyperref[regdesc:BITSCRAMBLERTXCTRLREG]{BITSCRAMBLER\_TX\_CTRL\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERTXENA]{BITSCRAMBLER\_TX\_ENA} 域使能比特调节器。
+    \item 根据需要决定是否配置环回模式。如果需要，将 \hyperref[regdesc:BITSCRAMBLERSYSREG]{BITSCRAMBLER\_SYS\_REG} 寄存器的 \hyperref[fielddesc:BITSCRAMBLERLOOPMODE] {BITSCRAMBLER\_LOOP\_MODE} 域置 1，否则清零。
+    \item 将程序加载到比特调节器中。对于每条指令和指令内的每个 32 位字，设置 \hyperref[regdesc:BITSCRAMBLERTXINSTCFG0REG]{BITSCRAMBLER\_TX\_INST\_CFG0\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERTXINSTIDX]{BITSCRAMBLER\_TX\_INST\_IDX} 和 \hyperref[fielddesc:BITSCRAMBLERTXINSTPOS]{BITSCRAMBLER\_TX\_INST\_POS} 域，然后将字写入 \hyperref[regdesc:BITSCRAMBLERTXINSTCFG1REG]{BITSCRAMBLER\_TX\_INST\_CFG1\_REG} 寄存器。注意，第 257 位写入到 \hyperref[regdesc:BITSCRAMBLERTXINSTCFG1REG]{BITSCRAMBLER\_TX\_INST\_CFG1\_REG} 的第 0 位。
+    \item 如果需要，将 LUT 挂载到比特调节器中：
+    \begin{enumerate}
+        \item 配置 \hyperref[regdesc:BITSCRAMBLERTXLUTCFG0REG]{BITSCRAMBLER\_TX\_LUT\_CFG0\_REG} 寄存器中 \hyperref[fielddesc:BITSCRAMBLERTXLUTMODE] {BITSCRAMBLER\_TX\_LUT\_MODE} 域来设置 LUT 宽度
+        \item 将地址写入 \hyperref[regdesc:BITSCRAMBLERTXLUTCFG0REG]{BITSCRAMBLER\_TX\_LUT\_CFG0\_REG}
+        \item 将数据字或字节写入 \hyperref[regdesc:BITSCRAMBLERTXLUTCFG1REG]{BITSCRAMBLER\_TX\_LUT\_CFG1\_REG}
+    \end{enumerate}
+        请注意，在写入数据之后和启动比特调节器之前更改 LUT 宽度都是可以的。
+    \item 配置比特调节器。根据比特调节器程序的需求，设置或清除 \hyperref[regdesc:BITSCRAMBLERTXCTRLREG]{BITSCRAMBLER\_TX\_CTRL\_REG} 寄存器中的相应位，也可将 \hyperref[regdesc:BITSCRAMBLERTXTAILINGBITSREG]{BITSCRAMBLER\_TX\_TAILING\_BITS\_REG} 设置为适当的值。
+    \item 清除 \hyperref[regdesc:BITSCRAMBLERTXCTRLREG]{BITSCRAMBLER\_TX\_CTRL\_REG} 寄存器的\hyperref[fielddesc:BITSCRAMBLERTXHALT]{BITSCRAMBLER\_TX\_HALT} 域，以启动比特调节器。
+    \item 启动 DMA 传输。有关 DMA 子系统的更多信息，请参阅章节 \ref{mod:dma} \textit{\nameref{mod:dma}}，如果未使用环回模式，请参阅各外设章节。
+    \item 等待 DMA 传输完成。
+    \item 设置 \hyperref[regdesc:BITSCRAMBLERTXCTRLREG]{BITSCRAMBLER\_TX\_CTRL\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERTXHALT]{BITSCRAMBLER\_TX\_HALT} 域停止比特调节器。
+    \item 等待比特调节器处于停止状态。当 \hyperref[regdesc:BITSCRAMBLERTXSTATEREG]{BITSCRAMBLER\_TX\_STATE\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERTXINIDLE]{BITSCRAMBLER\_TX\_IN\_IDLE} 位被置位时，比特调节器停止。
+    \item 在 \hyperref[regdesc:BITSCRAMBLERTXCTRLREG]{BITSCRAMBLER\_TX\_CTRL\_REG} 寄存器中的 \hyperref[fielddesc:BITSCRAMBLERTXFIFORST]{BITSCRAMBLER\_TX\_FIFO\_RST} 位先写入 1 然后再写入 0 来复位 FIFO。
+    \item 比特调节器可以使用当前的程序和 LUT 配置开始进行新的传输，从步骤 7 开始即可。
+\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{bitscrm-reg-summ}{}
+\section{寄存器列表}
+\label{sec:bitscrm-reg-summ}
+
+本小节的所有地址均为相对于比特调节器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/60-BITSCRM-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于比特调节器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/60-BITSCRM-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,1680 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./01-RISCVCPU}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned, comment out for full justification
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu}{}
+\chapter{高性能处理器}
+\label{mod:riscvcpu}
+
+\section{概述}
+ESP32-P4 采用了乐鑫第二代 32 位 RISC-V 指令集架构 (ISA) 的 CPU 核心系统。核心系统由双 RISC-V CPU 核心组成，配有专用的核心本地中断控制器 (CLIC)、调试模块以及核心本地中断 (CLINT) 定时器。图 \ref{fig:riscvcpu-core-complex-block-diagram} 为 CPU 核心系统的框图。
+
+\begin{figure}[H]
+\centering
+\includegraphics[scale=1,width=0.8\textwidth]{\modulefiles/figures/P4_CPU CoreComplex.png}
+\caption{CPU 核心系统框图}
+\end{figure}
+\label{fig:riscvcpu-core-complex-block-diagram}
+
+在CPU 核心系统中，每个 RISC-V 核心均使用 5 级顺序标量流水线架构，针对面积、功耗和性能进行了优化，内置专用的核心本地中断控制器 (CLIC) 和系统总线 (SYS BUS) 接口，用于访问存储器和外设。CLINT 定时器由两个核心共享。调试模块将 JTAG 接口连接至双核心，也支持 LP 核心调试。每个核心还提供用于离线调试的追踪接口。
+
+\section{特性}
+\label{sec:riscvcpu-features}
+CPU 核心系统中的每个 RISC-V CPU 核心均实现了以下标准 RISC-V 扩展：
+\begin{itemize}
+    \item 必须实现的基本整数 (I)
+    \item 乘法/除法 (M)
+    \item 原子 (A)
+    \item 浮点 (F)
+    \item 压缩 (C)
+    \item Zc
+\end{itemize}
+
+除了上述标准扩展之外，每个 RISC-V CPU 核心还实现了自定义指令 (X)，大致可分为以下两类：
+\begin{itemize}
+    \item 加速 AI 算法的自定义指令
+    \item 自定义硬件循环指令，进一步提高性能并减少 AI 算法重复执行时的代码大小
+\end{itemize}
+
+除了上述 RISC-V 指令扩展，每个 CPU 核心还支持以下特性：
+\begin{itemize}
+    \item RISC-V RV32IMAFCX ISA，具有五级流水线，支持高达 360 MHz 的工作时钟频率
+    \item 兼容《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》(RISC-V Instruction Set Manual, Volume I: RISC-V User-Level ISA, Version 2.2)
+    \item 兼容《RISC-V 指令集手册 v1.10 第二卷“特权架构”》(RISC-V Instruction Set Manual, Volume II: RISC-V Privileged Architecture, Version 1.10)
+    \item 兼容《核心本地中断控制器 (CLIC) v0.8》(RISC-V Core-Local Interrupt Controller (CLIC) Version 0.8)
+    \item 兼容《RISC-V 外部调试支持规范 v0.13》(RISC-V External Debug Support Version 0.13.2)
+    \item 通过 IRAM/DRAM 接口零等待周期访问片上 SRAM 和缓存中的程序和数据
+    \item 32 位 AHB 系统总线用于访问外设
+    \item 专用于各个特权模式的核心本地中断 (CLINT)
+    \item 支持用户 (U) 特权模式
+    \item 总线错误响应
+    \item 标准物理存储器准保护 (PMP) 和自定义物理存储器属性 (PMA)，最多可配置 16 个区域以确保安全
+    \item 分支目标缓冲器 (BTB) 具有 BHT 和 RAS 以提高性能
+    \item 调试模块 (DM) 符合《RISC-V 外部调试支持规范 v0.13》，支持通过行业标准的 JTAG/USB 端口连接外部调试器
+    \item 调试器通过 Core 0 以及系统总线 (SBA) 直接访问存储器和外设
+    \item 支持指令追踪以进行离线调试
+    \item 硬件触发器符合《RISC-V 调试规范 v0.13.2》(RISC-V External Debug Support Version 0.13.2)，具有多达 3 个断点/观察点
+    \item 支持多达 8 个快速 GPIO
+    \item 可配置的核心性能指标事件
+
+\end{itemize}
+
+\section{术语}
+\begin{longtable}[c]{ R{2cm} p{12cm} }
+\textbf{ABI} & 应用二进制接口 (application binary interface)\\
+\textbf{分支 (branch)} & 在一定条件下改变执行流程的指令 \\
+\textbf{CLIC} & 核心本地中断控制器 (core-local interrupt controller)\\
+\textbf{CLINT} & 核心本地中断 (core-local interrupt)\\
+\textbf{CSR} & 控制和状态寄存器 (control and status register)\\
+\textbf{delta} & 指令在存储器中的存储地址不连续时，程序计数器的地址偏移 \\
+\textbf{DTM} & 调试传输模块 (debug transport module) \\
+\textbf{FPR} & 浮点寄存器 (floating-point register)\\
+\textbf{GPIO} & 通用输入/输出 (general-purpose input/output)\\
+\textbf{GPR} & 通用寄存器 (general-purpose register)\\
+\textbf{HWLP} & 硬件循环 (hardware loop)\\
+\textbf{hart} & RISC-V 硬件线程\\
+\textbf{LSB} & 最低有效位 (least significant bit)\\
+\textbf{LR} & 加载保留 (load reserved)\\
+\textbf{MSB} & 最高有效位 (most significant bit)\\
+\textbf{PMP} & 物理存储器保护 (physical memory protection)\\
+\textbf{退役 (retire)} & 机器状态更新时，执行指令的最后一个阶段 \\
+\textbf{RO} & 只读域 (read-only)\\
+\textbf{R/W} & 可读写域 (readable and writable)\\
+\textbf{SC} & 条件存储 (store conditional)\\
+\textbf{SoC} & 片上系统 (system on chip)\\
+\textbf{WO} & 只写域 (write-only)\\
+\textbf{WARL} & 写入任何读取合法 (write any read legal)\\
+\textbf{W1} & 写入 1 (write 1)\\
+\end{longtable}
+
+\section{地址分布}
+
+下表列出了 CPU 可访问的指令地址空间、数据地址空间和通过系统总线访问的外设地址空间。
+\begin{longtable}{| l| l |c | c | c  |}
+\caption{CPU 地址分布} \label{tab:riscvcpu-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{名称} & \textbf{描述}    & \textbf{起始地址}  & \textbf{结束地址}  & \textbf{访问类型}   \\ \hline
+CPU \label{cpu} &  CLIC/CLINT 寄存器 &      0x2000\_0000  &  0x2FFF\_FFFF  &  R/W  \\ \hline
+IRAM/DRAM\label{ram} & 指令/数据区域 &   0x3000\_0000  &  0x3FEF\_FFFF  &  R/W  \\ \hline
+CPU 外设 \label{cpu_peri} &   &      0x3FF0\_0000  &  0x3FF1\_FFFF  &  R/W  \\ \hline
+IRAM/DRAM\label{ram2} & 指令/数据区域 &   0x3FF2\_0000  &  0x4FFF\_FFFF  &  R/W  \\ \hline
+CPU 外设 \label{cpu_peri2} & HP APB 外设  &   0x5000\_0000  &  0x500F\_FFFF  &  R/W  \\ \hline
+LP RAM/ROM \label{lpram} &  &   0x5010\_0000  &  0x5010\_FFFF  &  R/W  \\ \hline
+LP APB 外设 \label{lpapb} &   &   0x5011\_0000  &  0x5012\_FFFF  &  R/W  \\ \hline
+AHB\label{sysahb} & AHB 外设区域 &      *默认  &  *默认  &  R/W  \\ \hline
+\end{longtable}
+
+\textbf{*默认：}上述地址范围以外的地址空间通过 AHB 总线访问。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% P4 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置和状态寄存器 (CSRs)}
+\hypertarget{riscvcpu-cpu-reg-summ}{}
+\subsection{寄存器列表}
+\label{sec:riscvcpu-cpu-reg-summ}
+
+下表为每个 HP CPU 核心实现的 CSR 列表。所有已实现的 CSR 都遵循 《RISC-V 指令集手册 v1.10 第二卷“特权架构”》中所述的位域标准映射，但是，由于 CPU 并未实现所有的功能子集，所以某些标准 CSR 中的部分位域并未实现。有关详细的 CSR 寄存器描述，请参阅下一小节。
+
+\subfile{\modulefiles/01-RISCVCPU-reg-summ__CN}
+请注意，如果对上表中只读属性的任何 CSR 尝试执行写入/置位/清除操作，CPU 将生成非法指令异常。
+\subsection{寄存器描述}
+
+\subfile{\modulefiles/01-RISCVCPU-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% RISC-V 标准扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{RISC-V 标准 ISA 扩展支持}
+
+每个 HP 核心实现了基本整数 ISA，并符合 RV32I 基本整数指令集的 2.1 版本，详见《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》(RISC-V Instruction Set Manual, Volume I: RISC-V User-Level ISA, Version 2.2)。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% M 扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{M 扩展}
+\label{sec:riscvcpu-mext}
+\subsubsection{概述}
+\label{sec:riscvcpu-mext-overview}
+除了基本的 RV32I 指令集外，每个 HP 核心还实现了标准整数乘法和除法扩展，并完全符合《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》 中指定的 M 标准扩展的 2.0 版本。
+
+\subsubsection{功能描述}
+
+\label{sec:riscvcpu-mext-func-descr}
+M 扩展中的指令对两个整数寄存器中的值进行乘法和除法操作。以下是乘法和除法指令在流水线中没有数据冒险的情况下所需的 CPU 周期。
+\begin{itemize}
+    \item MUL 操作需要 2 个周期
+    \item DIV 操作需要 1-19 个周期，具体取决于操作数的情况
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% C 扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{C 扩展}
+\label{sec:riscvcpu-cext}
+\subsubsection{概述}
+
+\label{sec:riscvcpu-cext-overview}
+
+每个 HP 核心还实现了 RISC-V 标准压缩 (C) 指令集扩展，并完全符合 《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》 中 C 标准扩展的 2.0 版本。RVC 是 RISC-V 压缩扩展的简称。RVC 可以为常见操作添加较短的 16 位指令编码，减少静态和动态代码大小。通常，程序中 50-60\% 的 RISC-V 指令可以替换为 RVC 指令，从而可以减少 25-35\% 的代码量。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-cext-func-descr}
+RVC 采用的压缩方案较为简单，为 32 位 RISC-V 指令提供较短的 16 位版本，适用情景如下：
+\begin{enumerate}
+    \item 立即数和地址偏移量较小
+    \item 其中一个寄存器是零寄存器 (x0)、ABI 链接寄存器 (x1) 或 ABI 堆栈指针 (x2)
+    \item 目标寄存器和第一个源寄存器相同
+    \item 使用的寄存器是 8 个最常用的寄存器，即 x8-x15
+\end{enumerate}
+
+\newpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% F 扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{F 扩展}
+\label{sec:riscvcpu-fpu}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-fpu-overview}
+
+每个 HP 核心实现了 RISC-V 标准单精度浮点指令集扩展，简称 RV32F 扩展。该扩展提供了寄存器文件和各种 CSR 用于配置和标志检查。完整信息请参阅《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》> 章节 F Standard Extension Version 2.2。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-fpu-func-descr}
+
+\begin{itemize}
+    \item 各种指令用于执行浮点算术操作、整数格式的转换/移动操作、比较操作、分类操作和存储器加载/存储操作
+    \item 符合 IEEE 754-2008 标准的单精度 32 位浮点操作
+    \item 独立的 32 位宽浮点寄存器文件，包含 32 个寄存器
+    \item 可配置的舍入模式
+    \item 标志位支持检查不精确、上溢、下溢、无效和除以零等结果
+    \item 次正规数 (subnormal) 和非数字 (NaN) 算术
+    \item 状态位可配置开启/禁用扩展，程序执行过程中可追踪扩展使用情况
+\end{itemize}
+
+\subsubsection{初始化}
+\label{sec:riscvcpu-fpu-init}
+
+RV32F 扩展默认禁用，必须通过 \hyperref[fielddesc:MSTATUS_FS]{mstatus.FS} 位手动启用，否则在执行任何 RV32F 指令或访问任何相关 CSR 时将生成非法指令异常。
+
+完整信息请参阅 《RISC-V 指令集手册 v1.10 第二卷“特权架构”》> 章节 Extension Context Status in mstatus Register。
+
+\newpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Zc 扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{Zc (Z) 扩展}
+\label{sec:riscvcpu-zc}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-zc-overview}
+
+Zc 扩展有助于减少代码量，包含多个子集扩展。\chipname{} HP 核心实现的 Zc 扩展与 \href{https://github.com/riscvarchive/riscv-code-size-reduction/blob/v1.0.4-3/Zc-specification/Zc.adoc}{《Zc 规范 v1.0.4-3》} 兼容，实现的子集扩展包括 Zcb、Zcmp 和 Zcmt。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-zc-func-descr}
+
+\subparagraph{Zcb 扩展}
+
+Zcb 扩展依赖于 C 扩展，并提供更多压缩指令，适用情景如下：
+\begin{itemize}
+    \item 立即数和地址偏移量较小
+    \item 目标寄存器和第一个源寄存器相同
+    \item 使用的寄存器是 8 个最常用的寄存器 (x8-x15)
+\end{itemize}
+
+\subparagraph{Zcmp 扩展}
+
+Zcmp 扩展支持的指令在执行时可以等效为执行标准的 32 位 RISC-V 指令。
+
+\begin{itemize}
+    \item PUSH、POP、POPRET 操作用于减少函数序言 (prologue) 和尾声 (epilogue) 的大小
+        \begin{itemize}
+            \item PUSH 操作
+                \begin{itemize}
+                    \item 调整堆栈指针以创建堆栈帧
+                    \item 将寄存器列表中指定的寄存器推送（存储）到堆栈帧
+                \end{itemize}
+            \item POP 操作
+                \begin{itemize}
+                    \item 从堆栈帧中弹出（加载）寄存器列表中的寄存器
+                    \item 调整堆栈指针以销毁堆栈帧
+                \end{itemize}
+            \item POPRET 操作
+                \begin{itemize}
+                    \item 从堆栈帧中弹出（加载）寄存器列表中的寄存器
+                    \item cm.popretz 还将零移动到 a0 作为返回值
+                    \item 调整堆栈指针以销毁堆栈帧
+                    \item 执行 ret 指令以从函数返回
+                \end{itemize}
+        \end{itemize}
+    \item 将两个 a0-a1 移动到 s0-s7 的两个寄存器中
+    \item 将两个 s0-s7 移动到 a0-a1
+\end{itemize}
+
+\subparagraph{Zcmt 扩展}
+
+Zcmt 扩展也称为表跳转，它从跳转表中读取跳转目标地址，然后跳转到该地址。
+
+表跳转使用指令存储器中的 256 项 32 位宽的表来存储函数地址。表必须至少 64 字节对齐。作为字典压缩的一种形式，表跳可减少 jal、auipc+jalr、jr、auipc+jr 指令的代码大小。
+表跳转允许链接器用 cm.jalt 编码和表中的一个条目替换以下指令序列：
+\begin{itemize}
+    \item 32 位 j 调用
+    \item 32 位 jal ra 调用
+\end{itemize}
+
+\subsubsection{Zc 指令}
+\label{sec:riscvcpu-zc-insn-descr}
+
+\begin{longtable}{ | p{2.0cm} | p{4.0cm} |  p{10.0cm} | }
+\hline\rowcolor{lightgray}
+指令 & 助记符 & 描述  \\ \hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+指令 & 助记符 & 描述  \\ \hline
+\hline
+\endhead
+\endfoot
+
+\multicolumn{3}{|l|}{\textbf{Zcb 扩展}} \\\hline
+c.lbu & c.lbu rd', uimm(rs1') & 对立即数 uimm 零扩展后与 rs1' 相加，得到一个存储器地址，从该地址加载一个字节，将该字节零扩展至 32 位，并写入 rd' \\\hline
+c.lhu & c.lhu rd', uimm(rs1') &  对立即数 uimm 零扩展后与 rs1' 相加，得到一个存储器地址，从该地址加载一个半字，将该字节零扩展至 32 位，并写入 rd'\\\hline
+c.lh & c.lh rd', uimm(rs1') & 对立即数 uimm 零扩展后与 rs1' 相加，得到一个存储器地址，从该地址加载一个半字，将该字节符号扩展至 32 位，并写入 rd' \\\hline
+c.sb & c.sb rs2', uimm(rs1') & 对立即数 uimm 零扩展后与 rs1' 相加，得到一个存储器地址，将 rs2' 的最低有效字节存储到该地址 \\\hline
+c.sh & c.sh rs2', uimm(rs1') &  对立即数 uimm 零扩展后与 rs1' 相加，得到一个存储器地址，将 rs2' 的最低有效半字存储到该地址  \\\hline
+c.zext.b & c.zext.b rsd' & 将操作数的最低有效字节零扩展为 32 位，即：将高于 7 位的所有位填充为 0 \\\hline
+c.sext.b & c.sext.b rsd' & 将操作数的最低有效字节符号扩展为 32 位，即：将该字节中最高位的数值填充到比该位更高的位上  \\\hline
+c.zext.h & c.zext.h rsd' &  将操作数的最低有效半字零扩展为 32 位，即：将高于 15 位的所有位填充为 0 \\\hline
+c.sext.h  & c.sext.h rsd'  &  将操作数的最低有效半字符号扩展为 32 位，即：将该半字中最高位的数值填充到比该位更高的位上 \\\hline
+c.not & c.not rsd' & 对 rd'/rs1' 取反并将结果写入同一寄存器 \\\hline
+c.mul & c.mul rsd' & 将 rsd' 和 rs2' 源操作数的 32 位相乘，并将最低 32 位写入 rsd' 的结果 \\\hline
+
+\multicolumn{3}{|l|}{\textbf{Zcmp 扩展}} \\\hline
+
+cm.push & cm.push \{reg\_list\}, -stack\_adj & 将 reg\_list 中的寄存器存储到堆栈指针以下的存储器中，然后通过将堆栈指针减少一个 stack\_adj 的值来创建堆栈帧，同时包含 spimm 值请求的额外堆栈空间\\\hline
+cm.pop & cm.pop \{reg\_list\}, stack\_adj & 从堆栈存储器中加载 reg\_list 中的寄存器，然后按照 stack\_adj 调整堆栈指针 \\\hline
+cm.popret & cm.popret \{reg\_list\}, stack\_adj & 从堆栈存储器中加载 reg\_list 中的寄存器，按照 stack\_adj 调整堆栈指针，然后返回到 ra\\\hline
+cm.popretz & cm.popretz \{reg\_list\}, stack\_adj & 从堆栈存储器中加载 reg\_list 中的寄存器，通过 stack\_adj 调整堆栈指针，将零移动到 a0，然后返回到 ra\\\hline
+cm.mva01s & cm.mva01s rs1', rs2' &  将 r1s' 移动到 a0，将 r2s' 移动到 a1\\\hline
+cm.mva01 & cm.mva01 r1s', r2s' & 将 a0 移动到 r1s'，将 a1 移动到 r2s' \\\hline
+
+\multicolumn{3}{|l|}{\textbf{Zcmt 扩展}} \\\hline
+
+cm.jt & cm.jt index & 从存储器中的跳转向量表中读取一个条目并跳转到读取的地址 \\\hline
+cm.jalt & cm.jalt index & 从存储器中的跳转向量表中读取一个条目并跳转到读取的地址，链接到 ra  \\\hline
+
+\end{longtable}
+
+有关指令的更多详细信息，请参阅 \href{https://github.com/riscvarchive/riscv-code-size-reduction/blob/v1.0.4-3/Zc-specification/Zc.adoc}{《Zc 规范 v1.0.4-3》}。
+
+\subsubsection{限制}
+\label{sec:riscvcpu-zc-limit-descr}
+
+\hyperref[regdesc:JVT]{jvt} 将架构状态添加到上下文中。因此，必须在上下文切换时保存和恢复架构状态。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 原子扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{A 扩展}
+\label{sec:riscvcpu-atomic}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-atomic-overview}
+
+对原子 (A) 扩展的支持符合《RISC-V 指令集手册 v2.2 第一卷“RISC-V 用户级 ISA”》，重点是保证向前推进，即功能上避免出现任何数据存储器被无限期锁定的情况。
+
+原子指令目前忽略 aq（获取）和 rl（释放）位，因为这些位对于目前这种可以保证存储器排序的架构无关。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-atomic-func-descr}
+
+原子（A）扩展指令集包含可对存储器执行原子读-改-写操作的指令，用于同步同一存储器空间内运行的多个 RISC-V 硬件线程。原子指令包括两种形式：保留加载/条件存储（load-reserved/store-conditional）指令，以及原子获取并操作（fetch-and-op）存储器指令。目前，这些原子指令会忽略 aq（获取）和 rl（释放）位，因为在当前架构中，存储器顺序总是可以保证，因此这些位无实际作用。
+
+\subsubsection{加载保留字 (LR.W) 指令}
+\label{sec:riscvcpu-atomic-lr}
+
+LR.W 指令只是锁定正在读取的 32 位对齐存储器地址。 一旦某个 4 字节的存储器空间被锁定，它将保持锁定状态，其他 hart 无法访问该区域，直到在执行过程中遇到以下任何一种情况：
+
+\begin{itemize}
+    \item 任何读操作
+    \item 任何写操作
+    \item 任何中断/异常
+    \item 向后跳转/向后分支跳转
+    \item JALR 指令
+    \item ECALL/EBREAK/MRET/URET 指令
+    \item FENCE/FENCE.I 指令
+    \item 调试模式
+    \item 临界区超过 64 字节
+    \item SC.W 指令中的数据地址与 LR.W 指令中的不匹配
+\end{itemize}
+
+如果发生上述任何一种情况，存储器锁将立刻被释放。如果遇到 SC.W 指令，则存储器锁不会立即被释放，但最终会被释放，有关具体如何释放的信息，请参考章节 \ref{sec:riscvcpu-atomic-sc}。
+
+如果地址未对齐，则会导致异常 \hyperref[regdesc:MCAUSE]{mcause} = 6。
+
+\subsubsection{条件存入字 (SC.W) 指令}
+\label{sec:riscvcpu-atomic-sc}
+
+SC.W 指令首先检查存储器锁是否仍然有效，以及地址是否与上一条 LR.W 指令指定的地址相同，只有以上条件同时满足时，SC.W 指令才会对存储器执行写操作，并且在收到存储器发出的写操作完成确认信息后立即释放锁。
+
+如果锁已失效（失效原因见章节 \ref{sec:riscvcpu-atomic-lr}），SC.W 指令将在目标寄存器 rd 中设置失败代码，目前只能设置为 1。
+
+如果地址未对齐，则会导致异常 \hyperref[regdesc:MCAUSE]{mcause} = 6。
+
+\subsubsection{AMO 指令}
+\label{sec:riscvcpu-atomic-amo}
+
+AMO (原子性存储器操作) 指令分三步执行：
+
+\begin{enumerate}
+    \item 从 rs1 给定的存储器地址读取数据，并将数据保存到目标寄存器 rd。
+    \item 将 rd 和 rs2 中的数据进行运算。
+    \item 将上面第 2 步得到的结果写入 rs1 给定的存储器地址。
+\end{enumerate}
+
+AMO 运算共有 9 种类型：SWAP、ADD、AND、OR、XOR、MAX、MIN、MAXU 和 MINU。
+
+在整个过程中，存储器地址保持锁定状态，其他 hart 无法访问。如果遇到未对齐的地址，则会导致异常 \hyperref[regdesc:MCAUSE]{mcause} = 6。
+
+AMO 操作的读/写访问 (PMP/PMA) 都在第一步中进行检查。若发生错误，则 \hyperref[regdesc:MCAUSE]{mcause} = 7。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 自定义指令扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{自定义指令扩展}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 硬件循环扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{硬件循环}
+\label{sec:riscvcpu-hwloop}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-hwloop-overview}
+
+HWLP（硬件循环）是在硬件中实现的 for 循环。在执行循环前会配置循环的起始地址、结束地址以及循环次数。当指令执行遇到起始地址时，循环执行开始。当执行到结束地址时，视为一个循环计数，并再次获取起始地址。此过程重复进行，直到循环计数等于配置的循环次数。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-hwloop-feature}
+
+HWLP 具有以下特性：
+
+\begin{itemize}
+\item 与条件分支指令相比，执行时无额外惩罚
+\item 支持两个嵌套的 HWLP
+\item 如果结束地址在配置指令 1 KB 以内，则可通过单个指令 (lp.setupi) 进行配置
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-hwloop-func-descr}
+
+HWLP 的配置可以通过 CSR 或 HWLP 的自定义指令进行，后者将在后续章节中详细描述。HWLP 需要配置起始、结束地址和循环次数。
+
+当设置单个循环时，可以配置 Loop0 或 Loop1 CSR。在设置 HWLP 之前，请将 \hyperref[sec:riscvcpu-hwloop-reg-desc]{mhwloop\_state\_reg}  中的 \hyperref[regdesc:mhwlp_state_reg]{STATE} 配置为非零值（零表示 OFF，默认状态）。否则，访问 HWLP 配置 CSR 将导致非法指令异常。如果要在用户模式下设置和执行 HWLP，请将 \hyperref[sec:riscvcpu-hwloop-reg-desc]{mhwloop\_state\_reg} 中的\hyperref[regdesc:mhwlp_state_reg]{URW} 设置为 1。
+
+核心最多支持两个 HWLP，可以嵌套执行。在这种情况下，每个循环需单独配置。请注意，如果两个循环的结束指令相同，则内循环优先于外循环。在配置嵌套循环时，Loop0 必须作为内循环，Loop1 必须作为外循环，因为在硬件实现中 Loop0 的优先级高于 Loop1。
+
+与条件分支指令相比，HWLP 的优势在于执行时没有惩罚。分支/跳转指令使用预测逻辑来评估分支条件和分支/跳转地址。如果预测错误，则需刷新核心流水线，并获取正确地址。因此，刷新前去获取不正确的指令已经浪费了几个周期。由于 HWLP 不需要预测条件分支的结果或目标地址，因此没有惩罚，具有更高的吞吐量。
+
+\subsubsection{HWLP 中支持的指令/操作/模式}
+\label{sec:riscvcpu-hwloop-inst}
+
+\begin{itemize}
+    \item 加载类型指令
+    \item 存储类型指令
+    \item 算术、逻辑、AIA 指令
+    \item Zc 扩展指令（除 HWLP 末尾外）
+    \item HWLP 中的任何中断/异常
+    \item ECALL/EBREAK
+    \item FENCE/FENCE.I/CSRx 指令（除 HWLP 倒数第二个位置外）
+    \item 原子指令（除 HWLP 末尾外）
+    \item 调试模式
+    \item SC.W 指令中的数据地址与 LR.W 指令中的不匹配
+\end{itemize}
+
+\subsubsection{HWLP 限制}
+\label{sec:riscvcpu-hwloop-constraints}
+
+下表为使用 HWLP 时需要注意的限制。
+
+\begin{itemize}
+\item 循环应至少包含六条 32 位指令或十二条 16 位指令。16 位指令不支持作为循环的最后一条指令。
+\item HWLP 内不支持分支/跳转指令
+\item HWLP 不支持 Zc push/pop/popret/jt 类型、AMO 类型、LR/SC 指令作为循环的最后一条指令。
+\item HWLP 不支持未字对齐的起始和结束地址。
+\item CSR 读/写指令（如 CSRW、CSRC、CSRS）和 FENCE 指令（会刷新流水线）不支持在循环的倒数第二个位置。
+\item HWLP 在 LR/SC 之间不会导致 LR/SC 的解锁或失败，不像向后分支指令。因此，应避免在 LR/SC 中使用 HWLP。
+\end{itemize}
+
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-hwloop-reg-summ}
+
+\subfile{\modulefiles/01-RISCV-HWLOOP-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%
+\subsubsection{寄存器描述}
+\label{sec:riscvcpu-hwloop-reg-desc}
+\subfile{\modulefiles/01-RISCV-HWLOOP-reg__CN}
+
+\clearpage
+\begin{landscape}
+
+\subsubsection{HWLP 指令}
+\label{sec:riscvcpu-hwloop-instr}
+下表为 HWLP 指令集。
+
+\begin{table}[H]
+    \caption{HWLP 指令}
+    \label{tab:riscvcpu-hwlp-instr}
+    \begin{tabular}{|p{0.3cm}|p{2.5cm}|p{6cm}|p{2.5cm}|p{2.5cm}|p{1cm}|p{2.5cm}|p{2cm}|p{2cm}|p{2cm}|}
+        \hline\rowcolor{lightgray}
+        \textbf{SN} & \textbf{指令助记符} & \textbf{描述} & \textbf{31:20} & \textbf{19:15} & \textbf{14:12}  & \textbf{11:8} & \textbf{7} & \textbf{6:0} \\
+        \hline
+        1 & lp.setupi L, uimm\_Count, uimm\_EndOffset & StartAddr = PC+4 \newline EndAddr = PC+uimm\_EndOffset \newline Count = uimm\_Count & uimm\_Count [11:0] & uimm\_EndOffset [5:1] &  101 & uimm\_EndOffset [9:6] & L (index) & 0101011\\
+        \hline
+        2 & lp.setup L, rs1, uimm\_EndOffset & StartAddr = PC+4 \newline EndAddr = PC+uimm\_EndOffset \newline Count = GPR[rs1] & uimm\_EndOffset [12:1]  & rs1 [4:0] (count) & 100 & X & L (index) & 0101011 \\
+        \hline
+        3 & lp.starti L, uimm\_StartOffset & StartAddr = PC+uimm\_StartOffset  & uimm\_StartOffset [12:1] & X & 000 & X & L (index) & 0101011 \\
+        \hline
+        4 & lp.endi L, uimm\_EndOffset & EndAddr = PC+uimm\_EndOffset & uimm\_EndOffset [12:1] & X & 001 & X & L (index) & 0101011\\
+        \hline
+        5 & lp.count L, rs1 & Count = GPR[rs1] & X & rs1 [4:0] (count) & 010 & X & L (index) & 0101011\\
+        \hline
+        6 & lp.counti L, uimm\_Count & Count = uimm\_Count & uimm\_Count [11:0] & X & 011 & X & L (index) & 0101011\\
+        \hline
+    \end{tabular}
+\end{table}
+
+\end{landscape}
+\restoregeometry
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 处理器指令扩展 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{处理器指令扩展}
+\label{sec:riscvcpu-pie}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-pie-overview}
+
+处理器指令扩展 (PIE) ISA 自定义多种 128 位宽的 SIMD（单指令多数据）和复杂指令，用于加速边缘推理和数字信号处理应用。这些指令完全集成到 CPU 流水线中，可在 HP 核心中与其兼容的标准 RV32IMAFC ISA 无缝协同使用。
+
+\subsubsection{功能描述}
+
+\label{sec:riscvcpu-pie-func-descr}
+\begin{itemize}
+    \item 8 x 128 位宽整数向量寄存器文件
+    \item 每个 128 位宽向量寄存器可用作 16 x 8 位元素、8 x 16 位元素或 4 x 32 位元素进行 SIMD 操作
+    \item 向量寄存器可直接加载/存储高达 128 位宽数据
+    \item 支持并行执行算术和存储器操作融合指令
+    \item 向量和标量 MAC 单元能够每周期对 16 x 8 位元素或 8 x 16 位元素进行操作
+    \item 512 位宽向量寄存器用于累加 8 位或 16 位向量 MAC 操作的结果
+    \item 40 位宽标量寄存器用于累加 8 位或 16 位标量 MAC 操作的结果
+    \item 支持并行 16 位 FFT 和复数数学运算的指令
+    \item 最终结果在舍入和饱和处理后生成
+    \item 可配置的舍入模式和缩放（算术右移）参数
+\end{itemize}
+
+有关所有可用指令和配置的完整描述，请参阅章节 \ref{mod:pie} \textit{\nameref{mod:pie}}。
+
+\subsubsection{初始化、上下文切换和异常}
+\label{sec:riscvcpu-pie-init}
+
+PIE 扩展默认禁用，必须通过 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 域手动启用。否则，在执行任何 PIE 扩展指令时将生成非法指令异常。
+
+当 PIE 扩展禁用时发生了非法指令异常，即 \hyperref[regdesc:MCAUSE]{mcause} = 0x2 的异常，HP 核心将设置 \hyperref[fielddesc:MEXT_ILL_PIE_ILL]{mext\_ill.PIE\_ILL} 位来标志该异常。
+
+当 PIE 扩展启用时，即 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位为非零值，执行任何 PIE 指令将始终导致 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位更改为 DIRTY (11)。
+
+若需启用 PIE 扩展，请执行以下步骤：
+
+\begin{enumerate}
+    \item 将 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位写入 INITIAL (01) 状态。
+    \item 使用 PIE 指令将 PIE 寄存器文件和累加器寄存器初始化为零，这将导致 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位自动更改为 DIRTY (11)。
+    \item 由于此时 PIE 寄存器的值已知，将 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位写入 CLEAN (10)。
+    \item 继续执行应用程序。
+    \item 在执行应用程序代码期间，如果遇到任何 PIE 指令，\hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位将自动更改为 DIRTY (11)。
+\end{enumerate}
+
+在上下文切换期间，是否保存或恢复 PIE 扩展寄存器取决于 \hyperref[fielddesc:MEXT_PIE_STATE]{mext\_pie\_status.STATE} 位的值。如果值为 DIRTY，则必须将 PIE 寄存器的状态保存到堆栈中。之后，状态将更新为 CLEAN 或 OFF，具体取决于下一个上下文（线程）是否启用了 PIE 扩展。
+
+某些 PIE 指令对寄存器域或立即数域有限制。例如，当执行加载和算术的融合指令时，如果两个并行操作的目标寄存器相同，将导致歧义，进而触发 PIE 非法异常，即 \hyperref[regdesc:MCAUSE]{mcause} = 0x1f。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 存储器映射寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{存储器映射寄存器}
+\label{sec:riscvcpu-tcip}
+
+\subsection{概述}
+\label{sec:riscvcpu-tcip-overview}
+
+核心系统中存在以下紧密耦合的存储器映射寄存器：
+
+\begin{itemize}
+    \item 每个 HP 核心的 CLIC 寄存器
+    \item 共享的 CLINT 寄存器
+\end{itemize}
+
+\subsection{特性}
+\label{sec:riscvcpu-tcip-features}
+
+每个 HP CPU 核心支持：
+\begin{itemize}
+    \item 访问另一个 HP 核心的 CLIC 寄存器
+    \item 访问无效地址时生成总线错误异常
+    \item 访问 CLINT 寄存器。但是，只有核心 0 可以修改 CLINT 定时器值
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:riscvcpu-tcip-func-descr}
+
+下表为每个 HP 核心用于访问 CLIC 和 CLINT 地址范围的地址解码。
+
+\begin{longtable}{ | l | p{5 cm} | }
+\caption{存储器映射寄存器访问的地址解码} \label{tab:riscvcpu-tcip-table}
+\\ \hline
+\rowcolor{lightgray}
+位 & 描述 \\ \hline
+31:28 & 固定为 0x2，即基地址 \\ \hline
+27:20 & 标识子模块：\newline 0x0：CLINT \newline 0x08：CLIC \newline 0xB：CLIC 用户 \newline 其他：保留 \\ \hline
+19:16 & 控制访问类型 \newline 0x0：访问本核心的寄存器 \newline 0x1：访问另一核心的寄存器\\ \hline
+15:0 & 寄存器偏移 \\ \hline
+\end{longtable}
+
+
+\begin{longtable}{ | l | c | c |}
+\caption{内部存储器地址映射} \label{tab:riscvcpu-tcip-slave-table}
+\\ \hline
+\rowcolor{lightgray}
+块 & 起始地址 & 结束地址 \\ \hline
+CLINT (本核心) & 0x20000000  &  0x2000FFFF\\ \hline
+CLIC (本核心) & 0x20800000  &  0x2080FFFF\\ \hline
+CLINT (另一核心) & 0x20010000  &  0x2001FFFF\\ \hline
+CLIC (另一核心) & 0x20810000  &  0x201FFFF\\ \hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 中断控制器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{中断控制器}
+\label{sec:riscvcpu-int-ctrl}
+
+%%%%%%%%%%%%%%%%%%
+%%% 中断 %%%
+%%%%%%%%%%%%%%%%%%
+
+\subsection{概述}
+\label{sec:riscvcpu-intr-overview}
+
+每个 HP 核心使用 CLIC + CLINT 方案来实现中断支持。
+
+CLINT 表示核心本地中断 (core-local interrupt)，是 HP 核心子系统中的中断源，为每个 HP 核心生成定时器和软件中断。
+
+CLIC 表示核心本地中断控制器 (core-local interrupt controller)，为每个 HP 核心提供低延迟、向量化、抢占式中断。每个 HP 核心 CLIC 单元支持 32 个外部中断和 2 个 CLINT 中断。
+
+%%%%%%%%%%%%%
+%%% CLIC %%%
+%%%%%%%%%%%%%
+
+\subsection{CLIC}
+\label{sec:riscvcpu-clic}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-clic-overview}
+
+
+HP 核心中实现的 CLIC 遵循RISC-V 国际基金会的提案：\href{https://github.com/riscv/riscv-fast-interrupt/blob/26d29ce6ab7f1def8e5dc0a41639a1d8f67ea339/clic.adoc}{核心本地中断控制器 (CLIC) RISC-V 特权架构扩展}。在撰写本节时，官方提案尚未获得批准，因此，以下规范可能与批准的提案有所不同。
+
+HP 核心仅支持 CLIC 操作模式，即 \hyperref[fielddesc:MTVECMODE]{mtvec.MODE} 硬连线为 0x3。因此，RISC-V 基本的中断处理方案和相关的 CSR（如 mie、mip、mideleg、uie 和 uip）不可用。
+
+仅支持机器模式中断。
+
+\subsubsection{CLIC CSRs}
+\label{sec:riscvcpu-clic-csrs}
+
+以下机器模式 CSR 与 CLIC 方案中的中断处理相关：
+
+\begin{multicols}{4}
+\begin{itemize}
+\item \hyperref[regdesc:MSTATUS]{mstatus}
+\item \hyperref[regdesc:MTVEC]{mtvec}
+\item \hyperref[regdesc:MTVT]{mtvt}
+\item \hyperref[regdesc:MSCRATCH]{mscratch}
+\item \hyperref[regdesc:MEPC]{mepc}
+\item \hyperref[regdesc:MCAUSE]{mcause}
+\item \hyperref[regdesc:MNXTI_REG]{mnxti}
+\item \hyperref[regdesc:MINTSTATUS]{mintstatus}
+\item \hyperref[regdesc:MCLICBASE_REG]{mclicbase}
+\item \hyperref[regdesc:MSCRATCHCSW_REG]{mscratchcsw}
+\item \hyperref[regdesc:MSCRATCHCSWL_REG]{mscratchcswl}
+\end{itemize}
+\end{multicols}
+
+
+如前所述，CLIC 模式由 \hyperref[fielddesc:MTVECMODE]{mtvec.MODE} 域决定。在每个 HP 核心中，这些位硬连线为 0x3，表示仅支持 CLIC 模式。
+
+在 CLIC 模式下，机器模式的全局中断启用仍由 \hyperref[fielddesc:MSTATUSMIE]{mstatus.MIE} 位决定。
+
+
+每个中断可以是向量化的或非向量化的，具体取决于 \hyperref[fielddesc:MCLICINTATTR_i_SHV]{clicintattr[i].SHV} 域的值。
+
+对于非向量化中断，HP 核心跳转到 \hyperref[fielddesc:MTVECBASE]{mtvec.BASE} 域中配置的陷阱处理程序基地址。
+
+对于向量化中断，HP 核心跳转到向量表中相应索引对应的 32 位字地址，向量表的基地址在 \hyperref[regdesc:MTVT]{mtvt} 中配置。例如，对于第 i 个机器模式中断，首先加载存储器中 mtvt + 4*i 位置的 32 位地址，然后 HP 核心将加载的数据视为地址并跳转到该地址。
+
+在接受中断后，HP 核心会立刻将中断的指令地址存储在 \hyperref[regdesc:MEPC]{mepc} 中。此外，HP 核心将根据中断的 ID 更新 \hyperref[regdesc:MCAUSE]{mcause} 的值。
+
+
+\hypertarget{riscvcpu-clic-intmap}{}
+\subsubsection{中断映射}
+\label{sec:riscvcpu-clic-intmap}
+
+每个 HP 核心中的 CLIC 支持 32 个外部中断和 2 个核心本地中断。
+
+ID 16-47 映射到外部中断，而 ID 15 及以下用于核心本地中断。
+
+\begin{longtable}{ | l | l | }
+\caption{CLIC 中断映射}
+\label{tab:riscvcpu-clic-intmap-table}
+\\ \hline
+\rowcolor{lightgray}
+ID & 描述 \\ \hline
+0-2 & NA (保留) \\ \hline
+3 & CLINT 机器模式软件中断 \\ \hline
+4-6 & NA (保留) \\ \hline
+7 & CLINT 机器模式定时器中断 \\ \hline
+8-15 & NA (保留) \\ \hline
+16 & 外部中断 0 \\ \hline
+17 & 外部中断 1 \\ \hline
+18 & 外部中断 2 \\ \hline
+... & ... \\ \hline
+45 & 外部中断 29 \\ \hline
+46 & 外部中断 30 \\ \hline
+47 & 外部中断 31 \\ \hline
+\end{longtable}
+
+有关核心本地中断源的详细描述，请参阅章节 \ref{sec:riscvcpu-clint}。
+
+32 个外部中断到 SoC 中断源的映射由中断矩阵管理。有关如何配置和映射到每个 HP 核心的 CLIC 中断的详细信息，请参阅章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}}。
+
+\hypertarget{riscvcpu-clic-params}{}
+\subsubsection{CLIC 参数}
+\label{sec:riscvcpu-clic-params}
+
+CLIC 实现的特性可以通过读取 \hyperref[regdesc:MCLICBASE_REG]{mclicbase} 和 \hyperref[regdesc:CLICINFO_REG]{clicinfo} 寄存器获取：
+
+\begin{itemize}
+    \item \hyperref[regdesc:MCLICBASE_REG]{mclicbase} 为只读 CSR，用于保存机器模式下 CLIC 存储器映射寄存器的基地址。
+    \item \hyperref[regdesc:CLICINFO_REG]{clicinfo} 为存储器映射只读寄存器，包含以下域：
+    \begin{itemize}
+        \item \hyperref[fielddesc:CLICINFO_NUM_INTERRUPTS]{NUM\_INTERRUPTS}：表示当前 CLIC 实现支持的中断数量
+        \item \hyperref[fielddesc:CLICINFO_CLICINTCTLBITS]{CLICINTCTLBITS}：表示 \hyperref[regdesc:MCLICINTCTL_REG_i]{clicintctl[i]} 和 \hyperref[fielddesc:MINTTHRESH_TH]{{mintthresh.TH}} 中用于编码每个中断的级别和优先级的可编程高位数量。
+    \end{itemize}
+    \item 假设 \hyperref[fielddesc:MCLICBASE]{mclicbase} 已知，与 \hyperref[regdesc:CLICINFO_REG]{clicinfo} 对应的地址偏移量 0x0004 相加（参考章节 \ref{sec:riscvcpu-clic-memmap-reg-summ}），即可计算出 \hyperref[regdesc:CLICINFO_REG]{clicinfo} 的完整地址。
+\end{itemize}
+
+
+\hypertarget{riscvcpu-clic-int-level-prio}{}
+ \subsubsection{中断级别和优先级编码}
+\label{sec:riscvcpu-clic-int-level-prio}
+
+表 \ref{tab:riscv-clic-level-priority} 显示了配置 CLIC 中断级别和优先级的各种方式，具体取决于 \hyperref[fielddesc:MCLICCFG_MNLBITS]{mcliccfg.MNLBITS} 和 \hyperref[regdesc:MCLICINTCTL_REG_i]{clicintctl[i]} 寄存器的配置的值，以及 \hyperref[fielddesc:CLICINFO_CLICINTCTLBITS]{CLICINTCTLBITS} 参数的固定值（0x3）。
+
+\begin{longtable}{ | l | l | l | l | }
+\caption{CLIC 级别和优先级编码 (CLICINTCTLBITS=3)}
+\label{tab:riscv-clic-level-priority}
+\\\hline
+\rowcolor{lightgray}
+mnlbits[3:0] & clicintctl[i][7:0] & 中断级别 & 中断优先级 \\ \hline
+0   & \texttt{ppp.....} & 255 & 31, 63, 95, 127, 159, 191, 223, 255 \\ \hline
+1   & \texttt{lpp.....} & 127, 255 & 31, 63, 95, 127 \\ \hline
+2   & \texttt{llp.....} & 63, 127, 191, 255 & 31, 63 \\ \hline
+3-8 & \texttt{lll.....} & 31, 63, 95, 127, 159, 191, 223, 255 & 31 \\ \hline
+\end{longtable}
+
+\hyperref[fielddesc:MCLICCFG_MNLBITS]{mcliccfg.MNLBITS} 决定了 \hyperref[regdesc:MCLICINTCTL_REG_i]{clicintctl[i]} 寄存器中用于编码级别的高位数量（在上表中表示为 \texttt{'l'}），而剩余的低位用于编码优先级（在上表中表示为 \texttt{'p'}）。由于 \hyperref[regdesc:MCLICINTCTL_REG_i]{clicintctl[i]} 中 \hyperref[fielddesc:CLICINFO_CLICINTCTLBITS]{CLICINTCTLBITS} 个高位是可写的，因此剩余的低位固定为 1（在上表中表示为 ``.”）。
+
+级别和优先级均用于给某个中断设置更高的优先级。较高级别的中断可以抢占较低级别的中断（假设在中断处理程序中手动启用了 \hyperref[fielddesc:MSTATUSMIE]{mstatus.MIE} 以允许嵌套），但如果两个中断级别相同但优先级不同，且较低的中断正在被 CPU 处理，那么较高优先级的中断无法抢占该中断。因此，优先级仅能决定级别相同且都处于挂起状态的中断的处理顺序。如果如果两个中断的级别和优先级相同，则优先处理 ID 值较高的中断。
+
+
+CPU 内部会根据有效中断级别阈值，来决定在机器模式下，是否允许新挂起的中断抢占正在执行的中断处理程序。该阈值为 \hyperref[fielddesc:MINTSTATUS_MIL]{{mintstatus.MIL}} 和 \hyperref[fielddesc:MINTTHRESH_TH]{{mintthresh.TH}} 的较大值。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-clic-memmap-reg-summ}{}
+\subsubsection{CLIC 存储器映射寄存器列表}
+\label{sec:riscvcpu-clic-memmap-reg-summ}
+
+下表列出了所有 CLIC 机器模式存储器映射寄存器，以及每个寄存器相对于 \hyperref[fielddesc:MCLICBASE]{mclicbase} 的地址偏移量和绝对地址。
+
+请注意，\hyperref[regdesc:MCLICINTIP_REG_i]{clicintip[i]}、\hyperref[regdesc:MCLICINTIE_REG_i]{clicintie[i]}、\hyperref[regdesc:MCLICINTATTR_REG_i]{clicintattr[i]} 和 \hyperref[regdesc:MCLICINTCTL_REG_i]{clicintctl[i]} 为单字节寄存器，对这些寄存器进行字和半字对齐访问是原子的。
+
+\subfile{\modulefiles/01-RISCV-CLIC-M-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器描述 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-clic-memmap-reg}{}
+\subsubsection{CLIC 存储器映射寄存器描述}
+\label{sec:riscvcpu-clic-memmap-reg}
+
+\subfile{\modulefiles/01-RISCV-CLIC-reg__CN}
+
+%%%%%%%%%%%%%
+%%% CLINT %%%
+%%%%%%%%%%%%%
+\newpage
+\subsection{核心本地中断 (CLINT)}
+\label{sec:riscvcpu-clint}
+\subsubsection{概述}
+\label{sec:riscvcpu-clint-overview}
+CLINT 是核心本地中断模块，包含软件中断、定时器中断、以及相应的配置寄存器。
+CLINT 中断源的 ID 如下表所示：
+
+\begin{longtable}{ | c | l | }
+\caption{核心本地中断源} \label{tab:riscvcpu-clint-table}
+\\ \hline
+\rowcolor{lightgray}
+ID & 描述 \\ \hline
+3 & 机器模式软件中断 \\ \hline
+7 & 机器模式定时器中断 \\ \hline
+\end{longtable}
+
+
+\subsubsection{特性}
+\begin{itemize}
+\item 2 个本地电平类型机器模式中断源，优先级可编程
+\item 存储器映射配置和状态寄存器
+\item 64 位定时器，支持中断、溢出标志和三种采样模式
+\item 软件中断
+\end{itemize}
+
+\subsubsection{软件中断}
+\label{sec:riscvcpu-clint-software}
+
+机器模式软件中断通过设置或清除存储器映射寄存器 \hyperref[regdesc:CLINTMSIPREG]{MSIP} 来控制。
+
+设置寄存器位 clicintie[3] 来在核心级别启用软件中断。
+
+读取 CLIC 中断 3 的 clicintip 寄存器的相应位（即 clicintip[3] 位）可获取此中断的挂起状态。
+
+
+\subsubsection{定时器计数器和中断}
+\label{sec:riscvcpu-clint-timer}
+
+设置 \hyperref[regdesc:CLINTMTIMECTLREG]{mtimectl} 寄存器的 \hyperref[fielddesc:CLINTMTIMECTLEN]{mtime\_EN} 位启用定时器计数器。
+
+将 \hyperref[regdesc:CLINTMTIMECMPLOREG]{mtimecmplo} 和 \hyperref[regdesc:CLINTMTIMECMPHIREG]{mtimecmphi} 寄存器分别设置为与系统定时器进行比较的值的低 32 位和高 32 位。
+
+CPU 提供两个 32 位本地存储器映射的寄存器 \hyperref[regdesc:CLINTMTIMELOADLOREG]{mtimeloadlo} 和 \hyperref[regdesc:CLINTMTIMELOADHIREG]{mtimeloadhi}，具有读/写访问权限，用于加载系统定时器的特定值。
+
+当系统定时器值的 64 位值超过 \hyperref[regdesc:CLINTMTIMECMPLOREG]{mtimecmplo} 和 \hyperref[regdesc:CLINTMTIMECMPHIREG]{mtimecmphi} 的 64 位值时，机器模式中断触发。
+
+读取 CLIC 中断 7 的 clicintip 寄存器的 IP 位可获取定时器中断的挂起状态。
+
+若需取消挂起机器模式下的定时器中断，可以清除 CLIC 中断 7 的 clicintie 寄存器的 IE 位，或者更新 \hyperref[regdesc:CLINTMTIMECMPLOREG]{mtimecmplo} 和 \hyperref[regdesc:CLINTMTIMECMPHIREG]{mtimecmphi} 寄存器的值。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-clint-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-clint-reg-summ}
+
+本小节的所有地址均为相对于 CPU 子系统基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的图 \ref{fig:sysmem-address-mapping-structure}。
+
+\subfile{\modulefiles/01-RISCV-CLINT-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器描述}
+
+本小节的所有地址均为相对于 CPU 子系统基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的图 \ref{fig:sysmem-address-mapping-structure}。
+
+\subfile{\modulefiles/01-RISCV-CLINT-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 存储器保护单元 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{存储器保护单元}
+每个 HP 核心都实现了 RISC-V 标准的物理存储器保护 (PMP) 方案和自定义物理存储器属性检查器 (PMAC)，用于防止未经授权的存储器访问。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 物理存储器保护 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{标准物理存储器保护}
+\label{sec:riscvcpu-pmp}
+\subsubsection{概述}
+\label{sec:riscvcpu-pmp-overview}
+CPU 核心包含物理存储器保护 (PMP) 单元，完全符合《RISC-V 指令集手册 v1.10 第二卷“特权架构”》。软件可以使用它为所需的存储器区域设置存储器访问特权（读、写和执行权限）。除了标准 PMP 检查外，CPU 核心还实现了自定义的物理存储器属性 (PMA) 检查器，可根据预定义的属性提供额外的权限检查。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-pmp-features}
+
+PMP 单元用于控制对物理存储器的访问，主要特性包括：
+
+\begin{itemize}
+    \item 最多支持 16 个 PMP 表项
+    \item 最小地址颗粒度为 128 字节
+    \item 三种地址匹配模式：OFF、TOR（范围顶部）和 NAPOT（自然对齐的 2 的幂）。不支持 NA4（自然对齐的 4 字节区域）地址匹配模式
+    \item 读、写和执行的权限控制
+    \item 每个 PMP 表项均支持锁定功能
+    \item 最大物理空间地址为 4 GB
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-pmp-func-descr}
+
+软件可以设置 PMP 单元的配置和地址寄存器，以保存错误并确保安全执行。配置 PMP CSR 可使能 PMP 单元， 但只能在机器模式下进行配置，一旦 PMP 单元被使能，则将根据 16 个 pmpcfgX 和 pmpaddrX 寄存器（见 \ref{sec:riscvcpu-pmp-reg-summ}）中的配置值对用户模式下的所有存储器访问进行写入、读取、访问权限检查。
+
+默认情况下，PMP 允许机器模式下的所有存储器访问，而撤销用户模式下的所有访问。这意味着必须通过 pmpcfg 和 pmpaddr 寄存器（见 \ref{sec:riscvcpu-pmp-reg-summ}）设置用户模式可以访问的地址范围和有效权限，以确保访问成功。但是在机器模式下没有此要求，因为机器模式下默认 PMP 允许所有访问。如果在机器模式下也需要 PMP 检查，则软件可以将所需 PMP 表项的锁定位置位来使能权限检查。锁定位一旦置位，就只能通过 CPU 复位被清零。
+
+如果从没有执行权限的存储器区域获取指令，则处理器会生成异常，并且在 \hyperref[regdesc:MCAUSE]{mcause} CSR 中将异常原因设置为指令访问错误。同样，任何没有有效读/写权限的读写访问都将生成异常， \hyperref[regdesc:MCAUSE]{mcause} 会更新为读取存储器访问错误或写入存储器访问错误，并将则存储器访问地址更新到 \hyperref[regdesc:MTVAL]{mtval} CSR 中。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{riscvcpu-pmp-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-pmp-reg-summ}
+
+下表列出了 CPU 可访问的的 PMP CSR，只有在机器模式下才可以对它们进行读写。
+
+\subfile{\modulefiles/01-RISCV-PMP-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器描述}
+\label{sec:riscvcpu-pmp-reg-desc}
+
+PMP 单元实现了《RISC-V 指令集手册 v1.10 第二卷“特权架构”》中定义的所有 pmpcfg0-3 和 pmpaddr0-15 CSR。
+
+\subfile{\modulefiles/01-RISCV-PMP-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 物理存储器属性 (PMA) 检查器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{自定义物理存储器属性 (PMA) 检查器}
+\label{sec:riscvcpu-pma}
+\subsubsection{概述}
+\label{sec:riscvcpu-pma-overview}
+CPU 核心还实现了自定义物理存储器属性检查器 (PMAC)，可根据 CSR 预先定义的存储器类型提供额外的权限检查。请注意，PMA 检查不区分核心的特权模式，即不区分机器和用户模式。
+
+
+\subsubsection{特性}
+\label{sec:riscvcpu-pma-features}
+
+PMAC 支持以下特性：
+
+\begin{itemize}
+    \item 最多支持 16 个 PMA 表项
+    \item 指定的存储器区域可配置存储器类型
+    \item 最小地址颗粒度为 128 字节
+    \item 三种地址匹配模式：OFF、TOR（范围顶部）和 NAPOT（自然对齐的 2 的幂）。不支持 NA4（自然对齐的 4 字节区域）地址匹配模式
+    \item 读、写和执行的权限控制
+    \item 每个 PMA 表项均支持锁定功能
+    \item 最大物理空间地址为 4 GB
+    \item 指定的存储器区域可配置属性
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-pma-func-descr}
+
+软件可以设置 PMAC 单元的配置和地址寄存器，避免因访问无效存储器区域造成的错误。PMAC CSR 只能在机器模式下进行配置。一旦 PMAC 被使能，则将根据 16 个 pma\_cfgX 和 pma\_addrX 寄存器（见 \ref{sec:riscvcpu-pma-reg-summ}）中的配置值对各个模式下的所有存储器访问进行写入、读取、访问权限检查。访问被设置为无效的存储器的表项将导致获取错误或读写错误异常。
+
+PMA 检查相关的的异常生成及错误处理与 PMP 检查类似。如果从配置为 null 或无效的存储器区域提取指令，则会在处理器级别生成异常，并且在 \hyperref[regdesc:MCAUSE]{mcause} CSR 中将异常原因设置为指令访问错误。同样，读写任何 null 或无效的存储器区域都将生成异常，并且 \hyperref[regdesc:MCAUSE]{mcause} 会更新为读取存储器访问错误或写入存储器访问错误。如果发生存储器读写异常，则存储器访问地址会更新到 \hyperref[regdesc:MTVAL]{mtval} CSR 中。对于配置为有效存储器区域的 PMA 检查表项，处理方式与 PMP 检查相同。
+
+如果软件想要关闭对 PMAC 寄存器的写入，可使用表项的锁定位。一旦任何 pma\_cfgX 寄存器中的锁定位被设置，相应的 pma\_cfgX 和 pma\_addrX 寄存器就不能被写入，除非 CPU 复位。
+
+PMAC CSR 中还提供了一个 4 位的域来定义存储器区域的属性。这些位不为 CPU 核心使用，而是基于地址匹配在读写接口上作为边带信号，供 cache 控制器用于其内部操作。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{riscvcpu-pma-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-pma-reg-summ}
+
+下表列出了 CPU 可访问的的 PMA CSR，只有在机器模式下才可以对它们进行读写。
+
+\subfile{\modulefiles/01-RISCV-PMA-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器}
+\label{sec:riscvcpu-pma-reg-desc}
+
+\subfile{\modulefiles/01-RISCV-PMA-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Debug & Trace Support %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{调试和追踪}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 调试 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{调试}
+\label{sec:riscvcpu-dbg}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-dbg-overview}
+
+本节介绍如何调试在 HP 和 LP CPU 核心上运行的软件。调试功能由标准 JTAG 管脚提供，并符合 \href{https://riscv.org/wp-content/uploads/2019/03/riscv-debug-release.pdf}{《RISC-V 外部调试支持规范 v0.13.2》}。
+HP 核心和 LP 核心各自配备了独立的 JTAG DTM（调试传输模块），用于连接其对应的调试模块（Debug Module）。这两个 JTAG DTM 通过菊花链（daisy chain）串联至一个 JTAG 接口，调试器可通过该接口调试所需核心，并且在调试过程中，可以根据需求将未使用的 DTM 模块保持在旁路状态。两个 HP 核心共享一个调试模块 (DM)，该调试模块连接至 JTAG DTM (HP Cores) 模块，而 LP 核心使用单独的调试模块，该模块连接至 JTAG DTM (LP Core)。
+
+请注意，由于 HP 核心和 LP 核心通过不同的调试模块访问，因此二者无法同时进行调试。
+
+图 \ref{fig:riscvcpu-dbg-sys-overview} 显示了外部调试支持的主要组件。
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth,keepaspectratio]{\modulefiles/figures/debug_p4.png}
+\caption{调试系统概述}\label{fig:riscvcpu-dbg-sys-overview}
+\end{figure}
+
+本节重点介绍 HP 核心的调试功能，有关 LP 核心的调试功能，请参阅章节 \ref{mod:ulp} \textit{\nameref{mod:ulp}}。
+
+用户与运行调试器（Debugger，例如 GDB）的调试主机（DEBUG HOST，例如笔记本电脑）进行交互。调试器通过调试转换器（Debug Translator，可能包含硬件驱动，例如 OPENOCD）与调试传输硬件（DEBUG TRANSPORT，例如 ESP-Prog 适配器）进行通信。调试传输硬件通过标准 JTAG 接口将调试主机连接到 HP 核心的调试传输模块 (JTAG DTM)，绕过LP 核心 DTM。JTAG DTM 使用调试模块接口 (DMI) 提供对调试模块 (DM) 的访问。
+
+DM 允许调试器暂停选中的 HP 核心。抽象命令提供对 GPR（通用寄存器）的访问。程序缓冲区允许调试器在核心上执行任意代码，从而读取 CPU 核心的其他运行状态。CPU 核心的其他运行状态也可以由其他抽象命令读取。
+
+每个 HP 核心的触发器模块支持 3 个触发器。当满足触发条件时，核心将自发暂停并通知调试模块。
+
+系统总线访问模块可以在不影响任一 HP 核心的情况下访问存储器和外设寄存器。
+
+
+\subsubsection{功能}
+\label{sec:riscvcpu-dbg-features}
+
+HP CPU 核心支持以下基本调试功能：
+
+\begin{itemize}
+    \item 向调试器提供有关实现的必要信息
+    \item 支持暂停和恢复核心
+    \item 核心寄存器（包括 CSR）可以由调试器读取/写入
+    \item 可以从复位后执行的第一条指令开始调试核心
+    \item 可以通过调试器复位核心
+    \item 可以通过软件断点指令暂停核心
+    \item 硬件单步调试
+    \item 通过程序缓冲区在暂停的核心中执行任意指令。支持 2 个字的程序缓冲区
+    \item 支持系统总线的字对齐地址访问
+    \item 每个 HP 核心支持 3 个硬件触发器（可用作断点/观察点），详情见章节 \ref{sec:riscvcpu-hwt}
+    \item LP 核心可调试，通过菊花链串联 LP 核心的 JTAG DTM 来实现
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-dbg-func-descr}
+
+如前所述，调试机制遵守 \href{https://riscv.org/wp-content/uploads/2019/03/riscv-debug-release.pdf}{《RISC-V 外部调试支持规范 v0.13.2》}。有关功能操作的详细信息，请参阅该规范。
+
+\subsubsection{JTAG 控制}
+\label{sec:riscvcpu-dbg-jtag-cntl}
+
+标准的 JTAG 接口是 DTM 访问 DM 的唯一途径。硬件提供两种 JTAG 方式：PAD\_to\_JTAG 和 USB\_to\_JTAG。
+
+\begin{itemize}
+    \item {PAD\_to\_JTAG：指 JTAG 信号源来自芯片 IO 管脚}
+    \item {USB\_to\_JTAG：指 JTAG 信号源来自 USB Serial/JTAG 控制器}
+\end{itemize}
+
+使用哪种 JTAG 方法取决于许多因素，具体配置方法如下表所示。
+
+\subfile{\modulefiles/tables/JTAG_CNTL__CN}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-dbg-reg-summ}{}
+\subsubsection{寄存器}
+\label{sec:riscvcpu-dbg-reg-summ}
+
+以下是 HP 核心支持的调试 CSR 列表：
+\subfile{\modulefiles/01-RISCV-DBG-reg-summ__CN}
+
+所有的实现的调试模块寄存器均符合《RISC-V 外部调试支持规范 v0.13.2》。更多信息，请参阅该规范。
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%
+
+
+\subsubsection{寄存器描述}
+以下是 HP 核心支持的调试 CSR 的详细信息：
+
+\subfile{\modulefiles/01-RISCV-DBG-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 交叉触发支持 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{调试暂停组}
+\label{sec:riscvcpu-cti}
+\subsubsection{概述}
+\label{sec:riscvcpu-cti-overview}
+在多核心系统中，当调试软件在某个核心上运行时，其他核心最好不要改变系统状态。这可以通过同步暂停和恢复其他核心来实现，并且需要快速实现。因此，最好不要通过主机上运行的调试器软件的命令来实现，而是通过芯片内部的架构来实现。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-cti-features}
+\begin{itemize}
+    \item HP 核心之间可交叉触发
+    \item 覆盖核心的 RunStall 功能
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-cti-func-descr}
+
+HP 核心调试模块实现了《RISC-V 外部调试规范 v1.0-STABLE》（即将发布）中的 dmcs2 寄存器，以支持基于 hart 组的同时暂停/恢复。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{riscvcpu-cti-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-dmcs2-desc}
+
+
+下表包含调试模块内必须实现的控制寄存器。
+
+\subfile{\modulefiles/01-RISCV-CTI-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器描述}
+\label{sec:riscvcpu-cti-reg-desc}
+\subfile{\modulefiles/01-RISCV-CTI-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 硬件触发器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{硬件触发器}
+\label{sec:riscvcpu-hwt}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-hwt-overview}
+
+\subsubsection{特性}
+\label{sec:riscvcpu-hwt-features}
+
+每个 HP 核心实现一个硬件触发器模块，提供调试的断点和监视点功能。每个硬件触发器均支持以下特性：
+
+\begin{itemize}
+    \item 3 个独立的可配置触发单元，可匹配程序计数器地址或加载/存储访问地址
+    \item 可以通过引起断点异常来抢占执行
+    \item 可以暂停执行并将控制权转移给调试器
+    \item 支持 NAPOT（2 的幂次方对齐区域）地址编码
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-hwt-func-descr}
+
+硬件触发器模块提供了 7 个 CSR，见 \hyperref[sec:riscvcpu-hwt-reg-summ]{寄存器列表}。其中，\hyperref[regdesc:TDATA1]{tdata1} 和 \hyperref[regdesc:TDATA2]{tdata2} 是抽象 CSR，也就是说它们是用于访问某个触发单元中的内部寄存器的影子寄存器，一次访问一个触发单元。
+
+要选择特定的触发单元，需要将相应的编号 (0-2) 写入 \hyperref[regdesc:TSELECT]{tselect} CSR。当写入有效数值时，抽象 CSR \hyperref[regdesc:TDATA1]{tdata1} 和 \hyperref[regdesc:TDATA2]{tdata2} 将自动匹配该触发单元的内部寄存器。每个触发单元都有两个内部寄存器，即 \hyperref[regdesc:MCONTROL]{mcontrol} 和 \hyperref[regdesc:MADDRESS]{maddress}，它们分别与 tdata1 和 tdata2 匹配。
+
+向 tselect 写入超过最大编号的数值时会导致该数值被裁剪为最大的编号，此编号可以被读回。这个特性可用于枚举初始化期间或使用调试器时可用的触发器。
+
+由于软件或调试器可能需要知道所选触发器的类型以便正确解读 tdata1 和 tdata2，因此 tdata1 的 4 个位 (31-28) 对所选触发器的类型进行了编码。此域为只读访问属性，并且值始终为 0x2，代匹配类型触发器，因此，可以推断 tdata1 和 tdata2 会通过 mcontrol 和 maddress 被解读。RISC-V 调试规范 v0.13.2 提供了其他可能值的信息，但是该触发模块仅支持 0x2 类型。
+
+一旦选定了触发单元，就可以通过置位 mcontrol CSR (tdata1) 中相应的域并将目标地址写入 maddress CSR (tdata2) 来对该触发单元进行配置。
+
+通过写入 mcontrol 的 action 域，可以将每个触发单元配置为引起断点异常或进入调试模式。该域只能从调试器写入，因此默认情况下，触发器（如果启用）将引起断点异常。
+
+每个触发单元的 mcontrol 都有一个 \hyperref[fielddesc:MCONTROLHIT]{hit} 域。在 CPU 暂停或进入异常后，通过读取该域可以查明是否是触发单元触发了。触发器触发后该域会立即被置位，但在恢复操作之前必须被手动清零，不过不清零不会影响正常执行。
+
+每个触发单元仅支持地址匹配，该地址可以是存储器访问地址，也可以是指令的虚拟地址。通过写入所选触发单元的 maddress (tdata2) CSR，可以指定区域的地址和大小。大于 1 个字节的区域大小通过 NAPOT 编码（见表 \ref{tab:riscvcpu-hwt-table}）指定，并通过置位 mcontrol 中 match 域来使能。注意，根据定义，NAPOT 编码地址的起始地址需与区域大小对齐（即，是区域大小的整数倍），最大支持 128 字节。
+
+\begin{longtable}{ | c | c | r | }
+\caption{NAPOT 编码的 maddress} \label{tab:riscvcpu-hwt-table}
+\\ \hline
+\rowcolor{lightgray}
+maddress(31-0) & 起始地址 & 大小（字节） \\ \hline
+aaa...aaaaaaaaa0 & aaa...aaaaaaaaa0 & $2$ \\ \hline
+aaa...aaaaaaaa01 & aaa...aaaaaaaa00 & $4$ \\ \hline
+aaa...aaaaaaa011 & aaa...aaaaaaa000 & $8$ \\ \hline
+aaa...aaaaaa0111 & aaa...aaaaaa0000 & $16$ \\ \hline
+\multicolumn{3}{c}{....} \\ \hline
+aaa...0111111111 & aaa...aaa0000000 & $2^{8}$ \\ \hline
+\end{longtable}
+
+\hyperref[regdesc:TCONTROL]{tcontrol} CSR 对所有触发单元都是通用的。在机器模式下，当陷阱处理程序运行时，该寄存器可用于阻止触发器重复引起异常，而且默认会禁用 ISR 内部的断点异常，但是，出于调试目的，可以在进入 ISR 之前手动使能断点异常。如果将触发器配置为进入调试模式，则此 CSR 不相关。
+
+\subsubsection{触发执行流程}
+\label{sec:riscvcpu-hwt-suggest-op}
+
+当触发器触发引起 hart 暂停并进入调试模式时 (\hyperref[fielddesc:MCONTROLACTION]{action} = 1)：
+\begin{itemize}
+    \item \hyperref[regdesc:DPC]{dpc} 在解码阶段被设置为当前程序计数器 (PC)
+    \item \hyperref[regdesc:DCSR]{dcsr} 的 cause 域被设置为 2，表示暂停是由于触发器触发引起
+    \item 与触发的触发器对应的 \hyperref[fielddesc:MCONTROLHIT]{hit} 域被置位
+\end{itemize}
+
+当触发器触发引起 hart 进入陷阱时 (\hyperref[fielddesc:MCONTROLACTION]{action} = 0)：
+\begin{itemize}
+    \item \hyperref[regdesc:MEPC]{mepc} 在解码阶段被设置为当前 PC
+    \item \hyperref[regdesc:MCAUSE]{mcause} 被设置为 3，即断点异常
+    \item \hyperref[fielddesc:TCONTROLMPTE]{mpte} 被设置为陷阱发生之前的 \hyperref[fielddesc:TCONTROLMTE]{mte} 的值
+    \item \hyperref[fielddesc:TCONTROLMTE]{mte} 被设置为 0
+    \item 与触发的触发器对应的 \hyperref[fielddesc:MCONTROLHIT]{hit} 域被置位
+\end{itemize}
+
+\textit{说明：如果两个触发器同时触发，一个 action = 0，另一个action = 1，则 hart 会暂停并进入调试模式。}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 寄存器 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-hwt-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-hwt-reg-summ}
+
+
+下表列出了 CPU 可访问的的触发模块 CSR，只有在机器模式下才可以对它们进行读写。
+
+\subfile{\modulefiles/01-RISCV-HWT-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% 寄存器描述 %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器描述}
+
+\subfile{\modulefiles/01-RISCV-HWT-reg__CN}
+
+%%%%%%%%%%%%
+%%% 追踪 %%%
+%%%%%%%%%%%%
+
+\newpage
+\subsection{追踪}
+\label{sec:riscvcpu-trace}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-trace-overview}
+为了支持非侵入式软件调试，CPU 核心提供了指令追踪接口，为离线调试提供相关信息。追踪编码器 (Trace Encoder) 模块可通过指令追踪接口获取这些信息，并将其压缩后存储在分配的存储器中。软件解码器可直接从存储器中读取这些信息，无需中断 CPU 核心，便可重新生成 CPU 核心实际执行的程序。
+
+
+\subsubsection{特性}
+\label{sec:riscvcpu-trace-features}
+
+CPU 核心支持指令追踪功能，并按照 RISC-V 处理器追踪规范 v1.0 (RISC-V Processor Trace v1.0) 中的规定向追踪编码器提供以下信息：
+
+\begin{itemize}
+    \item 退役指令数量
+    \item 异常和中断是否发生及其原因、陷阱值
+    \item hart 当前的特权级别
+    \item 跳转、分支和返回退役指令的指令类型
+    \item 程序计数器更改之前和之后退役指令的地址
+    \item 根据 \hyperref[regdesc:MCONTROL]{mcontrol} 中的 \hyperref[regdesc:MCONTROL]{action} 位在触发命中时启用追踪
+\end{itemize}
+
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-trace-func-descr}
+
+每个 HP 核心实现了强制指令 delta 追踪，也称为分支追踪。它的工作原理是通过发送程序获取的 delta 信息来追踪从已知起始地址开始的执行情况。delta 通常由跳转、调用、返回、分支类型的指令、中断以及异常引入。所有此类 delta 以及其他详细信息，如原因和实际指令/地址，都通过高带宽指令追踪接口从 CPU 输出给追踪编码器，追踪编码器对这些信息进行操作，将信息压缩后存入存储器，供解码器离线调试。有关编码的更多信息，请参阅章节 \ref{mod:riscvtracenc} \textit{\nameref{mod:riscvtracenc}}。
+
+CPU 没有任何内部寄存器来控制指令追踪接口，所有相关控制寄存器都在 \ref{mod:riscvtracenc} \textit{\nameref{mod:riscvtracenc}} 模块中。
+
+%%%%%%%%%%%%
+%%% 性能增强 %%%
+%%%%%%%%%%%%
+\newpage
+\section{性能}
+\label{sec:riscvcpu-perf-enhancements}
+
+%%%%%%%%%%%%
+%%% 分支预测 %%%
+%%%%%%%%%%%%
+
+\subsection{分支预测}
+\label{sec:riscvcpu-perf-bp}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-perf-bp-overview}
+在分支指令执行前，核心会预测分支是否跳转以及跳转的目标地址。然后，基于预测的结果，从相应的 PC 获取指令。在执行分支时，验证预测是否正确，如果预测错误，则刷新流水线，并从正确的 PC 开始获取指令。预测能提高吞吐量，因为核心会根据预测结果继续获取指令，而不是等待分支指令执行完成。下面的章节会详细描述核心使用的预测技术。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-perf-bp-features}
+\begin{itemize}
+    \item 预测条件/无条件分支类型指令的结果和目标地址
+    \item 支持分支目标预测，指令包括 BEQ、BNE、BLT、BLTU、BGE、BGEU、C.BEQZ、C.BNEZ、JAL、J、CJ
+    \item 支持条件分支预测，指令包括：BEQ、BNE、BLT、BLTU、BGE、BGEU、C.BEQZ、C.BNEZ
+    \item 使用 2 位饱和计数器，提高准确性
+    \item 使用条件分支的全局历史进行预测，提高性能
+    \item 对于无条件分支，目标预测在一个时钟周期内完成，即当预测或推测正确时，0 周期惩罚
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-perf-bp-func-descr}
+
+核心使用分支历史表（BHT）和分支目标缓冲区（BTB）来预测分支指令和跳转指令的行为。
+
+BHT 是一个 512x16 位 SRAM 存储器，分别存在于两个核心中。在执行预测时，使用虚拟分支历史寄存器（VBHR）作为索引，而在更新或纠正分支类型指令执行结果（跳转或不跳转）时，由全局分支历史寄存器（GBHR）作为索引。GBHR 包含前 13 条分支类型指令执行结果，VBHR 包含前 12 条结果和当前分支指令的预测结果。因此，这两个寄存器都保存了先前执行的分支轨迹。基于 VBHR/GBHR 的 13 位，BHT 中存储的 2 位饱和计数器值分别被读取或写入。
+
+如图 \ref{fig:riscvcpu-bp_sat-scheme} 所示，2 位饱和计数器表示分支是否为：
+\begin{itemize}
+    \item 弱不跳转（weakly not taken，00）
+    \item 强不跳转（strongly not taken，01）
+    \item 弱跳转（weakly taken，10）
+    \item 强不跳转（strongly taken，11）
+\end{itemize}
+
+如果预测结果为弱不跳转或强不跳转，则预测分支为不跳转。如果为弱跳转或强跳转，则为跳转。
+
+在将分支执行的实际结果更新至 BHT 时，会使用以下逻辑更新相应的饱和计数器。
+
+BTB 存储 32 位分支目标地址，最多可存储 16 条地址，以条件或无条件分支类型指令 PC 的最后 16 位作为索引。因此，核心根据 BHT 来预测分支类型指令的结果，如果预测为跳转，跳转到 BTB 中的目标地址。对于无条件分支，核心直接跳转到 BTB 中的目标地址，因为这种情况不需要进行预测。如果预测错误，核心在执行过程中，会获得分支类型指令的实际结果和目标地址，同时也会刷新流水线，跳转到正确的地址，并更新 BTB 和 BHT 表项。
+
+图 \ref{fig:riscvcpu-bp_sat-scheme} 详细介绍了每个 HP 核心中使用的 2 位饱和方案。
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth,keepaspectratio]{\modulefiles/figures/sat_counter.png}
+\caption{2 位饱和计数器}\label{fig:riscvcpu-bp_sat-scheme}
+\end{figure}
+
+%%%%%%%%%%%%
+%%% RAS  %%%
+%%%%%%%%%%%%
+
+\subsection{RAS}
+\label{sec:riscvcpu-perf-ras}
+
+\subsubsection{概述}
+\label{sec:riscvcpu-perf-ras-overview}
+返回地址栈（RAS）是核心维护的一个栈，用于推送跳转和链接（JAL/JALR）类型指令的返回地址。因此，核心可以在 RET 指令被预解码时立即跳转到返回地址，从而提高函数调用返回的性能。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-perf-ras-features}
+
+\begin{itemize}
+    \item 避免函数调用返回时流水线停顿，提高核心性能
+    \item 最多可存储四级函数调用嵌套
+\end{itemize}
+
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-perf-ras-func-descr}
+当核心预解码 JAL/JALR/C.JALR 指令时，下一条指令的 32 位 PC 会被推送到 RAS。
+
+当核心预解码返回类型指令 (JALR, C.JR, C.JALR) 时，地址从 RAS 中弹出。然后，核心开始从弹出的地址获取指令。当核心执行返回指令时，如果弹出的地址与链接寄存器中存储的地址不匹配，则刷新流水线并从链接寄存器中的地址开始获取指令。RAS 最多可以存储四个返回地址，即支持四级函数调用嵌套。
+
+RAS 预测取决于以下条件：
+
+\begin{longtable}{ | c | c | c | }
+\hline\rowcolor{lightgray}
+目标寄存器 (Rd) & 源寄存器 (Rs) & RAS 操作 \\ \hline
+\endfirsthead
+\hline
+rd != x1 & rs1 != x1 & 无操作 \\ \hline
+rd != x1 & rs1 == x1 & 弹出 \\ \hline
+rd == x1 & rs1 != x1 & 推入 \\ \hline
+rd == x1 & rs1 == x1 & 推入并弹出 \\ \hline
+\end{longtable}
+
+ \subsection{性能配置控制状态寄存器}
+\label{sec:riscvcpu-perf-csr}
+\begin{register}{H}{mhcr}{0x7C1}\label{regdesc:MHCR}
+\regfield{(reserved)}{19}{13}{{0x00000}}%
+\regfield{BTB}{1}{12}{{0}}%
+\regfield{(reserved)}{6}{6}{{0x00}}%
+\regfield{BPE}{1}{5}{{0}}%
+\regfield{RS}{1}{4}{{0}}%
+\regfield{(reserved)}{4}{0}{{0x0}}%
+\reglabel{Reset}\regnewline%
+\begin{regdesc}\begin{reglist}
+\label{fielddesc:MHCRRS}\item [RS] 配置是否启用返回地址栈逻辑进行预测。\\
+0：禁用 \\
+1：启用 \\
+(R/W)
+\label{fielddesc:MHCRBPE}\item [BPE] 配置是否启用条件分支预测。\\
+0：禁用 \\
+1：启用 \\
+(R/W)
+\label{fielddesc:MHCRBTB}\item [BTB]配置是否启用分支目标缓冲区。\\
+0：禁用 \\
+1：启用 \\
+(R/W)
+\end{reglist}\end{regdesc}
+\end{register}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 自定义特性 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{自定义特性}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 总线错误响应 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{总线错误响应}
+\label{sec:riscvcpu-bus-err-resp}
+\subsubsection{概述}
+\label{sec:riscvcpu-buserr-overview}
+
+在 HP 核心中，加载/存储总线错误被处理为异步异常，这意味着在检测到此类异常时，CPU 可能已经执行了引起异常的指令之后的部分指令。
+
+在处理同步异常时，标准 CSR \hyperref[regdesc:MCAUSE]{mcause}、\hyperref[regdesc:MEPC]{mepc} 和 \hyperref[regdesc:MTVAL]{mtval} 提供的上下文足够。但是，对于异步异常来说，这些信息并不够。因此，需要额外的 CSR 来给软件提供程序所需的必要上下文，来处理和恢复遇到异步总线错误异常的程序。
+
+下一小节将介绍这些总线错误 CSR 以及获取总线错误异常上下文的推荐方法。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-buserr-func-descr}
+
+有两种方法来处理加载/存储总线错误：
+
+\begin{itemize}
+    \item 同步总线错误模式： \\
+    当启用此模式时（通过设置 \hyperref[fielddesc:MHINT_SBE]{mhint.SBE} 位），总线错误异常可以像其他同步异常一样进行处理。因此，执行会在发生总线错误的 PC 处触发异常，而且 \hyperref[regdesc:MEPC]{mepc} 持有相同的 PC。\\
+    启用此模式的缺点是增加了所有加载/存储指令的延迟。
+    \item 异步总线错误模式（默认）：
+    \begin{itemize}
+    \item 为了在异步模式下处理总线错误，建议（但不是必须）在启动时清除 \hyperref[fielddesc:MEXSTATUS_NMFT]{mexstatus.NMFT} 位。\\
+    \item 在异步模式下，当（一个或多个）加载/存储指令导致总线错误时，CPU 会进入陷阱处理程序，MCAUSE 值会更新为 5 或 7（取决于导致错误的操作类型），\hyperref[regdesc:MEPC]{mepc} 保存本应在该加载/存储指令之后执行的指令的 PC。\\
+    \item 进入原因 5 或 7 的异常处理程序时，必须检查 \hyperref[fielddesc:MEXSTATUS_BUS_ERR]{mexstatus.BUS\_ERR} 位，确认是否是由于加载/存储总线错误造成的异常。如果是，则必须清除此位进行确认。\\
+    \item 然后，必须检查位 \hyperref[fielddesc:LDPC0_VLD]{ldpc0.vld}、\hyperref[fielddesc:LDPC1_VLD]{ldpc1.vld}、\hyperref[fielddesc:STPC0_VLD]{stpc0.vld}、\hyperref[fielddesc:STPC1_VLD]{stpc1.vld} 和 \hyperref[fielddesc:STPC2_VLD]{stpc2.vld} 是否有效。如果有效，则必须清除这些位，并从这些 CSR 中读取相应的地址域（\hyperref[fielddesc:LDPC0_ADDR]{ldpc0.addr}、\hyperref[fielddesc:LDPC1_ADDR]{ldpc1.addr}、\hyperref[fielddesc:STPC0_ADDR]{stpc0.addr}、\hyperref[fielddesc:STPC1_ADDR]{stpc1.addr} 和 \hyperref[fielddesc:STPC2_ADDR]{stpc2.addr}），以获取这些故障加载/存储指令执行时的程序计数器。\hyperref[regdesc:LDTVAL0]{ldtval0}、\hyperref[regdesc:LDTVAL1]{ldtval1}、\hyperref[regdesc:STTVAL0]{sttval0}、\hyperref[regdesc:STTVAL1]{sttval1} 和 \hyperref[regdesc:STTVAL2]{sttval2} 保存了加载/存储指令相对应的存储器访问地址。注意，序号较低的 CSR 记录了最新的总线错误，序号较高的 CSR 保存了更早的总线错误。\\
+    \item 注意，即使原因是 5 或 7，加载和存储总线错误 CSR 都必须进行检查，因为有时有多个加载/存储指令（或未对齐访问被拆分为多个加载/存储操作）已执行并正在进行中。在首次遇到总线错误之前进入陷阱处理程序时，CPU 会完成所有挂起的存储器操作，并记录它们引起的任何总线错误。因此，检查所有 CSR 非常重要，因为这可以捕获和处理所有此类异常。\\
+    \item 注意，跟同步总线错误异常相比，异步总线错误异常发生后，恢复正常的程序执行更加复杂，因为程序可能执行了问题指令之后的很多指令。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{控制状态寄存器}
+\label{sec:riscvcpu-buserr-csr}
+
+\begin{longtable}{ | p{4.0cm} | p{8.4cm} | c | c| }
+\hline\rowcolor{lightgray}
+名称 & 描述 & 地址 & 访问 \\ \hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+名称 & 描述 & 地址 & 访问  \\
+\hline
+\endhead
+\endfoot
+
+\hyperref[regdesc:MEXSTATUS]{mexstatus} & 机器扩展控制和状态寄存器 & 0x7E1 & R/W \\\hline
+\hyperref[regdesc:MHINT]{mhint} & 机器隐式操作寄存器 & 0x7C5 & R/W \\\hline
+\hyperref[regdesc:LDPC0]{ldpc0} & 加载总线错误 PC 寄存器0 & 0xBE0 & R/W \\\hline
+\hyperref[regdesc:LDPC1]{ldpc1} & 加载总线错误 PC 寄存器 1 & 0xBE1 & R/W \\\hline
+\hyperref[regdesc:LDTVAL0]{ldtval0} & 加载总线错误访问地址寄存器 0 & 0xBE8 & R/W \\\hline
+\hyperref[regdesc:LDTVAL1]{ldtval1} & 加载总线错误访问地址寄存器 1 & 0xBE9 & R/W \\\hline
+\hyperref[regdesc:STPC0]{stpc0} & 存储总线错误 PC 寄存器 0 & 0xBF0 & R/W \\\hline
+\hyperref[regdesc:STPC1]{stpc1} & 存储总线错误 PC 寄存器 1 & 0xBF1 & R/W \\\hline
+\hyperref[regdesc:STPC2]{stpc2} & 存储总线错误 PC 寄存器 2 & 0xBF2 & R/W \\\hline
+\hyperref[regdesc:STTVAL0]{sttval0} & 存储总线错误访问地址寄存器 0 & 0xBF8 & R/W \\\hline
+\hyperref[regdesc:STTVAL1]{sttval1} & 存储总线错误访问地址寄存器 1 & 0xBF9 & R/W \\\hline
+\hyperref[regdesc:STTVAL2]{sttval2} & 存储总线错误访问地址寄存器 2 & 0xBFA & R/W \\\hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 专用IO %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\subsection{专用 IO}
+\label{sec:riscvcpu-fastio}
+\subsubsection{概述}
+\label{sec:riscvcpu-fastio-overview}
+
+GPIO 通常为 APB 外设，这意味着对输出的更改和对输入的读取，可能会卡在写缓冲区或其他传输之后，并且速度通常较慢，因为 APB 总线的运行速度通常低于 CPU。
+作为替代方案，CPU 核心实现了 I/O 处理器特定的 CPU 寄存器 (CSR)，直接连接到 GPIO 矩阵或 IO 管脚。这些寄存器只需一条指令即可访问，因此十分迅速。
+
+\subsubsection{特性}
+\label{sec:riscvcpu-fastio-features}
+ \begin{itemize}
+    \item 8 个直接映射到 GPIO 的专用 IO
+    \item 驱动输出端口无延迟
+    \item 读取输入值有两个 CPU 周期的延迟
+\end{itemize}
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-fastio-func-descr}
+
+CPU 核心有一组 8 个输入和输出（管脚值 + 管脚输出使能），这些输入和输出端口直接连接到 GPIO 矩阵，可通过 GPIO 矩阵映射到最上层的管脚。更多相关信息请参考 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+
+CPU 自定义了 3 个 CSR：
+\begin{itemize}
+    \item GPIO\_IN 只读，表示输入值。
+    \item GPIO\_OUT 可读可写，表示 GPIO 输出值。
+    \item GPIO\_OEN 可读可写，表示 GPIO 输出使能状态，控制管脚方向，拉高表示管脚配置为输出模式，拉低表示配置为输入模式。
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{riscvcpu-fastio-reg-summ}{}
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-fastio-reg-summ}
+
+
+下面是在核心中自定义的专用 IO CSR 的列表。
+
+\subfile{\modulefiles/01-RISCV-FASTIO-reg-summ__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsubsection{寄存器}
+\label{sec:riscvcpu-fastio-reg-desc}
+\subfile{\modulefiles/01-RISCV-FASTIO-reg__CN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 运行暂停 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{运行暂停 (RunStall)}
+\label{sec:riscvcpu-custom-runstall}
+\subsubsection{概述}
+\label{sec:riscvcpu-custom-runstall-overview}
+
+运行暂停 (RunStall) 信号允许外部代理暂停处理器，同时关闭大部分时钟树，以节省运行功耗。
+
+RunStall 输入信号允许外部逻辑暂停处理器的内部流水线。RunStall 输入信号激活后，流水线中正在进行的所有指令将完成运行。流水线成功暂停后，核心将输出握手信号 corestalled，表示成功暂停 CPU 流水线。
+
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-custom-runstall-feature-func-descr}
+
+RunStall 输入信号可用于以下两种场景：
+\begin{itemize}
+    \item 在复位后初始化指令和数据 RAM。如果在复位期间激活RunStall，并在复位移除后仍然保持激活状态，那么处理器将处于暂停状态。可以初始化指令和数据 RAM，在初始化完成后，可以释放 RunStall，允许处理器开始执行代码。这种机制可以让处理器的复位向量指向本地指令 RAM中的地址，并且复位代码可以在处理器开始执行代码之前，由外部代理写入指令 RAM。
+    \item 冻结处理器的内部流水线。激活 RunStall 减少了处理器的活动功耗，也无需使用中断和 WAITI 选项。然而，使用 RunStall 信号所节省的功耗没有 WAITI 节省得那么多，因为 RunStall 逻辑需要处理器的某些部分在流水线暂停时，仍然保持活跃状态。
+\end{itemize}
+
+图 \ref{fig:riscvcpu-runstall} 显示了 RunStall 和 CoreStalled 信号的时序图以及 CPU 核心状态的切换。
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth,keepaspectratio]{\modulefiles/figures/RunStall.png}
+\caption{使用 RunStall 时 CPU 核心状态的切换}\label{fig:riscvcpu-runstall}
+\end{figure}
+
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-custom-runstall-reg-summ}
+
+章节 \ref{sec:sysreg-cpu-registers} 中的 SoC 寄存器可用于激活 HP 核心的 RunStall。
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 调试辅助信息 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\subsection{调试辅助信息}
+\label{sec:riscvcpu-dbgassist-features}
+HP CPU 核心系统向 \chipname{} 中的调试辅助模块提供了额外的调试信息。详细信息请参阅章节 \ref{mod:dbgassist} \textit{\nameref{mod:dbgassist}}。
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% 核心锁定 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{核心锁定}
+\label{sec:riscvcpu-custom-lockup-features}
+\subsubsection{概述}
+\label{sec:riscvcpu-custom-lockup-overview}
+目前，RISC-V 编程模型中没有定义异常使能寄存器。而且，从异常服务程序返回到正常程序流时，MCAUSE 寄存器中的异常向量 ID 未被清除。因此，软件开发者无法仅通过编程模型中定义的寄存器，轻松判断 CPU 当前是在处理中断异常，还是在执行正常的程序流程。为了解决这一问题，CPU 实现了一个自定义的 LOCKUP 域，可以通过自定义 CSR 读取。
+
+\subsubsection{功能描述}
+\label{sec:riscvcpu-custom-lockup-feature-func-descr}
+当 CPU 响应异常时，会通过 MEXSTATUS 域中的 EXPT\_VLD 确定当前是否正在运行异常服务程序。如果 CPU 正在处理异常，并且从异常服务程序返回之前又触发了新的异常，CPU 将被锁定。当 CPU 被锁定时：
+
+\begin{itemize}
+    \item 锁定信号会被设置为高，来通知 SoC CPU 处于锁定状态
+    \item CPU 停止获取和执行指令
+    \item PC 停留在触发锁定的指令上
+    \item MEXSTATUS 寄存器中的 LOCKUP 域置为 1
+\end{itemize}
+
+在锁定状态下，调试器仍然可以介入并执行调试命令。建议在检测到锁定状态时重置核心。
+
+锁定规则有一些例外，当 ECALL 或 EBREAK 引起的异常嵌套在任何异常类型中时，不会触发 CPU 锁定。
+
+\subsubsection{寄存器列表}
+\label{sec:riscvcpu-custom-lockup-reg-summ}
+
+\hyperref[fielddesc:MEXSTATUS_LOCKUP]{mexstatus.LOCKUP} 位表示单个核心的锁定状态。
+
+\subsubsection{寄存器描述}
+\label{sec:riscvcpu-custom-lockup-reg-desc}
+请参阅 \hyperref[regdesc:MEXSTATUS]{mexstatus} CSR。
+\end{document}

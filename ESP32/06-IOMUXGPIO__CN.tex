@@ -1,0 +1,439 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./06-IOMUXGPIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{iomuxgpio}{}
+\chapter{IO MUX 和 GPIO 交换矩阵 (GPIO, IO MUX)}
+\label{mod:iomuxgpio}
+
+\section{概述} \label{sec:iomux-overview}
+
+ESP32 芯片有 34 个物理 GPIO 管脚。每个 GPIO 管脚都可用作一个通用 IO，或连接一个内部的外设信号。IO MUX \footnote{MUX：Multiplexer 的缩写，即多路复用。ESP32 芯片集成了多个需要与外界通讯的外设。由于芯片封装尺寸小、管脚数量有限，传送所有输入输出信号的唯一方法是管脚多路复用。管脚多路复用由软件可编程的寄存器控制（例如 IO\_MUX\_\regindex{x}\_REG 寄存器）。}、RTC IO MUX 和 GPIO 交换矩阵用于将信号从外设传输至 GPIO 管脚。这些模块共同组成了芯片的 IO 控制。
+
+{\bfseries 注意：这 34 个物理 GPIO 管脚的序列号为：0-19, 21-23, 25-27, 32-39。其中 GPIO34-39 仅用作输入管脚，其他的既可以作为输入又可以作为输出管脚。}
+
+{\bfseries GPIO20 仅在 ESP32-PICO-V3 和 ESP32-PICO-V3-02 上可用，详细信息请参阅 \href{https://www.espressif.com/sites/default/files/documentation/esp32-pico_series_datasheet_cn.pdf}{\textit{ESP32-PICO 系列技术规格书}}。本章节的描述不包含 GPIO20。}
+
+本章描述了 GPIO 管脚（控制信号：FUN\_SEL、IE、OE、WPU、WDU 等）和 162 个外设输入以及 176 个外设输出信号（控制信号：SIG\_IN\_SEL、SIG\_OUT\_SEL、IE、OE 等）和快速外设输入／输出信号（控制信号：IE、OE 等）以及 RTC IO MUX 之间的信号选择和连接关系。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{./06-IOMUXGPIO/figures/IO_diagram_20181017.eps}
+    \caption{IO MUX、RTC IO MUX 和 GPIO 交换矩阵结构框图}
+\end{figure}
+
+\begin{enumerate}
+
+\item IO MUX 中每个 GPIO 管脚有一组寄存器。每个管脚可以配置成 GPIO 功能（连接 GPIO 交换矩阵）或者直连功能（旁路 GPIO 交换矩阵，快速信号如以太网、SDIO、SPI、JTAG、UART 等会旁路 GPIO 交换矩阵以实现更好的高频数字特性。所以高速信号会直接通过 IO MUX 输入和输出。）
+
+章节 \ref{sec:iomux_pads} 列出了所有 GPIO 管脚的 IO MUX 功能。
+
+\item GPIO 交换矩阵是外设输入和输出信号和管脚之间的全交换矩阵。
+\begin{itemize}
+\item 芯片输入方向：162 个外设输入信号都可以选择任意一个 GPIO 管脚的输入信号。
+\item 芯片输出方向：每个 GPIO 管脚的输出信号可来自 176 个外设输出信号中的任意一个。
+\end{itemize}
+
+章节 \ref{sec:peripheral_signals} 列出了 GPIO 交换矩阵的外设信号。
+
+\item RTC IO MUX 用于控制 GPIO 管脚的低功耗和模拟功能。只有部分 GPIO 管脚具有这些功能。
+
+章节 \ref{sec:rtcmux_pins} 列出了 RTC IO MUX 功能。
+\end{enumerate}
+
+图 \ref{fig:pad-overview} 展示了芯片焊盘 (PAD) 的内部结构，即芯片逻辑与 GPIO 管脚之间的电气接口。ESP32 的 GPIO 管脚均采用这一结构，且由 IE、OE、WPU 和 WPD 信号控制。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./06-IOMUXGPIO/figures/pad-overview_20210815.eps}    \caption{焊盘内部结构}
+    \label{fig:pad-overview}
+\end{figure}
+
+\begin{itemize}
+    \item IE：输入使能
+    \item OE：输出使能
+    \item WPU：内部弱上拉电阻
+    \item WPD：内部弱下拉电阻
+    \item Bonding pad：接合焊盘，芯片逻辑的结点，实现芯片封装内晶片与 GPIO 管脚之间的物理连接
+\end{itemize}
+
+\section{通过 GPIO 交换矩阵的外设输入}
+
+
+\subsection{概述}
+
+为实现通过 GPIO 交换矩阵接收外设输入信号，需要配置 GPIO 交换矩阵从 34 个 GPIO（0-19，21-23，25-27，32-39）中获取外设输入信号的索引号（0-18，23-36，39-58，61-90，95-124，140-155，164-181，190-195，198-206）。
+
+输入信号通过 IO MUX 从 GPIO 管脚中读取。IO MUX 必须设置相应管脚为 GPIO 功能。这样 GPIO 管脚的输入信号就可进入 GPIO 交换矩阵然后通过 GPIO 交换矩阵进入选择的外设输入。
+
+\subsection{功能描述}
+\label{sec:inputconfig}
+图 \ref{Figure:gpio_matrix_input} 为通过 GPIO 交换矩阵的外设输入的示意图。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./06-IOMUXGPIO/figures/iomux-input-via-gpio-matrix_20200617}}
+    \caption{通过 IO MUX、GPIO 交换矩阵的外设输入}
+    \label{Figure:gpio_matrix_input}
+\end{figure}
+
+把某个外设信号 \textcolor{red}{\it{Y}} 绑定到某个 GPIO 管脚 \textcolor{red}{\it{X}} 的配置过程为：
+
+\begin{enumerate}
+    \item 在 GPIO 交换矩阵中配置外设信号 \textcolor{red}{\it{Y}} 的 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL\_CFG 寄存器：
+    \begin{itemize}
+        \item 置位 GPIO\_SIG\textcolor{red}{\it{y}}\_IN\_SEL 选择通过 GPIO 交换矩阵接收外部输入信号；
+        \item 设置 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL 字段为要读取的 GPIO 管脚 \textcolor{red}{\it{X}} 的值。
+    \end{itemize}
+    \item 在 GPIO 交换矩阵中配置 GPIO 管脚 \textcolor{red}{\it{X}} 的 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG 寄存器、清零 GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段：
+    \begin{itemize}
+        \item 要强制管脚的输出状态始终由 GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段决定，则将 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG 寄存器的  GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL 字段位置为 1。
+        \item GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段在 GPIO\_ENABLE\_REG (GPIOs 0-31) 或 GPIO\_ENABLE1\_REG (GPIOs 32-39) 中，清零此位可以关闭 GPIO 管脚的输出。
+    \end{itemize}
+    \item 配置 IO MUX 寄存器来选择 GPIO 交换矩阵。配置 GPIO 管脚 \textcolor{red}{\it{X}} 的 IO\_MUX\_\textcolor{red}{\it{x}}\_REG 的过程如下：
+    \begin{itemize}
+        \item 设置功能字段 (MCU\_SEL) 为 GPIO \textcolor{red}{\it{X}} 的 IO MUX 功能（所有管脚的 Function 2，数值为 2）。
+        \item 置位 FUN\_IE 使能输入。
+        \item 置位或清零 FUN\_WPU 和 FUN\_WPD 位，使能或关闭内部上拉/下拉电阻器。
+    \end{itemize}
+\end{enumerate}
+
+{\bfseries 说明：}
+\begin{itemize}
+\item 同一个输入管脚上可以同时绑定多个内部 input\_signals。
+\item 置位 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_INV\_SEL 可以把输入的信号取反。
+\item 无需将输入信号绑定到一个管脚也可以使外设读取恒低或恒高电平的输入值。实现方式为选择特定的 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL 输入值而不是一个 GPIO 序号：
+\begin {itemize}
+\item 当 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL 是 0x30 时， input\_signal\_\textcolor{red}{\it{x}} 始终为 0。
+\item 当 GPIO\_FUNC\textcolor{red}{\it{y}}\_IN\_SEL 是 0x38 时，input\_signal\_\textcolor{red}{\it{x}} 始终为 1。
+\end {itemize}
+\end{itemize}
+
+例如，要把 RMT 外设通道 0 的输入信号 RMT\_SIG\_IN0\_IDX（信号索引号 83）绑定到 GPIO15，请按照以下步骤操作（请注意  GPIO15 也叫做 MTDO 管脚）：
+\begin{enumerate}
+\item 将 GPIO\_FUNC83\_IN\_SEL\_CFG 寄存器的 GPIO\_FUNC83\_IN\_SEL 字段设置为 15。
+\item 因为此信号是纯输入信号，置位 GPIO\_FUNC15\_OUT\_SEL\_CFG\_REG  寄存器中的 GPIO\_FUNC15\_OEN\_SEL 位。
+\item 清零 GPIO\_ENABLE\_REG 寄存器的 bit 15（GPIO\_ENABLE\_DATA[15] 字段）。
+\item 配置 IO\_MUX\_GPIO15 寄存器的 MCU\_SEL 字段为 2 (GPIO function)，同时置位 FUN\_IE（使能输入模式）。
+\end{enumerate}
+
+\subsection{简单 GPIO 输入}\label{IOMUXSimpleGPIOInput}
+
+GPIO\_IN\_REG/GPIO\_IN1\_REG 寄存器存储着每一个 GPIO 管脚的输入值。
+
+任意 GPIO 管脚的输入值都可以随时读取而无需为某一个外设信号配置 GPIO 交换矩阵。但是需要为管脚 \textcolor{red}{\it{X}} 的 IO\_MUX\_\textcolor{red}{\it{x}}\_REG 寄存器配置 FUN\_IE 位以使能输入，如章节 \ref{sec:inputconfig} 所述。
+
+\section{通过 GPIO 交换矩阵的外设输出}
+
+\subsection{概述}
+
+为实现通过 GPIO 交换矩阵输出外设信号，需要配置 GPIO 交换矩阵将输出索引号为 0-18，23-37，61-121，140-215，224-228 的外设信号输出到 28 个 GPIO (0-19, 21-23, 25-27, 32-33)。
+
+输出信号从外设输出到 GPIO 交换矩阵，然后到达 IO MUX。IO MUX 必须设置相应管脚为 GPIO 功能。这样输出 GPIO 信号就能连接到相应管脚。
+
+\begin{tiplisting}
+输出索引号为 224-228 的外设信号，可配置为从一个 GPIO 管脚输入后，直接由另一个 GPIO 管脚输出。
+\end{tiplisting}
+\vspace{-2em}
+\subsection{功能描述}\label{IOMUXPeripheralOutput}
+
+图 \ref{Figure:gpio_matrix_output} 所示为 176 个输出信号中的某一个信号通过 GPIO 交换矩阵到达 IO MUX 然后连接到某个管脚。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.85\textwidth]{./06-IOMUXGPIO/figures/iomux-output-via-gpio-matrix-20181017}}
+    \caption{通过 GPIO 交换矩阵输出信号}
+    \label{Figure:gpio_matrix_output}
+\end{figure}
+
+输出外设信号 \textcolor{red}{\it{Y}} 到某一 GPIO 管脚 \textcolor{red}{\it{X}} 的步骤为：
+
+\begin{enumerate}
+    \item 在 GPIO 交换矩阵里配置 GPIO \textcolor{red}{\it{X}} 的 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG 寄存器和 GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段：
+    \begin{itemize}
+        \item 设置 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG 寄存器的 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL 字段为外设输出信号 \textcolor{red}{\it{Y}} 的索引号 (\textcolor{red}{\it{Y}})。
+        \item 要将信号强制使能为输出模式，将 GPIO 管脚 \textcolor{red}{\it{X}} 的 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL\_CFG 寄存器的 GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL 置位，并且将  GPIO\_ENABLE\_REG 寄存器的  GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段置位。或者，将 GPIO\_FUNC\textcolor{red}{\it{x}}\_OEN\_SEL 清零，此时输出使能信号由内部逻辑功能决定。
+        \item GPIO\_ENABLE\_DATA[\textcolor{red}{\it{x}}] 字段在 GPIO\_ENABLE\_REG (GPIO0-31) 或 GPIO\_ENABLE1\_REG (GPIO32-39) 中，清零此位可以关闭 GPIO 管脚的输出。
+    \end{itemize}
+    \item 要选择以开漏方式输出，可以设置 GPIO \textcolor{red}{\it{X}} 的 GPIO\_PIN\textcolor{red}{\it{x}} 寄存器中的 GPIO\_PIN\textcolor{red}{\it{x}}\_PAD\_DRIVER 位。
+    \item 配置 IO\_MUX 寄存器来选择 GPIO 交换矩阵。配置 GPIO 管脚 \textcolor{red}{\it{X}} 的 IO\_MUX\_\textcolor{red}{\it{x}}\_REG 的过程如下：
+    \begin{itemize}
+        \item 设置功能字段 (MCU\_SEL) 为 GPIO \textcolor{red}{\it{X}} 的 IO MUX 功能（所有管脚的 Function 2，数值为 2）。
+        \item 设置 FUN\_DRV 字段为特定的输出强度值 (0-3)，值越大，输出驱动能力越强。
+        \item 在开漏模式下，通过置位/清零 FUN\_WPU 和 FUN\_WPD 使能或关闭上拉/下拉电阻器。
+    \end{itemize}
+\end{enumerate}
+
+{\bfseries 说明：}
+\begin{itemize}
+\item 某一个外设的输出信号可以同时从多个管脚输出。
+\item 只有 28 个 GPIO 管脚可用于输出信号。
+\item 置位 GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_INV\_SEL 可以把输出的信号取反。
+\end{itemize}
+
+\subsection{简单 GPIO 输出}
+
+GPIO 交换矩阵也可以用于简单 GPIO 输出。设置 GPIO\_OUT\_DATA 寄存器中某一位的值可以写入对应的 GPIO 管脚。
+
+为实现某一管脚的 GPIO 输出，设置 GPIO 交换矩阵GPIO\_FUNC\textcolor{red}{\it{x}}\_OUT\_SEL 寄存器为特定的外设索引值 256（0x100）。
+
+\section{IO MUX 的直接输入输出功能}
+
+\subsection{概述}
+
+快速信号如以太网、SDIO、SPI、JTAG、UART 等会旁路 GPIO 交换矩阵以实现更好的高频数字特性。所以高速信号会直接通过 IO MUX 输入和输出。
+
+这样比使用 GPIO 交换矩阵的灵活度要低，即每个 GPIO 管脚的 IO MUX 寄存器只有较少的功能选择，但可以实现更好的高频数字特性。
+
+\subsection{功能描述}\label{direct io via iomux}
+
+为实现外设的输入输出信号旁路 GPIO 交换矩阵必须配置两个寄存器：
+
+\begin{enumerate}
+\item GPIO 管脚的 IO MUX 必须设置为相应的管脚功能，章节 \ref{sec:iomux_pads} 列出了管脚功能。
+\item 对于输入信号，必须清零 SIG\_IN\_SEL 寄存器，直接将输入信号输出到外设。
+\end{enumerate}
+
+\section{RTC IO MUX 的低功耗性能和模拟信号输入输出功能}
+
+\subsection{概述}
+
+18 个 GPIO 管脚具有低功耗（低功耗 RTC）性能和模拟功能，由 ESP32 的 RTC 子系统控制。这些功能不使用 IO MUX 和 GPIO 交换矩阵，而是使用 RTC IO MUX 将输入输出指向 RTC 子系统。
+
+当这些管脚被配置为 RTC GPIO 管脚，作为输出管脚时仍然能够在芯片处于 Deep-sleep 睡眠模式下保持输出电平值或者作为输入管脚使用时可以将芯片从 Deep-sleep 中唤醒。
+
+章节 \ref{sec:rtcmux_pins} 列出了 RTC IO MUX 管脚和功能。
+
+\subsection{模拟功能描述}\label{sec:rtc_gpio_analog_func}
+
+RTC\_GPIO 的 RTC 功能和模拟功能同一时刻只能选择一个，其中 RTC\_GPIO8 \verb+~+ RTC\_GPIO17 的模拟输出可以输出到 IO MUX，该功能由寄存器 \hyperref[regdesc:RTCIOTOUCHPADnREG]{RTC\_IO\_TOUCH\_PAD\textcolor{red}{\it{n}}/\textcolor{red}{\it{m}}\_TO\_GPIO} 位控制。该位为 1 时，管脚的输入信号通过模拟功能输出到 IO MUX；该位为 0 时，则管脚的输入信号通过数字功能输出到 IO MUX。
+
+\section{Light-sleep 模式管脚功能}
+
+当 ESP32 处于 Light-sleep 模式时管脚可以有不同的功能。如果某一 GPIO 管脚的 IO MUX 寄存器中 SLP\_SEL 位置为 1，芯片处于 Light-sleep 模式下将由另一组不同的寄存器控制管脚。
+
+
+\input{./06-IOMUXGPIO/tables/iomux_sleep_functions_cn.tex}
+
+如果 SLP\_SEL 置为 0，则芯片在正常工作和 Light-sleep 模式下，管脚的功能一样。
+
+\section{管脚 Hold 特性}\label{PadHold}
+
+每个 GPIO 管脚（包括 RTC GPIO）都有单独的 hold 功能，由 RTC 寄存器控制。管脚的 hold 功能被置上后，在置上 hold 那一刻，管脚的状态被强制保持，无论内部信号如何变化，修改 IO MUX 配置或者 GPIO 配置，都不会改变管脚的状态。应用如果希望在看门狗超时触发内核复位时或 Deep-sleep 触发内核复位时管脚的状态不被改变，就需要提前把 hold 置上。
+
+每个管脚的 hold 状态由各管脚的 hold 使能信号和全局的 hold 使能信号经过或运算后共同控制。
+
+\begin{itemize}
+    \item \textbf{数字管脚} (GPIO18 \verb+~+ GPIO19, GPIO21 \verb+~+ GPIO23, GPIO25 \verb+~+ GPIO27, GPIO32 \verb+~+ GPIO39)
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCIODIGPADHOLDREG] {RTCIO\_DIG\_PAD\_HOLD\_REG[\regindex{n}]}，控制各个数字管脚的 hold 使能信号，具体对应关系见表 \ref{tab:hold-bit-mapping}。
+        \item \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD}，控制数字管脚全局的 hold 使能信号。
+    \end{itemize}
+要使用此功能，请按照以下步骤操作：
+    \begin{itemize}
+        \item 若要在 Deep-sleep 中保持管脚输入输出的状态值，需要在掉电之前将寄存器 \hyperref[regdesc:RTCIODIGPADHOLDREG] {RTCIO\_DIG\_PAD\_HOLD\_REG[\regindex{n}]} 置位，\regindex{n} = 0 \verb+~+ 31，与管脚的对应关系见表 \ref{tab:hold-bit-mapping}。在芯片被唤醒后，若要关闭 hold 功能，可将上述寄存器清除。
+        \item 或者，将 \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD} 置位，用以保持所有数字管脚的状态值。在芯片被唤醒后，也可将 \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_UNHOLD} 置位，用以关闭所有数字管脚的 hold 功能。
+    \end{itemize}
+    \item \textbf{RTC 管脚} (GPIO0 \verb+~+ GPIO17)
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCCNTLHOLDFORCEREG]{RTC\_CNTL\_HOLD\_FORCE\_REG[\regindex{n}]}(\regindex{n} = 0 \verb+~+ 17)，控制 GPIO0 \verb+~+ GPIO17 各个 RTC 管脚的 Hold 使能信号。
+        \item \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD}，控制 RTC 管脚全局的 hold 使能信号。
+    \end{itemize}
+    
+要使用此功能，请按照以下步骤操作：
+
+    \begin{itemize}
+        \item 若要在 Deep-sleep 中保持管脚输入输出的状态值，需要在掉电之前将寄存器 \hyperref[regdesc:RTCCNTLHOLDFORCEREG]{RTC\_CNTL\_HOLD\_FORCE\_REG[\regindex{n}]} 置位，\regindex{n} = 0 \verb+~+ 17，对应管脚 GPIO0 \verb+~+ GPIO17。在芯片被唤醒后，若要关闭 Hold 功能，可将上述寄存器清除。 
+        \item 或者，将 \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_HOLD} 置位，用以保持所有 RTC 管脚的状态值。在芯片被唤醒后，也可将 \hyperref[regdesc:RTCCNTLDIGISOREG]{RTC\_CNTL\_DG\_PAD\_FORCE\_UNHOLD} 置位，用以关闭所有 RTC 管脚的 Hold 功能。
+    \end{itemize}
+\end{itemize}
+
+
+\section{GPIO 管脚供电}\label{I/O Pad Power Supplies}
+
+GPIO 管脚供电如图 \ref{ESP32_Power_Sources_TRM_66} 和图 \ref{ESP32_Power_Sources_TRM_55}  所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.65\textwidth]{./06-IOMUXGPIO/figures/ESP32_Power_Sources_TRM_66}}
+    \caption{ESP32 GPIO 管脚供电源（QFN 6*6，顶视图）}
+    \label{ESP32_Power_Sources_TRM_66}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{./06-IOMUXGPIO/figures/ESP32_Power_Sources_TRM_55}}
+    \caption{ESP32 GPIO 管脚供电源（QFN 5*5，顶视图）}
+    \label{ESP32_Power_Sources_TRM_55}
+\end{figure}
+
+
+\begin{itemize}
+\item 蓝色的管脚为 RTC 管脚，它们都带有一种或几种模拟功能，也可以用作为正常数字 IO 管脚使用，详见章节 \ref{sec:rtcmux_pins}。
+\item 黄色和绿色的管脚只有数字 IO 的功能。
+\item 绿色的管脚以通过 VDD\_SDIO 由外部供电也可由芯片内部供电（详见下文）。
+\end{itemize}
+
+\subsection{VDD\_SDIO 电源域}
+
+VDD\_SDIO 可以拉电流和灌电流，因此 VDD\_SDIO 电源域可由外部或内部供电。若使用外部供电，必须使用和 VDD3P3\_RTC 相同的电源。
+
+如果外部不供电，则内部线性稳压器会给 VDD\_SDIO 供电。VDD\_SDIO 电压可以为 1.8 V 或与 VDD3P3\_RTC 一致，这取决于 MTDI 管脚在复位时的状态 —— 高电平时为 1.8 V，低电平时为与 VDD3P3\_RTC 一致。eFuse bit 置上后可强制决定 VDD\_SDIO 的默认电压。此外，软件启动后软件还可以配置寄存器来强制改变 VDD\_SDIO 的电压。
+
+\begin{landscape}
+\section{外设信号列表}
+\label{sec:peripheral_signals}
+
+
+表 \ref{table:peripheral_signals} 列出了所有经由 GPIO 交换矩阵的外设输入输出信号。
+
+请注意 \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} 位的配置：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 1，则寄存器 \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} 中的相应位  \regindex{n} 将用于控制信号输出使能。
+    \begin{itemize}
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 0：输出关闭；
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 1：输出使能；
+    \end{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0，则输出信号的使能由外设控制，例如表 \ref{table:peripheral_signals} 中 ``输出信号的输出使能信号" 一栏的 SPIQ\_oe。注意，使能信号 SPIQ\_oe 可设置为 1 (1'd1) 或 0 (1'd0)，具体由外设的配置决定。如果 ``输出信号的输出使能信号" 一栏中为 1'd1，则表示 \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} 已清零，输出信号默认始终使能。
+\end{itemize}
+
+\begin{tiplisting}
+信号连续编号，但并非所有信号均有效。
+\vspace{-1em}
+\begin{itemize}
+    \item 表 \ref{table:peripheral_signals}“输入信号”一栏中有名字的信号均为有效输入信号；
+    \item 表 \ref{table:peripheral_signals}“输出信号”一栏中有名字的信号均为有效输出信号。
+\end{itemize}
+\end{tiplisting}
+
+\input{./06-IOMUXGPIO/tables/102-ESP32_GPIO_Matrix__CN.tex}
+\end{landscape}
+
+\section{IO MUX 管脚功能列表}
+\label{sec:iomux_pads}
+表 \ref{table:iomux_pads} 列出了每个GPIO 管脚的 IO MUX 功能。
+
+\input{./06-IOMUXGPIO/tables/iomux_pad_summary_cn.tex}
+
+\textbf{复位配置}
+
+“Reset”一栏是每个管脚复位后的默认配置。
+
+\begin{itemize}
+\item \textbf{0} - IE=0（输入关闭）
+\item \textbf{1} - IE=1（输入使能）
+\item \textbf{2} - IE=1, WPD=1（输入使能，下拉电阻）
+\item \textbf{3} - IE=1, WPU=1（输入使能，上拉电阻）
+\end{itemize}
+
+\textbf{说明}
+
+\begin{itemize}
+\item \textbf{R} - 该管脚通过 RTC IO MUX 具有 RTC 或模拟功能。
+\item \textbf{I} - 该管脚只能配置为输入 GPIO。此类管脚不具备输出驱动或内置上拉/下拉电路。
+\end{itemize}
+
+请参考 \doclinkcdCN 的附录查看管脚功能的完整表格。
+
+\section{RTC IO MUX 管脚清单}
+\label{sec:rtcmux_pins}
+
+表 \ref{table:rtcmux pads} 列出了 RTC GPIO 管脚和对应 GPIO 管脚。
+
+\input{./06-IOMUXGPIO/tables/rtcmux_pad_summary_20191119_cn.tex}
+
+\hypertarget{iomuxgpio-reg-summ}{}
+\section{寄存器列表}
+\label{section:4.12}
+
+\subsection{GPIO 交换矩阵寄存器列表}\label{sec:gpio-reg-summ}
+\subfile{\modulefiles/gpio_reg_summary_cn}
+
+\subsection{IO MUX 寄存器列表}\label{sec:iomux-reg-summ}
+\subfile{\modulefiles/pad_reg_summary_cn}
+
+\subsection{RTC IO MUX 寄存器列表}\label{sec:rtcio-reg-summ}
+\subfile{\modulefiles/rtc_io_reg_summary_cn}
+
+\section{寄存器}
+\label{section:4.13}
+\subsection{GPIO 交换矩阵寄存器}
+本小节括号中的地址均为相对于 GPIO 基地址 0x3FF4\_4000 的地址偏移量（相对地址），具体基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。寄存器绝对地址见章节 \ref{sec:gpio-reg-summ} \textit{\nameref{sec:gpio-reg-summ}}。
+\subfile{\modulefiles/gpio_reg_cn}
+
+\subsection{IO MUX 寄存器}
+
+\clearpage
+\subfile{\modulefiles/pad_reg_cn}
+
+\subsection{RTC IO MUX 寄存器}
+
+本小节括号中的地址均为相对于 (RTC 基地址 + 0x0400 = 0x3FF4\_8400) 的地址偏移量（相对地址）。RTC 基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。寄存器绝对地址见章节 \ref{sec:rtcio-reg-summ} \textit{\nameref{sec:rtcio-reg-summ}}。
+
+\subfile{\modulefiles/rtc_io_reg_cn}
+\end{document}

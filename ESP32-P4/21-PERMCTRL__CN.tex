@@ -1,0 +1,475 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./21-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    \usepackage{diagbox}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{permcrtl}{}
+\chapter{权限控制 (PMS)}
+\label{mod:permctrl}
+
+
+\section{概述}
+
+\chipname{} 整个系统的权限控制可以分为两部分： PMP（Physical Memory Protection，物理存储器保护）和 APM（Access Permission Management，访问权限管理）。
+
+PMP 位于 HP CPU 内部，能够管控 HP CPU 访问所有的地址空间。APM 则是一个作用于总线端口处的访问权限管理模块，不仅可以独立管理 CPU（HP CPU0/1 和 LP CPU）访问全片外设内部寄存器（见表 \ref{tab:pmp-apm} 中 HP CPU PERI、HP PERI 和 LP PERI）、部分内存和外存的访问权限，还可以独立控制 VDMA， USB OTG 2.0 等支持 DMA 传输的主设备访问部分内存和外存的访问权限。
+
+APM 通过与预先配置的地址区间（或固定的地址区间）及每个地址区间对应的访问权限，以及总线上所携带的信息，如主机 ID 号、模式、访问地址等信息作对比，从而判断是否允许访问。通过 APM，用户可实现精确控制所有主机对存储器和外设寄存器的访问权限。
+
+PMP 和 APM 的管控区域分布如表 \ref{tab:pmp-apm} 所示。对于主机 HP CPU0/1，PMP 和 APM 的管控关系见图 \ref{fig:pmp_apm}。
+
+\label{addrspace}
+\begin{ThreePartTable}
+\begin{TableNotes}
+\footnotesize{
+    \item[1] 如 VDMA、USB 2.0 OTG、MEM\_MONITOR 等其他支持 DMA 传输的主机。
+
+    \item[2]
+    \begin{itemize}
+        \item HP ROM (0x4FC0\_0000 - 0x4FC1\_FFFF)
+        \item HP L2MEM (0x4FF0\_0000 - 0x4FFB\_FFFF)
+        \item EXT MEM 包含外部 flash (0x4000\_0000 - 0x43FF\_FFFF) 和外部 RAM (0x4800\_0000 - 0x4BFF\_FFFF)
+    \end{itemize}
+
+    \item[3] 指 HP CPU0 和 HP CPU1 不经过 cache 直接访问内存和外存：
+    \begin{itemize}
+        \item HP ROM (0x8FC0\_0000 - 0x8FC1\_FFFF)
+        \item HP L2MEM (0x8FF0\_0000 - 0x8FFB\_FFFF)
+        \item EXT MEM 包含外部 flash (0x8000\_0000 - 0x83FF\_FFFF) 和外部 RAM (0x8800\_0000 - 0x8BFF\_FFFF)
+    \end{itemize}
+
+    \item[4] HP CPU 相关外设寄存器 (0x3FF0\_0000 - 0x3FF1\_FFFF)。
+
+    \item[5]  HP 系统相关外设寄存器 (0x5000\_0000 - 0x500F\_FFFF)。
+
+    \item[6]  LP 系统相关外设寄存器 (0x5011\_0000 - 0x5012\_FFFF)。
+
+    \item[7] 小节 \ref{sec:permcrtl-apm-structure} 将介绍 APM 分为 HP APM、LP APM 和 DMA APM。
+    }
+\end{TableNotes}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|}
+
+    \caption{PMP 和 APM 的管控区域}
+    \label{tab:pmp-apm}\\\hline
+
+    \rowcolor{lightgray}\diagbox{\textbf{从机}}{\textbf{主机}}
+    & \multicolumn{1}{|c|}{\textbf{HP CPU0}}
+    & \multicolumn{1}{|c|}{\textbf{HP CPU1}}
+    & \multicolumn{1}{|c|}{\textbf{LP CPU}}
+    & \multicolumn{1}{|c|}{\textbf{DMA 主机}\tnote{1}}\\ \hline
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+
+    \textbf{HP ROM}\tnote{2}                     &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{HP SPM}                              &PMP       & PMP  & N/A     & N/A \\ \hline
+    \textbf{HP L2MEM}\tnote{2}                   &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{EXT MEM}\tnote{2}                    &PMP       & PMP  & HP APM  & DMA APM \\ \hline
+    \textbf{Direct Access HP ROM}\tnote{3}    &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{Direct Access HP L2MEM}\tnote{3}  &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{Direct Access EXT MEM}\tnote{3}   &PMP + HP APM  & PMP + HP APM &  N/A & N/A\\ \hline
+    \textbf{HP CPU PERI}\tnote{4}                &PMP + HP APM  & PMP + HP APM & HP APM & N/A \\ \hline
+    \textbf{HP PERI}\tnote{5}                 &PMP + HP APM  & PMP + HP APM & HP APM & N/A\\ \hline
+    \textbf{LP PERI}\tnote{6}                 &PMP + LP APM  & PMP + LP APM & LP APM & N/A\\ \hline
+    \textbf{LP ROM}                           &N/A      & N/A     &  N/A & N/A \\ \hline
+    \textbf{LP SRAM}                          & PMP + LP APM & PMP + LP APM &  N/A & N/A\\ \hline
+
+\end{longtable}
+\end{ThreePartTable}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{21-PERMCTRL//figures/pmp_apm.png}
+    \caption{PMP 和 APM 的管控关系}
+    \label{fig:pmp_apm}
+\end{figure}
+
+如图所示，HP CPU 访问 HP ROM、HP SPM、HP L2MEM 和 EXT MEM 只受 PMP 管控，APM 无法管控。HP CPU0 和 HP CPU1 访问全片外设寄存器以及不通过 cache 直接访问 HP ROM、HP L2MEM 以及 EXT MEM，不仅需要先接受 PMP 的权限管控，还需要再接受 APM 的权限管控。如果 PMP 检查不通过，则不会再触发 APM 权限管控。
+
+PMP 相关的寄存器位于 HP CPU 内部，需要特殊指令进行获取或配置。更多有关 PMP 配置和使用的内容，请参考章节 \textit{\nameref{mod:riscvcpu}} > \ref{sec:riscvcpu-pmp} \textit{\nameref{sec:riscvcpu-pmp}}。
+
+以下章节将详细介绍 APM 模块的特性、功能与配置。当提到 HP CPU0/1
+访问 HP ROM/HP L2MEM/EXT MEM 时都是指 Direct Access HP ROM/HP L2MEM/EXT MEM。
+
+\section{主要特性}
+
+\chipname{} 的 APM 控制器具有以下特性：
+
+\begin{itemize}
+    \item 最多可为 DMA 主机配置 32 组有效地址区间
+    \item 支持独立控制 CPU 每种模式下对内部存储器、外部存储器以及外设寄存器的访问权限
+    \item 支持中断功能
+    \item 支持异常信息记录功能
+\end{itemize}
+
+\section{功能描述}
+
+\subsection{结构概览}\label{sec:permcrtl-apm-structure}
+
+APM 权限管理模块可分为 3 个部分，共有 5 个寄存器模块：
+
+\label{apm_compnt}
+\begin{itemize}
+    \item \textbf{DMA APM}，寄存器模块为 \nameref{sec:permctrl-reg-dma}
+    \begin{itemize}
+        \item 负责管理所有 DMA 主机可访问的地址区间，最多可管理 32 个地址区间
+        \item 可独立控制每一个 DMA 主机读写每一个地址区间的访问权限
+    \end{itemize}
+    \item \textbf{HP APM}，寄存器模块为 \nameref{sec:permctrl-reg-hp} 和 \nameref{sec:permctrl-reg-lp2hp}，负责管理 HP 系统中外设寄存器 (HP CPU PERI, HP PERI)、内存 (HP ROM, HP L2MEM) 和外存 (EXT MEM) 的访问权限，具体为：
+    \begin{itemize}
+        \item 分别控制 HP CPU0/1 在用户模式下访问上述所有从机的权限
+        \item 分别控制 HP CPU0/1 在机器模式下访问上述所有从机的权限
+        \item 控制 LP CPU 在机器模式下访问上述所有从机的权限
+    \end{itemize}
+    \item \textbf{LP APM}，寄存器模块为 \nameref{sec:permctrl-reg-lp} 和 \nameref{sec:permctrl-reg-hp2lp}，负责管理 LP 系统中外设寄存器 (LP PERI) 和内存 (LP SRAM) 的访问权限，具体为：
+    \begin{itemize}
+        \item 分别控制 HP CPU0/1 在用户模式下访问 LP PERI 和 LP SRAM 的权限
+        \item 分别控制 HP CPU0/1 在机器模式下访问 LP PERI 和 LP SRAM 的权限
+        \item 控制 LP CPU 在机器模式下访问 LP PERI 的权限
+    \end{itemize}
+\end{itemize}
+
+图 \ref{fig:APM_Ctrl_Location} 显示了 APM 管控的总线访问路径以及对应的寄存器模块。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{21-PERMCTRL//figures/apm_architecture.png}
+    \caption{APM 控制器结构图}
+    \label{fig:APM_Ctrl_Location}
+\end{figure}
+\clearpage
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 寄存器名称“HP2LP”及“LP2HP”中的“HP”主要是指 HP CPU0/1，“LP”主要是指 LP CPU。
+    \item 由表 \ref{tab:pmp-apm} 可知，HP CPU 和 LP CPU 访问 HP ROM、HP L2MEM、外部 flash 和 RAM 的地址空间不同。对于 HP CPU0/1，HP APM 管理的是 HP CPU0/1 不经过 cache 直接访问内存和外存的通路。
+    \item \nameref{sec:permctrl-reg-lp} 中还额外包含了 \iftagged{ESP32-P4-latest}{8}{2} 个可配置地址区间及其对应的访问权限，可作用于 HP APM 和 LP APM，以管理全片外设寄存器（HP CPU PERI、HP PERI、LP PERI）的访问权限。
+\end{itemize}
+\end{tiplisting}
+
+\subsection{地址区间及访问权限}
+\label{sec:permctrl-addr-region}
+
+APM 管理的地址区间分为固定地址区间和可配置地址区间。DMA APM 最多可管理 32 组可配置地址区间，HP APM 和 LP APM 除了控制固定地址区间外，还可管理 \iftagged{ESP32-P4-latest}{8}{2} 个可配置地址区间。
+
+\subsubsection{HP APM 和 LP APM 管理的地址区间及访问权限}
+
+HP APM 和 LP APM 控制的访问通路上，内部存储器和外部存储器通路采用固定地址区间管理访问权限，而全片外设寄存器通路上不仅支持固定地址区间的权限控制，还支持 \iftagged{ESP32-P4-latest}{8}{2} 个可配置地址区间。
+
+\begin{itemize}
+    \item 固定地址区间
+    \begin{itemize}
+        \item 固定地址区间即各个外设寄存器、内存和外存的有效地址空间。内存和外存地址空间见表 \ref{tab:pmp-apm}，各个外设寄存器的地址空间详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} > 表 \ref{tab:sysmem-base-address}。
+        \item 要管理固定地址区间的访问权限，请参考图 \ref{fig:APM_Ctrl_Location} 确定访问通路及其对应的寄存器模块。
+    \end{itemize}
+    \item 可配置地址区间
+    \begin{itemize}
+        \item APM 可通过 \nameref{sec:permctrl-reg-lp} 中的 \hyperref[fielddesc:PMSPERIREGIONNLOW]{PMS\_PERI\_REGION\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}}\_LOW\_REG} 和 \hyperref[fielddesc:PMSPERIREGIONNHIGH]{PMS\_PERI\_REGION\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}}\_HIGH\_REG}（\regindex{n}\tagged{ESP32-P4-latest}{/\regindex{m}} = 0 \verb+~+ \iftagged{ESP32-P4-latest}{7}{1}) 配置 \iftagged{ESP32-P4-latest}{8}{2} 个地址区间，作用于 LP CPU 和 HP CPU0/1 到全片外设寄存器的访问通路。
+        \item 可通过 \nameref{sec:permctrl-reg-lp} 中 \hyperref[regdesc:PMSPERIREGIONPMSREG]{PMS\_PERI\_REGION\_PMS\_REG} 管理可配置地址区间的访问权限。
+    \end{itemize}
+\end{itemize}
+
+对全片外设寄存器访问进行访问权限管理时，可配置地址区间权限管理要先于固定地址区间权限管理，具体为：
+
+\begin{itemize}
+    \item 若访问地址在可配置地址区间内，则本次访问首先会接受可配置地址区间的检查。
+    \begin{itemize}
+        \item 如果有权限，则本次访问将继续接受后续固定地址区间的权限管理。
+        \item 如果该访问没有权限，则访问被禁止，不会接受后续固定地址区间的权限管理。
+    \end{itemize}
+    \item 若访问地址在可配置地址区间之外，则本次访问直接跳过可配置地址区间检查，直接接受固定地址区间的权限管理。
+
+    \item 可配置区间管理功能是对固定区间管理的补充。例如，配置了某固定地址区间的访问权限，将\tagged{ESP32-P4-latest}{其中} 2 个可配置地址区间限定在该固定地址区间内，并禁用其访问权限，便可实现在固定地址区间中设置 2 个禁止访问的地址区间。
+\end{itemize}
+
+\subsubsection{DMA APM 管理的地址区间及访问权限}
+
+寄存器模块 \nameref{sec:permctrl-reg-dma} 中提供了 32 组可配置地址区间 (\hyperref[fielddesc:PMSDMAREGIONNLOW]{PMS\_DMA\_REGION\regindex{n}\_LOW\_REG} \verb+~+ \hyperref[fielddesc:PMSDMAREGIONNHIGH]{PMS\_DMA\_REGION\regindex{n}\_HIGH\_REG}, \regindex{n} = 0 \verb+~+ 31)，控制所有 DMA 主机的访问地址空间。配置该地址区间时，由于地址最小以 4K 字节对齐，故低 12 位为 0。
+
+\nameref{sec:permctrl-reg-dma} 为每一个 DMA 主机访问每一个地址区间分配了独立的读权限和写权限。
+
+\section{配置流程}
+
+由于 HP CPU 有不同的工作模式（用户模式和机器模式），HP APM 和 LP APM 为不同工作模式分配了相应的访问管理权限。因此当 HP CPU 作为主机访问内存、外存或外设寄存器时，首先需要配置 HP CPU 的工作模式。
+
+由于 LP CPU 仅支持机器模式，因此 HP APM 和 LP APM 仅为 LP CPU 的机器模式分配了访问权限位。
+
+支持 DMA 传输的主设备不分访问模式，但 DMA APM 为 DMA 主设备分别提供了读和写操作管理权限。
+
+\subsection{配置 HP CPU0/1 的访问权限}
+
+HP CPU0/1 访问内存、外存或者外设寄存器路径中 APM 管控的配置流程为：
+
+\begin{enumerate}
+    \item 配置 HP CPU0/1 工作模式（用户模式或机器模式）。关于 CPU 用户模式及机器模式的配置方法请参考 RISC\-/V 指令集手册 v1.10 第二卷“特权架构” (RISC-V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10)。
+    \item 如果访问外设寄存器，可额外管理 \iftagged{ESP32-P4-latest}{8}{2} 个可配置地址区间，请参考章节 \ref{sec:permctrl-addr-region}。
+    \item 配置访问权限：
+    \begin{itemize}
+        \item 通过 \nameref{sec:permctrl-reg-hp} 配置 HP 系统一侧的内存（HP L2MEM 和 HP ROM）、外存（External RAM 和 flash）和外设寄存器（HP PERI 和 HP CPU PERI）的访问权限：
+        \begin{itemize}
+            \item 通过 \hyperref[fielddesc:PMSCORENMML2ROMALLOW]{PMS\_CORE\regindex{n}\_\regindex{MODE\_NAME}\_\regindex{MODULE\_NAME}\_ALLOW} 管理 HP CPU\regindex{n} 在 \regindex{MODE\_NAME} 模式下访问 \regindex{MODULE\_NAME} 模块的权限，比如 \hyperref[fielddesc:PMSCORENMMPSRAMALLOW]{PMS\_CORE\regindex{n}\_MM\_PSRAM\_ALLOW}。
+        \end{itemize}
+        \item 通过 \nameref{sec:permctrl-reg-hp2lp} 配置 LP SRAM 和 LP PERI 的访问权限：
+            \begin{itemize}
+            \item 通过 \hyperref[fielddesc:PMSHPCORENMMLPSYSREGALLOW]{PMS\_HP\_CORE\regindex{n}\_\regindex{MODE\_NAME}\_\regindex{MODULE\_NAME}\_ALLOW} 管理 HP CPU\regindex{n} 在 \regindex{MODE\_NAME} 模式下访问 \regindex{MODULE\_NAME} 模块的权限，比如 \hyperref[fielddesc:PMSHPCORENMMLPSYSREGALLOW]{PMS\_HP\_CORE\regindex{n}\_MM\_LP\_SYSREG\_ALLOW}。
+        \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{配置 LP CPU 的访问权限}
+
+LP CPU 仅支持机器模式，LP CPU 访问内存、外存或者外设寄存器路径中 APM 管控的配置流程为：
+
+\begin{enumerate}
+    \item 如果访问外设寄存器，可额外管理 \iftagged{ESP32-P4-latest}{8}{2} 个可配置地址区间，请参考章节 \ref{sec:permctrl-addr-region}。
+    \item 配置访问权限：
+    \begin{itemize}
+        \item 通过 \nameref{sec:permctrl-reg-lp2hp} 配置 HP 系统一侧的内存（HP L2MEM 和 HP ROM）、外存（External RAM 和 flash）和外设寄存器（HP PERI 和 HP CPU PERI）的访问权限：
+        \begin{itemize}
+            \item 通过 \hyperref[fielddesc:PMSLPMML2ROMALLOW]{PMS\_LP\_MM\_\regindex{MODULE\_NAME}\_ALLOW} 管理 LP CPU 在机器模式下访问 \regindex{MODULE\_NAME} 模块的权限，比如 \hyperref[fielddesc:PMSLPMMPSRAMALLOW]{PMS\_LP\_MM\_PSRAM\_ALLOW}。
+        \end{itemize}
+        \item 通过 \nameref{sec:permctrl-reg-lp} 配置 LP 一侧的外设寄存器 (LP PERI) 的访问权限：
+        \begin{itemize}
+            \item 通过 \hyperref[fielddesc:PMSLPMMLPSYSREGALLOW]{PMS\_LP\_MM\_\regindex{MODULE\_NAME}\_ALLOW} 管理 LP CPU 在机器模式下访问 \regindex{MODULE\_NAME} 模块的权限，比如 \hyperref[fielddesc:PMSLPMMLPSYSREGALLOW]{PMS\_LP\_MM\_LP\_SYSREG\_ALLOW}。
+        \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{配置其他 DMA 主机的访问权限}
+
+DMA 主机访问内存、外存以及其它地址空间路径中 APM 管控的配置流程为：
+
+\begin{enumerate}
+    \item 配置所有 DMA 主机可访问的地址区间：
+    \begin{itemize}
+        \item 通过 \hyperref[regdesc:PMSDMAREGIONNLOWREG]{PMS\_DMA\_REGION\regindex{n}\_LOW\_REG} 配置 region\regindex{n} 的起始地址的高 20 位
+        \item 通过 \hyperref[regdesc:PMSDMAREGIONNHIGHREG]{PMS\_DMA\_REGION\regindex{n}\_HIGH\_REG} 配置 region\regindex{n} 的结束地址的高 20 位
+    \end{itemize}
+    \item 配置每个 DMA 主机 (\regindex{DMA\_MASTER}) 各自访问每一个地址区间的读写权限：
+    \begin{itemize}
+        \item 通过 PMS\_\regindex{DMA\_MASTER}\_PMS\_R\_REG 配置读操作权限，如 \hyperref[regdesc:PMSDMAGMACPMSRREG]{PMS\_DMA\_GMAC\_PMS\_R\_REG}
+        \item 通过 PMS\_\regindex{DMA\_MASTER}\_PMS\_W\_REG 配置写操作权限，如 \hyperref[regdesc:PMSDMAGMACPMSWREG]{PMS\_DMA\_GMAC\_PMS\_W\_REG}
+    \end{itemize}
+\end{enumerate}
+
+\section{越权访问与中断}
+
+APM 模块管理总线访问通路时，会解析总线携带的信息（主机 ID、访问方向、访问地址、甚至是运行模式)，然后根据此信息确定该访问的管理权限配置。当 APM 确认此次访问无权限时，\chipname{} 将视其为越权访问，将进行如下处理：
+
+\begin{itemize}
+    \item 拒绝该访问请求，并作错误响应
+    \item HP APM  会触发 ICM\_SYS\_REG\_INT 中断信号
+    \item DMA APM 会触发 ICM\_SYS\_REG\_INT 中断信号
+    \item LP APM  会触发 LP\_SYSREG\_INT 中断信号
+\end{itemize}
+
+这些中断信号由 APM 管理模块的内部中断源生成。表 \ref{tab:apm-int-sources} 列出了 APM 管理模块的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | l | L{8cm} | l | }
+\caption{APM 内部中断源} \label{tab:apm-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+ICM\_CPU\_ADDRHOLE\_INTR &  HP APM 检测到越权访问；或当主机为高速 USB 2.0 OTG、全速 USB 2.0 OTG、EMAC、SDMMC、Trace0/1、GDMA-AHB、L2MEM 监测器和 SPM 监测器时，DMA APM 检测到越权访问 &  ICM\_SYS\_REG\_INT \\ \hline
+ICM\_SYS\_ADDRHOLE\_INTR & 当主机为 VDMA、GDMA-AXI、2D-DMA 和 H264 DMA 时 DMA APM 发生了越权访问 &  ICM\_SYS\_REG\_INT \\ \hline
+LP\_ADDRHOLE\_INTR &  LP APM 检测到越权访问 &  LP\_SYSREG\_INTR  \\ \hline
+\end{longtable}
+
+APM 会自动记录非法访问的相关信息，包括主机 ID、访问方向（读或者写）、访问地址、非法访问标志等信息。所有这些信息可以从章节 \ref{mod:sysreg} \textit{\nameref{mod:sysreg}} 中的相关寄存器中获取。
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{permctrl-reg-summ}{}
+\section{寄存器列表}
+\label{sec:permctrl-reg-summ}
+
+\subsection{HP\_DMA\_PMS\_REG}
+\label{sec:permctrl-reg-dma}
+
+本小节的所有地址均为相对于 HP\_DMA\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+\input{21-PERMCTRL/21-PERMCTRL-dma-pms-reg-summ__CN}
+
+\subsection{HP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-hp}
+
+本小节的所有地址均为相对于 HP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+\input{21-PERMCTRL/21-PERMCTRL-hp-peri-pms-reg-summ__CN}
+
+\subsection{LP2HP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-lp2hp}
+
+本小节的所有地址均为相对于 LP2HP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\input{21-PERMCTRL/21-PERMCTRL-lp2hp-peri-pms-reg-summary__CN}
+
+\subsection{LP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-lp}
+
+本小节的所有地址均为相对于 LP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem}
+\textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\input{21-PERMCTRL/21-PERMCTRL-lp-peri-pms-reg-summary__CN}
+
+\subsection{HP2LP\_PERI\_PMS\_REG}
+\label{sec:permctrl-reg-hp2lp}
+
+本小节的所有地址均为相对于 HP2LP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem}
+\textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\input{21-PERMCTRL/21-PERMCTRL-hp2lp-peri-pms-reg-summary__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+\subsection{HP\_DMA\_PMS\_REG}
+
+本小节的所有地址均为相对于 HP\_DMA\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\input{21-PERMCTRL/21-PERMCTRL-dma-pms-reg__CN}
+
+\subsection{HP\_PERI\_PMS\_REG}
+
+本小节的所有地址均为相对于 HP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\input{21-PERMCTRL/21-PERMCTRL-hp-peri-pms-reg__CN}
+
+\subsection{LP2HP\_PERI\_PMS\_REG}
+
+本小节的所有地址均为相对于 LP2HP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\input{21-PERMCTRL/21-PERMCTRL-lp2hp-peri-pms-reg__CN}
+
+\subsection{LP\_PERI\_PMS\_REG}
+
+本小节的所有地址均为相对于 LP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem}
+\textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\input{21-PERMCTRL/21-PERMCTRL-lp-peri-pms-reg__CN}
+
+\subsection{HP2LP\_PERI\_PMS\_REG}
+
+本小节的所有地址均为相对于 HP2LP\_PERI\_PMS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem}
+\textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\input{21-PERMCTRL/21-PERMCTRL-hp2lp-peri-pms-reg__CN}
+
+\end{document}

@@ -1,0 +1,587 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./30-UART}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{uart}{}
+\chapter{UART Controller (UART, LP\_UART, UHCI)}
+\label{mod:uart}
+
+\section{Overview}
+
+In embedded system applications, data is required to be transferred in a simple way with minimal system resources. This can be achieved by a Universal Asynchronous Receiver/Transmitter (UART), which flexibly exchanges data with other peripheral devices in full-duplex mode. \chipname{} has three UART controllers, including two regular UARTs and one low-power LP UART. These UARTs are compatible with various UART devices, and support Infrared Data Association (IrDA) and RS485 communication.
+
+
+Each of the two regular UART controllers has a group of registers that function identically. In this chapter, the two regular UART controllers are referred to as UART\regindex{n}, in which \regindex{n} denotes 0 or 1. LP UART is the cut-down version of regular UART, with a separate group of registers. For differences between UART and LP UART, please refer to Table \ref{tab:uart-feature-distinction}.
+
+
+A UART is a character-oriented data link for asynchronous communication between devices. Such communication does not add clock signals to the data sent. Therefore, in order to communicate successfully, the transmitter and the receiver must operate at the same baud rate with the same stop bit(s) and a parity bit.
+
+A UART data frame usually begins with one start bit, followed by data bits, one parity bit (optional), and one or more stop bits. UART controllers on \chipname{} support various lengths of data bits and stop bits. These controllers also support software and hardware flow control as well as GDMA for high-speed data transfer. This allows developers to use multiple UART ports at minimal software cost.
+
+\section{Features}
+
+Table \ref{tab:uart-feature-distinction} lists the feature comparison between UART and LP UART:
+
+\input{./30-UART/tables/30-UART-feature-distinction__EN}
+
+The following description mainly covers regular UART controllers.
+
+
+\section{UART Structure}
+
+\begin{figure}[H]
+\centerline{\includegraphics[width=1.1\textwidth]{\modulefiles/figures/UART-uart-architecture-c6}}
+\centering
+\caption{UART Structure}
+\label{fig:one-uart-structure}
+\end{figure}
+
+
+Figure \ref{fig:one-uart-structure} shows the basic structure of a UART controller. A UART controller works in four clock domains, namely APB\_CLK, AHB\_CLK, UART\_SCLK, and UART\_FCLK. APB\_CLK and AHB\_CLK are synchronized but with different frequencies (APB\_CLK is derived from AHB\_CLK by division), and likewise UART\_SCLK and UART\_FCLK are synchronized but with different frequencies (UART\_SCLK is derived from UART\_FCLK by division). UART\_FCLK has three clock sources: an 80 MHz PLL\_F80M\_CLK, RC\_FAST\_CLK, and external crystal clock XTAL\_CLK (for details, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}), which are selected by configuring \hyperref[fielddesc:PCRUART0SCLKSEL]{PCR\_UART\regindex{n}\_SCLK\_SEL}. The selected clock source is divided by a divider to generate UART\_SCLK clock signals. The divisor is configured by \hyperref[fielddesc:PCRUART0SCLKDIVNUM]{PCR\_UART\regindex{n}\_SCLK\_DIV\_NUM} for the integral part, \hyperref[fielddesc:PCRUART0SCLKDIVA]{PCR\_UART\regindex{n}\_SCLK\_DIV\_A} for the denominator of the fractional part, and \hyperref[fielddesc:PCRUART0SCLKDIVB]{PCR\_UART\regindex{n}\_SCLK\_DIV\_B} for the numerator of the fractional part. The divisor ranges from 1 \verb+~+ 256. Only regular UART has such a divider; LP UART does not.
+
+A UART controller can be broken down into two parts according to functions: a transmitter and a receiver.
+
+The transmitter contains a TX FIFO (i.e. Tx\_FIFO in Figure \ref{fig:one-uart-structure}), which buffers data to be sent. Software can write data to Tx\_FIFO via the APB bus, or move data to Tx\_FIFO using GDMA. Tx\_FIFO\_Ctrl controls writing and reading Tx\_FIFO. When Tx\_FIFO is not empty, Tx\_FSM reads data bits in the data frame via Tx\_FIFO\_Ctrl, and converts them into a bitstream. The levels of output bitstream signal txd\_out can be inverted by configuring the \hyperref[fielddesc:UARTTXDINV]{UART\_TXD\_INV} field.
+
+The receiver contains an RX FIFO (i.e. Rx\_FIFO in Figure \ref{fig:one-uart-structure}), which buffers data to be processed. The input bitstream signal rxd\_in is transferred to the UART controller, and its level can be inverted by configuring \hyperref[fielddesc:UARTRXDINV]{UART\_RXD\_INV} field. Baudrate\_Detect measures the baud rate of input bitstream signal rxd\_in by detecting its minimum pulse width. Start\_Detect detects the start bit in a data frame. If the start bit is detected, Rx\_FSM stores data bits in the data frame into Rx\_FIFO by Rx\_FIFO\_Ctrl. Software can read data from Rx\_FIFO via the APB bus, or receive data using GDMA.
+
+HW\_Flow\_Ctrl controls rxd\_in and txd\_out data flows by standard UART RTS and CTS flow control signals (rtsn\_out and ctsn\_in). SW\_Flow\_Ctrl controls data flows by adding special characters to outgoing data and detecting special characters in incoming data. When a UART controller is Light-sleep mode (see Chapter \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} for more details), a wake\_up signal can be generated in four ways and sent to RTC, which then wakes up the \chipname{} chip. For more information about wakeup, please refer to Section \ref{sec:uart-wakeup}.
+
+\section{Functional Description}
+
+\subsection{Clock and Reset}
+
+UART controllers are asynchronous. Their register configuration module works in the APB\_CLK domain. TX FIFO and RX FIFO work across the AHB\_CLK and UART\_FCLK domains. The UART RAM control unit works in the UART\_FCLK domain. The UART transmission and reception control module works in the UART\_SCLK domain, i.e. UART Core's clock domain.
+
+When the frequency of the UART\_SCLK is higher than the frequency needed to generate the baud rate, the UART Core can be clocked at a lower frequency by the divider, in order to reduce power consumption. Usually, the UART Core's clock frequency is lower than the APB\_CLK's frequency, and can be divided by the largest divisor when higher than the frequency needed to generate the baud rate. The frequency of the UART Core's clock can also be at most twice higher than the APB\_CLK. The clock for the UART transmitter and the UART receiver can be controlled independently. To enable the clock for the UART transmitter, \hyperref[fielddesc:UARTTXSCLKEN]{UART\_TX\_SCLK\_EN} shall be set; to enable the clock for the UART receiver, \hyperref[fielddesc:UARTRXSCLKEN]{UART\_RX\_SCLK\_EN} shall be set.
+
+
+To ensure that the configured register values are synchronized from APB\_CLK domain to the UART Core's clock domain, please follow the procedures in Section\ref{sec:uart-program}.
+
+
+To reset the whole UART, please:
+\begin{itemize}
+    \item Enable the UART Core's clock by setting \hyperref[fielddesc:PCRUART0CLKEN]{PCR\_UART\regindex{n}\regindex{n}\_CLK\_EN} to 1.
+    \item Write 1 to \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN}.
+    \item Clear \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN} to 0.
+
+\end{itemize}
+
+
+\subsection{UART FIFO}
+
+The transmitter and the receiver on the UART controller each use a 128 x 8-bit RAM, and access their respective RAM through a separate 4 x 8-bit asynchronous FIFO interface. The RAM and asynchronous FIFO interface for the transmitter and the receiver are independent and cannot be shared.
+
+UART0 Tx\_FIFO and UART1 Tx\_FIFO are reset by setting \hyperref[fielddesc:UARTTXFIFORST]{UART\_TXFIFO\_RST}. UART0 Rx\_FIFO and UART1 Rx\_FIFO are reset by setting \hyperref[fielddesc:UARTRXFIFORST]{UART\_RXFIFO\_RST}.
+
+Data to be sent is written to TX FIFO via the APB bus or using GDMA, read automatically, and converted from a frame into a bitstream by hardware Tx\_FSM. Data received is converted from a bitstream into a frame by hardware Rx\_FSM, written into RX FIFO, and then stored into RAM via the APB bus or using GDMA. The two UART controllers share one GDMA channel.
+
+The empty signal threshold for Tx\_FIFO is configured by setting \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD}. When data stored in Tx\_FIFO is less than \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD}, a UART\_TXFIFO\_EMPTY\_INT interrupt is generated. The full signal threshold for Rx\_FIFO is configured by setting \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD}. When data stored in Rx\_FIFO is greater than or equal to \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD}, a UART\_RXFIFO\_FULL\_INT interrupt is generated. In addition, when Rx\_FIFO receives more data than its capacity, a UART\_RXFIFO\_OVF\_INT interrupt is generated.
+
+UART\regindex{n} can access FIFO via register \hyperref[regdesc:UARTFIFOREG]{UART\_FIFO\_REG}. Writing to \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} stores the data into the TX FIFO. As \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} is a read-only register field, the hardware does not actually perform a write operation on \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE}; instead, upon detecting a write request to this field's address, it passes the corresponding write data to the TX FIFO via a separate bypass. Reading \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE} retrieves the data from the RX FIFO.
+
+\clearpage
+\subsection{Baud Rate Generation and Detection}
+
+\subsubsection{Baud Rate Generation}
+
+Before a UART controller sends or receives data, the baud rate should be configured by setting corresponding registers. The baud rate generator of a UART controller functions by dividing the input clock source. It can divide the clock source by a fractional amount. The divisor is configured by \hyperref[regdesc:UARTCLKDIVSYNCREG]{UART\_CLKDIV\_SYNC\_REG}: \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} for the integral part, and \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} for the fractional part. When using the 80 MHz input clock, the UART controller supports a maximum baud rate of 5 Mbaud.
+
+The divisor of the baud rate divider is equal to
+\[
+    \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + \frac{\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}}{16}
+\]
+meaning that the final baud rate is equal to
+\[
+    \frac{INPUT\_FREQ}{\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + \frac{\hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}}{16}}
+\]
+where INPUT\_FREQ is the frequency of UART Core's source clock. For example, if \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} = 694 and \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} = 7,
+then the divisor value is
+\[
+    694 + \frac{7}{16} = 694.4375
+\]
+
+
+When \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} is 0, the baud rate generator is an integer clock divider where an output pulse is generated every
+\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} input pulses.
+
+When \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} is not 0, the divider is fractional and the output baud rate clock pulses are not strictly uniform.
+As shown in Figure \ref{fig:uart-frag-div}, for every 16 output pulses, the generator divides either (\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + 1) input pulses or \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} input pulses per
+output pulse. A total of \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG} output pulses are generated by dividing (\hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} + 1) input pulses, and the remaining
+(16 - \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}) output pulses are generated by dividing \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} input pulses.
+
+The output pulses are interleaved as shown in Figure \ref{fig:uart-frag-div} below, to make the output timing more uniform:
+
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/uart_frag_div_en.eps}
+\centering
+\caption{UART Controllers Division}
+\label{fig:uart-frag-div}
+\end{figure}
+
+To support IrDA (see Section \ref{sub:uart-func-desc-irda} for details), the fractional clock divider for IrDA data transmission generates clock signals divided by 16 × \hyperref[regdesc:UARTCLKDIVSYNCREG]{UART\_CLKDIV\_SYNC\_REG}. This divider works similarly as the one elaborated above: it takes \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV}/16 as the integer value and the lowest four bits of \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} as the fractional value.
+
+\subsubsection{Baud Rate Detection}
+
+Automatic baud rate detection (Autobaud) on UARTs is enabled by setting \hyperref[fielddesc:UARTAUTOBAUDEN]{UART\_AUTOBAUD\_EN}. The Baudrate\_Detect module shown in Figure \ref{fig:one-uart-structure} filters any noise whose pulse width is shorter than \hyperref[fielddesc:UARTGLITCHFILT]{UART\_GLITCH\_FILT}.
+
+Before communication starts, the transmitter could send random data to the receiver for baud rate detection. \hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} stores the minimum low pulse width, \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} stores the minimum high pulse width, \hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} stores the minimum pulse width between two rising edges, and \hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} stores the minimum pulse width between two falling edges. These four fields are read by software to determine the transmitter's baud rate.
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/baud_det}
+\centering
+\caption{The Timing Diagram of Weak UART Signals Along Falling Edges}
+\label{fig:baud-det}
+\end{figure}
+
+The baud rate can be determined in the following three ways:
+
+\begin{enumerate}
+\item Normally, to avoid sampling erroneous data along rising or falling edges in a metastable state, which results in the inaccuracy of \hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} or \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT}, use a weighted average of these two values to eliminate errors for 1-bit pulses. In this case, the baud rate is calculated as follows:
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} + \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT} + 2)/2}}
+    \]
+\item If UART signals are weak along falling edges as shown in Figure \ref{fig:baud-det}, which leads to an inaccurate average of \hyperref[fielddesc:UARTLOWPULSEMINCNT]{UART\_LOWPULSE\_MIN\_CNT} and \hyperref[fielddesc:UARTHIGHPULSEMINCNT]{UART\_HIGHPULSE\_MIN\_CNT}, use \hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} to determine the transmitter's baud rate as follows:
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTPOSEDGEMINCNT]{UART\_POSEDGE\_MIN\_CNT} + 1)/2}}
+    \]
+\item If UART signals are weak along rising edges, use \hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} to determine the transmitter's baud rate as follows:
+    \[
+    B_{\textrm{uart}}=\frac{f_{\textrm{clk}}} {\textrm{(\hyperref[fielddesc:UARTNEGEDGEMINCNT]{UART\_NEGEDGE\_MIN\_CNT} + 1)/2}}
+    \]
+\end{enumerate}
+
+\subsection{UART Data Frame}
+
+\begin{figure}[H]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/uart_data_frame}
+\centering
+\caption{Structure of UART Data Frame}
+\label{fig:uart-data-frame}
+\end{figure}
+
+Figure \ref{fig:uart-data-frame} shows the basic structure of a data frame. A frame starts with one start bit, and ends with stop bits which can be 1, 1.5 or 2 bits long, configured by \hyperref[fielddesc:UARTSTOPBITNUM]{UART\_STOP\_BIT\_NUM} (in RS485 mode turnaround delay may be added. See details in Section \ref{sec:uart-turnaround-delay}). The start bit is logical low, whereas stop bits are logical high.
+
+The actual data length can be anywhere between 5 \verb+~+ 8 bit, configured by \hyperref[fielddesc:UARTBITNUM]{UART\_BIT\_NUM}. When \hyperref[fielddesc:UARTPARITYEN]{UART\_PARITY\_EN} is set, a parity bit is added after data bits. \hyperref[fielddesc:UARTPARITY]{UART\_PARITY} is used to choose even parity or odd parity. When the receiver detects a parity bit error in the data received, a UART\_PARITY\_ERR\_INT interrupt is generated, and the data received
+will still be stored into RX FIFO. When the receiver detects a data frame error, a UART\_FRM\_ERR\_INT interrupt is generated, and the data received by default is stored into RX FIFO.
+
+If all data in Tx\_FIFO has been sent, a UART\_TX\_DONE\_INT interrupt is generated. After this, if the \hyperref[fielddesc:UARTTXDBRK]{UART\_TXD\_BRK} bit is set, then the transmitter will enter the Break condition and send several NULL characters in which the TX data line is logical low. The number of NULL characters is configured by \hyperref[fielddesc:UARTTXBRKNUM]{UART\_TX\_BRK\_NUM}. Once the transmitter has sent all NULL characters, a UART\_TX\_BRK\_DONE\_INT interrupt is generated. The minimum interval between data frames can be configured using \hyperref[fielddesc:UARTTXIDLENUM]{UART\_TX\_IDLE\_NUM}. If the transmitter stays idle for \hyperref[fielddesc:UARTTXIDLENUM]{UART\_TX\_IDLE\_NUM} or more time, a UART\_TX\_BRK\_IDLE\_DONE\_INT interrupt is generated.
+
+The receiver can also detect the Break conditions when the RX data line remains logical low for one NULL character transmission, and a UART\_BRK\_DET\_INT interrupt will be triggered to detect that a Break condition has been completed.
+
+The receiver can detect the current bus state through the timeout interrupt UART\_RXFIFO\_TOUT\_INT. The UART\_RXFIFO\_TOUT\_INT interrupt will be triggered when the bus is in the idle state for more than \hyperref[fielddesc:UARTRXTOUTTHRHD]{UART\_RX\_TOUT\_THRHD} bit time on current baud rate after the receiver has received at least one byte. You can use this interrupt to detect whether all the data from the transmitter has been sent.
+
+
+
+
+
+\subsection{AT\_CMD Character Structure}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/uart_at_cmd}
+\centering
+\caption{AT\_CMD Character Structure}
+\label{fig:uart-at-cmd}
+\end{figure}
+
+Figure \ref{fig:uart-at-cmd} is the structure of a special character AT\_CMD. If the receiver constantly receives AT\_CMD\_CHAR and the following conditions are met, a UART\_AT\_CMD\_CHAR\_DET\_INT interrupt is generated.
+
+\begin{itemize}
+    \item The interval between the first AT\_CMD\_CHAR and the last non-AT\_CMD\_CHAR character is at least \hyperref[fielddesc:UARTPREIDLENUM]{UART\\\_PRE\_IDLE\_NUM} cycles.
+    \item The interval between two AT\_CMD\_CHAR characters is less than \hyperref[fielddesc:UARTRXGAPTOUT]{UART\_RX\_GAP\_TOUT} in the unit of baud rate cycles.
+    \item The number of AT\_CMD\_CHAR characters is equal to or greater than \hyperref[fielddesc:UARTCHARNUM]{UART\_CHAR\_NUM}.
+    \item The interval between the last AT\_CMD\_CHAR character and next non-AT\_CMD\_CHAR character is at least \hyperref[fielddesc:UARTPOSTIDLENUM]{UART\_POST\_IDLE\_NUM} cycles.
+\end{itemize}
+
+Note: Given that the interval between AT\_CMD\_CHAR characters is less than \hyperref[fielddesc:UARTRXGAPTOUT]{UART\_RX\_GAP\_TOUT} in the unit of baud rate cycles, the APB\_CLK frequency is suggested not to be lower than 8 MHz.
+
+\subsection{RS485}
+
+The two regular UART controllers support RS485 communication mode. In this mode differential signals are used to transmit data, so it can communicate over longer distances at higher bit rates than RS232. RS485 has two-wire half-duplex and four-wire full-duplex options. UART controllers support two-wire half-duplex transmission and bus snooping.
+
+
+\subsubsection{Driver Control}
+
+As shown in Figure \ref{fig:rs485}, in a two-wire multidrop network, an external RS485 transceiver is needed for differential to single-ended conversion or the other way around. An RS485 transceiver contains a driver and a receiver. When a UART controller is not in transmitter mode, the connection to the differential line can be broken by disabling the driver. When DE is 1, the driver is enabled; when DE is 0, the driver is disabled.
+
+The UART receiver converts differential signals to single-ended signals via an external receiver. RE is the enable control signal for the receiver. When RE is 0, the receiver is enabled; when RE is 1, the receiver is disabled. If RE is configured as 0, the UART controller is allowed to snoop data on the bus, including the data sent by itself.
+
+DE can be controlled by either software or hardware. To reduce the cost of software, in our design DE is controlled by hardware. As shown in Figure \ref{fig:rs485}, DE is connected to dtrn\_out of UART (please refer to Section \ref{sec:uart-hd-flow-control} for more details).
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/rs485}
+\centering
+\caption{Driver Control Diagram in RS485 Mode}
+\label{fig:rs485}
+\end{figure}
+
+\subsubsection{Turnaround Delay}\label{sec:uart-turnaround-delay}
+
+By default, the two UART controllers work in receiver mode. When a UART controller is switched from transmitter mode to receiver mode, the RS485 protocol requires a turnaround delay of one cycle after the stop bit. The UART transmitter supports adding a turnaround delay of one cycle before the start bit or after the stop bit. When \hyperref[fielddesc:UARTDL0EN]{UART\_DL0\_EN} is set, a turnaround delay of one cycle is added before the start bit; when \hyperref[fielddesc:UARTDL1EN]{UART\_DL1\_EN} is set, a turnaround delay of one cycle is added after the stop bit.
+
+
+\subsubsection{Bus Snooping}
+
+In a two-wire multidrop network,  UART controllers support bus snooping if RE of the external RS485 transceiver is 0. By default, a UART controller is not allowed to transmit and receive data simultaneously. If \hyperref[fielddesc:UARTRS485TXRXEN]{UART\_RS485TX\_RX\_EN} is set and the external RS485 transceiver is configured as in Figure \ref{fig:rs485}, a UART controller may receive data in transmitter mode and snoop the bus. If \hyperref[fielddesc:UARTRS485RXBYTXEN]{UART\_RS485RXBY\_TX\_EN} is set, a UART controller may transmit data in receiver mode.
+
+The two UART controllers can snoop the data sent by themselves. In transmitter mode, when a UART controller monitors a collision between the data sent and the data received, a UART\_RS485\_CLASH\_INT is generated; when a UART controller monitors a data frame error, a UART\_RS485\_FRM\_ERR\_INT interrupt is generated; when a UART controller monitors a polarity error, a UART\_RS485\_PARITY\_ERR\_INT is generated.
+
+
+\subsection{IrDA} \label{sub:uart-func-desc-irda}
+
+IrDA protocol consists of three layers, namely the physical layer, the link access protocol, and the link management protocol. The two UART controllers implement IrDA's physical layer. In IrDA encoding, a UART controller supports data rates up to 115.2 kbit/s (SIR, or serial infrared mode). As shown in Figure \ref{fig:sir-endec}, the IrDA encoder converts a non-return to zero code (NRZ) signal to a return to zero inverted code (RZI) signal and sends it to the external driver and infrared LED. This encoder uses modulated signals whose pulse width is 3/16 bits to indicate logic “0”, and low levels to indicate logic “1”. The IrDA decoder receives signals from the infrared receiver and converts them to NRZ signals. In most cases, the receiver is high when it is idle, and the encoder output polarity is the opposite of the decoder input polarity. If a low pulse is detected, it indicates that a start bit has been received.
+
+When IrDA function is enabled, one bit is divided into 16 clock cycles. If the bit to be sent is zero, then the 9th, 10th, and 11th clock cycle are high.
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/sir_endec}
+\centering
+\caption{The Timing Diagram of Encoding and Decoding in SIR mode}
+\label{fig:sir-endec}
+\end{figure}
+
+
+The IrDA transceiver is half-duplex, meaning that it cannot send and receive data simultaneously. As shown in Figure \ref{fig:irda_arc}, IrDA function is enabled by setting \hyperref[fielddesc:UARTIRDAEN]{UART\_IRDA\_EN}. When \hyperref[fielddesc:UARTIRDATXEN]{UART\_IRDA\_TX\_EN} is set to 1, the IrDA transceiver is enabled to send data and not allowed to receive data; when \hyperref[fielddesc:UARTIRDATXEN]{UART\_IRDA\_TX\_EN} is reset to 0, the IrDA transceiver is enabled to receive data and not allowed to send data.
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/IrDA_arc}
+\centering
+\caption{IrDA Encoding and Decoding Diagram}
+\label{fig:irda_arc}
+\end{figure}
+
+\subsection{Wake-up}\label{sec:uart-wakeup}
+
+UART can be set as wake-up source. When a UART controller is in Light-sleep mode, a wake\_up signal can be generated in four ways and be sent to the RTC module,  which then wakes up \chipname{}.
+
+\begin{itemize}
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL} = 0: When all the clocks are disabled, the chip can be woken up by reverting RXD for multiple cycles until the number of rising edges is equal to or greater than (\hyperref[fielddesc:UARTACTIVETHRESHOLD]{UART\_ACTIVE\_THRESHOLD} + 3).
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL} = 1: UART Core keeps working, so the UART receiver can still receive data and store the received data in RX FIFO. When the number of data bytes in RX FIFO is greater than \hyperref[fielddesc:UARTRXWAKEUPTHRHD]{UART\_RX\_WAKE\_UP\_THRHD}, the chip can be woken up from the Light-sleep mode.
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL} = 2: When the UART receiver detects a start bit, the chip will be woken up.
+\item \hyperref[fielddesc:UARTWKMODESEL]{UART\_WK\_MODE\_SEL} = 3: When the UART receiver receives a specific character sequence, the chip will be woken up. The wakeup characters can be defined by configuring \hyperref[fielddesc:UARTWKCHAR0]{UART\_WK\_CHAR0}, \hyperref[fielddesc:UARTWKCHAR1]{UART\_WK\_CHAR1}, \hyperref[fielddesc:UARTWKCHAR2]{UART\_WK\_CHAR2}, \hyperref[fielddesc:UARTWKCHAR3]{UART\_WK\_CHAR3}, and \hyperref[fielddesc:UARTWKCHAR4]{UART\_WK\_CHAR4}. These four characters can be formed into different character sequences by configuring \hyperref[fielddesc:UARTCHARNUM]{UART\_CHAR\_NUM} and \hyperref[fielddesc:UARTWKCHARMASK]{UART\_WK\_CHAR\_MASK}, as shown in Table \ref{tab:uart-char-wakeup-cfg}. Once the sequence is detected, the chip will be woken up. For the last configuration in Table \ref{tab:uart-char-wakeup-cfg}, UART will detects for CHAR0 \verb+~+ CHAR4 in order.
+\end{itemize}
+
+\input{./30-UART/tables/30-UART-char-wakeup-cfg__EN}
+
+After the chip is woken up by UART, it is necessary to clear the wake\_up signal by transmitting data to UART in Active mode or resetting the whole UART, otherwise the number of rising edges required for the next wakeup will be reduced.
+
+\subsection{Flow Control}
+
+UART controllers have two ways to control data flow, namely hardware flow control and software flow control. Hardware flow control is achieved using output signal rtsn\_out and input signal ctsn\_in. Software flow control is achieved by inserting special characters in the data flow sent and detecting special characters in the data flow received.
+
+\subsubsection{Hardware Flow Control}\label{sec:uart-hd-flow-control}
+
+
+\begin{figure}[H]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/UART-hardware-flow-control-20211123}
+\centering
+\caption{Hardware Flow Control Diagram}
+\label{fig:uart-flow-control}
+\end{figure}
+
+Figure \ref{fig:uart-flow-control} shows the hardware flow control of a UART controller. Hardware flow control uses output signal rtsn\_out and input signal dsrn\_in. Figure \ref{fig:hw-flow-control-connect} illustrates how these signals are connected between UART on \chipname{} (hereinafter referred to as IU0) and the external UART (hereinafter referred to as EU0).
+
+When rtsn\_out of IU0 is low, EU0 is allowed to send data. When rtsn\_out of IU0 is high, EU0 is notified to stop sending data until rtsn\_out of IU0 returns to low. The output signal rtsn\_out can be controlled in two ways.
+
+\begin{itemize}
+    \item Software control: Enter this mode by clearing \hyperref[fielddesc:UARTRXFLOWEN]{UART\_RX\_FLOW\_EN} to 0. In this mode, the level of rtsn\_out is changed by configuring \hyperref[fielddesc:UARTSWRTS]{UART\_SW\_RTS}.
+    \item Hardware control: Enter this mode by setting \hyperref[fielddesc:UARTRXFLOWEN]{UART\_RX\_FLOW\_EN} to 1. In this mode, rtsn\_out is pulled high when data in Rx\_FIFO exceeds \hyperref[fielddesc:UARTRXFLOWTHRHD]{UART\_RX\_FLOW\_THRHD}.
+\end{itemize}
+
+\begin{figure}[H]
+\includegraphics[width=0.55\textwidth]{\modulefiles/figures/hardware_flow_control_connect_figure.eps}
+\centering
+\caption{Connection between Hardware Flow Control Signals}
+\label{fig:hw-flow-control-connect}
+\end{figure}
+
+When ctsn\_in of IU0 is low, IU0 is allowed to send data; when ctsn\_in is high, IU0 is not allowed to send data. When IU0 detects an edge change of ctsn\_in, a UART\_CTS\_CHG\_INT interrupt is generated.
+
+If dtrn\_out of IU0 is high, it indicates that IU0 is ready to transmit data. dtrn\_out is generated by configuring the \hyperref[fielddesc:UARTSWDTR]{UART\_SW\_DTR} field. When the IU0 transmitter detects an edge change of dsrn\_in, a UART\_DSR\_CHG\_INT interrupt is generated. After this interrupt is detected, software can obtain the level of input signal dsrn\_in by reading \hyperref[fielddesc:UARTDSRN]{UART\_DSRN}. If dsrn\_in is high, it indicates that EU0 is ready to transmit data.
+
+In a two-wire RS485 multidrop network enabled by setting \hyperref[fielddesc:UARTRS485EN]{UART\_RS485\_EN}, dtrn\_out is generated by hardware and used for transmit/receive turnaround. When data transmission starts, dtrn\_out is pulled high and the external driver is enabled; when data transmission completes, dtrn\_out is pulled low and the external driver is disabled. Please note that when there is a turnaround delay of one cycle added after the stop bit, dtrn\_out is pulled low after the delay.
+
+UART loopback test is enabled by setting \hyperref[fielddesc:UARTLOOPBACK]{UART\_LOOPBACK}. In the test, UART output signal txd\_out is connected to its input signal rxd\_in, rtsn\_out is connected to ctsn\_in, and dtrn\_out is connected to dsrn\_out. If the data sent matches the data received, it indicates that UART controllers are working properly.
+
+\subsubsection{Software Flow Control}
+
+Instead of CTS/RTS lines, software flow control uses XON/XOFF characters to start or stop data transmission. Such flow control is enabled by setting \hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} to 1.
+
+When using software flow control, hardware automatically detects if there are XON/XOFF characters in the data flow received, and generate a UART\_SW\_XOFF\_INT or a UART\_SW\_XON\_INT interrupt accordingly. If an XOFF character is detected, the transmitter stops data transmission once the current byte has been transmitted; if an XON character is detected, the transmitter starts data transmission. In addition, software can force the transmitter to stop sending data by setting \hyperref[fielddesc:UARTFORCEXOFF]{UART\_FORCE\_XOFF}, or to start sending data by setting \hyperref[fielddesc:UARTFORCEXON]{UART\_FORCE\_XON}.
+
+Software determines whether to insert flow control characters according to the remaining room in RX FIFO. When \hyperref[fielddesc:UARTSENDXOFF]{UART\_SEND\_XOFF} is set, the transmitter sends an XOFF character configured by \hyperref[fielddesc:UARTXOFFCHAR]{UART\_XOFF\_CHAR} after the current byte in transmission; when \hyperref[fielddesc:UARTSENDXON]{UART\_SEND\_XON} is set, the transmitter sends an XON character configured by \hyperref[fielddesc:UARTXONCHAR]{UART\_XON\_CHAR} after the current byte in transmission. If the RX FIFO of a UART controller stores more data than \hyperref[fielddesc:UARTXOFFTHRESHOLD]{UART\_XOFF\_THRESHOLD}, \hyperref[fielddesc:UARTSENDXOFF]{UART\_SEND\_XOFF} is set by hardware. As a result, the transmitter sends an XOFF character configured by \hyperref[fielddesc:UARTXOFFCHAR]{UART\_XOFF\_CHAR} after the current byte in transmission. If the RX FIFO of a UART controller stores less data than \hyperref[fielddesc:UARTXONTHRESHOLD]{UART\_XON\_THRESHOLD}, \hyperref[fielddesc:UARTSENDXON]{UART\_SEND\_XON} is set by hardware. As a result, the transmitter sends an XON character configured by \hyperref[fielddesc:UARTXONCHAR]{UART\_XON\_CHAR} after the current byte in transmission.
+
+In full-duplex mode, when the UART receiver receives an XOFF character, the UART transmitter is not allowed to send any data including XOFF even if the UART receiver receives more data than its threshold. To avoid deadlocks in software flow control or overflow caused thereby, you can set \hyperref[fielddesc:UARTXONXOFFSTILLSEND]{UART\_\_XON\_XOFF\_STILL\_SEND}. In this way, the UART transmitter can still send an XOFF character when it is not allowed to send any data.
+
+\subsection{GDMA Mode}
+
+The two UART controllers on \chipname{} share one TX/RX GDMA (general direct memory access) channel via UHCI. In GDMA mode, UART controllers support the decoding and encoding of HCI data packets. The \hyperref[fielddesc:UHCIUART0CE]{UHCI\_UART\regindex{n}\_CE} field determines which UART controller occupies the GDMA TX/RX channel.
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/UDMA}
+\centering
+\caption{Data Transfer in GDMA Mode}
+\label{fig:uart-gdma}
+\end{figure}
+
+Figure \ref{fig:uart-gdma} shows how data is transferred using GDMA. Before GDMA receives data, software prepares an inlink. \hyperref[fielddesc:GDMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} points to the first receive descriptor in the inlink. After \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} is set, UHCI sends data that UART has received to the decoder. The decoded data is then stored into the RAM pointed by the inlink under the control of GDMA.
+
+Before GDMA sends data, software prepares an outlink and data to be sent. \hyperref[fielddesc:GDMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}} points to the first transmit descriptor in the outlink. After \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} is set, GDMA reads data from the RAM pointed by outlink. The data is then encoded by the encoder, and sent sequentially by the UART transmitter.
+
+HCI data packets have separators at the beginning and the end, with data bits in the middle (separators + data bits + separators). The encoder inserts separators in front of and after data bits, and replaces data bits identical to separators with special characters. The decoder removes separators in front of and after data bits, and replaces special characters with separators. There can be more than one continuous separator at the beginning and the end of a data packet. The separator is configured by \hyperref[fielddesc:UHCISEPERCHAR]{UHCI\_SEPER\_CHAR}, 0xC0 by default. The special character is configured by \hyperref[fielddesc:UHCIESCSEQ0CHAR0]{UHCI\_ESC\_SEQ0\_CHAR0} (0xDB by default) and \hyperref[fielddesc:UHCIESCSEQ0CHAR1]{UHCI\_ESC\_SEQ0\_CHAR1} (0xDD by default). When all data has been sent, a GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT interrupt is generated. When all data has been received, a GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT is generated.
+
+
+\subsection{UART Interrupts}
+\begin{itemize}
+\item \label{int:UARTATCMDCHARDETINT}UART\_AT\_CMD\_CHAR\_DET\_INT: Triggered when the receiver detects an AT\_CMD character.
+\item \label{int:UARTRS485CLASHINT}UART\_RS485\_CLASH\_INT: Triggered when a collision is detected between the transmitter and the receiver in RS485 mode.
+\item \label{int:UARTRS485FRMERRINT}UART\_RS485\_FRM\_ERR\_INT: Triggered when an error is detected in the data frame sent by the transmitter in RS485 mode.
+\item \label{int:UARTRS485PARITYERRINT}UART\_RS485\_PARITY\_ERR\_INT: Triggered when an error is detected in the parity bit sent by the transmitter in RS485 mode.
+\item \label{int:UARTTXDONEINT}UART\_TX\_DONE\_INT: Triggered when all data in the transmitter's TX FIFO has been sent.
+\item \label{int:UARTTXBRKIDLEDONEINT}UART\_TX\_BRK\_IDLE\_DONE\_INT: Triggered when the transmitter stays idle for the minimum interval (threshold) after sending the last data bit.
+\item \label{int:UARTTXBRKDONEINT}UART\_TX\_BRK\_DONE\_INT: Triggered when the transmitter has sent all NULL characters after all data in TX FIFO had been sent.
+\item \label{int:UARTGLITCHDETINT}UART\_GLITCH\_DET\_INT: Triggered when the receiver detects a glitch in the middle of the start bit.
+\item \label{int:UARTSWXOFFINT}UART\_SW\_XOFF\_INT: Triggered when \hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} is set and the receiver receives a XOFF character.
+\item \label{int:UARTSWXONINT}UART\_SW\_XON\_INT: Triggered when \hyperref[fielddesc:UARTSWFLOWCONEN]{UART\_SW\_FLOW\_CON\_EN} is set and the receiver receives a XON character.
+\item \label{int:UARTRXFIFOTOUTINT}UART\_RXFIFO\_TOUT\_INT: Triggered when the receiver has received at least one byte, and the bus remains idle for \hyperref[fielddesc:UARTRXTOUTTHRHD]{UART\_RX\_TOUT\_THRHD}.
+\item \label{int:UARTBRKDETINT}UART\_BRK\_DET\_INT: Triggered when the receiver detects a NULL character (i.e. logic 0 for one NULL character transmission) after stop bits.
+\item \label{int:UARTCTSCHGINT}UART\_CTS\_CHG\_INT: Triggered when the receiver detects an edge change of CTSn signals.
+\item \label{int:UARTDSRCHGINT}UART\_DSR\_CHG\_INT: Triggered when the receiver detects an edge change of DSRn signals.
+\item \label{int:UARTRXFIFOOVFINT}UART\_RXFIFO\_OVF\_INT: Triggered when the amount of data received by the receiver exceeds the storage capacity of the FIFO.
+\item \label{int:UARTFRMERRINT}UART\_FRM\_ERR\_INT: Triggered when the receiver detects a data frame error.
+\item \label{int:UARTPARITYERRINT}UART\_PARITY\_ERR\_INT: Triggered when the receiver detects a parity error.
+\item \label{int:UARTTXFIFOEMPTYINT}UART\_TXFIFO\_EMPTY\_INT: Triggered when TX FIFO stores less data than what \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD} specifies.
+\item \label{int:UARTRXFIFOFULLINT}UART\_RXFIFO\_FULL\_INT: Triggered when the receiver receives more data than what \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD} specifies.
+\item \label{int:UARTWAKEUPINT}UART\_WAKEUP\_INT: Triggered when UART is woken up.
+\end{itemize}
+
+
+\subsection{UHCI Interrupts}
+\begin{itemize}
+\item \label{int:UHCIAPPCTRL1INT}UHCI\_APP\_CTRL1\_INT: Triggered when software sets \hyperref[fielddesc:UHCIAPPCTRL1INTRAW]{UHCI\_APP\_CTRL1\_INT\_RAW}.
+\item \label{int:UHCIAPPCTRL0INT}UHCI\_APP\_CTRL0\_INT: Triggered when software sets \hyperref[fielddesc:UHCIAPPCTRL0INTRAW]{UHCI\_APP\_CTRL0\_INT\_RAW}.
+\item \label{int:UHCIOUTLINKEOFERRINT}UHCI\_OUTLINK\_EOF\_ERR\_INT: Triggered when an EOF error is detected in a transmit descriptor.
+\item \label{int:UHCISENDAREGQINT}UHCI\_SEND\_A\_REG\_Q\_INT: Triggered when UHCI has sent a series of short packets using always\_send.
+\item \label{int:UHCISENDSREGQINT}UHCI\_SEND\_S\_REG\_Q\_INT: Triggered when UHCI has sent a series of short packets using single\_send.
+\item \label{int:UHCITXHUNGINT}UHCI\_TX\_HUNG\_INT: Triggered when UHCI takes too long to read RAM using a GDMA transmit channel.
+\item \label{int:UHCIRXHUNGINT}UHCI\_RX\_HUNG\_INT: Triggered when UHCI takes too long to receive data using a GDMA receive channel.
+\item \label{int:UHCITXSTARTINT}UHCI\_TX\_START\_INT: Triggered when GDMA detects a separator character.
+\item \label{int:UHCIRXSTARTINT}UHCI\_RX\_START\_INT: Triggered when a separator character has been sent.
+\end{itemize}
+
+
+\section{Programming Procedures}\label{sec:uart-program}
+
+\subsection{Register Type}
+
+All UART registers are in the APB\_CLK domain.
+
+UART configuration registers can be classified into two groups. One group of registers are read in APB\_CLK or AHB\_CLK domains, so once such registers are configured no extra operations are required. The other group of registers are read in the UART Core's clock domain, and therefore need to implement the clock domain crossing design. Once these registers are configured, the configured values need to be synchronized to the UART Core's clock domain by writing to \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE}. Once all values have been synchronized, \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} will be automatically cleared by hardware. After configuring registers that need synchronization, it is recommended to check whether \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} is 0. This is to ensure that register values configured before have already been synchronized.
+
+To distinguish between these two groups of registers easily, all registers that implement the clock domain crossing design have the \_SYNC suffix, and are put together in Section \ref{sec:uart-reg-summ}. Those without the \_SYNC suffix in Section \ref{sec:uart-reg-summ} are configuration registers that require no clock domain crossing.
+
+\subsection{Detailed Steps}
+
+Figure \ref{fig:uart-program-flow} illustrates the process to program UART controllers, namely initialize UART, configure registers, enable the UART transmitter or receiver, and finish data transmission.
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/uart_program_flow}
+\centering
+\caption{UART Programming Procedures}
+\label{fig:uart-program-flow}
+\end{figure}
+
+\subsubsection{Initializing UART\regindex{n}}
+
+To initialize UART\regindex{n}:
+
+\begin{itemize}
+    \item Write 1 to \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN}.
+    \item Clear \hyperref[fielddesc:PCRUART0RSTEN]{PCR\_UART\regindex{n}\_RST\_EN}.
+\end{itemize}
+
+\subsubsection{Configuring UART\regindex{n} Communication}
+
+To configure UART\regindex{n} communication:
+
+
+\begin{itemize}
+    \item Wait for \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE} to become 0, which indicates the completion of the last synchronization.
+    \item Select the clock source via \hyperref[fielddesc:PCRUART0SCLKSEL]{PCR\_UART\regindex{n}\_SCLK\_SEL}.
+    \item Configure divisor of the divider via \hyperref[fielddesc:PCRUART0SCLKDIVNUM]{PCR\_UART\regindex{n}\_SCLK\_DIV\_NUM}, \hyperref[fielddesc:PCRUART0SCLKDIVA]{PCR\_UART\regindex{n}\_SCLK\_DIV\_A}, and \hyperref[fielddesc:PCRUART0SCLKDIVB]{PCR\_UART\regindex{n}\_SCLK\_DIV\_B}.
+    \item Configure the baud rate for transmission via \hyperref[fielddesc:UARTCLKDIV]{UART\_CLKDIV} and \hyperref[fielddesc:UARTCLKDIVFRAG]{UART\_CLKDIV\_FRAG}.
+    \item Configure data length via \hyperref[fielddesc:UARTBITNUM]{UART\_BIT\_NUM}.
+    \item Configure odd or even parity check via \hyperref[fielddesc:UARTPARITYEN]{UART\_PARITY\_EN} and \hyperref[fielddesc:UARTPARITY]{UART\_PARITY}.
+    \item Optional steps depending on application ...
+    \item Synchronize the configured values to the Core Clock domain by writing 1 to \hyperref[fielddesc:UARTREGUPDATE]{UART\_REG\_UPDATE}.
+\end{itemize}
+
+\subsubsection{Enabling UART\regindex{n}}
+
+To enable UART\regindex{n} transmitter:
+
+\begin{itemize}
+    \item Configure TX FIFO's empty threshold via \hyperref[fielddesc:UARTTXFIFOEMPTYTHRHD]{UART\_TXFIFO\_EMPTY\_THRHD}.
+    \item Disable UART\_TXFIFO\_EMPTY\_INT interrupt by clearing \hyperref[fielddesc:UARTTXFIFOEMPTYINTENA]{UART\_TXFIFO\_EMPTY\_INT\_ENA}.
+    \item Write data to be sent to \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE}.
+    \item Clear UART\_TXFIFO\_EMPTY\_INT interrupt by setting  \hyperref[fielddesc:UARTTXFIFOEMPTYINTCLR]{UART\_TXFIFO\_EMPTY\_INT\_CLR}.
+    \item Enable UART\_TXFIFO\_EMPTY\_INT interrupt by setting \hyperref[fielddesc:UARTTXFIFOEMPTYINTENA]{UART\_TXFIFO\_EMPTY\_INT\_ENA}.
+    \item Check \hyperref[fielddesc:UARTTXFIFOEMPTYINTST]{UART\_TXFIFO\_EMPTY\_INT\_ST} and wait for the completion of data transmission.
+\end{itemize}
+
+To enable UART\regindex{n} receiver:
+\begin{itemize}
+    \item Configure RX FIFO's full threshold via \hyperref[fielddesc:UARTRXFIFOFULLTHRHD]{UART\_RXFIFO\_FULL\_THRHD}.
+    \item Enable UART\_RXFIFO\_FULL\_INT interrupt by setting \hyperref[fielddesc:UARTRXFIFOFULLINTENA]{UART\_RXFIFO\_FULL\_INT\_ENA}.
+    \item Check \hyperref[fielddesc:UARTRXFIFOFULLINTST]{UART\_RXFIFO\_FULL\_INT\_ST} and wait until the RX FIFO is full.
+    \item Read data from RX FIFO via  \hyperref[fielddesc:UARTRXFIFORDBYTE]{UART\_RXFIFO\_RD\_BYTE}, and obtain the number of bytes received in RX FIFO via \hyperref[fielddesc:UARTRXFIFOCNT]{UART\_RXFIFO\_CNT}.
+\end{itemize}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+
+\clearpage
+\section{Register Summary}
+\label{sec:uart-reg-summ}
+\hypertarget{uart-reg-summ}{}
+
+\subsection{UART Register Summary}
+
+The addresses in this section are relative to UART Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/30-UART-reg-summ__EN}
+
+\subsection{LP UART Register Summary}
+
+The addresses in this section are relative to LP UART base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/30-LP-UART-reg-summ__EN}
+
+
+\subsection{UHCI Register Summary}
+
+The addresses in this section are relative to UHCI base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/30-UHCI-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+\subsection{UART Registers}
+
+The addresses in this section are relative to UART Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/30-UART-reg__EN}
+
+\subsection{LP UART Registers}
+
+The addresses in this section are relative to LP UART base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/30-LP-UART-reg__EN}
+
+
+
+\subsection{UHCI Registers}
+
+The addresses in this section are relative to UHCI base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/30-UHCI-reg__EN}
+
+
+
+\end{document}

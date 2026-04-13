@@ -1,0 +1,267 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./13-WDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{wdt}{}
+\chapter{看门狗定时器 (WDT)}
+\label{mod:wdt}
+
+\section{概述}
+
+看门狗定时器是一种硬件定时器，用于检测和修复故障。软件必须定期喂狗（复位），以防超时。系统或软件若出现不可预知的问题（比如软件卡在某个循环或逾期事件中）将无法按时喂狗，造成看门狗超时。因此，看门狗定时器有助于检测、处理系统或软件的错误行为。
+
+如图 \ref{fig:wdt-timers-overview} 所示，\chipname{} 中有两个数字看门狗定时器：章节 \ref{mod:timg} \textit{\nameref{mod:timg}} 描述的定时器组中有一个（称作主系统看门狗定时器，缩写为 MWDT），RTC 模块中有一个（称作 RTC 看门狗定时器，缩写为 RWDT）。数字看门狗在运行期间会经历四个阶段（除非看门狗按时喂狗或者处于关闭状态），每个阶段均可配置单独的超时时间和超时动作，其中 MWDT 支持中断、CPU 复位和内核复位三种超时动作，RWDT 支持中断、CPU 复位、内核复位和系统复位四种超时动作（详见章节 \ref{sec:wdt-timeout} \textit{\nameref{sec:wdt-timeout}}）。每个阶段的超时时间都可单独设置。
+
+在 flash 引导模式下，RWDT 和定时器组 0 的 MWDT 会默认使能，以检测引导过程中发生的错误，并恢复运行。
+
+\chipname{} 中还有一个模拟看门狗定时器——超级看门狗 (SWD)。超级看门狗是模拟域的超低功耗电路，可以防止系统在数字电路异常状态下运行，并在必要时复位系统。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/esp8684-wdt-overview}
+    \caption{看门狗定时器概览}
+    \label{fig:wdt-timers-overview}
+\end{figure}
+
+请注意，本章节仅包含看门狗定时器的功能描述，其寄存器部分详见章节 \ref{mod:timg} \textit{\nameref{mod:timg}} 和章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+
+\section{数字看门狗定时器}
+\subsection{主要特性}
+看门狗定时器具有如下特性：
+
+\begin{itemize}
+    \item 四个阶段，每个阶段都可配置超时时间和超时动作
+    \item 超时动作
+        \begin{itemize}
+            \item MWDT：中断、CPU 复位、内核复位
+            \item RWDT：中断、CPU 复位、内核复位、系统复位
+        \end{itemize}
+    \item 阶段 0 Flash 启动保护：
+        \begin{itemize}
+            \item MWDT：超时触发内核复位
+            \item RWDT：超时触发系统复位
+        \end{itemize}
+    \item 写保护，使能时寄存器仅可读取
+    \item 32 位超时计数器
+    \item 时钟源：
+        \begin{itemize}
+            \item MWDT：40 MHz PLL\_F40M\_CLK 或 XTAL\_CLK
+            \item RWDT：RTC\_SLOW\_CLK
+        \end{itemize}
+\end{itemize}
+
+
+
+\subsection{功能描述}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/esp8684-wdt-arch}
+    \caption{\chipname{} 的数字看门狗定时器}
+    \label{fig:wdt-timers}
+\end{figure}
+
+图 \ref{fig:wdt-timers} 为 \chipname{} 数字系统中的两个看门狗定时器。
+
+\subsubsection{时钟源与 32 位计数器}
+
+看门狗定时器的核心是一个 32 位计数器。
+
+
+MWDT 可通过设置 \hyperref[regdesc:TIMGWDTCONFIG0REG]{TIMG\_WDTCONFIG0\_REG} 寄存器的 \hyperref[fielddesc:TIMGWDTUSEXTAL]{TIMG\_WDT\_USE\_XTAL} 字段选择 PLL\_F40M\_CLK 时钟或外部时钟 (XTAL\_CLK) 作为时钟源。注意，当芯片处于低功耗模式 CPU\_CLK 且时钟源不为 PLL\_CLK 时（即 \hyperref[fielddesc:SYSTEMSOCCLKSEL]{SYSTEM\_SOC\_CLK\_SEL} 不为 1 时，详见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}} 的表 \ref{tab:resclk-cpu-clk-src}），MWDT 仅能选择 XTAL\_CLK。将 \hyperref[regdesc:TIMGREGCLKREG]{TIMG\_REGCLK\_REG} 寄存器的 \hyperref[fielddesc:TIMGWDTCLKISACTIVE]{TIMG\_WDT\_CLK\_IS\_ACTIVE} 字段置 1 开启时钟，清零关闭时钟。时钟经由可配置的 16 位预分频器分频。MWDT 的 16 位预分频器可通过 \hyperref[regdesc:TIMGWDTCONFIG1REG]{TIMG\_WDTCONFIG1\_REG} 寄存器的 \hyperref[fielddesc:TIMGWDTCLKPRESCALE]{TIMG\_WDT\_CLK\_PRESCALE} 字段配置。 \hyperref[fielddesc:TIMGWDTDIVCNTRST]{TIMG\_WDT\_DIVCNT\_RST} 字段置位时，预分频器复位，可立即重新配置。
+
+
+RWDT 直接将 RTC 慢速时钟 RTC\_SLOW\_CLK（详见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}）用作时钟源。
+
+MWDT 和 RWDT 看门狗可分别通过设置 \hyperref[fielddesc:TIMGWDTEN]{TIMG\_WDT\_EN} 和 \hyperref[fielddesc:RTCCNTLWDTEN]{RTC\_CNTL\_WDT\_EN} 字段使能。看门狗使能后，其内部 32 位计数器的值会在每个时钟源周期内累加 1，直到达到该阶段的超时时间（即在该阶段发生超时）。如发生超时，计数器的值会重置为 0，同时看门狗进入下一阶段。如果软件成功喂狗，看门狗定时器会回到阶段 0，并将计数器的值重置为 0。软件向 \hyperref[regdesc:TIMGWDTFEEDREG]{TIMG\_WDTFEED\_REG} 和 \hyperref[fielddesc:RTCCNTLWDTFEED]{RTC\_CNTL\_RTC\_WDT\_FEED} 寄存器内写入任意值，便可分别为 MDWT 和 RWDT 喂狗。
+
+
+\subsubsection{阶段与超时动作}\label{sec:wdt-timeout}
+定时器在各阶段可以配置不同的超时时间和对应的超时动作。某一阶段超时会触发对应的超时动作，同时计数器的值被重置为 0，看门狗进入下一阶段。MWDT 和 RWDT 有四个阶段（称为阶段 0 至阶段 3）。看门狗定时器会循环工作（即从阶段 0 至阶段 3，再回到阶段 0）。
+
+MWDT 每个阶段的超时时间可用 \hyperref[regdesc:TIMGWDTCONFIG2REG]{TIMG\_WDTCONFIG\textcolor{red}{\it{i}}\_REG} （i 的范围是 2 到 5）寄存器配置，RWDT 的超时时间可用 \hyperref[fielddesc:RTCCNTLWDTSTG3]{RTC\_CNTL\_WDT\_STG\textcolor{red}{\it{j}}\_HOLD}（j 的范围是 0 到 3）字段配置。
+
+值得注意的是，RWDT 在阶段 0 的超时时间 (T\textsubscript{hold0}) 受 eFuse 寄存器 \hyperref[regdesc:EFUSERDREPEATDATA0REG]{EFUSE\_RD\_REPEAT\_DATA0\_REG} 的 \\\hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} 字段和 \hyperref[fielddesc:RTCCNTLWDTSTG0HOLD]{RTC\_CNTL\_WDT\_STG0\_HOLD} 字段共同影响，关系如下：
+
+\begin{displaymath}
+T_{hold0} = \hyperref[fielddesc:RTCCNTLWDTSTG0HOLD]{RTC\_CNTL\_WDT\_STG0\_HOLD}   << (\hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} + 1)
+\end{displaymath}
+
+其中，$<<$ 为左移运算符。
+
+如某个阶段超时，下列超时动作之一将会执行：
+
+
+\begin{table}[H]
+\centering
+\caption{超时动作}
+\label{tab:wdt-timeout-action}
+
+\begin{tabular}{|l|m{12cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{超时动作} & \textbf{描述} \\\hline
+
+    中断 &  触发中断 \\ \hline
+    CPU 复位 &  复位 CPU 核心 \\ \hline
+    内核复位 &  复位主系统（包括 MWDT、CPU 和所有外设），功耗管理单元和 RTC 外设不会复位\\ \hline
+    系统复位 &  复位主系统、功耗管理单元和 RTC 外设（详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}），此动作仅可在 RWDT 中实现 \\ \hline
+    关闭 &  对系统不产生影响\\ \hline
+
+\end{tabular}
+\end{table}
+
+MWDT 所有阶段的超时动作均在 \hyperref[regdesc:TIMGWDTCONFIG0REG]{TIMG\_WDTCONFIG0\_REG} 寄存器中配置。RWDT 的超时动作可在\\ \hyperref[regdesc:RTCCNTLWDTCONFIG0REG]{RTC\_CNTL\_WDTCONFIG0\_REG} 寄存器配置。
+
+\subsubsection{写保护}
+看门狗定时器对于检测和处理系统或软件错误而言至关重要，不应轻易关闭（例如，因写寄存器位置错误而误将看门狗关闭）。因此，MWDT 和 RWDT 引入写保护机制，防止看门狗因无意的写操作而被关闭或篡改。
+
+写保护机制通过每个看门狗定时器的写密钥字段运行（MWDT 看门狗使用 \hyperref[fielddesc:TIMGWDTWKEY]{TIMG\_WDT\_WKEY}，RWDT 看门狗使用 \hyperref[fielddesc:RTCCNTLWDTWKEY]{RTC\_CNTL\_WDT\_WKEY}）。必须向看门狗定时器的写密钥字段写入 0x50D83AA1，才能修改其它看门狗寄存器。如果写密钥字段的值不是 0x50D83AA1，任何试图向看门狗定时器寄存器（除了向写密钥字段本身）写值的操作都会被忽略。推荐按以下步骤访问看门狗定时器：
+
+\begin{enumerate}
+\item 将 0x50D83AA1 写入看门狗定时器的写密钥字段，关闭写保护。
+\item 根据需要修改看门狗，如喂狗或改变配置。
+\item 向看门狗定时器的写密钥字段上写入除 0x50D83AA1 以外的任意值，重新使能写保护。
+\end{enumerate}
+
+\subsubsection{Flash 引导保护}
+在 flash 引导模式下，MWDT 和 RWDT 会默认使能。MWDT 的阶段 0 的默认超时动作为内核复位（复位主系统）。RWDT 的阶段 0 超时动作为系统复位（复位主系统和 RTC）。引导后，应将 \hyperref[fielddesc:TIMGWDTFLASHBOOTMODEN]{TIMG\_WDT\_FLASHBOOT\_MOD\_EN} 和 \hyperref[fielddesc:RTCCNTLWDTFLASHBOOTMODEN]{RTC\_CNTL\_WDT\_FLASHBOOT\_MOD\_EN} 位清零，分别关闭 MWDT 和 RWDT的 flash 引导保护。然后，软件可以配置 MWDT 和 RWDT。
+
+
+\section{模拟看门狗定时器}\label{sec:wdt-swdt}
+超级看门狗 (SWD) 是模拟域的超低功耗电路，可以防止系统在数字电路异常状态下运行，并在必要时复位系统。SWD 包含一个看门狗电路，需在每个超时阶段（约不足一秒）至少喂狗一次。该电路会在看门狗超时时间约 100 ms 之前发送 WD\_INTR 信号提醒系统喂狗。
+
+如果系统不回应 SWD 的喂狗请求，看门狗超时，SWD 会产生系统电平信号 SWD\_RSTB，复位芯片上的整个数字电路。
+
+SWD 的时钟源固定，不可选择。
+
+\subsection{主要特性}
+SWD 具有如下特性：
+\begin{itemize}
+    \item 超低功耗
+    \item 用中断提醒 SWD 即将超时
+    \item 软件有多种专用的方法喂 SWD，让 SWD 监控整个操作系统的工作状态
+\end{itemize}
+
+\subsection{SWD 控制器}
+\subsubsection{结构}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/swd_pic_thicker}
+    \caption{SWD 控制器结构}
+    \label{fig:wdt}
+\end{figure}
+
+\subsubsection{工作流程}
+正常状态下：
+\begin{itemize}
+    \item SWD 控制器收到 SWD 的喂狗请求。
+    \item SWD 控制器可以向主 CPU 发送中断。
+    \item 主 CPU 可以通过置位 \hyperref[fielddesc:RTCCNTLSWDFEED]{RTC\_CNTL\_SWD\_FEED} 直接喂狗。
+    \item CPU 喂狗时，需要先向 \hyperref[fielddesc:RTCCNTLSWDWKEY]{RTC\_CNTL\_SWD\_WKEY} 写 0x8F1D312A  关闭 SWD 控制器的写保护。这样做可以防止系统在数字电路异常状态下运行时误喂 SWD。
+    \item 如将 \hyperref[fielddesc:RTCCNTLSWDAUTOFEEDEN]{RTC\_CNTL\_SWD\_AUTO\_FEED\_EN} 置 1，SWD 控制器也可配置为在不需要 CPU 干预的情况下喂 SWD。
+\end{itemize}
+
+复位后：
+\begin{itemize}
+    \item 可查看 \hyperref[fielddesc:RTCCNTLRESETCAUSEPROCPU]{RTC\_CNTL\_RESET\_CAUSE\_PROCPU}[5:0] 获知 CPU 复位原因。\\
+	如 \hyperref[fielddesc:RTCCNTLRESETCAUSEPROCPU]{RTC\_CNTL\_RESET\_CAUSE\_PROCPU}[5:0] == 0x12，则表示上一次复位的原因是 SWD 复位。
+	\item 置位 \hyperref[fielddesc:RTCCNTLSWDRSTFLAGCLR]{RTC\_CNTL\_SWD\_RST\_FLAG\_CLR} 清除 SWD 复位标志。
+\end{itemize}
+
+\section{中断}
+
+看门狗定时器中断，请前往章节 \ref{mod:timg} \textit{\nameref{mod:timg}} 的第 \ref{sec:timg-interrupt} 节 \textit{\nameref{sec:timg-interrupt}} 查看。
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\section{寄存器}
+MWDT 寄存器是定时器组模块的一部分，在章节 \ref{mod:timg} \textit{\nameref{mod:timg}} 的第 \ref{sec:timg-reg-summ} 节 \textit{\nameref{sec:timg-reg-summ}} 中有详细描述。RWDT 和 SWD 寄存器是 RTC 模块的一部分，在章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} 的第 \ref{sec:lowpowm-reg-summ} 节 \textit{\nameref{sec:lowpowm-reg-summ}} 中有详细描述。
+
+
+\end{document}

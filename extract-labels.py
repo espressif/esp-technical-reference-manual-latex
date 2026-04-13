@@ -7,10 +7,10 @@ DEFAULT_CHIP_LABELS = os.environ.get("CHIP_LIST")
 # Get the value of CI_MERGE_REQUEST_LABELS from the environment
 CI_MERGE_REQUEST_LABELS = os.environ.get("CI_MERGE_REQUEST_LABELS")
 
-# Initialize a flag for the Release label
+# Initialize a flag for the release label
 RELEASE_LABEL = False
 
-# Labels to ignore in build logic besides Release
+# Labels to ignore in build logic besides release
 IGNORED_BUILD_LABELS = [
     "needs backport",
     "backport created",
@@ -18,11 +18,11 @@ IGNORED_BUILD_LABELS = [
 
 if CI_MERGE_REQUEST_LABELS:
     LABELS_LIST = CI_MERGE_REQUEST_LABELS.split(",")
-    # Check for the Release label
-    if "Release" in LABELS_LIST:
+    # Check for the release label
+    if "release" in LABELS_LIST:
         RELEASE_LABEL = True
-        # Remove the Release label from further processing
-        LABELS_LIST.remove("Release")
+        # Remove the release label from further processing
+        LABELS_LIST.remove("release")
 
     # Remove ignored labels
     for ignored in IGNORED_BUILD_LABELS:

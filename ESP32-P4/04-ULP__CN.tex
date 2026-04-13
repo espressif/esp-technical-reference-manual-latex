@@ -1,0 +1,544 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./04-ULP}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ulp}{}
+\chapter{低功耗处理器}
+\label{mod:ulp}
+
+\section{概述}
+\label{sec:ulp-intro}
+
+\chipname{} 低功耗处理器 (Low-Power CPU, LP CPU) 是基于 RISC-V ISA 的 32 位处理器，包括整数 (I)、乘法/除法 (M)、原子 (A) 和压缩 (C) 标准扩展。LP CPU 内核具有 2 级有序标量流水线，具有极低的功耗。CPU 内核架构包含中断控制器 (INTC)、调试模块 (DM) 和用于访问存储器和外设的系统总线 (SYS BUS) 接口。
+
+LP CPU 默认处于睡眠状态（详见章节 \ref{sec:sleep}）, 在芯片进入 Deep-sleep 时可保持上电状态（详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}），能够访问绝大部分外设和存储器，详情请参考 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 章节。LP CPU 有两种应用场景：
+\begin{itemize}
+    \item 功耗不敏感场景：高性能处理器 (HP CPU) 处于工作状态，LP CPU 可协助 HP CPU 完成一些对速度和效率不敏感的控制或计算
+    \item 功耗敏感场景：HP CPU 处于掉电状态来节省功耗时，可以唤醒 LP CPU 处理一些外部唤醒事件
+\end{itemize}
+
+HP CPU 和 LP CPU 可访问的资源如图 \ref{figure:ulp-overview} 所示：
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=0.7\textwidth]{./04-ULP/figures/04-ULP-lp-core-overview.pdf}
+    \caption{LP CPU 概览}
+    \label{figure:ulp-overview}
+\end{figure}
+
+在上图中，HP 电源域 (HP Power Domain) 和 LP 电源域 (LP Power Domain) 可分别上下电，当其中一个电源域处于掉电状态时，另一个电源域的 CPU 无法访问该域的资源，只有当该域处于上电状态时才可访问其资源，更多关于电源的信息，请参考章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+
+
+
+\section{特性}
+\label{sec:ulp-features}
+
+LP CPU 具有以下特性：
+
+\begin{itemize}
+    \item 时钟工作频率高达 40 MHz
+    \item 支持 18 个向量中断
+    \item 调试模块 (DM) 符合 RISC-V 调试规范 v0.13，支持通过行业标准的 JTAG/USB 端口连接外部调试器
+    \item 硬件触发器符合 RISC-V 调试规范 v0.13，具有 2 个断点/观察点
+    \item 支持核心性能指标事件
+    \item 可唤醒 HP CPU 或向 HP CPU 发送中断
+    \item 可访问 HP 存储器和 LP 存储器
+    \item 可访问所有外设空间
+
+\end{itemize}
+
+\section{配置与状态寄存器 (CSR)}
+\hypertarget{ulp-reg-summ}{}
+\subsection{寄存器列表}
+\label{sec:ulp-reg-summ}
+
+
+下表为 CPU 可访问的 CSR 列表。除了自定义的性能计数器 CSR 外，所有已实现的 CSR 都遵循 RISC\-/V 指令集手册 V1.10 第二卷“特权架构” (RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10) 中所述的位域标准映射。必须注意的是，受 CPU 中实现的功能子集的限制，即使在标准 CSR 中也并非实现了所有位域。有关详细的 CSR 寄存器描述，请参阅章节 \ref{sec:ulp-reg}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/04-ULP-reg-summ__CN}
+
+请注意，如果对上表中只读属性的任何 CSR 尝试执行写入/置位/清除操作，CPU 将生成非法指令异常。
+
+\subsection{寄存器}
+\label{sec:ulp-reg}
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/04-ULP-reg__CN}
+
+\section{中断和异常}
+
+低功耗 CPU 根据 RISC\-/V 指令集手册 V1.10 第二卷“特权架构” 实现了中断和异常的处理。当 CPU 进入中断/异常处理程序时，内核将执行以下操作：
+\begin{itemize}
+    \item 将当前 PC 保存到 \hyperref[regdesc:LPMEPC]{mepc} CSR 中
+    \item 将 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMIE]{MIE} 保存到 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMPIE]{MPIE}
+    \item 将当前特权模式保存到 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMPP]{MPP}
+    \item 将 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMIE]{MIE}  清 0
+    \item 特权模式切换到机器模式
+    \item 跳转到处理程序地址
+        \begin{itemize}
+            \item 对于所有异常原因，跳转到 \hyperref[regdesc:LPMTVEC]{mtvec} CSR 中向量表的基地址
+            \item 对于中断，跳转到 $mtvec + 4*ID$ (ID 为中断的编号，参见章节 \ref{sec:ulp-intr})
+        \end{itemize}
+    \item 执行 mret 指令后，内核跳转到之前保存在 \hyperref[regdesc:LPMEPC]{mepc} CSR 中的程序计数器，并将 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMIE]{MIE} 恢复为 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMPIE]{MPIE}，将当前特权模式恢复为 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMPP]{MPP}
+\end{itemize}
+
+
+当内核启动时，向量表的基地址被初始化为启动地址 0x50000000。启动后可通过写入 \hyperref[regdesc:LPMTVEC]{mtvec} CSR 更改基地址。有关配置和状态寄存器的详细信息，请参阅章节 \ref{sec:ulp-reg-summ}。
+
+内核在复位后从 \hyperref[regdesc:LPSYSREGLPCOREBOOTADDRREG]{LPSYSREG\_LP\_CORE\_BOOT\_ADDR\_REG} 寄存器指定的地址偏移 0x80 开始取指，寄存器默认值为 LP ROM 起始地址 0x50100000。
+
+
+\subsection{中断}\label{sec:ulp-intr}
+
+
+
+
+\chipname{} 低功耗 CPU 支持 18 个中断入口，每个中断对应一个 ID，假定为 \textcolor{red}{n} (\textcolor{red}{n} = 3, 7, 11, 16 \verb+~+ 30)，每个中断都有特定的入口地址 $mtvec + 4*\textcolor{red}{n}$，每个中断都连接特定的外设源，图 \ref{tab:ulp-intr-map} 列出了外设源与中断号的映射关系：
+
+
+读取寄存器 \hyperref[regdesc:LPINTRSTATUSREG]{LPINTR\_STATUS\_REG}（只读）中特定位的值可以获取 LP CPU 外部中断源当前的状态。寄存器 \hyperref[regdesc:LPINTRSTATUSREG]{LPINTR\_STATUS\_REG} 与中断源的关系请参考寄存器说明。
+
+
+
+\begin{longtable}[c]{|l|L{8 cm}|}
+    \caption{LP CPU 中断映射}\label{tab:ulp-intr-map}\\\hline
+    \rowcolor{lightgray}
+    中断 ID & 外设源 \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+        中断 ID & 外设源\\\hline
+    \endhead
+    \endfoot
+
+     3  & LP\_SW\_INTR \\\hline
+     7  & LP\_UART\_INTR \\\hline
+     11 & LP\_SPI\_INTR  \\\hline
+     17 & LP\_I2C\_INTR \\\hline
+     18 & LP\_GPIO\_INTR  \\\hline
+     19 & LP\_ADC\_INTR \\\hline
+     20 & LP\_TOUCH\_INTR \\\hline
+     21 & LP\_TSENS\_INTR \\\hline
+     22 & LP\_EFUSE\_INTR \\\hline
+     23 & LP\_SYSREG\_INTR \\\hline
+     24 & LP\_ANAPERI\_INTR \\\hline
+     25 & PMU\_REG\_0\_INTR、PMU\_REG\_1\_INTR \\\hline
+     26 & MB\_HP\_INTR、MB\_LP\_INTR  \\\hline
+     27 & LP\_TIMER\_REG\_0\_INTR、LP\_TIMER\_REG\_1\_INTR  \\\hline
+     28 & LP\_WDT\_INTR \\\hline
+     29 & LP\_RTC\_INTR \\\hline
+     30 & HP\_INTR \\\hline
+\end{longtable}
+
+
+\subsection{中断处理}
+
+默认情况下，全局禁用中断，因为 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMIE]{MIE} 的复位值为 0。软件必须设置该位以启用全局中断。
+
+假定使能的中断 ID 为 \textcolor{red}{n}：
+
+\begin{enumerate}
+    \item 中断使能
+        \begin{itemize}
+            \item 置位 \hyperref[regdesc:LPMSTATUS]{mstatus} 的 \hyperref[fielddesc:LPMSTATUSMIE]{MIE} 域，启用全局中断使能
+            \item 置位 \hyperref[regdesc:LPMIE]{mie} CSR 的第 \textcolor{red}{n} 比特，使能中断 \textcolor{red}{n}
+        \end{itemize}
+    \item 中断使能后，LP CPU 即可响应中断，同时去配置相应外设的中断，使其能够触发中断信号给 LP CPU。
+    \item 触发中断后 LP CPU 会跳转到地址 $mtvec + 4*\textcolor{red}{n}$。
+    \item 中断清除，只需要清除各外设的中断信号即可。
+\end{enumerate}
+
+\subsection{异常}
+
+低功耗 CPU 支持 RISC-V 标准异常，能够触发以下异常：
+
+\begin{longtable}[c]{|l|L{8 cm}|}
+    \caption{LP CPU 异常原因}\label{tab:ulp-exc-cause}\\\hline
+    \rowcolor{lightgray}
+    异常编号 & 描述 \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+        异常编号 & 描述 \\\hline
+    \endhead
+    \endfoot
+
+    1 & 指令访问错误 \\\hline
+    2 & 非法指令 \\\hline
+    3 & 断点 (EBREAK) \\\hline
+    5 & 加载访问错误 \\\hline
+    6 & 原子指令非对齐 \\\hline
+    7 & 存储访问错误 \\\hline
+
+\end{longtable}
+
+
+\section{调试}
+
+本节介绍如何调试和测试低功耗 CPU。调试功能由标准 JTAG 管脚提供，并符合 RISC-V 外部调试支持规范 v0.13 (RISC-V External Debug Support, Version 0.13)。
+
+\chipname{} 系统调试结构请参考章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}} 中的图 \ref{fig:riscvcpu-dbg-sys-overview} \textit{\nameref{fig:riscvcpu-dbg-sys-overview}}。
+
+用户与运行调试器（Debugger，例如 GDB）的调试主机（DEBUG HOST，例如笔记本电脑）进行交互。调试器通过调试转换器（Debug Translator，可能包含硬件驱动，例如 OpenOCD）与调试传输硬件（DEBUG TRANSPORT，例如 ESP-Prog 适配器）进行通信。调试传输硬件通过标准 JTAG 接口将调试主机连接到处理器内核的调试传输模块 (JTAG DTM)。JTAG DTM 使用调试模块接口 (DMI) 提供对调试模块 (DM) 的访问。
+
+\chipname{} 有两个 DTM 通过菊花链结构互联，其中 TAP0 用于连接 HP CPU，TAP1 用于连接 LP CPU。
+
+HP 调试模块 (DM) 支持 RISC-V 外部调试支持规范 v0.13 的多核调试，能够同时控制 HP 双核 CPU。LP 调试模块 (DM) 仅调试单核 LP CPU。
+
+
+
+低功耗 CPU 实现了四个内核调试寄存器：\hyperref[regdesc:LPDCSR]{dcsr}、\hyperref[regdesc:LPDPC]{dpc}、\hyperref[regdesc:LPDSCRATCH0]{dscratch0} 和 \hyperref[regdesc:LPDSCRATCH1]{dscratch1}。所有这些寄存器只能从调试模式访问，如果软件试图在内核未处于调试模式的情况下进行访问，则会触发非法指令异常。
+
+\subsection{特性}
+低功耗 CPU 调试模块支持以下特性：
+\begin{itemize}
+    \item 访问有关实现的必要信息
+    \item 支持暂停和恢复 CPU 内核
+    \item 读写 CPU 内核寄存器（包括 CSR）
+    \item 复位 CPU 内核
+    \item 在软件断点（植入的断点指令）上暂停 CPU
+    \item 硬件单步调试
+    \item 支持两个硬件触发器（可用作断点/观察点），具体见章节 \ref{sec:ulp-trigger}
+\end{itemize}
+
+\subsection{功能描述}
+调试机制遵守 RISC-V 外部调试支持规范 v0.13。有关调试功能的详细介绍，请参考 RISC-V 外部调试支持规范 v0.13 (RISC-V External Debug Support, Version 0.13)。
+
+根据 RISC-V 外部调试支持规范，hart 存在 nonexistent、unavail、 running、halted 等状态，低功耗 CPU 默认处于 unavail 状态，需要用户配置 \hyperref[regdesc:LPPERICPUREG]{LPPERI\_CPU\_REG} 寄存器清除 unavail 状态，从而能够连接低功耗 CPU 进行调试。
+
+\subsection{寄存器列表}
+
+下表列出了低功耗 CPU 支持的调试 CSR。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/04-ULP-DBG-reg-summ__CN}
+
+所有调试模块寄存器的实现均符合 RISC-V 外部调试支持规范 v0.13。请参考 RISC-V 外部调试支持规范 v0.13 获取详细信息。
+
+\subsection{寄存器}
+%%%%%%%%%
+以下是低功耗 CPU 支持的调试 CSR 的详细描述。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/04-ULP-DBG-reg__CN}
+
+
+\section{硬件触发器}\label{sec:ulp-trigger}
+
+\subsection{特性}
+硬件触发器模块提供了断点和观察点功能，供调试使用。硬件触发器具有以下特性：
+
+\begin{itemize}
+    \item 2 个独立触发单元
+    \item 每个单元都可以配置为匹配程序计数器的地址
+    \item 可以暂停执行并将控制权转移给调试器
+
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:ulp-hwt-func-descr}
+
+硬件触发器模块提供了 3 个 CSR，见章节 \ref{sec:ulp-trigger}。其中，\hyperref[regdesc:LPTDATA1]{tdata1} 和 \hyperref[regdesc:LPTDATA2]{tdata2} 是抽象 CSR，也就是说它们是用于访问某个触发单元中的内部寄存器的影子寄存器，一次访问一个触发单元。
+
+要选择特定的触发单元，需要将相应的编号 (0-1) 写入 \hyperref[regdesc:LPTSELECT]{tselect} CSR。当写入有效数值时，抽象 CSR \hyperref[regdesc:LPTDATA1]{tdata1} 和 \hyperref[regdesc:LPTDATA2]{tdata2} 将自动匹配该触发单元的内部寄存器。每个触发单元都有两个内部寄存器，即 \hyperref[regdesc:LPMCONTROL]{mcontrol} 和 \hyperref[regdesc:LPMADDRESS]{maddress}，它们分别与 \hyperref[regdesc:LPTDATA1]{tdata1} 和 \hyperref[regdesc:LPTDATA2]{tdata2} 匹配。
+
+向 \hyperref[regdesc:LPTSELECT]{tselect} 写入超过 1 的数值时会导致 \hyperref[regdesc:LPTSELECT]{tselect} 写入 1。
+
+由于软件或调试器可能需要知道所选触发器的类型以便正确解读 \hyperref[regdesc:LPTDATA1]{tdata1} 和 \hyperref[regdesc:LPTDATA2]{tdata2}，因此 \hyperref[regdesc:LPTDATA1]{tdata1} 的 4 个位 (31-28) 对所选触发器的类型进行了编码。此域为只读访问属性，并且值始终为 0x2，代表触发器仅支持地址/数据匹配。因此，可以推断 \hyperref[regdesc:LPTDATA1]{tdata1} 和 \hyperref[regdesc:LPTDATA2]{tdata2} 会通过 \hyperref[regdesc:LPMCONTROL]{mcontrol} 和 \hyperref[regdesc:LPMADDRESS]{maddress} 被解读。RISC-V 外部调试支持规范 v0.13 提供了其他可能值的信息，但是该触发模块仅支持 0x2 类型。
+
+一旦选定了触发单元，就可以通过置位  \hyperref[regdesc:LPMCONTROL]{mcontrol} CSR (tdata1) 中相应的域并将目标地址写入 \hyperref[regdesc:LPMADDRESS]{maddress} CSR (tdata2) 来对该触发单元进行配置。
+
+
+\subsection{触发执行流程}
+\label{sec:ulp-hwt-suggest-op}
+
+当触发器触发引起硬件线程暂停并进入调试模式时 (\hyperref[fielddesc:LPMCONTROLACTION]{action} = 1)：
+\begin{itemize}
+    \item \hyperref[regdesc:LPDPC]{dpc} 被设置为当前 PC（在解码阶段）
+    \item \hyperref[regdesc:LPDCSR]{dcsr} 的 cause 域被设置为 2，表示暂停是由于触发器触发引起
+\end{itemize}
+
+
+\subsection{寄存器列表}
+下表列出了 CPU 可访问的的触发模块 CSR，只有在机器模式下才可以对它们进行读写。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/04-ULP-Trigger-reg-summ__CN}
+
+\subsection{寄存器}
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/04-ULP-Trigger-reg__CN}
+
+
+\section{性能计数器}
+
+低功耗 CPU 实现了时钟周期计数器 \hyperref[regdesc:LPMCYCLEH]{mcycle(h)}、指令计数器 \hyperref[regdesc:LPMINSTRETH]{minstret(h)} 以及 10 个事件计数器 \hyperref[regdesc:LPMHPMCOUNTER]{mhpmcounter\regindex{n}(\regindex{n}:3-12)} 。时钟周期计数器和指令计数器始终可用且为 64 位 ，其余性能计数器为 40 位。
+
+默认情况下，所有计数器在复位后启用。通过 \hyperref[regdesc:LPMCOUNTINHIBIT]{mcountinhibit} CSR 中的相应位来单独启用/禁用对应的计数器。
+
+每个计数器的计数事件都是固定的，参考表 \ref{tab:ulp-pccr}。
+
+\begin{longtable}[c]{|l|l|}
+    \caption{性能计数器}\label{tab:ulp-pccr}\\\hline
+    \rowcolor{lightgray}
+    计数器 & 计数事件 \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    计数器 & 计数事件 \\\hline
+    \endhead
+    \endfoot
+
+    mcycle      & 统计时钟周期数  \\\hline
+    minstret    & 统计指令数量 \\\hline
+    mhpmcounter3 & 统计内存访问的等待周期  \\\hline
+    mhpmcounter4 & 统计取指等待周期 \\\hline
+    mhpmcounter5 &  统计内存读操作的数量，非对齐读视作两次。  \\\hline
+
+    mhpmcounter6 & 统计内存写操作的数量，非对齐写视作两次。 \\\hline
+    mhpmcounter7 & 统计无条件跳转指令的数量 (jal, jr, jalr)\\\hline
+    mhpmcounter8 & 统计分支指令的数量 \\\hline
+    mhpmcounter9 & 统计分支指令跳转的数量  \\\hline
+    mhpmcounter10 & 统计压缩指令的数量  \\\hline
+    mhpmcounter11 & 统计乘法指令的等待周期  \\\hline
+    mhpmcounter12 & 统计除法指令的等待周期  \\\hline
+
+\end{longtable}
+
+\section{系统访问}
+
+LP CPU 可访问存储器和外设，当访问非法地址（不属于存储器或者外设地址空间），将根据访问类型触发对应的访问错误异常。
+
+\subsection{存储器访问}
+
+\chipname{} 低功耗 CPU 可以访问的存储器资源有 LP ROM、LP SRAM 和 L2 SRAM，详情参考章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。其中：
+\begin{itemize}
+    \item LP ROM：16 KB, 地址范围为 0x5010\_0000 \verb+~+ 0x5010\_3FFF，可进行取指、读数据等操作
+    \item LP SRAM：32 KB, 地址范围为 0x5010\_8000 \verb+~+ 0x5010\_FFFF，可进行取指、读数据、写数据等操作
+    \item L2 SRAM：768 KB, 地址范围为 0x4FF0\_0000 \verb+~+ 0x4FFB\_FFFF，可进行取指、读数据、写数据等操作
+\end{itemize}
+
+\begin{tiplisting}
+LP CPU 访问 L2 SRAM 的延迟很大，一次访问大约需要 20 个 LP CPU 时钟周期，但可以无延迟访问 LP ROM 和 LP SRAM。
+\end{tiplisting}
+
+LP CPU 支持原子指令集，LP CPU 和 HP CPU 可通过原子指令访问存储器，从而实现内存访问的原子性。关于原子指令集的细节请参考 RISC-V 指令集手册 v2.2 第一卷“非特权架构” (RISC-V Instruction Set Manual Volume I: Unprivileged ISA, Version 2.2)。
+
+注意：只有 L2 SRAM 可以支持 HP CPU 和 LP CPU 的原子访问。
+
+\subsection{外设访问}
+\label{sec:ulp-etm-func}
+
+章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 表 \ref{tab:sysmem-base-address} 详细列出了低功耗 CPU 可访问的外设及基地址。
+
+\section{事件任务矩阵功能}
+在 \chipname{} 中，LP CPU 支持事件任务矩阵 (ETM) 功能，即可以通过任意外设的 ETM 事件触发 LP CPU 的 ETM 任务，或者通过 LP CPU 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与 LP CPU 相关的 ETM 任务和 ETM 事件。
+
+LP CPU 可接收的 ETM 任务有：
+
+\begin{itemize}
+    \item ULP\_TASK\_WAKEUP\_CPU：唤醒 LP CPU
+    \item ULP\_TASK\_INT\_CPU：触发 LP CPU 中断
+\end{itemize}
+
+LP CPU 可产生的 ETM 事件有：
+
+\begin{itemize}
+    \item ULP\_EVT\_ERR\_INTR：表示 LP CPU 发生异常
+    \item ULP\_EVT\_START\_INTR：表示 LP CPU 时钟打开
+    \item ULP\_EVT\_HALT：表示 LP CPU 进入休眠状态
+
+\end{itemize}
+
+
+
+
+\section{睡眠和唤醒流程}\label{sec:sleep}
+\subsection{特性}
+
+以下是低功耗 CPU 支持的睡眠和唤醒特性：
+
+\begin{itemize}
+    \item 低功耗 CPU 工作在低功耗系统中，可以在高性能系统进入睡眠的时候，独立进入睡眠、从睡眠中醒来以及进行工作
+    \item 低功耗 CPU 可以根据软件运行状态，主动配置寄存器进入睡眠状态
+    \item 低功耗 CPU 支持多个唤醒源
+   \item 外设可拒绝 LP CPU 进入睡眠
+\end{itemize}
+
+\subsection{流程}
+
+低功耗 CPU 默认处于睡眠状态，低功耗 CPU 的睡眠唤醒模块将按照如下流程唤醒开始工作以及进入睡眠。
+
+LP CPU 的唤醒源配置如表 \ref{tab:ulp-wake-sources} 所示。
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=1.0\textwidth]{./04-ULP/figures/04-ULP-lp-core-sleep-wake-flow.pdf}
+    \caption{LP CPU 唤醒和睡眠流程}
+    \label{figure:ulp-overvew}
+\end{figure}
+LP CPU 上电后的首次启动取决于 HP CPU 对能唤醒使能信号和唤醒源的配置。
+\begin{itemize}
+    \item LP CPU 的初始化
+        \begin{itemize}
+            \item 初始化 LP 存储器。
+            \item 启动 LP CPU。由于 LP CPU 的启动依赖于唤醒过程，所以推荐使用 \hyperref[fielddesc:PMUHPTRIGGERLP]{PMU\_HP\_TRIGGER\_LP} 寄存器来开始 LP CPU 的初始化，方法如下：
+            \begin{itemize}
+               \item 将 \hyperref[fielddesc:PMULPCPUWAKEUPEN]{PMU\_LP\_CPU\_WAKEUP\_EN} 设置为 0x400000
+               \item 将 \hyperref[fielddesc:PMUHPTRIGGERLP]{PMU\_HP\_TRIGGER\_LP} 设置为 0x1
+               \item LP CPU 被唤醒后开始运行
+            \end{itemize}
+        \end{itemize}
+    \item 唤醒启动流程 (Wake-up flow)：
+    \begin{itemize}
+     \item 睡眠唤醒模块接收到唤醒信号向电池管理单元 (PMU) 发送上电请求。
+     \item 如果当前功耗状态（时钟、电源等）已经满足低功耗 CPU 需求，则 PMU 立刻回复完成信号，否则将调整功耗状态再回复完成信号。
+     \item 睡眠唤醒模块关闭低功耗 CPU 的 STALL 状态，并打开中断接收使能。
+     \item 睡眠唤醒模块开启时钟并释放复位（如果睡眠没有使能复位则忽略该步骤），然后开始工作。
+   \end{itemize}
+
+    \item 睡眠流程 (Sleep flow)：
+    \begin{itemize}
+    \item 低功耗 CPU 配置 \hyperref[fielddesc:PMULPCPUSLEEPREQ]{PMU\_LP\_CPU\_SLEEP\_REQ} 寄存器，睡眠唤醒模块启动睡眠流程。
+    \item 如果 \hyperref[fielddesc:PMULPCPUSLPSTALLEN]{PMU\_LP\_CPU\_SLP\_STALL\_EN} 为 1，睡眠唤醒模块则使能低功耗 CPU 的 STALL 状态，如果为 0，则不使能低功耗 CPU 的 STALL 状态。如果 \hyperref[fielddesc:PMULPCPUSLPBYPASSINTREN]{PMU\_LP\_CPU\_SLP\_BYPASS\_INTR\_EN} 为 1，睡眠唤醒模块则屏蔽 低功耗 CPU 的所有中断，如果为 0，则不屏蔽 CPU 的中断。
+    \item 睡眠唤醒模块等待 \hyperref[fielddesc:PMULPCPUSLPSTALLWAIT]{PMU\_LP\_CPU\_SLP\_STALL\_WAIT} 个低功耗 CPU 时钟周期后，关闭低功耗 CPU 的时钟，如果 \hyperref[fielddesc:PMULPCPUSLPRESETEN]{PMU\_LP\_CPU\_SLP\_RESET\_EN} 为 1，则使能低功耗 CPU 的复位。
+    \item 睡眠唤醒模块更新低功耗 CPU 的状态为 IDLE 状态，PMU 可以进入更深层次的睡眠。
+   \end{itemize}
+   \end{itemize}
+
+\subsection{唤醒源}
+
+    \begin{table}[H]
+    \centering
+    \caption{唤醒源}
+    \label{tab:ulp-wake-sources}
+    \begin{threeparttable}
+    \begin{tabular}{| l | l | m{9cm}|}
+    \hline
+    \rowcolor{lightgray}
+    寄存器值\tnote{1} & 唤醒源 & 描述  \\\hline
+
+    BIT(9) & LP IO & 该唤醒源使用 LP IO 的中断状态寄存器信号，详情请见章节  \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} \\\hline
+    BIT(10) & LP UART & LP UART 接收一定数量的 RX 脉冲，需要使能 REG\_UART\_WAKEUP\_EN，详情请见章节 \ref{mod:uart} \textit{\nameref{mod:uart}} \\\hline
+    BIT(13) & RTC 定时器 & 使用 RTC 定时器的 target 0 超时中断控制，详情请见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} \\\hline
+    BIT(14) & 欠压检测 & 发生欠压时，可唤醒 LP CPU，详情请见章节 \ref{mod:brownout} \textit{\nameref{mod:brownout}} \\\hline
+    BIT(17) & ETM & 可接收来自 ETM 的唤醒源，详情请见章节 \ref{mod:evntaskmatrix} \textit{\nameref{mod:evntaskmatrix}} \\\hline
+    BIT(18) & RTC 定时器 & 使用 RTC 定时器的 target 1 超时中断控制，详情请见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} \\\hline
+    BIT(19) & LP I2S 音频 & I2S 接受到固定音频，可唤醒 LP CPU，详情请见章节 \ref{mod:i2s} \textit{\nameref{mod:i2s}}\\\hline
+    BIT(22) & 寄存器 \hyperref[fielddesc:PMUHPTRIGGERLP]{PMU\_HP\_TRIGGER\_LP} & 通过主核置位寄存器 \hyperref[fielddesc:PMUHPTRIGGERLP]{PMU\_HP\_TRIGGER\_LP} 可唤醒低功耗 CPU，置位 REG\_HP\_SW\_TRIGGER\_INT\_CLR 可清除唤醒源\\\hline
+\end{tabular}
+    \begin{tablenotes}
+        \item[1] 寄存器 \hyperref[fielddesc:PMULPCPUWAKEUPEN]{PMU\_LP\_CPU\_WAKEUP\_EN} 的值
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsection{拒绝睡眠}
+
+当低功耗 CPU 准备进入睡眠状态时，可以被外设事件拒绝，即外设事件可以阻止低功耗 CPU 进入睡眠。以下是外设事件阻止低功耗 CPU 进入睡眠状态的配置流程：
+
+\begin{enumerate}
+    \item 低功耗 CPU 配置 \hyperref[fielddesc:PMUSLPREJECTEN]{PMU\_SLP\_REJECT\_EN} 使能外设阻止低功耗 CPU 进入睡眠状态的功能
+    \item 低功耗 CPU 配置 \hyperref[fielddesc:PMUSLEEPREJECTENA]{PMU\_SLEEP\_REJECT\_ENA} 使能对应外设阻止低功耗 CPU 进入睡眠状态
+\end{enumerate}
+
+阻止低功耗 CPU 进入睡眠的外设源头与唤醒源一致。
+
+
+
+
+
+
+
+
+\end{document}
+

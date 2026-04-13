@@ -1,0 +1,411 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./02-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{dma}{}
+\chapter{DMA Controller (DMA)}
+\label{mod:dma}
+
+
+\section{Overview}
+
+Direct Memory Access (DMA) is a feature that allows peripheral-to-memory and memory-to-memory data transfer at a high speed. The CPU is not involved in the DMA transfer, and therefore it becomes more efficient.
+
+ESP32-S2 has three types of DMA, namely Internal DMA, EDMA and Copy DMA. Internal DMA can only access internal RAM and is used for data transfer between internal RAM and peripherals. EDMA can access both internal RAM and external RAM and is used for data transfer between internal RAM, external RAM and peripherals. Copy DMA can only access internal RAM and is used for data transfer from one location in internal RAM to another.
+
+Eight peripherals on ESP32-S2 have DMA features. As shown in Figure \ref{Figure:Module_with_DMA}, UART0 and UART1 share one Internal DMA; SPI3 and ADC Controller share one Internal DMA; AES Accelerator and SHA Accelerator share one EDMA (i.e. Crypto DMA); SPI2 and I2S0 have their individual EDMA. Besides, the CPU Peripheral module on ESP32-S2 also has one Copy DMA.
+
+\begin{figure}[h]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/module_with_dma_transfer.eps}}
+\centering
+\caption{Modules with DMA and Supported Data Transfers}
+\label{Figure:Module_with_DMA}
+\end{figure}
+
+\section{Features}
+
+The DMA controller has the following features:
+
+\begin{itemize}
+    \item AHB bus architecture
+    \item Half-duplex and full-duplex mode
+    \item Programmable length of data to be transferred in bytes
+    \item INCR burst transfer when accessing internal RAM
+    \item Access to an address space of 320 KB at most in internal RAM
+    \item Access to an address space of 10.5 MB at most in external RAM
+    \item High-speed data transfer using DMA
+\end{itemize}
+
+\section{Functional Description}
+
+In ESP32-S2, all modules that need high-speed data transfer support DMA. The DMA controller and CPU data bus have access to the same address space in internal RAM and external RAM. DMA controllers for different modules vary in functions according to needs, but their architecture is identical.
+
+\subsection{DMA Engine Architecture}
+
+\begin{figure}[!ht]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/DMA_ENGINE}}
+\centering
+\caption{DMA Engine Architecture}
+\label{Figure:DMA_ENGINE}
+\end{figure}
+
+A DMA engine reads/writes data to/from external RAM or internal RAM via the AHB\_BUS. Figure \ref{Figure:DMA_ENGINE} shows the basic architecture of a DMA engine. For how to access RAM, please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. Software can use the DMA engine through linked lists. The DMA\_ENGINE transmits data in corresponding RAM according to the outlink (i.e. a linked list of transmit descriptors), and stores received data into specific address space in RAM according to the inlink (i.e. a linked list of receive descriptors).
+
+\subsection{Linked List}
+
+\begin{figure}[!ht]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_descriptor}
+\centering
+\caption{Structure of a Linked List}
+\label{Figure:link_descriptor}
+\end{figure}
+
+Figure \ref{Figure:link_descriptor} shows the structure of a linked list. An outlink and an inlink have the same structure. A linked list is formed by one or more descriptors, and each descriptor consists of three words. Linked lists should be in internal RAM for the DMA engine to be able to use them. The meaning of each field is as follows:
+
+\begin{itemize}
+    \item Owner (DW0) [31]: Specifies who is allowed to access the buffer that this descriptor points to.\\
+    1'b0: CPU can access the buffer; \\
+    1'b1: The DMA controller can access the buffer.\\
+    When the DMA controller stops using the buffer, this bit is cleared by hardware. You can set \textcolor{red}{\it{PERI}}\_IN\_LOOP\_TEST bit to disable automatic clearing by hardware. When software loads a linked list, this bit should be set to 1.
+    \\{\bfseries Note:} \textcolor{red}{\it{PERI}} refers to modules that support DMA transfers, e.g. I2S, SPI, UHCI, etc.
+    \item suc\_eof (DW0) [30]: Specifies whether this descriptor is the last descriptor in the list.\\
+    1'b0: This descriptor is not the last one;\\
+    1'b1: This descriptor is the last one.\\
+    Software clears suc\_eof bit in receive descriptors. When a packet has been received, this bit in the last receive descriptor is set by hardware, and this bit in the last transmit descriptor is set by software.
+    \item Reserved (DW0) [29]: Reserved.
+    \item err\_eof (DW0) [28]: Specifies whether the received data has errors.\\
+    This bit is used only when UART DMA receives data. When an error is detected in the received packet, this bit in the receive descriptor is set to 1 by hardware.\\
+    \item Reserved (DW0) [27:24]: Reserved.
+    \item Length (DW0) [23:12]: Specifies the number of valid bytes in the buffer that this descriptor points to. This field in a transmit descriptor is written by software and indicates how many bytes can be read from the buffer; this field in a receive descriptor is written by hardware automatically and indicates how many bytes have been stored into the buffer.
+    \item Size (DW0) [11:0]: Specifies the size of the buffer that this descriptor points to.\\
+    When the DMA controller accesses external RAM, this field must be a multiple of 16/32/64 bytes. Please see more details in Section \ref{access_exram} \textit{\nameref{access_exram}}.
+    \item Buffer address pointer (DW1): Pointer to the buffer.\\
+    When the DMA controller accesses external RAM, the destination address must be aligned with \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE field. Please see more details in Section \ref{access_exram} \textit{\nameref{access_exram}}.
+    \item Next descriptor address (DW2): Pointer to the next descriptor. If the current descriptor is the last one (suc\_eof = 1), this value is 0. This field can only point to internal RAM.\\
+\end{itemize}
+
+If the length of data received is smaller than the size of the buffer, the DMA controller will not use available space of the buffer in the next transaction.
+
+\subsection{Enabling DMA}
+
+Software uses the DMA controller through linked lists. When the DMA controller receives data, software loads an inlink, configures \textcolor{red}{\it{PERI}}\_INLINK\_ADDR field with address of the first receive descriptor, and sets \textcolor{red}{\it{PERI}}\_INLINK\_START bit to enable DMA. When the DMA controller transmits data, software loads an outlink, prepares data to be transmitted, configures \textcolor{red}{\it{PERI}}\_OUTLINK\_ADDR field with address of the first transmit descriptor, and sets \textcolor{red}{\it{PERI}}\_OUTLINK\_START bit to enable DMA. \textcolor{red}{\it{PERI}}\_INLINK\_START bit and \textcolor{red}{\it{PERI}}\_OUTLINK\_START bit are cleared automatically by hardware.
+
+The DMA controller can be restarted.
+If you are not sure whether the loaded linked list has been used up or not and want to load a new linked list, you can use this Restart function without affecting the loaded linked list.
+When using the Restart function, software needs to rewrite address of the first descriptor in the new list to DW2 of the last descriptor in the loaded list, loads the new list as shown in Figure \ref{Figure:link_restart}, and set \textcolor{red}{\it{PERI}}\_INLINK\_RESTART bit or \textcolor{red}{\it{PERI}}\_OUTLINK\_RESTART bit (these two bits are cleared automatically by hardware). By doing so, hardware can obtain the address of the first descriptor in the new list when reading the last descriptor in the loaded list, and then read the new list.
+
+\begin{figure}[!ht]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_restart}
+\centering
+\caption{Relationship among Linked Lists}
+\label{Figure:link_restart}
+\end{figure}
+
+
+\subsection{Linked List reading process}
+
+Once configured and enabled by software, the DMA controller starts to read the linked list from internal RAM. \textcolor{red}{\it{PERI}}\_IN\_DSCR\_ERR\_INT\_ENA bit or \textcolor{red}{\it{PERI}}\_OUT\_DSCR\_ERR\_INT\_ENA bit can be set to enable descriptor error interrupt.
+If the buffer address pointer (DW1) does not point to \hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF when the DMA controller accesses internal RAM, or does not point to \hexprefix{}3F500000 \verb+~+ \hexprefix{}3FF7FFFF when the DMA controller accesses external RAM, a descriptor error interrupt is generated.\\
+{\bfseries Note:} The third word (DW2) in a descriptor can only point to internal RAM; it points to the next descriptor to use and descriptors must be in internal memory.
+
+\subsection{EOF}
+
+The DMA controller uses EOF (end of file) flags to indicate the completion of data transfer.
+
+Before the DMA controller transmits data, \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT\_ENA bit should be set. If data in the buffer pointed by the last descriptor has been transmitted, a \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT interrupt is generated.
+
+Before the DMA controller receives data, \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT\_ENA bit should be set. If data has been received successfully, a \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT\ interrupt is generated. In addition to \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT interrupt, UART DMA also supports UHCI\_IN\_ERR\_EOF\_INT. This interrupt is enabled by setting \hyperref[fielddesc:UHCIINERREOFINTENA]{UHCI\_IN\_ERR\_EOF\_INT\_ENA} bit, and it indicates that a data packet has been received with errors.
+
+When a \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT or a \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT interrupt is detected, software can record the value of field \textcolor{red}{\it{PERI}}\_OUTLINK\_DSCR\_ADDR or \textcolor{red}{\it{PERI}}\_INLINK\_DSCR\_ADDR, i.e. address of the last descriptor (right shifted 2 bits). Therefore, software can tell which descriptors have been used and reclaim them.
+
+{\bfseries Note: }In this chapter, EOF of transmit descriptors refers to suc\_eof, EOF of receive descriptors refers to both suc\_eof and err\_eof.
+
+\subsection{Internal DMA} \label{internal DMA}
+
+Internal DMA is used by UART0, UART1, SPI3, and ADC Controller. It can only access \hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF in internal RAM. For Internal DMA, size, length, and buffer address pointer in linked list descriptors are not necessarily word-aligned. In other words, Internal DMA can read data of specified length from any starting address in the accessible address range, or write data of the specified length to any contiguous addresses in the accessible address range.
+
+\subsection{EDMA} \label{edma}
+
+EDMA is used by I2S0, SPI2, AES Accelerator, and SHA Accelerator. It can access both internal RAM and external RAM.
+
+\subsubsection{Accessing Internal RAM}
+
+Like Internal DMA, EDMA can access \hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF in internal RAM. Size, length, and buffer address pointer in linked list descriptors are also not necessarily word-aligned. Please note that if EDMA receives more than one data frame with null character (null character indicates empty data, which will not be written into memory by EDMA; such a character is generated together with EOF), as shown in Figure \ref{Figure:inter_receive_data} there must be at least three bytes between EOF in the first data frame and EOF in the second data frame. In this case, EOF could be either suc\_eof or err\_eof.
+
+EDMA can send data in burst mode to improve data transfer efficiency. To enable burst mode, please set \textcolor{red}{\it{PERI}}\_OUT\_DATA\_BURST\_EN bit.
+
+\begin{figure}[!h]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/inter_receive_data}
+\centering
+\caption{EDMA Receiving Data Frames in Internal}
+\label{Figure:inter_receive_data}
+\end{figure}
+
+\subsection{Accessing External RAM} \label{access_exram}
+EDMA can access \hexprefix{}3F500000 \verb+~+ \hexprefix{}3FF7FFFF in external RAM. The block size of EDMA can be 16 bytes, 32 bytes or 64 bytes. That is, the amount of data to transfer at a time can be 16 bytes, 32 bytes or 64 bytes. To configure the block size, please set \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE bit. Note that all EDMA should have the same block size.
+
+When EDMA accesses external RAM, fields in linked list descriptors should be aligned with block size. Specifically, size and buffer address pointer in receive descriptors should be 16-byte, 32-byte or 64-byte aligned. For data frame whose length is not a multiple of 16 bytes, 32 bytes, or 64 bytes, EDMA adds padding bytes to the end. After \textcolor{red}{\it{PERI}}\_DMA\_IN\_SUC\_EOF\_INT is detected, software can check the amount of valid data by reading length field in receive descriptors. Size, length and buffer address pointer in transmit descriptors are not necessarily aligned with block size. Table \ref{table:external ram excess} illustrates the value of  \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE bit when fields in linked list descriptors are 16-byte, 32-byte and 64-byte aligned respectively.
+
+
+\begin{longtable}[c]{ |p{5cm}|p{4cm}|p{4cm}| }
+\caption{Relationship Between Configuration Register, Block Size and Alignment}
+\label{table:external ram excess}\\
+\hline
+    \rowcolor{lightgray}    \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE & Block Size & Alignment\\
+    \hline
+    0   & 16 bytes & 16-byte aligned \\
+    \hline
+    1   & 32 bytes & 32-byte aligned \\
+    \hline
+    2   & 64 bytes & 64-byte aligned  \\
+    \hline
+\end{longtable}
+
+\section{Copy DMA Controller}
+
+Copy DMA is used for data transfer from one location in internal RAM to another. Figure \ref{Figure:copy_dma} shows the architecture of a Copy DMA engine. Unlike Internal DMA and EDMA, Copy DMA first reads data to be transferred from internal RAM, stores the data into the DMA FIFO via an outlink, and then writes the data to the target internal RAM via an inlink.
+
+Copy DMA should be configured by software as follows:
+\begin{enumerate}
+   \item Set \hyperref[fielddesc:CPDMAINRST]{CP\_DMA\_IN\_RST}, \hyperref[fielddesc:CPDMAOUTRST]{CP\_DMA\_OUT\_RST}, \hyperref[fielddesc:CPDMAFIFORST]{CP\_DMA\_FIFO\_RST} and \hyperref[fielddesc:CPDMACMDFIFORST]{CP\_DMA\_CMDFIFO\_RST} bit first to 1 and then to 0, to reset Copy DMA state machine and FIFO pointer;
+   \item Load an outlink, and configure \hyperref[fielddesc:CPDMAOUTLINKADDR]{CP\_DMA\_OUTLINK\_ADDR} with address of the first transmit descriptor;
+   \item Load an inlink, and configure \hyperref[fielddesc:CPDMAINLINKADDR]{CP\_DMA\_INLINK\_ADDR} with address of the first receive descriptor;
+   \item Set \hyperref[fielddesc:CPDMAOUTLINKSTART]{CP\_DMA\_OUTLINK\_START} to enable DMA transmission;
+   \item Set \hyperref[fielddesc:CPDMAINLINKSTART]{CP\_DMA\_INLINK\_START} to enable DMA reception.
+\end{enumerate}
+
+
+\begin{figure}[!ht]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/copy_dma}
+\centering
+\caption{Copy DMA Engine Architecture}
+\label{Figure:copy_dma}
+\end{figure}
+
+\section{UART DMA (UDMA) Controller}
+
+ESP32-S2 has two UART controllers. They share one UDMA controller. UHCI\_UART\_CE specifies which UART controller gets access to UDMA.
+
+\begin{figure}[!ht]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/UDMA}
+\centering
+\caption{Data Transfer in UDMA Mode}
+\label{Figure:UDMA}
+\end{figure}
+
+Figure \ref{Figure:UDMA} shows how data is transferred using UDMA. Before UDMA receives data, software prepares an inlink. \hyperref[fielddesc:UHCIINLINKADDR]{UHCI\_INLINK\_ADDR} points to the first receive descriptor in the inlink. After \hyperref[fielddesc:UHCIINLINKSTART]{UHCI\_INLINK\_START} is set, UHCI sends data that UART has received to the Decoder. The decoded data is then stored into the RAM pointed by the inlink under the control of UDMA.
+
+Before UDMA sends data, software prepares an outlink and data to be sent. \hyperref[fielddesc:UHCIOUTLINKADDR]{UHCI\_OUTLINK\_ADDR} points to the first transmit descriptor in the outlink. After \hyperref[fielddesc:UHCIOUTLINKSTART]{UHCI\_OUTLINK\_START} is set, UDMA reads data from the RAM pointed by outlink. The data is then encoded by the Encoder, and sent sequentially by the UART transmitter.
+
+Data packets of UDMA have separators at the beginning and the end, with data bits in the middle. The encoder inserts separators in front of and after data bits, and replaces data bits identical to separators with special characters. The decoder removes separators in front of and after data bits, and replaces special characters with separators. There can be more than one continuous separator at the beginning and the end of a data packet. The separator is configured by \hyperref[fielddesc:UHCISEPERCHAR]{UHCI\_SEPER\_CHAR}, \hexprefix{}C0 by default. The special character is configured by \hyperref[fielddesc:UHCIESCSEQ0CHAR0]{UHCI\_ESC\_SEQ0\_CHAR0} (\hexprefix{}DB by default) and \hyperref[fielddesc:UHCIESCSEQ0CHAR1]{UHCI\_ESC\_SEQ0\_CHAR1} (\hexprefix{}DD by default). When all data has been sent, a UHCI\_OUT\_TOTAL\_EOF\_INT interrupt is generated. When all data has been received, a UHCI\_IN\_SUC\_EOF\_INT is generated.
+
+\section{SPI DMA Controller}
+
+\begin{figure}[!ht]
+\fbox{\includegraphics[width=0.4\textwidth]{\modulefiles/figures/spi_dma}}
+\centering
+\caption{SPI DMA}
+\label{Figure:spi_dma}
+\end{figure}
+
+As shown in Figure \ref{Figure:spi_dma}, SPI2 and SPI3 have separate DMA controllers.
+
+SPI DMA receives and transmits data through descriptors at least one byte at a time. The transmission of data can be done in bursts.
+
+\hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} bit of \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} register and \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} bit of \hyperref[regdesc:SPIDMAINLINKREG]{SPI\_DMA\_IN\_LINK\_REG} register are used to enable the DMA engine and are cleared by hardware. When \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} is set to 1, the DMA engine loads an outlink and prepares data to be transferred; when \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} is set to 1, the DMA engine loads an inlink and prepares to receive data.
+
+When receiving data, SPI DMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SPIINRST]{SPI\_IN\_RST}, \hyperref[fielddesc:SPIAHBMFIFORST]{SPI\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:SPIAHBMRST]{SPI\_AHBM\_RST} bit first to 1 and then to 0, to reset DMA state machine and FIFO pointer;
+    \item Load an inlink, and configure \hyperref[fielddesc:SPIINLINKADDR]{SPI\_INLINK\_ADDR} with address of the first receive descriptor;
+    \item Set \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} to enable DMA reception.\\
+\end{enumerate}
+
+When transmitting data, SPI DMA should be configured by software as follows:
+\begin{enumerate}
+   \item Set \hyperref[fielddesc:SPIOUTRST]{SPI\_OUT\_RST}, \hyperref[fielddesc:SPIAHBMFIFORST]{SPI\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:SPIAHBMRST]{SPI\_AHBM\_RST} bit first to 1 and then to 0, to reset RMA state machine and FIFO pointer;
+   \item Load an outlink, and configure \hyperref[fielddesc:SPIOUTLINKADDR]{SPI\_OUTLINK\_ADDR} with address of the first transmit descriptor;
+   \item Set \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} to enable DMA transmission.
+\end{enumerate}
+
+{\bfseries Note:} When SPI DMA transfers data between internal RAM and external RAM, \hyperref[fielddesc:SPIMEMTRANSEN]{SPI\_MEM\_TRANS\_EN} should be set.
+
+
+SPI DMA also supports data transfer in segments. For more details, please refer to Chapter \ref{mod:spi} \textit{\nameref{mod:spi}}.
+
+\section{I2S DMA Controller}
+
+ESP32-S2 I2S has an individual DMA. \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} bit of \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} register is used to enable DMA transfer of I2S. I2S DMA receives and transmits data through linked lists. The transmission of data can be done in bursts. \hyperref[fielddesc:I2SRXEOFNUM]{I2S\_RX\_EOF\_NUM}[31:0] bit of \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} register is used to configure how many words of data to be received at a time.
+
+\hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} bit of \hyperref[regdesc:I2SOUTLINKREG]{I2S\_OUT\_LINK\_REG} and \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} bit of \hyperref[regdesc:I2SINLINKREG]{I2S\_IN\_LINK\_REG} register are used to enable the DMA engine and are cleared by hardware. When \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} bit is set to 1,the DMA engine loads an outlink and prepares data to be transferred; when \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} is set to 1,the DMA engine loads an inlink and prepares to receive data.
+
+When receiving data, I2S DMA should be configured by software as follows:
+\begin{enumerate}
+   \item Set \hyperref[fielddesc:I2SINRST]{I2S\_IN\_RST}, \hyperref[fielddesc:I2SAHBMFIFORST]{I2S\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:I2SAHBMRST]{I2S\_AHBM\_RST} bit first to 1 and then to 0, to reset DMA state machine and FIFO pointer;
+   \item Load an inlink, and configure \hyperref[fielddesc:I2SINLINKADDR]{I2S\_INLINK\_ADDR} with address of the first receive descriptor;
+   \item Set \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} to enable DMA reception.
+\end{enumerate}
+
+When transmitting data, I2S DMA should be configured by software as follows:
+\begin{enumerate}
+   \item Set \hyperref[fielddesc:I2SOUTRST]{I2S\_OUT\_RST}, \hyperref[fielddesc:I2SAHBMFIFORST]{I2S\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:I2SAHBMRST]{I2S\_AHBM\_RST} bit first to 1 and then to 0, to reset DMA state machine and FIFO pointer;
+   \item Load an outlink, and configure \hyperref[fielddesc:I2SOUTLINKADDR]{I2S\_OUTLINK\_ADDR} with address of the first transmit descriptor;
+   \item Set \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} to enable DMA transmission.
+\end{enumerate}
+
+{\bfseries Note:} When I2S DMA transfers data between internal RAM and external RAM using I2S DMA, \hyperref[fielddesc:I2SMEMTRANSEN]{I2S\_MEM\_TRANS\_EN} should be set.
+
+For how data is stored in I2S mode, please refer to description about I2S mode in Chapter \ref{mod:i2s} \textit{\nameref{mod:i2s}}; for how data is stored in LED mode, please refer to Section \ref{LCDMODE} \textit{\nameref{LCDMODE}} in Chapter  \ref{mod:i2s} \textit{\nameref{mod:i2s}}.\\ For more information about I2S DMA interrupts, please refer to Section \ref{section:DMA interrupts} \textit{\nameref{section:DMA interrupts}} in Chapter \ref{mod:i2s} \textit{\nameref{mod:i2s}}.
+
+\section{Crypto DMA}\label{subsection:dma-crypto}
+AES Accelerator and SHA Accelerator (cryptographic hardware accelerators) on ESP32-S2 share one dedicated EDMA, which is called as Crypto DMA. If \hyperref[fielddesc:CRYPTODMAAESSHASELECT]{CRYPTO\_DMA\_AES\_SHA\_SELECT} is set, Crypto DMA is used by SHA Accelerator. If \hyperref[fielddesc:CRYPTODMAAESSHASELECT]{CRYPTO\_DMA\_AES\_SHA\_SELECT} is cleared, Crypto DMA is used by AES Accelerator.
+
+When receiving data, Crypto DMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:CRYPTODMAINRST]{CRYPTO\_DMA\_IN\_RST}, \hyperref[fielddesc:CRYPTODMAAHBMFIFORST]{CRYPTO\_DMA\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:CRYPTODMAAHBMRST]{CRYPTO\_DMA\_AHBM\_RST} bit first to 1 and then to 0, to reset DMA state machine and FIFO pointer;
+    \item Load an inlink, and configure \hyperref[fielddesc:CRYPTODMAINLINKADDR]{CRYPTO\_DMA\_INLINK\_ADDR} with address of the first receive descriptor;
+    \item Set \hyperref[fielddesc:CRYPTODMAINLINKSTART]{CRYPTO\_DMA\_INLINK\_START} to enable DMA reception.
+\end{enumerate}
+
+When transmitting data, Crypto DMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:CRYPTODMAOUTRST]{CRYPTO\_DMA\_OUT\_RST}, \hyperref[fielddesc:CRYPTODMAAHBMFIFORST]{CRYPTO\_DMA\_AHBM\_FIFO\_RST} and \hyperref[fielddesc:CRYPTODMAAHBMRST]{CRYPTO\_DMA\_AHBM\_RST} first to 1 and then to 0, to reset DMA state machine and FIFO pointer;
+    \item Load an outlink, and configure \hyperref[fielddesc:CRYPTODMAOUTLINKADDR]{CRYPTO\_DMA\_OUTLINK\_ADDR} with address of the first transmit descriptor;
+    \item Set \hyperref[fielddesc:CRYPTODMAOUTLINKSTART]{CRYPTO\_DMA\_OUTLINK\_START} to enable DMA transmission.
+\end{enumerate}
+
+{\bfseries Note:} When Crypto DMA is used for data transfer between internal RAM and external RAM, please set \\ \hyperref[fielddesc:CRYPTODMAMEMTRANSEN]{CRYPTO\_DMA\_MEM\_TRANS\_EN}.
+
+\section{Copy DMA Interrupts}
+\begin{itemize}
+\item \label{int:CPDMAOUTTOTALEOFINT}CP\_DMA\_OUT\_TOTAL\_EOF\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) has been sent.
+\item \label{int:CPDMAINDSCREMPTYINT}CP\_DMA\_IN\_DSCR\_EMPTY\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received.
+\item \label{int:CPDMAOUTDSCRERRINT}CP\_DMA\_OUT\_DSCR\_ERR\_INT: Triggered when an error is detected in a transmit descriptor.
+\item \label{int:CPDMAINDSCRERRINT}CP\_DMA\_IN\_DSCR\_ERR\_INT: Triggered when an error is detected in a receive descriptor.
+\item \label{int:CPDMAOUTEOFINT}CP\_DMA\_OUT\_EOF\_INT: Triggered when EOF in a transmit descriptor is 1 and data corresponding to this descriptor has been sent.
+\item \label{int:CPDMAOUTDONEINT}CP\_DMA\_OUT\_DONE\_INT: Triggered when all data corresponding to a transmit descriptor has been sent.
+\item \label{int:CPDMAINSUCEOFINT}CP\_DMA\_IN\_SUC\_EOF\_INT: Triggered when a data packet has been received.
+\item \label{int:CPDMAINDONEINT}CP\_DMA\_IN\_DONE\_INT: Triggered when all data corresponding to a receive descriptor has been received.
+\end{itemize}
+
+\section{Crypto DMA Interrupts}
+\begin{itemize}
+\item \label{int:CRPDAMINFIFOFULLWM}CRYPTO\_DMA\_INFIFO\_FULL\_WM\_INT: Triggered when the amount of data in DMA RX FIFO is larger than the threshold (the value of \hyperref[fielddesc:CRYPTODMAINFIFOFULLTHRS]{CRYPTO\_DMA\_INFIFO\_FULL\_THRS}).
+\item \label{int:CRPDMAOUTTOTALEOFINT}CRYPTO\_DMA\_OUT\_TOTAL\_EOF\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) has been sent.
+\item \label{int:CRPDMAINDSCREMPTYINT}CRYPTO\_DMA\_IN\_DSCR\_EMPTY\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received.
+\item \label{int:CRPDMAOUTDSCRERRINT}CRYPTO\_DMA\_OUT\_DSCR\_ERR\_INT: Triggered when an error is detected in a receive descriptor.
+\item \label{int:CRPDMAINDSCRERRINT}CRYPTO\_DMA\_IN\_DSCR\_ERR\_INT: Triggered when an error is detected in a transmit descriptor.
+\item \label{int:CRPDMAOUTEOFINT}CRYPTO\_DMA\_OUT\_EOF\_INT: Triggered when EOF in a transmit descriptor is 1 and all data corresponding to this descriptor has been sent.
+\item \label{int:CRPDMAOUTDONEINT}CRYPTO\_DMA\_OUT\_DONE\_INT: Triggered when all data corresponding to a transmit descriptor has been sent.
+\item \label{int:CRPDMAINERREOFINT}CRYPTO\_DMA\_IN\_ERR\_EOF\_INT: Reserved.
+\item \label{int:CRPDMAINSUCEOFINT}CRYPTO\_DMA\_IN\_SUC\_EOF\_INT: Triggered when a data packet has been received.
+\item \label{int:CRPDMAINDONEINT}CRYPTO\_DMA\_IN\_DONE\_INT: Triggered when all data corresponding to a receive descriptor has been sent.
+\end{itemize}
+
+\section{Base Address}\label{DMA-Base-Addresses}
+Users can access Copy DMA and Crypto DMA respectively with two base addresses, which can be seen in table \ref{table:dma_base_addr}. Details about UART DMA, SPI DMA and I2S DMA are included in individual chapters. For more information about accessing peripherals from different buses, please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}[c]{ |l|l|c|}
+\caption{Copy DMA and Crypto DMA Base Address}\label{table:dma_base_addr}
+\\\hline
+\rowcolor{lightgray}
+    Module &   Bus to Access Peripheral      & Base Address \\\hline
+    CP DMA       &  PeriBUS1    & \hexprefix{}3F4C3000 \\\hline
+    \multirow{2}*{CRYPTO DMA}   & PeriBUS1     & \hexprefix{}3F43F000 \\\cline{2-3}
+                                 & PeriBUS2     & \hexprefix{}6003F000 \\\hline
+\end{longtable}
+
+\hypertarget{dma-reg-summ}{}
+\section{Register Summary}
+
+The addresses in the following table are relative to the Copy DMA base addresses provided in Section \ref{DMA-Base-Addresses}.
+
+\subfile{\modulefiles/cp_dma_summary_en.tex}
+
+The addresses in the following table are relative to the Crypto DMA base addresses provided in Section \ref{DMA-Base-Addresses}.
+\subfile{\modulefiles/crypto_dma_summary_en.tex}
+
+{\clearpage}
+\section{Registers}
+
+\subfile{\modulefiles/cp_dma_reg_en.tex}
+\subfile{\modulefiles/crypto_dma_reg_en.tex}
+\end{document}

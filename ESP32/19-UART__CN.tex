@@ -1,0 +1,336 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./19-UART}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{uart}{}
+\chapter{UART 控制器 (UART)}
+\label{mod:uart}
+
+
+\section{概述}
+
+嵌入式应用通常要求一个简单的并且占用系统资源少的方法来传输数据。通用异步收发传输器 (UART) 即可以满足这些要求，它能够灵活地与外部设备进行全双工数据交换。ESP32 芯片中有 3 个 UART 控制器可供使用，并且兼容不同的 UART 设备。另外，UART 还可以用作红外数据交换 (IrDA) 或 RS-485 调制解调器。
+
+3 个 UART 控制器有一组功能相同的寄存器。本文以 UART\textcolor{red}{\it{n}} 指代 3 个 UART 控制器，\textcolor{red}{\it{n}} 为 0、1、2。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 可编程收发波特率
+    \item 3 个 UART 的发送 FIFO 以及接收 FIFO 共享 1024 × 8-bit RAM
+    \item 全双工异步通信
+    \item 支持输入信号波特率自检功能
+    \item 支持 5/6/7/8 位数据长度
+    \item 支持 1/1.5/2 个停止位
+    \item 支持奇偶校验位
+    \item 支持 RS485 协议
+    \item 支持 IrDA 协议
+    \item 支持 DMA 高速数据通信
+    \item 支持 UART 唤醒模式
+    \item 支持软件流控和硬件流控
+\end{itemize}
+
+\section{功能描述}
+\subsection{UART 简介}
+UART 是一种以字符为导向的通用数据链，可以实现设备间的通信。异步传输的意思是不需要在发送数据上添加时钟信息。这也要求发送端和接收端的速率、停止位、奇偶校验位等都要相同，通信才能成功。
+
+一个典型的 UART 帧开始于一个起始位，紧接着是有效数据，然后是奇偶校验位（可有可无），最后是停止位。ESP32 上的 UART 控制器支持多种字符长度和停止位。另外，控制器还支持软硬件流控和 DMA，可以实现无缝高速的数据传输。开发者可以使用多个 UART 端口，同时又能保证很少的软件开销。
+
+\newpage
+
+\subsection{UART 架构}\label{UARTArchitecture}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{./19-UART/figures/one_uart_structure}
+\centering
+\caption{UART基本架构图}
+\label{Figure:one_uart_structure}
+\end{figure}
+
+图 \ref{Figure:one_uart_structure} 为 UART 基本架构图。UART 有两个时钟源：80-MHz APB\_CLK 以及参考时钟 REF\_TICK （详情请参考章节\hyperref[mod:resclk]{复位和时钟}）。可以通过配置 UART\_TICK\_REF\_ALWAYS\_ON 来选择时钟源。时钟中的分频器用于对时钟源进行分频，然后产生时钟信号来驱动 UART 模块。UART\_CLKDIV\_REG 将分频系数分成两个部分：UART\_CLKDIV 用于配置整数部分，UART\_CLKDIV\_FRAG 用于配置小数部分。
+
+UART 控制器可以分为两个功能块：发送块和接收块。
+
+发送块包含一个发送 FIFO 用于缓存待发送的数据。软件可以通过 APB 总线写 Tx\_FIFO，也可以通过 DMA 将数据搬入 Tx\_FIFO。Tx\_FIFO\_Ctrl 用于控制 Tx\_FIFO 的读写过程，当 Tx\_FIFO 非空时，Tx\_FSM 通过 Tx\_FIFO\_Ctrl 读取数据，并将数据按照配置的帧格式转化成比特流。比特流输出信号 txd\_out 可以通过配置 UART\_TXD\_INV 寄存器实现取反功能。
+
+接收块包含一个接收 FIFO 用于缓存待处理的数据。输入比特流 rxd\_in 可以输入到 UART 控制器。可以通过 UART\_RXD\_INV 寄存器实现取反。Baudrate\_Detect 通过检测最小比特流输入信号的脉宽来测量输入信号的波特率。Start\_Detect 用于检测数据的 START 位，当检测到 START 位之后，RX\_FSM 通过 Rx\_FIFO\_Ctrl 将帧解析后的数据存入 Rx\_FIFO 中。
+
+软件可以通过 APB 总线读取 Rx\_FIFO 中的数据。为了提高数据传输效率，可以使用 DMA 方式进行数据发送或接收。
+
+HW\_Flow\_Ctrl 通过标准 UART RTS 和 CTS（rtsn\_out 和 ctsn\_in）流控信号来控制 rxd\_in 和 txd\_out 的数据流。SW\_Flow\_Ctrl 通过在发送数据流中插入特殊字符以及在接收数据流中检测特殊字符来进行数据流的控制。当 UART 处于 Light-sleep（详情请参考章节\hyperref[mod:lowpowm]{低功耗管理}）状态时，Wakeup\_Ctrl 开始计算 rxd\_in 的脉冲个数，当输入 RxD 沿变化的次数大于等于 (\hyperref[UARTACTIVETHRESHOLD]{UART\_ACTIVE\_THRESHOLD}+2) 时产生 wake\_up 信号给 RTC 模块，由 RTC 来唤醒 UART 控制器。{\bfseries 注意：}只有 UART0 和 UART1 具有 Light-sleep 功能，且 rxd\_in 不能通过 GPIO 交换矩阵输入，只能通过 IO\_MUX 输入。
+
+\newpage
+
+\subsection{UART RAM}\label{section:UART RAM}
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{./19-UART/figures/uart_mem}
+\centering
+\caption{UART 共享 RAM 图}
+\label{Figure:uart_mem}
+\end{figure}
+
+芯片中 3 个 UART 控制器共用 1024x8-bit RAM 空间。如图 \ref{Figure:uart_mem} 所示，RAM 以 block 为单位进行分配，1 block 为 128×8 bit。图 \ref{Figure:uart_mem} 所示为默认情况下 3 个 UART 控制器的 Tx\_FIFO 和 Rx\_FIFO 占用 RAM 的情况。通过配置 UART\_TX\_SIZE 可以对 UART\textcolor{red}{\it{n}} 的 Tx\_FIFO 进行扩展，通过配置 UART\_RX\_SIZE 可以对 UART\textcolor{red}{\it{n}} 的 Rx\_FIFO 进行扩展，需要注意的是当扩展某一个 UART 的 FIFO 空间时可能会占用其他 UART 的 FIFO 空间。
+
+当 3 个 UART 控制器都不工作时，可以通过置位 UART\_MEM\_PD、UART1\_MEM\_PD 以及 UART2\_MEM\_PD 来使 RAM 进入低功耗状态。
+
+UART0 的 Tx\_FIFO 和 Rx\_FIFO 可以通过置位 UART\_TXFIFO\_RST 和 UART\_RXFIFO\_RST 来复位。UART1 的 Tx\_FIFO 和 Rx\_FIFO 可以通过置位 UART1\_TXFIFO\_RST 和 UART1\_RXFIFO\_RST 来复位。
+
+\begin{tiplisting}
+UART2 的 Tx\_FIFO 和 Rx\_FIFO 没有相应的寄存器来复位。另外，UART1 的 UART1\_TXFIFO\_RST 和 UART1\_RXFIFO\_RST 可能会影响 UART2 的性能。因此，UART1 的 UART1\_TXFIFO\_RST 和 UART1\_RXFIFO\_RST 只能在 UART2 的 Tx\_FIFO 和 Rx\_FIFO 都没有数据的时候使用。
+\end{tiplisting}
+
+3 个 UART\textcolor{red}{\it{n}} 可通过寄存器 \hyperref[regdesc:UARTFIFOREG]{UART\_FIFO\_REG} 访问对应的 FIFO。
+
+\subsection{波特率检测}\label{sec:baudrate-detect}
+
+置位 UART\_AUTOBAUD\_EN 可以开启 UART 波特率自检测功能。图 \ref{Figure:one_uart_structure} 中的 Baudrate\_Detect 可以滤除信号脉宽小于 UART\_GLITCH\_FILT 的噪声。
+
+在 UART 双方进行通信之前可以通过发送几个随机数据让具有波特率检测功能的数据接收方进行波特率分析。UART\_LOWPULSE\_MIN\_CNT 存储了最小低电平脉冲宽度，UART\_HIGHPULSE\_MIN\_CNT 存储了最小高电平脉冲宽度，软件可以通过读取这两个寄存器获取发送方的波特率。
+
+
+
+\subsection{UART 数据帧}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{./19-UART/figures/uart_data_frame}
+\centering
+\caption{UART 数据帧结构}
+\label{Figure:uart_data_frame}
+\end{figure}
+
+图 \ref{Figure:uart_data_frame} 所示为基本数据帧格式，数据帧从 START 位开始以 STOP 位结束。START 占用 1 bit，STOP 位可以通过配置 UART\_STOP\_BIT\_NUM 实现 1、1.5、2 位宽（  RS485 模式下可通过配置 UART\_DL0\_EN 和 UART\_DL1\_EN 增加转换延时）。START 为低电平，STOP 为高电平。
+
+数据位宽 (BIT0 \verb+~+ BITn) 为 5 \verb+~+ 8 bit，可以通过 UART\_BIT\_NUM 进行配置。当置位 UART\_PARITY\_EN 时，数据帧会在数据之后添加一位奇偶校验位。UART\_PARITY 用于选择奇校验或是偶校验。当接收器检测到输入数据的校验位错误时会产生 UART\_PARITY\_ERR\_INT 中断，当接收器检测到数据帧格式错误时会产生 UART\_FRM\_ERR\_INT 中断。
+
+Tx\_FIFO 中数据都发送完成后会产生 UART\_TX\_DONE\_INT 中断。置位 UART\_TXD\_BRK 时，发送数据完成后，发送端会进入终止状态 (break condition)，发送几个连续的特殊数据帧 NULL，NULL 的数量可由 UART\_TX\_BRK\_NUM 进行配置。发送器发送完所有的 NULL 之后会产生 UART\_TX\_BRK\_DONE\_INT 中断。数据帧之间可以通过配置 UART\_TX\_IDLE\_NUM 保持最小间隔时间。当一帧数据之后的空闲时间大于等于 UART\_TX\_IDLE\_NUM 寄存器的配置值时则产生\\ UART\_TX\_BRK\_IDLE\_DONE\_INT 中断。
+
+在传输一个 NULL 数据帧所需的时间内，RX 数据线若一直输出低电平，接收端会检测为终止状态，并触发 UART\_BRK\_DET\_INT 中断表示终止状态已结束。
+
+接收端通过 UART\_RXFIFO\_TOUT\_INT 中断检测总线状态。接收端接收到至少一个字节数据后，总线处于空闲状态超过 \hyperref[UARTRXTOUTTHRHD]{UART\_RX\_TOUT\_THRHD} 位时间时，触发 UART\_RXFIFO\_TOUT\_INT 中断。您可用此中断检测发送端是否已经发送所有数据。
+
+\subsection{AT\_CMD字符格式}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{./19-UART/figures/uart_at_cmd}
+\centering
+\caption{AT\_CMD 字符格式}
+\label{Figure:uart_at_cmd}
+\end{figure}
+
+图 \ref{Figure:uart_at_cmd} 为一种特殊的 AT\_CMD 字符格式。当接收器连续收到 UART\_AT\_CMD\_CHAR 字符且字符之间满足如下条件时将会产生 UART\_AT\_CMD\_CHAR\_DET\_INT 中断。
+
+\begin{itemize}
+    \item 接收到的第一个 UART\_AT\_CMD\_CHAR 与上一个非 UART\_AT\_CMD\_CHAR 之间至少保持 UART\_PER\_IDLE\_NUM 个 APB 时钟。
+    \item UART\_AT\_CMD\_CHAR 字符之间必须小于 \hyperref[UARTRXGAPTOUT]{UART\_RX\_GAP\_TOUT} 个 APB 时钟。
+    \item 接收的 UART\_AT\_CMD\_CHAR 字符个数必须大于等于 UART\_CHAR\_NUM。
+    \item 接收到的最后一个 UART\_AT\_CMD\_CHAR 字符与下一个非 UART\_AT\_CMD\_CHAR 之间至少保持\\ UART\_POST\_IDLE\_NUM 个 APB 时钟。
+\end{itemize}
+
+\subsection{流控}
+
+UART 控制器有两种数据流控方式：硬件流控和软件流控。硬件流控主要通过输出信号 rtsn\_out 以及输入信号 dsrn\_in 进行数据流控制。软件流控主要通过在发送数据流中插入特殊字符以及在接收数据流中检测特殊字符来实现数据流控功能。
+
+\subsubsection{硬件流控}
+
+
+\begin{figure}[H]
+\includegraphics[width=0.7\textwidth]{./19-UART/figures/uart_flow_control}
+\centering
+\caption{硬件流控图}
+\label{Figure:uart_flow_control}
+\end{figure}
+
+图 \ref{Figure:uart_flow_control} 为 UART 硬件流控图。当使用硬件流控功能时，输出信号 rtsn\_out 为高电平表示请求对方发送数据，rtsn\_out 为低电平表示通知对方中止数据发送直到 rtsn\_out 恢复高电平。发送器的硬件流控有两种方式。
+
+\begin{itemize}
+    \item UART\_RX\_FLOW\_EN 等于 0：可以通过配置 UART\_SW\_RTS 改变 rtsn\_out 的电平。
+    \item UART\_RX\_FLOW\_EN 等于 1：当 Rx\_FIFO 中的数据大于 UART\_RX\_FLOW\_THRHD 时拉低 rtsn\_out 的电平。
+\end{itemize}
+
+当 UART 检测到输入信号 ctsn\_in 的沿变化时会产生 UART\_CTS\_CHG\_INT 中断并且在发送完当前数据后停止接下来的数据发送。
+
+输出信号 dtrn\_out 为高电平表示发送方数据已经准备完毕，UART 在检测到输入信号 dsrn\_in 的沿变化时会产生 UART\_DSR\_CHG\_INT 中断。软件在检测到中断后，通过读取 UART\_DSRN 可以获取 dsrn\_in 的输入信号电平，从而判断当前是否可以接收数据。
+
+置位 UART\_LOOPBACK 即开启 UART 的回环测试功能。此时 UART 的输出信号 txd\_out 和其输入信号 rxd\_in 相连，rtsn\_out 和 ctsn\_in 相连，dtrn\_out 和 dsrn\_out 相连。当接收的数据与发送的数据相同时表明 UART 能够正常发送和接收数据。
+
+\subsubsection{软件流控}
+
+软件可以通过置位 UART\_FORCE\_XOFF 来强制停止发送器发送数据，也可以通过置位 UART\_FORCE\_XON 来强制发送器发送数据。
+
+UART 还可以通过传输特殊字符进行软件流控。置位 UART\_SW\_FLOW\_CON\_EN 可以开启软件流控功能。当 UART 接收的数据字节数超过 UART\_XOFF 的阈值时，可以通过发送 UART\_XOFF\_CHAR 来告知对方停止发送数据。
+
+在 UART\_SW\_FLOW\_CON\_EN 为 1 时，软件可以在任意时候发送流控字符。置位 UART\_SEND\_XOFF，发送器会在发送完当前数据之后插入发送一个 UART\_XOFF\_CHAR；置位 UART\_SEND\_XON，发送器会在发送完当前数据之后插入发送一个 UART\_XON\_CHAR。
+
+\subsection{UDMA}
+
+ESP32 芯片内部有两个 UDMA (UART DMA)，更多信息请见章节 \hyperref[mod:dma]{DMA 控制器}。
+
+\subsection{UART 中断}
+\begin{itemize}
+\item \label{int:UARTATCMDCHARDETINT}UART\_AT\_CMD\_CHAR\_DET\_INT: 当接收器检测到 at\_cmd 字符时触发此中断。
+\item \label{int:UARTRS485CLASHINT}UART\_RS485\_CLASH\_INT: 在 RS-485 模式下检测到发送器和接收器之间的冲突时触发此中断。
+\item \label{int:UARTRS485FRMERRINT}UART\_RS485\_FRM\_ERR\_INT: 在 RS-485 模式下检测到数据帧错误时触发此中断。
+\item \label{int:UARTRS485PARITYERRINT}UART\_RS485\_PARITY\_ERR\_INT: 在 RS-485 模式下检测到校验位错误时触发此中断。
+\item \label{int:UARTTXDONEINT}UART\_TX\_DONE\_INT: 当发送器发送完 FIFO 中的所有数据时触发此中断。
+\item \label{int:UARTTXBRKIDLEDONEINT}UART\_TX\_BRK\_IDLE\_DONE\_INT: 当发送器在最后一个数据发送后保持了最短的间隔时间时触发此中断。
+\item \label{int:UARTTXBRKDONEINT}UART\_TX\_BRK\_DONE\_INT: 当发送 FIFO 中的数据发送完之后发送器完成了发送 NULL 则触发此中断。
+\item \label{int:UARTGLITCHDETINT}UART\_GLITCH\_DET\_INT: 当接收器检测到起始位时触发此中断。
+\item \label{int:UARTSWXOFFINT}UART\_SW\_XOFF\_INT: UART\_SW\_FLOW\_CON\_EN 置位时，当接收器接收到 Xon 字符时触发此中断。
+\item \label{int:UARTSWXONINT}UART\_SW\_XON\_INT: UART\_SW\_FLOW\_CON\_EN 置位时，当接收器接收到 Xoff 字符时触发此中断。
+\item \label{int:UARTRXFIFOTOUTINT}UART\_RXFIFO\_TOUT\_INT: 当接收器接收一个字节的时间大于 RX\_TOUT\_THRHD 时触发此中断。
+\item \label{int:UARTBRKDETINT}UART\_BRK\_DET\_INT: 当接收器在停止位之后检测到一个 NULL （即传输一个 NULL 的时间内保持逻辑低电平）时触发此中断。
+\item \label{int:UARTCTSCHGINT}UART\_CTS\_CHG\_INT: 当接收器检测到 CTSn 信号的沿变化时触发此中断。
+\item \label{int:UARTDSRCHGINT}UART\_DSR\_CHG\_INT: 当接收器检测到 DSRn 信号的沿变化时触发此中断。
+\item \label{int:UARTRXFIFOOVFINT}UART\_RXFIFO\_OVF\_INT: 当接收器接收到的数据量多于 FIFO 的存储量时触发此中断。
+\item \label{int:UARTFRMERRINT}UART\_FRM\_ERR\_INT: 当接收器检测到数据帧错误时触发此中断。
+\item \label{int:UARTPARITYERRINT}UART\_PARITY\_ERR\_INT: 当接收器检测到校验位错误时触发此中断。
+\item \label{int:UARTTXFIFOEMPTYINT}UART\_TXFIFO\_EMPTY\_INT: 当发送 FIFO 中的数据量少于 [tx\_mem\_cnt, txfifo\_cnt] 所指定的值时触发此中断。
+\item \label{int:UARTRXFIFOFULLINT}UART\_RXFIFO\_FULL\_INT: 当接收器接收到的数据多于 [rx\_flow\_thrhd\_h3, rx\_flow\_thrhd] 所指定的值时触发此中断。
+\end{itemize}
+
+\subsection{UHCI 中断}
+\begin{itemize}
+\item \label{int:UHCISENDAREGQINT}UHCI\_SEND\_A\_REG\_Q\_INT: 当使用 always\_send 发送一串短包，DMA 发送了短包后触发此中断。
+\item \label{int:UHCISENDSREGQINT}UHCI\_SEND\_S\_REG\_Q\_INT: 当使用 single\_send 发送一串短包，DMA 发送了短包后触发此中断。
+\item \label{int:UHCIOUTTOTALEOFINT}UHCI\_OUT\_TOTAL\_EOF\_INT: 当所有数据都已发送时触发此中断。
+\item \label{int:UHCIOUTLINKEOFERRINT}UHCI\_OUTLINK\_EOF\_ERR\_INT: 当检测到发送链表描述符中的 EOF 有错误时触发此中断。
+\item \label{int:UHCIINDSCREMPTYINT}UHCI\_IN\_DSCR\_EMPTY\_INT: 当 DMA 没有足够的接收链表描述符时触发此中断。
+\item \label{int:UHCIOUTDSCRERRINT}UHCI\_OUT\_DSCR\_ERR\_INT: 当接收链表描述符里有错误时触发此中断。
+\item \label{int:UHCIINDSCRERRINT}UHCI\_IN\_DSCR\_ERR\_INT: 当发送链表描述符里有错误时触发此中断。
+\item \label{int:UHCIOUTEOFINT}UHCI\_OUT\_EOF\_INT: 当前描述符的 EOF 位为 1 时触发此中断。
+\item \label{int:UHCIOUTDONEINT}UHCI\_OUT\_DONE\_INT: 当发送链表描述符完成时触发此中断。
+\item \label{int:UHCIINERREOFINT}UHCI\_IN\_ERR\_EOF\_INT: 当接收链表描述符中的 EOF 有错误时触发此中断。
+\item \label{int:UHCIINSUCEOFINT}UHCI\_IN\_SUC\_EOF\_INT: 当接收一个数据包时触发此中断。
+\item \label{int:UHCIINDONEINT}UHCI\_IN\_DONE\_INT: 当一个接收链表描述符完成时触发此中断。
+\item \label{int:UHCITXHUNGINT}UHCI\_TX\_HUNG\_INT: 当 DMA 从 RAM 中读取数据的时间过长时触发此中断。
+\item \label{int:UHCIRXHUNGINT}UHCI\_RX\_HUNG\_INT: 当 DMA 接收数据的时间过长时触发此中断。
+\item \label{int:UHCITXSTARTINT}UHCI\_TX\_START\_INT: 当 DMA 检测到分隔符时触发此中断。
+\item \label{int:UHCIRXSTARTINT}UHCI\_RX\_START\_INT: 当分隔符已发送时触发此中断。
+\end{itemize}
+
+\hypertarget{uart-reg-summ}{}
+\section{寄存器列表}
+
+\subsection{UART 寄存器列表}\label{sec:uart-reg-summ}
+
+本小节的所有地址均为相对于 UART 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/uart_reg-summary_cn.tex}
+
+\subsection{UHCI 寄存器列表}\label{sec:uhci-reg-summ}
+
+本小节的所有地址均为相对于 UDMA 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/uhci_reg-summary_cn.tex}
+{\clearpage}
+
+\section{寄存器}
+
+\subsection{UART 寄存器}
+
+本小节的所有地址均为相对于 UART 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。寄存器绝对地址见章节 \ref{sec:uart-reg-summ} \textit{\nameref{sec:uart-reg-summ}}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/uart_reg_cn.tex}
+
+\subsection{UHCI 寄存器}
+
+本小节的所有地址均为相对于 UDMA 加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。寄存器绝对地址见章节 \ref{sec:uhci-reg-summ} \textit{\nameref{sec:uhci-reg-summ}}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/uhci_reg_cn.tex}
+
+\end{document}

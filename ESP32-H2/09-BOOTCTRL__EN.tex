@@ -1,0 +1,285 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./09-BOOTCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{bootctrl}{}
+\chapter{Chip Boot Control}
+\label{mod:bootctrl}
+
+
+\section{Overview}
+
+Chip boot process and some chip functions are determined on power-on or hardware reset by strapping pins and eFuses. The following functionality can be determined:
+\begin{itemize}
+    \item chip boot mode
+    \item enable or disable ROM messages printing to UART0/USB
+    \item source of JTAG signals
+
+\end{itemize}
+
+\chipname{} has three strapping pins:
+\begin{itemize}
+    \item GPIO8
+    \item GPIO9
+    \item GPIO25
+\end{itemize}
+
+During Chip Reset (see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}), hardware captures samples and stores the voltage level of strapping pins as strapping bit of ``0" or ``1" in latches, and holds these bits until the chip is powered down or next chip reset. Software can read the latch status (strapping value) from \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}.
+
+
+
+
+
+
+
+\section{Functional Description}
+
+This section introduces chip reset functions and the patterns of the strapping pins and eFuse values to invoke each function.
+
+\begin{importantlisting}
+
+Only documented patterns should be used. If an undocumented pattern is used, it may trigger unexpected behaviors.
+\end{importantlisting}
+
+\subsection{Default Configuration}
+By default, GPIO9 is connected to the chip's internal pull-up resistor. If GPIO9 is not connected or is connected to an external high-impedance circuit, the internal weak pull-up determines the default input level of this strapping pin (see Table \ref{tab:bootctrl-default-config-strapping-pins}).
+
+\clearpage
+\begin{longtable}[c]{|p{2.5cm}|p{3.5cm}|}
+\caption{Default Configuration of Strapping Pins}
+\label{tab:bootctrl-default-config-strapping-pins} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{Strapping Pin} & \textbf{Default Configuration} \\ \hline
+  \textbf{GPIO8} & Floating \\ \hline
+  \textbf{GPIO9} & Pull-up \\ \hline
+  \textbf{GPIO25} & Floating \\ \hline
+\end{longtable}
+
+To change the strapping bit values, users can apply external pull-down/pull-up resistors, or use host MCU GPIOs to control the voltage level of these pins when powering on \chipname{}. After the reset is released, the strapping pins work as normal-function pins.
+
+
+
+
+
+\subsection{Boot Mode Control}\label{sec:bootModeControl}
+
+The values of GPIO9, GPIO8, GPIO3 and GPIO2 at reset determine the boot mode after the reset is released. Table \ref{tab:bootctrl-boot-mode-control} shows the strapping pin values of GPIO9, GPIO8, GPIO3 and GPIO2, and the associated boot modes.
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] Joint Download Boot mode: This mode supports the following download methods:
+        \begin{itemize}
+            \item USB-Serial-JTAG Download Boot
+            \item UART Download Boot
+        \end{itemize}
+
+    \item[2] SPI Download Boot mode: GPIO3 and GPIO2 need to be reserved only when using SPI Download Boot mode. GPIO3 and GPIO2 are floating by default and are in a high-impedance state at reset.
+    \item[3] Invalid Combination: This combination can trigger unexpected behavior and should be avoided.
+
+\end{TableNotes}
+
+\begin{longtable}[c]{|p{5cm}|c|c|c|c|}
+\caption{Boot Mode Control}
+\label{tab:bootctrl-boot-mode-control} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{Boot Mode} & \textbf{GPIO9} & \textbf{GPIO8}& \textbf{GPIO3} & \textbf{GPIO2} \\
+    \hline
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+  SPI Boot mode & 1 & Ignored & Ignored & Ignored \\ \hline
+  Joint Download Boot mode\tnote{1} & 0 & 1  & Ignored & Ignored \\ \hline
+  SPI Download Boot mode\tnote{2} & 0 & 0  & 0 & 1 \\ \hline
+  Invalid Combination\tnote{3} & 0 & 0  & Ignored & 0 \\ \hline
+
+\end{longtable}
+\end{ThreePartTable}
+
+In SPI Boot mode, the ROM bootloader loads and executes the program from SPI flash to boot the system. SPI Boot mode can be further classified as follows:
+
+\begin{itemize}
+    \item Normal Flash Boot: supports Secure Boot. The ROM bootloader loads the program from flash into SRAM and executes it. In most practical scenarios, this program is the 2nd stage bootloader, which later boots the target application.
+
+    \item Direct Boot: does not support Secure Boot and programs run directly from flash. To enable this mode, make sure that the first two words of the bin file downloaded to flash are 0xaedb041d. For more detailed process, see Figure \ref{fig:boot_flow}.
+
+\end{itemize}
+
+In Joint Download Boot mode, users can download binary files into flash using UART0 or USB interface. It is also possible to download binary files into SRAM and execute it from SRAM.
+
+In SPI Download Boot mode, users can download binary files into flash using SPI interface. It is also possible to download binary files into SRAM and execute it from SRAM.
+
+Figure \ref{fig:boot_flow} shows the detailed boot flow of the chip.
+
+\begin{figure}[H]
+    \centering
+    {\includegraphics[width=1.0\textwidth]{\modulefiles/figures/boot_flow_230606.eps}}\\
+    \textbf{*Note}: The strapping values "1xxx" and "01xx/0001" are the combination of GPIO9, GPIO8, GPIO3 and GPIO2 pins, see Table \ref{tab:bootctrl-boot-mode-control}.
+    \caption{Chip Boot Flow}
+    \label{fig:boot_flow}
+\end{figure}
+
+The following eFuses control boot mode behaviors:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDISFORCEDOWNLOAD]{EFUSE\_DIS\_FORCE\_DOWNLOAD}
+    \begin{itemize}
+    \item If this eFuse is 0 (default), software can force switch the chip from SPI Boot mode to Joint Download Boot mode by setting register \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT} and triggering a CPU reset. In this case, hardware overwrites \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}[3:2] from "1x" to "01".
+
+    \item If this eFuse is 1, \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT} is disabled, and \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} can not be overwritten.
+    \end{itemize}
+
+    \item \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{EFUSE\_DIS\_DOWNLOAD\_MODE}
+
+    If this eFuse is 1, Joint Download Boot mode is disabled, and \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} will not be overwritten by \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT}.
+
+    \item \hyperref[fielddesc:EFUSEENABLESECURITYDOWNLOAD]{EFUSE\_ENABLE\_SECURITY\_DOWNLOAD}
+
+    If this eFuse is 1, Joint Download Boot mode only allows reading, writing, and erasing plaintext flash and does not support any SRAM or register operations. Ignore this eFuse if Joint Download Boot mode is disabled.
+
+    \item \hyperref[fielddesc:EFUSEDISDIRECTBOOT]{EFUSE\_DIS\_DIRECT\_BOOT}
+
+    If this eFuse is 1, Direct Boot mode is disabled.
+\end{itemize}
+
+USB Serial/JTAG Controller can also force switch the chip to Joint Download Boot mode from SPI Boot mode, and vice versa. For detailed information, please refer to Chapter \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}}.
+
+\subsection{ROM Messages Printing Control}
+
+During the ROM boot stage of SPI Boot mode, GPIO8, \hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE4\_REG}[0] and \hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL} jointly control the printing of ROM messages.
+
+
+
+\begin{table}[H]
+    \centering
+    \caption{ROM Message Printing Control}
+    \label{tab:bootctrl-rom-code-printing-control}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c | c |}
+    \hline
+        \rowcolor{lightgray}
+    \textbf{ROM Message Printing} & \textbf{\hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE4\_REG}[0]} &   \textbf{\hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL}} &   \textbf{GPIO8} \\\hline
+    Always printed to UART0 & \multirow{6}*{0}   & 0(0b00) &  Ignored \\\cline{1-1}\cline{3-4}
+    Enabled &  & \multirow{2}*{1(0b01)}   & 0      \\\cline{1-1}\cline{4-4}
+    Disabled & & & 1 \\\cline{1-1}\cline{3-4}
+    Disabled & & \multirow{2}*{2(0b10)}   & 0   \\\cline{1-1}\cline{4-4}
+    Enabled & & & 1 \\\cline{1-1}\cline{3-4}
+    Disabled &  & 3(0b11) &  Ignored \\\hline
+    Disabled & 1 & Ignored & Ignored \\\hline
+    \end{tabular}
+
+    \end{threeparttable}
+\end{table}
+
+
+ROM message is printed to UART0 and USB Serial/JTAG Controller by default during power-on. Users can disable the printing to USB Serial/JTAG Controller by setting the eFuse bit \hyperref[fielddesc:EFUSEDISUSBPRINT]{EFUSE\_DIS\_USB\_PRINT}.
+
+Note that if \hyperref[fielddesc:EFUSEDISUSBPRINT]{EFUSE\_DIS\_USB\_PRINT} is set to 0 to print to USB, but the USB Serial/JTAG Controller has been disabled, then ROM messages will not be printed to USB Serial/JTAG Controller.
+
+
+\subsection{JTAG Signal Source Control}
+
+GPIO25 controls the source of JTAG signals together with \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}, \hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG}, and \hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\_SEL\_ENABLE}. See Table \ref{tab:bootctrl-jtag-signal-src-control}.
+
+\begin{table}[H]
+    \centering
+    \caption{JTAG Signal Source Control}
+    \label{tab:bootctrl-jtag-signal-src-control}
+    \begin{threeparttable}
+        \begin{tabular}{ | l | C{2.3cm} | C{2.3cm} | C{2.3cm} | C{2cm} | }
+        \hline
+
+        \rowcolor{lightgray}
+        \textbf{JTAG Signal Source} & \textbf{\hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\newline\_PAD\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\newline\_USB\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\newline\_SEL\_ENABLE}} &   \textbf{GPIO25}       \\\hline
+
+        \multirow{3}*{USB Serial/JTAG Controller} & 0 & 0 & 0 & Ignored \\\cline{2-5}
+        & 0 & 0 & 1 & 1 \\\cline{2-5}
+        & 1 & 0 & Ignored & Ignored \\\hline
+        \multirow{2}*{JTAG pins MTDI, MTCK, MTMS, and MTDO} & 0 & 0 & 1 & 0 \\\cline{2-5}
+        & 0 & 1 & Ignored & Ignored \\\hline
+        JTAG disabled & 1 & 1 & Ignored & Ignored \\\hline
+        \end{tabular}
+
+    \end{threeparttable}
+\end{table}
+
+
+\end{document}
+

@@ -1,0 +1,457 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./16-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{dma}{}
+\chapter{GDMA Controller (GDMA)}
+\label{mod:dma}
+
+
+
+\section{Overview}
+
+General Direct Memory Access (GDMA) is a feature that allows peripheral-to-memory, memory-to-peripheral, and memory-to-memory data transfer at a high speed. The CPU is not involved in the GDMA transfer, and therefore it becomes more efficient with less workload.
+
+The GDMA controller in \chipname{} has ten independent channels, i.e., five transmit channels and five receive channels. These ten channels are shared by peripherals with GDMA feature, namely SPI2, SPI3, UHCI0, I2S0, I2S1, LCD/CAM, AES, SHA, ADC, and RMT. You can assign the ten channels to any of these peripherals. Every channel supports access to internal RAM or external RAM.
+
+The GDMA controller uses fixed-priority and round-robin channel arbitration schemes to manage peripherals' needs for bandwidth.
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/modules-with-dgma-feature-and-gdma-channels}}
+\centering
+\caption{Modules with GDMA Feature and GDMA Channels}
+\label{Figure:Module_with_DMA}
+\end{figure}
+
+\section{Features}
+
+The GDMA controller has the following features:
+
+\begin{itemize}
+    \item AHB bus architecture
+    \item Programmable length of data to be transferred in bytes
+    \item Linked list of descriptors
+    \item INCR burst transfer when accessing internal RAM
+    \item Access to an address space of 480 KB at most in internal RAM
+    \item Access to an address spacee of 32 MB at most in external RAM
+    \item Five transmit channels and five receive channels
+    \item Access to internal and external RAM supported by every channel
+    \item Software-configurable selection of peripheral requesting its service supported by every channel
+    \item Fixed channel priority and round-robin channel arbitration
+\end{itemize}
+
+\section{Architecture}
+
+In \chipname{}, all modules that need high-speed data transfer support GDMA. The GDMA controller and CPU data bus have access to the same address space in internal and external RAM. Figure \ref{fig:gdma-engine} shows the basic architecture of the GDMA engine.
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/gdma_engine}
+\centering
+\caption{GDMA Engine Architecture}
+\label{fig:gdma-engine}
+\end{figure}
+
+The GDMA controller has ten independent channels, i.e., five transmit channels and five receive channels. Every channel can be connected to different peripherals. In other words, channels are general-purpose, shared by peripherals.
+
+The GDMA engine has two independent AHB bus referred to as AHB\_BUS1 and AHB\_BUS2 respectively. AHB\_BUS1 is used to read data from or write data to internal RAM, whereas AHB\_BUS2 is used to read data from or write data to external RAM. Before this, the GDMA controller uses fixed-priority arbitration scheme for channels requesting read or write access. For available address range of RAM, please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+Software can use the GDMA engine through linked lists. These linked lists, stored in internal RAM, consist of outlink\regindex{n} and inlink\regindex{n}, where \regindex{n} indicates the channel number (ranging from 0 to 4).
+The GDMA controller reads an outlink\regindex{n} (i.e., a linked list of transmit descriptors) from internal RAM and transmits data in corresponding RAM according to the outlink\regindex{n}, or reads an inlink\regindex{n} (i.e., a linked list of receive descriptors) and stores received data into specific address space in RAM according to the inlink\regindex{n}.
+
+\clearpage
+\section{Functional Description}
+
+\subsection{Linked List}
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_descriptor}
+\centering
+\caption{Structure of a Linked List}
+\label{fig:gdma-link-descriptor}
+\end{figure}
+
+Figure \ref{fig:gdma-link-descriptor} shows the structure of a linked list. An outlink and an inlink have the same structure. A linked list is formed by one or more descriptors, and each descriptor consists of three words. Linked lists should be in internal RAM for the GDMA engine to be able to use them. The meaning of each field is as follows:
+
+\begin{itemize}
+    \item Owner (DW0) [31]: Specifies who is allowed to access the buffer that this descriptor points to.\\
+    1'b0: CPU can access the buffer; \\
+    1'b1: The GDMA controller can access the buffer.\\
+    When the GDMA controller stops using the buffer, this bit in a receive descriptor is automatically cleared by hardware, and this bit in a transmit descriptor is automatically cleared by hardware only if \\\hyperref[fielddesc:DMAOUTAUTOWRBACKCHN]{GDMA\_OUT\_AUTO\_WRBACK\_CH\regindex{n}} is set to 1. When software loads a linked list, this bit should be set to 1.
+    \\{\bfseries Note:} GDMA\_OUT is the prefix of transmit channel registers, and GDMA\_IN is the prefix of receive channel registers.
+    \item suc\_eof (DW0) [30]: Specifies whether the GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT or GDMA\_OUT\_EOF\_CH\regindex{n}\_INT interrupt will be triggered when the data corresponding to this descriptor has been received or transmitted.\\
+    1'b0: No interrupt will be triggered after the current descriptor's successful transfer;\\
+    1'b1: An interrupt will be triggered after the current descriptor's successful transfer.\\
+    For receive descriptors, software needs to clear this bit to 0, and hardware will set it to 1 after receiving data containing the EOF flag.\\
+    For transmit descriptors, software needs to set this bit to 1 as needed.\\
+    If software configures this bit to 1 in a descriptor, the GDMA will include the EOF flag in the data sent to the corresponding peripheral, indicating to the peripheral that this data segment marks the end of one transfer phase.
+    \item Reserved (DW0) [29]: Reserved. Value of this bit does not matter.
+    \item err\_eof (DW0) [28]: Specifies whether the received data have errors.\\
+    This bit is used only when UHCI0 uses GDMA to receive data. When an error is detected in the received data segment corresponding to a descriptor, this bit in the receive descriptor is set to 1 by hardware.
+    \item Reserved (DW0) [27:24]: Reserved.
+    \item Length (DW0) [23:12]: Specifies the number of valid bytes in the buffer that this descriptor points to. This field in a transmit descriptor is written by software and indicates how many bytes can be read from the buffer; this field in a receive descriptor is written by hardware automatically and indicates how many valid bytes have been stored into the buffer.
+    \item Size (DW0) [11:0]: Specifies the size of the buffer that this descriptor points to.
+    \item Buffer address pointer (DW1): Address of the buffer.
+    \item Next descriptor address (DW2): Address of the next descriptor. If the current descriptor is the last one, this value is 0. This field can only point to internal RAM.
+\end{itemize}
+
+If the length of data received is smaller than the size of the buffer, the GDMA controller will not use available space of the buffer in the next transaction.
+
+\subsection{Peripheral-to-Memory and Memory-to-Peripheral Data Transfer}
+
+The GDMA controller can transfer data from memory to peripheral (transmit) and from peripheral to memory (receive). A transmit channel transfers data in the specified memory location to a peripheral's transmitter via an outlink\regindex{n}, whereas a receive channel transfers data received by a peripheral to the specified memory location via an inlink\regindex{n}.
+
+Every transmit and receive channel can be connected to any peripheral with GDMA feature. Table \ref{tab:gdma-peri-sel} illustrates how to select the peripheral to be connected via registers. When a channel is connected to a peripheral, the rest channels can not be connected to that peripheral. All transmit and receive channels support access to internal and external RAM. For details, please refer to Section \ref{sec:dma-access-inter-ram} and Section \ref{sec:dma-access-exter-ram}.
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{Selecting Peripherals via Register Configuration}
+\label{tab:gdma-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:DMAPERIINSELCHN]{GDMA\_PERI\_IN\_SEL\_CH\regindex{n}} & \\
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:DMAPERIOUTSELCHN]{GDMA\_PERI\_OUT\_SEL\_CH\regindex{n}} & \multirow{-2}{*}{Peripheral}\\
+    \hline
+    0   & SPI2 \\ \hline
+    1   & SPI3 \\ \hline
+    2   & UHCI0  \\ \hline
+    3   & I2S0 \\ \hline
+    4   & I2S1 \\ \hline
+    5   & LCD/CAM  \\ \hline
+    6   & AES \\ \hline
+    7   & SHA \\ \hline
+    8   & ADC  \\ \hline
+    9   & RMT  \\ \hline
+    10 \verb+~+ 63 & Invalid
+\end{longtable}
+
+\subsection{Memory-to-Memory Data Transfer}
+
+The GDMA controller also allows memory-to-memory data transfer. Such data transfer can be enabled by setting \hyperref[fielddesc:DMAMEMTRANSENCHN]{GDMA\_MEM\_TRANS\_EN\_CH\regindex{n}}, which connects the output of transmit channel \regindex{n} to the input of receive channel \regindex{n}. Note that a transmit channel is only connected to the receive channel with the same number (\regindex{n}).
+
+As every transmit and receive channel can be used to access internal and external RAM, there are four data transfer modes:
+\begin{itemize}
+    \item from internal RAM to internal RAM
+    \item from internal RAM to external RAM
+    \item from external RAM to internal RAM
+    \item from external RAM to external RAM
+\end{itemize}
+
+\subsection{Channel Buffer}
+
+Every transmit and receive channel contains FIFOs at three levels, i.e., L1FIFO, L2FIFO, and L3FIFO. As Figure \ref{fig:gdma-ch-buffer} shows, L1FIFO is close to the memory, L3FIFO is close to peripherals, and L2FIFO falls in between L1FIFO and L3FIFO. L1FIFO, L2FIFO and L3FIFO have fixed depth: 24, 128, and 16 bytes, respectively.
+
+\begin{figure}[H]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/ch_buffer}
+\centering
+\caption{Channel Buffer}
+\label{fig:gdma-ch-buffer}
+\end{figure}
+
+
+\subsection{Enabling GDMA}
+
+Software uses the GDMA controller through linked lists. When the GDMA controller receives data, software loads an inlink, configures \hyperref[fielddesc:DMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} field with address of the first receive descriptor, and sets \hyperref[fielddesc:DMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} bit to enable GDMA. When the GDMA controller transmits data, software loads an outlink, prepares data to be transmitted, configures \hyperref[fielddesc:DMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}} field with address of the first transmit descriptor, and sets \hyperref[fielddesc:DMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} bit to enable GDMA. \hyperref[fielddesc:DMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} bit and \hyperref[fielddesc:DMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} bit are cleared automatically by hardware.
+
+In some cases, you may want to append more descriptors to a DMA transfer that is already started. Naively, it would seem to be possible to do this by clearing the EOF bit of the final descriptor in the existing list and setting its next descriptor address pointer field (DW2) to the first descriptor of the to-be-added list. However, this strategy fails if the existing DMA transfer is almost or entirely finished. Instead, the GDMA engine has specialized logic to make sure a DMA transfer can be continued or restarted: if it is still ongoing, it will make sure to take the appended descriptors into account; if the transfer has already finished, it will restart with the new descriptors. This is implemented in the Restart function.
+
+When using the Restart function, software needs to rewrite the address of the first descriptor in the new list to DW2 of the last descriptor in the loaded list, and set \hyperref[fielddesc:DMAINLINKRESTARTCHN]{GDMA\_INLINK\_RESTART\_CH\regindex{n}} bit or \hyperref[fielddesc:DMAOUTLINKRESTARTCHN]{GDMA\_OUTLINK\_RESTART\_CH\regindex{n}} bit (these two bits are cleared automatically by hardware). As shown in Figure \ref{fig:gdma-link-restart}, by doing so hardware can obtain the address of the first descriptor in the new list when reading the last descriptor in the loaded list, and then read the new list.
+
+\begin{figure}[H]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_restart}
+\centering
+\caption{Relationship among Linked Lists}
+\label{fig:gdma-link-restart}
+\end{figure}
+
+
+\subsection{Linked List Reading Process}
+
+Once configured and enabled by software, the GDMA controller starts to read the linked list from internal RAM. The GDMA performs checks on descriptors in the linked list. Only if the descriptors pass the checks, will the corresponding GDMA channel transfer data. If the descriptors fail any of the checks, hardware will trigger descriptor error interrupt (either GDMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT or GDMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT), and the channel will halt.
+
+The checks performed on descriptors are:
+\begin{itemize}
+    \item Owner bit check when \hyperref[fielddesc:DMAINCHECKOWNERCHN]{GDMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:DMAOUTCHECKOWNERCHN]{GDMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is set to 1. If the owner bit is 0, the buffer is accessed by the CPU. In this case, the owner bit fails the check. The owner bit will not be checked if \hyperref[fielddesc:DMAINCHECKOWNERCHN]{GDMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:DMAOUTCHECKOWNERCHN]{GDMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is 0;
+    \item Buffer address pointer (DW1) check. If the buffer address pointer points to 0x{}3FC88000 \verb+~+ 0x{}3FCFFFFF or 0x{}3C000000 \verb+~+ 0x{}3DFFFFFF (please refer to Section \ref{sec:dma-access-inter-ram}), it passes the check.
+
+\end{itemize}
+
+After software detects a descriptor error interrupt, it must reset the corresponding channel, and enable GDMA by setting \hyperref[fielddesc:DMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} or \hyperref[fielddesc:DMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} bit.
+
+{\bfseries Note:} The third word (DW2) in a descriptor can only point to a location in internal RAM, given that the third word points to the next descriptor to use and that all descriptors must be in internal memory.
+
+\subsection{EOF}
+
+The GDMA controller uses EOF (end of frame) flags to indicate the end of data segment transfer corresponding to a specific descriptor.
+
+Before the GDMA controller transmits data, \hyperref[fielddesc:DMAOUTTOTALEOFCHNINTENA]{GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT\_ENA} bit should be set to enable GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT interrupt. If data in the buffer pointed by the last descriptor (with EOF) have been transmitted, a GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT interrupt is generated.
+
+Before the GDMA controller receives data, \hyperref[fielddesc:DMAINSUCEOFCHNINTENA]{GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT\_ENA} bit should be set to enable GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT interrupt. If a data segment with an EOF flag has been received successfully, a GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT interrupt is generated. In addition, when GDMA channel is connected to UHCI0, the GDMA controller also supports GDMA\_IN\_ERR\_CH\regindex{n}\_EOF\_INT interrupt. This interrupt is enabled by setting \hyperref[fielddesc:DMAINERREOFCHNINTENA]{GDMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT\_ENA} bit, and it indicates that a data segment corresponding to a descriptor has been received with errors.
+
+When detecting a GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT or a GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT interrupt, software can record the value of \hyperref[fielddesc:DMAOUTEOFDESADDRCHN]{GDMA\_OUT\_EOF\_DES\_ADDR\_CH\regindex{n}} or \hyperref[fielddesc:DMAINSUCEOFDESADDRCHN]{GDMA\_IN\_SUC\_EOF\_DES\_ADDR\_CH\regindex{n}} field, i.e., address of the last descriptor. Therefore, software can tell which descriptors have been used and reclaim them.
+
+{\bfseries Note: }In this chapter, EOF of transmit descriptors refers to suc\_eof, while EOF of receive descriptors refers to both suc\_eof and err\_eof.
+
+\subsection{Accessing Internal RAM}\label{sec:dma-access-inter-ram}
+
+Any transmit and receive channels of GDMA can access 0x{}3FC88000 \verb+~+ 0x{}3FCFFFFF in internal RAM. To improve data transfer efficiency, GDMA can send data in burst mode, which is disabled by default. This mode is enabled for receive channels by setting \hyperref[fielddesc:DMAINDATABURSTENCHN]{GDMA\_IN\_DATA\_BURST\_EN\_CH\regindex{n}}, and enabled for transmit channels by setting \hyperref[fielddesc:DMAOUTDATABURSTENCHN]{GDMA\_OUT\_DATA\_BURST\_EN\_CH\regindex{n}}.
+
+\begin{longtable}[c]{ | l | l | l | l | l | }
+    \caption{Descriptor Field Alignment Requirements for Accessing Internal RAM}
+    \label{tab:gdma-inter-desc-param-align}
+    \\\hline
+    \rowcolor{lightgray}
+    Inlink/Outlink & Burst Mode & Size & Length & Buffer Address Pointer \\\hline
+
+    % table contents
+    \multirow{2}{*}{Inlink}  & 0  & --- & ---  & --- \\\cline{2-5}
+     & 1 & Word-aligned   & ---  & Word-aligned \\\hline
+    \multirow{2}{*}{Outlink} & 0  & --- & ---  & --- \\\cline{2-5}
+     & 1 & --- & ---  & --- \\\hline
+\end{longtable}
+
+Table \ref{tab:gdma-inter-desc-param-align} lists the requirements for descriptor field alignment when GDMA accesses internal RAM.
+
+When burst mode is disabled, size, length, and buffer address pointer in both transmit and receive descriptors do not need to be word-aligned. That is to say, GDMA can read data of specified length (1 \verb+~+ 4095 bytes) from any start addresses in the accessible address range, or write received data of the specified length (1 \verb+~+ 4095 bytes) to any contiguous addresses in the accessible address range.
+
+When burst mode is enabled, size, length, and buffer address pointer in transmit descriptors are also not necessarily word-aligned. However, size and buffer address pointer in receive descriptors except length should be word-aligned.
+
+\subsection{Accessing External RAM}\label{sec:dma-access-exter-ram}
+
+Any transmit and receive channels of GDMA can access 0x{}3C000000 \verb+~+ 0x{}3DFFFFFF in external RAM. GDMA can send data only in burst mode. The number of data bytes to transfer in one burst is defined as block size. Block size can be 16 bytes, 32 bytes or 64 bytes, configured via \hyperref[fielddesc:DMAINEXTMEMBKSIZECHN]{GDMA\_IN\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}} for transmit channels and \hyperref[fielddesc:DMAOUTEXTMEMBKSIZECHN]{GDMA\_OUT\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}}  for receive channels.
+
+\begin{longtable}[c]{ | l | l | l | l | }
+    \caption{Descriptor Field Alignment Requirements for Accessing External RAM}
+    \label{tab:gdma-exter-desc-param-align}
+    \\\hline
+    \rowcolor{lightgray}
+
+    Inlink/Outlink  & Size & Length & Buffer Address Pointer \\\hline
+
+    % table contents
+    Inlink  & Block-aligned & ---  & Block-aligned \\\hline
+    Outlink & --- & ---  & --- \\\hline
+\end{longtable}
+
+Table \ref{tab:gdma-exter-desc-param-align} lists the requirements for descriptor field alignment when GDMA accesses internal RAM. Size, length, and buffer address pointer in transmit descriptors do not need to be aligned. However, size and buffer address pointer in receive descriptors except length should be aligned with block size. Table \ref{tab:gdma-external-ram-excess} illustrates the value of \hyperref[fielddesc:DMAINEXTMEMBKSIZECHN]{GDMA\_IN\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}} or \hyperref[fielddesc:DMAOUTEXTMEMBKSIZECHN]{GDMA\_OUT\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}} bit when fields in linked list descriptors are 16-byte, 32-byte and 64-byte aligned respectively.
+
+
+\begin{longtable}[c]{ |p{6.5cm}|m{3cm}|m{3cm}| }
+\caption{Relationship Between Configuration Register, Block Size and Alignment}
+\label{tab:gdma-external-ram-excess}\\
+\hline
+    \rowcolor{lightgray}    \hyperref[fielddesc:DMAINEXTMEMBKSIZECHN]{GDMA\_IN\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}} or \hyperref[fielddesc:DMAOUTEXTMEMBKSIZECHN]{GDMA\_OUT\_EXT\_MEM\_BK\_SIZE\_CH\regindex{n}} & Block Size & Alignment\\
+    \hline
+    0   & 16 bytes & 16-byte aligned \\
+    \hline
+    1   & 32 bytes & 32-byte aligned \\
+    \hline
+    2   & 64 bytes & 64-byte aligned  \\
+    \hline
+\end{longtable}
+
+{\bfseries Note:} For receive descriptors, if the data length received are not aligned with block size, GDMA will pad the data received with 0 until they are aligned to initiate burst transfer. You can read the length field in receive descriptors to obtain the length of valid data received.
+
+\subsection{External RAM Access Permissions}
+
+GDMA in \chipname{} has a permission control module for access to external RAM. As Figure \ref{fig:gdma-pms} shows, the permission control module divided the 32 MB external RAM into four areas through three configurable boundaries, namely boundary 0, boundary 1, and boundary 2.
+
+\begin{itemize}
+    \item Area 0: 0x{}3C000000 \verb+~+ boundary 0 (include 0x{}3C000000 but exclude boundary 0)
+    \item Area 1: boundary 0 \verb+~+ boundary 1 (include boundary 0 but exclude boundary 1)
+    \item Area 2: boundary 1 \verb+~+ boundary 2 (include boundary 1 but exclude boundary 2)
+    \item Area 3: boundary 2 \verb+~+ 0x{}3DFFFFFF (include boundary 0)
+\end{itemize}
+
+Boundary 0, 1, and 2 are configured via \hyperref[fielddesc:PMSEDMABOUNDARY0]{PMS\_EDMA\_BOUNDARY\_0}, \hyperref[fielddesc:PMSEDMABOUNDARY1]{PMS\_EDMA\_BOUNDARY\_1}, and \hyperref[fielddesc:PMSEDMABOUNDARY2]{PMS\_EDMA\_BOUNDARY\_2}, respectively. For details about these fields, please refer to Chapter \ref{mod:permctrl} \textit{\nameref{mod:permctrl}}. The unit of these fields is 4 KB. For example, if \hyperref[fielddesc:PMSEDMABOUNDARY0]{PMS\_EDMA\_BOUNDARY\_0} is 0x{}80, the address of boundary 0 should be 0x{}3C000000 + 0x{}80 * 4 KB = 3c080000, in which 0x{}3C000000 is the starting address of accessible external RAM.
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/dma_pms}
+\centering
+\caption{Dividing External RAM into Areas}
+\label{fig:gdma-pms}
+\end{figure}
+
+All peripherals with GDMA feature (i.e., SPI2, SPI3, UHCI0, I2S0, I2S1, LCD/CAM, AES, SHA, ADC, and RMT) do not have access permissions for Area 0 and Area 3, but their permissions for Area 1 and Area 2 can be independently managed. The permission control module contains registers to manage such access permissions for Area 1 and Area 2. For example, the \hyperref[fielddesc:PMSEDMAPMSSPI2ATTR1]{PMS\_EDMA\_PMS\_SPI2\_ATTR1} field configures SPI2's permissions to read and write Area 1. Specifically, when bit 0 of this field is 1, SPI2 is granted read permission; when bit 1 of this field is 1, SPI2 is granted write permission. Likewise, the \hyperref[fielddesc:PMSEDMAPMSSPI2ATTR2]{PMS\_EDMA\_PMS\_SPI2\_ATTR2} field configures SPI2's permissions to read and write Area 2.
+
+Access violations are logged and can trigger the GDMA\_ETXMEN\_REJECT\_INT interrupt. You can check the address where the address violation occurs, the peripheral involved, channel number and read or write attribute via \hyperref[fielddesc:DMAEXTMEMREJECTADDR]{GDMA\_ETXMEM\_REJECT\_ADDR}, \hyperref[fielddesc:DMAEXTMEMREJECTPERINUM]{GDMA\_ETXMEN\_REJECT\_PERI\_NUM}, \hyperref[fielddesc:DMAEXTMEMREJECTCHANNELNUM]{GDMA\_ETXMEN\_REJECT\_CHANNEL\_NUM}, and \hyperref[fielddesc:DMAEXTMEMREJECTATRR]{GDMA\_ETXMEM\_REJECT\_ATTR} respectively.
+
+\subsection{Seamless Access to Internal and External RAM}
+
+In some application scenarios, a data frame or packet contains data from both internal RAM and external RAM. To ensure real-time data processing, GDMA is designed in such a way that some descriptors in the linked list can be used to access internal RAM, while the other descriptors in the same linked list can be used to access external RAM. This design allows seamless access to internal and external RAM.
+
+\subsection{Arbitration}
+
+To ensure timely response to peripherals running at a high speed with low latency (such as SPI, LCD/CAM), the GDMA controller implements a fixed-priority channel arbitration scheme. That is to say, each channel can be assigned a priority from 0 \verb+~+ 9. The larger the number, the higher the priority, and the more timely the response. When several channels are assigned the same priority, the GDMA controller adopts a round-robin arbitration scheme.
+
+Please note that the overall throughput of peripherals with GDMA feature cannot exceed the maximum bandwidth of the GDMA, so that requests from low-priority peripherals can be responded to.
+
+
+\section{GDMA Interrupts}
+
+\begin{itemize}
+\item \label{int:GDMAOUTTOTALEOFINT}GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) have been sent via transmit channel \regindex{n}.
+\item \label{int:GDMAINDSCREMPTYINT}GDMA\_IN\_DSCR\_EMPTY\_CH\regindex{n}\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received via receive channel \regindex{n}.
+\item \label{int:GDMAOUTDSCRERRINT}GDMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when an error is detected in a transmit descriptor on transmit channel \regindex{n}.
+\item \label{int:GDMAINDSCRERRINT}GDMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when an error is detected in a receive descriptor on receive channel \regindex{n}.
+\item \label{int:GDMAOUTEOFINT}GDMA\_OUT\_EOF\_CH\regindex{n}\_INT: Triggered when EOF in a transmit descriptor is 1 and data corresponding to this descriptor have been sent via transmit channel \regindex{n}. If \hyperref[fielddesc:DMAOUTEOFMODECHN]{GDMA\_OUT\_EOF\_MODE\_CH\regindex{n}} is 0, this interrupt will be triggered when the last byte of data corresponding to this descriptor enters GDMA's transmit channel; if \hyperref[fielddesc:DMAOUTEOFMODECHN]{GDMA\_OUT\_EOF\_MODE\_CH\regindex{n}} is 1, this interrupt is triggered when the last byte of data is taken from GDMA's transmit channel.
+\item \label{int:GDMAOUTDONEINT}GDMA\_OUT\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a transmit descriptor have been sent via transmit channel \regindex{n}.
+\item \label{int:GDMAINERREOFINT}GDMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT: Triggered when an error is detected in the data segment corresponding to a descriptor received via receive channel \regindex{n}. This interrupt is used only for UHCI0 peripheral (UART0 or UART1).
+\item \label{int:GDMAINSUCEOFINT}GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT: Triggered when the suc\_eof bit in a receive descriptor is 1 and the data corresponding to this receive descriptor has been received via receive channel \regindex{n}.
+\item \label{int:GDMAINDONEINT}GDMA\_IN\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a receive descriptor have been received via receive channel \regindex{n}.
+\end{itemize}
+
+
+\section{Programming Procedures}
+
+\subsection{Programming Procedure for GDMA Clock and Reset}
+
+GDMA's clock and reset should be configured as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SYSTEMDMACLKEN]{SYSTEM\_DMA\_CLK\_EN} to enable GDMA's clock;
+    \item Clear \hyperref[fielddesc:SYSTEMDMARST]{SYSTEM\_DMA\_RST} to reset GDMA.
+\end{enumerate}
+
+\subsection{Programming Procedures for GDMA's Transmit Channel}
+
+To transmit data, GDMA's transmit channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMAOUTRSTCHN]{GDMA\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's transmit channel and FIFO pointer;
+    \item Load an outlink, and configure \hyperref[fielddesc:DMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}}  with address of the first transmit descriptor;
+    \item Configure \hyperref[fielddesc:DMAPERIOUTSELCHN]{GDMA\_PERI\_OUT\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:gdma-peri-sel};
+    \item Set \hyperref[fielddesc:DMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} to enable GDMA's transmit channel for data transfer;
+    \item Configure and enable the corresponding peripheral (SPI2, SPI3, UHCI0 (UART0, UART1, or UART2), I2S0, I2S1, AES, SHA, and ADC). See details in individual chapters of these peripherals;
+    \item Wait for GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT interrupt, which indicates the completion of data transfer.
+\end{enumerate}
+
+\subsection{Programming Procedures for GDMA's Receive Channel}
+To receive data, GDMA's receive channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMAINRSTCHN]{GDMA\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's receive channel and FIFO pointer;
+    \item Load an inlink, and configure \hyperref[fielddesc:DMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor;
+    \item Configure \hyperref[fielddesc:DMAPERIINSELCHN]{GDMA\_PERI\_IN\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:gdma-peri-sel};
+    \item Set \hyperref[fielddesc:DMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} to enable GDMA's receive channel for data transfer;
+    \item Configure and enable the corresponding peripheral (SPI2, SPI3, UHCI0 (UART0, UART1, or UART2), I2S0, I2S1, AES, SHA, and ADC). See details in individual chapters of these peripherals;
+\end{enumerate}
+
+\subsection{Programming Procedures for Memory-to-Memory Transfer}
+To transfer data from one memory location to another, GDMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMAOUTRSTCHN]{GDMA\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's transmit channel and FIFO pointer;
+    \item Set \hyperref[fielddesc:DMAINRSTCHN]{GDMA\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of GDMA's receive channel and FIFO pointer;
+    \item Load an outlink, and configure \hyperref[fielddesc:DMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}}  with address of the first transmit descriptor;
+    \item Load an inlink, and configure \hyperref[fielddesc:DMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor;
+    \item Set \hyperref[fielddesc:DMAMEMTRANSENCHN]{GDMA\_MEM\_TRANS\_EN\_CH\regindex{n}} to enable memory-to-memory transfer;
+    \item Set \hyperref[fielddesc:DMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} to enable GDMA's transmit channel for data transfer;
+    \item Set \hyperref[fielddesc:DMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} to enable GDMA's receive channel for data transfer;
+    \item If the suc\_eof bit is set in a transmit descriptor, a GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT interrupt will be triggered when the data segment corresponding to this descriptor has been transmitted.
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{dma-reg-summ}{}
+\section{Register Summary}
+\label{sec:dma-reg-summ}
+
+The addresses in this section are relative to \textcolor{red}{GDMA} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/16-DMA-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to \textcolor{red}{GDMA} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/16-DMA-reg__EN}
+
+
+\end{document}

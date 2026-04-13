@@ -1,0 +1,131 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./11-WDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+\setcounter{secnumdepth}{4}
+
+\hypertarget{wdt}{}
+\chapter{看门狗定时器 (WDT)}
+\label{mod:wdt}
+
+\section{概述}
+ESP32 中有三个看门狗定时器：两个定时器模块中各一个（称作主系统看门狗定时器，缩写为 MWDT），RTC 模块中一个（称作 RTC 看门狗定时器，缩写为 RWDT）。
+不可预知的软件或硬件问题会导致应用程序工作失常，看门狗定时器可以帮助系统从中恢复。看门狗定时器有四个阶段。如果当前阶段超过预定时间，但没有喂狗或关闭看门狗定时器，每个阶段可能被配成以下三或四种动作中的一种。这些动作是：中断、CPU 复位、内核复位和系统复位。其中，只有 RWDT 能够触发系统复位，将复位包括 RTC 和主系统 在内的整个芯片。每个阶段的超时时间都可单独设置。
+
+在 Flash 启动期间，RWDT 和第一个 MWDT 会自动开启以检测和修复启动问题。
+
+\section{主要特性}
+\begin{itemize}
+    \item 4 个阶段，每阶段都可被单独配置或关闭
+    \item 各阶段超时时间可配置
+    \item 如阶段超时，会采取三到四种可能动作中的一种（中断、CPU 复位、内核复位和系统复位）
+    \item 32-bit 超时计数器
+    \item 写保护，防止 RWDT 和 MWDT 配置被不小心改变
+    \item Flash 启动保护\\
+     如果在预定时间内，SPI Flash 的启动过程没有完成，看门狗会重启整个主系统
+\end{itemize}
+
+\section{功能描述}
+\subsection{时钟}
+RWDT 的时钟源是 RTC 慢速时钟 RTC\_SLOW\_CLK。MWDT 时钟源来自于 APB 时钟 APB\_CLK，经过可配置的 16-bit 预分频器输出给 MWDT。RWDT 和 MWDT 的时钟源用作驱动 32-bit 超时计数器。当计数器接近当前阶段的超时时间，将执行当前阶段配置的动作，超时计数器复位，下一阶段启动。
+
+
+\subsection{运行过程}
+RWDT 和 MWDT 使能时会循环工作，从阶段 0 进行到阶段 3，再回到阶段 0 重新开始。每阶段超时动作和超时时间可以被单独配置。
+
+如果超时计时器接近阶段超时时间，以下动作可以被配置到每个阶段：
+\begin{itemize}
+    \item 触发中断\\
+    如阶段超时，中断被触发。
+    \item 复位 CPU 内核\\
+    如阶段超时，复位指定 CPU 内核。复位 MWDT0 CPU 只能复位 PRO CPU，复位 MWDT1 CPU 只能复位 APP CPU。根据不同配置，复位 RWDT CPU 可以复位两个，一个或不复位 CPU 内核。
+
+    \item 复位主系统\\
+    如阶段超时，包括 MWDT 在内的主系统都会被复位。在本文中，主系统指的是 CPU 和所有外设。但 RTC 是一个例外，不会复位。
+    \item 复位主系统和 RTC\\
+    如阶段超时，主系统和 RTC 同时复位。此动作仅可在 RWDT 中实现。
+    \item 关闭\\
+    该阶段对系统不产生影响。
+\end{itemize}
+
+当软件喂狗时，看门狗定时器重新回到阶段 0，超时计数器从 0 重新开始。 
+
+\subsection{写保护}
+两个 MWDT 和 RWDT 都可被保护不受误写影响。为实现该功能，两个看门狗都配有写密匙保护寄存器。MWDT 的寄存器为 \hyperref[regdesc:TIMERSWDTWPROTECTREG]{TIMG\textcolor{red}{\it{n}}\_WDTWPROTECT\_REG}, RWDT 的寄存器为 \hyperref[regdesc:RTCCNTLWDTWPROTECTREG]{RTC\_CNTL\_WDTWPROTECT\_REG}。复位时，这些寄存器的初始值为  0x50D83AA1。当寄存器的值被改变，写保护使能。此时，除了写密匙保护寄存器以外，在包括喂狗寄存器的其他任意 WDT 寄存器上写值操作会被忽略。推荐按以下步骤访问 WDT：
+\begin{enumerate}
+\item 关闭写保护
+\item 根据需要修改寄存器或喂狗
+\item 重新使能写保护
+\end{enumerate}
+
+\subsection{Flash 启动保护}
+在 Flash 启动过程中，定时器组 0（\hyperref[TIMG0]{TIMG0}）中的 MWDT 和 RWDT 自动使能。两个看门狗定时器的阶段 0 默认为在超时后复位系统。启动后，应该清零寄存器 TIMERS\_WDT\_FLASHBOOT\_MOD\_EN 来关闭 MWDT Flash 启动保护程序。对于 RWDT，则应该清零 RTC\_CNTL\_WDT\_FLASHBOOT\_MOD\_EN 。然后，软件可以配置 MWDT 和 RWDT。
+
+\section{寄存器}
+MWDT 寄存器是定时器子模块的一部分，在\hyperref[timer_registers]{定时器寄存器}中有详细描述。RWDT 寄存器是 RTC 子模块的一部分，在 \hyperref[register summary-30]{RTC 寄存器}中有详细描述。
+
+\end{document}

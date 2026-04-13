@@ -1,0 +1,331 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./14-INTMTRX-latest}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{intmtrx}{}
+\chapter{中断矩阵}
+\label{mod:intmtrx}
+
+\section{概述}
+
+
+\chipname{} 中断矩阵将任一外部中断源单独映射到 ESP-RISC-V CPU 的任一外部中断上，以便在外设中断信号产生后，及时通知 HP CPU0 或 HP CPU1 进行处理。
+
+外部中断源必须经中断矩阵分配至 HP CPU0/HP CPU1 外部中断，主要是因为：
+\begin{itemize}
+    \item \chipname{} 有 128 个外部中断源，但 HP CPU0/HP CPU1 只支持 32 个外部中断。因此，将这些外部中断源映射至 HP CPU0 中断或 HP CPU1 必须使用中断矩阵。
+    \item 通过中断矩阵，可以根据应用需要，将一个外部中断源映射至 HP CPU0 的任一外部中断或 HP CPU1 的任一外部中断上。
+\end{itemize}
+
+\begin{tiplisting}
+本章节只涉及将外部中断源映射到 CPU0 或 CPU1 中断，关于中断配置、中断向量表、中断服务程序推荐处理机制请参考章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}。
+\end{tiplisting}
+\vspace{-1em}
+
+\section{\chipname{} 中断术语}\label{sec:intmtx-int-terminology}
+
+下列有关中断的术语是在《\chipname{} 技术参考手册》的语境下定义的，旨在帮助读者更好地理解本文档。
+
+\subsection{中断}
+
+中断指的是在特定事件或条件下，CPU 中止当前执行去处理中断服务程序（ISR）。中断机制使 CPU 能够迅速响应特定的事件。
+
+《\chipname{} 技术参考手册》里涉及的“中断”是个广义的概念，可以泛指中断信号或中断源。
+
+\subsection{中断信号/中断源}
+
+中断信号和中断源只是定义的角度不同，实际意思相同，都是描述同一个信号。
+
+从外设的角度来看，中断信号是由外设的内部中断源产生的，并发送到中断矩阵。
+
+从中断矩阵的角度来看，它接收来自外设发送的中断信号，并将其视为中断源。然后，中断矩阵将 CPU 外部中断信号发送到 CPU。
+
+从 CPU 的角度来看，来自中断矩阵的中断信号又变成中断源，与核心本地中断源一起发送给 CPU 中断控制器。
+
+\subsection{\chipname{} 中断流}
+
+图 \ref{fig:interrupt-term} 所示为 \chipname{} 的中断流。
+
+\begin{figure}[H]
+\centering \includegraphics[width=1\textwidth]{\modulefiles/figures/ESP32-P4-interrupt-terms_CN.pdf}
+\caption{\chipname{} 的中断流}\label{fig:interrupt-term}
+\end{figure}
+
+\section{特性}
+
+\chipname{} 的中断矩阵模块具有如下特性：
+
+\begin{itemize}
+    \item 接收 128 个外部中断源作为输入
+    \item 生成 32 个 HP CPU0 的外部中断和 32 个 HP CPU1 的外部中断作为输出
+    \item 支持查询外部中断源当前的中断状态
+    \item 支持将多个中断源映射到单个 HP CPU0 中断或 HP CPU1 中断（即共享中断）
+    \item 支持 HP CPU0 和 HP CPU1 用户模式中断重映射到机器模式中断
+\end{itemize}
+
+中断矩阵的结构如图 \ref{fig:interrupt-matrix-structure} 所示。
+\begin{figure}[H]
+    \centering
+    {\includegraphics[width=0.8\textwidth]{\modulefiles/figures/14-INTMTRX-struct.png}}
+    \caption{中断矩阵结构图}
+    \label{fig:interrupt-matrix-structure}
+\end{figure}
+
+所有外部中断源产生的中断信号均可由 HP CPU0 或 HP CPU1 进行处理。配置 \hyperref[sec: cpu0-intmtrx-reg]{HP CPU0 中断寄存器}（图 \ref{fig:interrupt-matrix-structure} Core0 Interrupt Reg 模块）可将外部中断源分配给 HP CPU0 的外部中断，此时外部中断源产生的中断信号会由 HP CPU0 响应处理。同理，配置 \hyperref[sec: cpu1-intmtrx-reg]{HP CPU1 中断寄存器}（图 \ref{fig:interrupt-matrix-structure} Core1 Interrupt Reg 模块）可将中断信号交由 HP CPU1 响应处理。也可将外部中断源同时分配给 HP CPU0 和 HP CPU1, 此时 HP CPU0 和 HP CPU1 都会接收到中断信号。
+
+
+\section{功能描述}
+
+\subsection{外部中断源}
+
+\chipname{} 共有 128 个有效外部中断源。表 \ref{tab:peripheral-interrupt-config-status-source} 列出了所有外部中断源及其对应的中断源映射寄存器与中断状态寄存器。
+
+\begin{itemize}
+    \item ``No."：表示外部中断源序号，范围：0 \verb+~+ 82，84 \verb+~+ 98， 100 \verb+~+ 111， 113 \verb+~+ 130（83，99 和 112 保留）
+    \item ``章节"：详细描述外部中断源的章节
+    \item ``中断源"：外部中断源名称
+    \item ``中断源映射寄存器"：用于将外部中断源分配至 HP CPU 外部中断
+    \item ``中断状态寄存器"：用于读取中断源的中断状态
+    \begin{itemize}
+        \item ``中断状态寄存器 - 位"：表示在中断状态寄存器中的比特位置，用于记录相应中断源的状态
+        \item ``中断状态寄存器 - 名称"：表示中断状态寄存器的名称
+    \end{itemize}
+\end{itemize}
+
+中断源与同一行中断源映射寄存器和中断状态寄存器一一对应，例如：中断源 RMT\_INTR 对应的中断源映射寄存器为 \hyperref[regdesc:CORE0RMTINTMAPREG]{CORE\regindex{x}\_RMT\_INT\_MAP\_REG}，对应的中断状态寄存器为 \hyperref[regdesc:CORE0INTRSTATUSREG1REG]{CORE\regindex{x}\_INTR\_STATUS\_REG\_1\_REG}。
+
+注意，表格中的 CORE\regindex{x} 可以是 CORE0 (HP CPU0) 或 CORE1 (HP CPU1)。
+
+
+
+\clearpage
+\begin{landscape}
+\input{\modulefiles/tables/14-INTMTRX-peri-int-config-status-source__CN}
+\end{landscape}
+\restoregeometry
+\clearpage
+
+
+\subsection{分配外部中断源至 HP CPU 外部中断}
+
+在本小节中，我们将使用以下术语描述中断矩阵相关操作：
+
+\begin{itemize}
+
+\item \regindex{SOURCE}：代表某个外部中断源，详见表 \ref{tab:peripheral-interrupt-config-status-source}。
+\item \hyperref[fielddesc:CORE0SOURCEMAP]{CORE\regindex{x}\_\regindex{SOURCE}\_MAP}：HP CPU\regindex{x} 外部中断源 (\regindex{SOURCE}) 的中断源映射寄存器。
+\item Num\_P： HP CPU 中断编号，范围： 16 \verb+~+ 47。
+\item Interrupt\_P：表示中断号为 Num\_P 的 HP CPU 中断。
+
+\end{itemize}
+\subsubsection{分配一个外部中断源 \regindex{SOURCE} 至 HP CPU\regindex{x} 外部中断}
+
+将外部中断源 \regindex{SOURCE} 对应的寄存器 \hyperref[fielddesc:CORE0SOURCEMAP]{CORE\regindex{x}\_\regindex{SOURCE}\_MAP} 配成 Num\_P，即可将该中断源分配至序号为 Num\_P 的 HP CPU\regindex{x} 中断 (Interrupt\_P)。
+
+\subsubsection{分配多个外部中断源 \regindex{SOURCE} 至 HP CPU\regindex{x} 外部中断}
+将各个中断源对应的寄存器 \hyperref[fielddesc:CORE0SOURCEMAP]{CORE\regindex{x}\_\regindex{SOURCE}\_MAP} 均配置成相同的 Num\_P，即可将多个中断源 \regindex{SOURCE} 分配至同一 HP CPU\regindex{x} 外部中断 Interrupt\_P。上述任一外设中断均会触发 HP CPU\regindex{x} 外部中断 Interrupt\_P。待中断触发后， HP CPU\regindex{x} 需查询中断状态寄存器，判断产生中断的外设。 更多信息，见章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}。
+
+\subsubsection{关闭 HP CPU\regindex{x} 外部中断源 \regindex{SOURCE}}
+
+将中断源对应的寄存器 \hyperref[fielddesc:CORE0SOURCEMAP]{CORE\regindex{x}\_\regindex{SOURCE}\_MAP} 配置成 0，即可关闭外部中断源。
+
+\subsection{查询 HP CPU\regindex{x} 外部中断源当前的中断状态}
+配置开启外设中断源后，读取寄存器 \hyperref[fielddesc:CORE0INTRSTATUS0]{CORE\regindex{x}\_INTR\_STATUS\_\regindex{n}}（只读）中特定位的值可以获取 HP CPU\regindex{x} 外部中断源当前的中断状态。寄存器 \hyperref[fielddesc:CORE0INTRSTATUS0]{CORE\regindex{x}\_INTR\_STATUS\_\regindex{n}} 与外部中断源的对应关系如表 \ref{tab:peripheral-interrupt-config-status-source} 所示。
+
+
+\subsection{中断重映射}
+
+\chipname{} 的 RISC-V HP CPU\regindex{x}（x 可为 0 或 1）支持机器模式（Machine Mode）和用户模式（User Mode）。
+
+HP CPU\regindex{x} 一共有 32 个外部中断，每个外部中断均可被 HP CPU\regindex{x} 委托为机器模式或用户模式中断。
+
+在正常情况下，当 HP CPU\regindex{x} 运行在 机器模式 时，仅能响应机器模式中断，无法响应用户模式中断。当 HP CPU\regindex{x} 运行在 用户模式 时，可以响应机器模式和用户模式的所有中断。
+
+为支持 HP CPU\regindex{x} 在机器模式下间接响应用户模式中断，系统引入了中断重映射（Interrupt Remap）机制。
+
+中断重映射是指将 32 个 HP CPU0/HP CPU1 外部中断(信号)中，原本委托给用户模式的中断，根据软件配置，统一重新映射到一个指定的机器模式中断上。通过该方式，间接实现 HP CPU0/HP CPU1 在机器模式下响应用户模式中断。
+
+中断重映射功能特性:
+\begin{itemize}
+    \item 使能中断重映射功能: 每个外部中断源都可独立配置是否参与中断重映射。如将 \hyperref[fielddesc:CORE0SOURCESRCPASSINSEC]{CORE\regindex{x}\_\regindex{SOURCE}\_SRC\_PASS\_IN\_SEC} 置 1 使能中断矩阵中断源 \regindex{SOURCE} 的中断重映射功能。
+    \item 指定目标机器模式中断: 所有被重映射的用户模式中断信号，均通过 \hyperref[regdesc:CORE0INTRSIGIDXASSERTINSECREG]{CORE\regindex{x}\_INTR\_SIG\_IDX\_ASSERT\_IN\_SEC\_REG} 统一映射至同一个指定的机器模式中断上。如 \hyperref[regdesc:CORE0INTRSIGIDXASSERTINSECREG]{CORE\regindex{x}\_INTR\_SIG\_IDX\_ASSERT\_IN\_SEC\_REG} 写入值 n，选择将 HP CPU\regindex{x} 用户模式中断信号重映射到中断号为 n 的机器模式中断。
+    \item 重映射相关寄存器的访问限制: 以下与重映射相关的寄存器及字段, 仅允许 HP CPU\regindex{x} 在机器模式下写入：
+  \begin{itemize}
+    \item \hyperref[regdesc:CORE0INTRSIGIDXASSERTINSECREG]{CORE\regindex{x}\_INTR\_SIG\_IDX\_ASSERT\_IN\_SEC\_REG}
+    \item \hyperref[fielddesc:CORE0SOURCESRCPASSINSEC]{CORE\regindex{x}\_\regindex{SOURCE}\_SRC\_PASS\_IN\_SEC}
+    \item \hyperref[fielddesc:CORE0SOURCESRCINSECFLAG]{CORE\regindex{x}\_\regindex{SOURCE}\_SRC\_IN\_SEC\_FLAG}
+    \item 当 \hyperref[fielddesc:CORE0SOURCESRCINSECFLAG]{CORE\regindex{x}\_\regindex{SOURCE}\_SRC\_IN\_SEC\_FLAG} 为 1 时，
+          \hyperref[fielddesc:CORE0SOURCEMAP]{CORE\regindex{x}\_\regindex{SOURCE}\_MAP} 也仅可在机器模式下写入。
+  \end{itemize}
+\end{itemize}
+
+当中断源 \regindex{SOURCE} 已映射至 CORE\regindex{x} 外部中断信号 \regindex{n} 时，仅当同时满足以下条件，中断源 \regindex{SOURCE} 才会发生中断重映射：
+\begin{itemize}
+  \item \hyperref[fielddesc:CORE0SOURCESRCPASSINSEC]{CORE\regindex{x}\_\regindex{SOURCE}\_SRC\_PASS\_IN\_SEC} 被置为 1
+  \item CORE\regindex{x} 当前运行在机器模式
+  \item CORE\regindex{x} 的外部中断信号 \regindex{n} 在 CPU 内部被委托给用户模式
+  \item \hyperref[regdesc:CORE0INTRSIGIDXASSERTINSECREG]{CORE\regindex{x}\_INTR\_SIG\_IDX\_ASSERT\_IN\_SEC\_REG} 所指定的目标中断信号，在 CPU 内部被委托给机器模式
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\hypertarget{intmtrx--reg-summ}{}
+\begin{landscape}
+\section{寄存器列表}
+\label{sec:{intmtrx--reg-summ}}
+
+本小节的所有地址均为相对于中断矩阵 HP CPU0/HP CPU1 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subsection{HP CPU0 中断矩阵寄存器列表}
+\label{sec: cpu0-intmtrx-reg-summ}
+\subfile{\modulefiles/14-INTMTRX-core0-reg-summ__CN.tex}
+
+
+\subsection{HP CPU1 中断矩阵寄存器列表}
+\label{sec: cpu1-intmtrx-reg-summ}
+\subfile{\modulefiles/14-INTMTRX-core1-reg-summ__CN.tex}
+
+\end{landscape}
+
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于中断矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subsection{HP CPU0 中断矩阵寄存器}
+\label{sec: cpu0-intmtrx-reg}
+\subfile{\modulefiles/14-INTMTRX-core0-reg__CN}
+
+\subsection{HP CPU1 中断矩阵寄存器}
+\label{sec: cpu1-intmtrx-reg}
+\subfile{\modulefiles/14-INTMTRX-core1-reg__CN}
+
+\end{document}

@@ -1,0 +1,657 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./09-LOWPOWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{lowpowm}{}
+\chapter{Low-Power Management}
+\label{mod:lowpowm}
+
+\section{Introduction}
+
+ESP32-S2 has an advanced Power Management Unit (PMU), which can flexibly power up different power domains of the chip, to achieve the best balance among chip performance, power consumption, and wakeup latency. To simplify power management for typical scenarios, ESP32-S2 has predefined five power modes, which are preset configurations that power up different combinations of power domains. On top of that, the chip also allows the users to independently power up any particular power domain to meet more complex requirements. ESP32-S2 has integrated two Ultra-Low-Power co-processors (ULP co-processors), which allow the chip to work when most of the power domains are powered down, thus achieving extremely low-power consumption.
+
+\section{Features}
+ESP32-S2's low-power management supports the following features:
+\begin{itemize}
+    \item ULP co-processors supported in all power modes
+    \item Five predefined power modes to simplify power management for typical scenarios
+    \item Up to 16 KB of retention memory
+    \item 8 x 32-bit retention registers
+    \item RTC Boot supported for reduced wakeup latency
+\end{itemize}
+
+In this chapter, we first introduce the working process of ESP32-S2's low-power management, then introduce the predefined power modes of the chip, and at last, introduce the RTC boot of the chip.
+
+\section{Functional Description}
+
+ESP32-S2's low-power management involves the following components:
+
+\begin{itemize}
+    \item Power management unit: controls the power supply to Analog, RTC and Digital power domains.
+    \item Power isolation unit: isolates different power domains, so any powered down power domain does not affect the powered up ones.
+    \item Low-power clocks: provide clocks to power domains working in low-power modes.
+    \item Timers:
+    \begin{itemize}
+        \item RTC timer: logs the status of the RTC main state machine in dedicated registers.
+        \item ULP timer: wakes up the ULP co-processors at a predefined time. For details, please refer to Chapter \ref{mod:ulp} \textit{\nameref{mod:ulp}}.
+        \item Touch sensor timer: wakes up the touch sensor at a predefined time. For details, please refer to Chapter \ref{mod:sensor} \textit{\nameref{mod:sensor}}.
+    \end{itemize}
+    \item 8 x 32-bit ``always-on" retention registers: These registers are always powered up and can be used for storing data that cannot be lost.
+    \item 22 x ``always-on" pins: These pins are always powered up and can be used as wakeup sources when the chip is working in the low-power modes (for details, please refer to Section \ref{WakeupSource}), or can be used as regular GPIOs (for details, please refer to Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}).
+    \item RTC slow memory: supports 8 KB SRAM, which can be used as retention memory or to store ULP directives and data.
+    \item RTC fast memory: supports 8 KB SRAM, which can be used as retention memory.
+    \item Regulators: regulate the power supply to different power domains.
+\end{itemize}
+
+The schematic diagram of ESP32-S2's low-power management is shown in Figure \ref{figure:ESP32 power control}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{\modulefiles/figures/Low_power_Management_Schematics.eps}
+    \caption{Low-power Management Schematics}
+    \label{figure:ESP32 power control}
+\end{figure}
+
+\subsection{Power Management Unit}
+
+ESP32-S2's power management unit controls the power supply to different power domains. The main components of the power management unit include:
+
+\begin{itemize}
+    \item RTC main state machine: generates power gating, clock gating, and reset signals.
+    \item Power controllers: power up and power down different power domains, according to the power gating signals from the main state machine.
+    \item Sleep / wakeup controllers: send sleep or wakeup requests to the RTC main state machine.
+    \item Clock controller: selects and powers up / down clock sources.
+\end{itemize}
+
+In ESP32-S2's power management unit, the sleep / wakeup controllers send sleep or wakeup requests to the RTC main state machine, which then generates power gating, clock gating, and reset signals. Then, the power controller and clock controller power up and power down different power domains and clock sources, according to the signals generated by the RTC main state machine, so that the chip enters or exits the low-power modes. The main workflow is shown in Figure \ref{figure:RTC structure}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.1\textwidth]{\modulefiles/figures/rtc_structure.pdf}
+    \caption{Power Management Unit Workflow}
+    \label{figure:RTC structure}
+\end{figure}
+
+\begin{tiplisting}
+For more detailed description about power domains, please refer to \ref{rtc status}.
+\end{tiplisting}
+
+\subsection{Low-Power Clocks}
+
+In general, ESP32-S2 powers down its 40 MHz crystal oscillator and PLL to reduce power consumption when working in low-power modes. During this time, the chip's low-power clocks remain on to provide clocks to different power domains, such as the power management unit, RTC peripherals, RTC fast memory, RTC slow memory, and Wi-Fi digital circuits in the digital domain.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/rtc_clock.pdf}
+    \caption{RTC\_FAST\_CLK and RTC\_SLOW\_CLK}
+    \label{figure:RTC fast clocks}
+\end{figure}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/low_power_clk.pdf}
+    \caption{Low-Power Clocks for RTC Power Domains}
+    \label{figure:Digital low-power clocks}
+\end{figure}
+
+\newpage
+\begin{longtable}[c]{| p{2.8cm}| p{4.2cm} | p{5.9cm} | p{3.5cm} | }
+\caption{Low-Power Clocks}\label{table:clock_type}
+\\\hline
+\rowcolor{lightgray}
+Clock Type & Clock Source & Selection Option & Power Domain \\ \hline
+
+& RC\_SLOW\_CLK \hyperref[clock_note]{$^1$}&  &  \\ \cline{2-2}
+ & XTAL32K\_CLK &  &  \\ \cline{2-2}
+\multirow{-3}{*}{RTC slow clock} &  RC\_FAST\_DIV\_CLK & \multirow{-3}{*}{\hyperref[fielddesc:RTCCNTLANACLKRTCSEL]{RTC\_CNTL\_ANA\_CLK\_RTC\_SEL}} & \multirow{-3}{*}{Power management unit} \\ \hline
+
+ & XTAL\_DIV\_CLK &  & RTC peripherals \\ \cline{2-2} \cline{4-4}
+ &  &  & RTC fast memory \\ \cline{4-4}
+\multirow{-3}{*}{RTC fast clock} & \multirow{-2}{*}{RC\_FAST\_CLK \hyperref[clock_note]{$^2$}} & \multirow{-3}{*}{\hyperref[fielddesc:RTCCNTLFASTCLKRTCSEL]{RTC\_CNTL\_FAST\_CLK\_RTC\_SEL}} & RTC slow memory \\ \hline
+
+
+
+ & XTAL32K\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL32K} &  \\ \cline{2-3}
+ & RC\_FAST\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_8M} &  \\ \cline{2-3}
+ & RTC\_SLOW\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_RTC\_SLOW} &  \\ \cline{2-3}
+\multirow{-4}{*}{Low-Power clocks} & XTAL\_CLK & \hyperref[regdesc:SYSTEMBTLPCKDIVFRACREG]{SYSTEM\_LPCLK\_SEL\_XTAL} & \multirow{-4}{*}{\shortstack{Digital system (Wi-Fi)\\ in low-power modes}} \\\hline
+\end{longtable}
+\begin{tiplisting}
+\vspace{-2.5em}\label{clock_note}
+    \begin{enumerate}
+        \item The default RTC slow clock source.
+        \item The default RTC fast clock source.
+        \end{enumerate}
+\end{tiplisting}
+
+For more detailed description about clocks, please refer to \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+\subsection{Timers}
+
+ESP32-S2's low-power management uses 3 timers:
+\begin{itemize}
+    \item RTC timer
+    \item ULP timer
+    \item Touch sensor timer
+\end{itemize}
+
+This section only introduces the RTC timer. For detailed description of ULP timer and touch sensor timer, please refer to Chapters \ref{mod:ulp} \textit{\nameref{mod:ulp}} and \ref{mod:sensor} \textit{\nameref{mod:sensor}}.
+
+The readable 48-bit RTC timer is a real-time rr (using RTC slow clock) that can be configured to log the time when one of the following events happens. For details, see Table \ref{table:Update RTC TIMER VALUE}.
+
+\begin{longtable}[c]{|p{5.5cm}|p{9cm}|}
+    \caption{The Triggering Conditions for the RTC Timer} \label{table:Update RTC TIMER VALUE}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Enabling Options} & \textbf{Descriptions} \\
+    \hline
+    \multirow{2}{*}{\hyperref[regdesc:RTCCNTLTIMEUPDATEREG]{RTC\_CNTL\_TIMER\_XTL\_OFF}} & 1. RTC main state machine powers down; 2. 40 MHz crystal powers up.\\
+    \hline
+    \multirow{2}{*}{\hyperref[regdesc:RTCCNTLTIMEUPDATEREG]{RTC\_CNTL\_TIMER\_SYS\_STALL}} & CPU enters or exits the stall state. This is to ensure the SYS\_TIMER is continuous in time. \\
+    \hline
+    \hyperref[regdesc:RTCCNTLTIMEUPDATEREG]{RTC\_CNTL\_TIMER\_SYS\_RST} & Resetting digital system completes.\\
+    \hline
+    \multirow{2}{*}{\hyperref[regdesc:RTCCNTLTIMEUPDATEREG]{RTC\_CNTL\_TIME\_UPDATE}} & Register \hyperref[fielddesc:RTCCNTLRTCTIMEUPDATE]{RTC\_CNTL\_RTC\_TIME\_UPDATE} is configured by CPU (i.e. users).\\
+    \hline
+\end{longtable}
+
+
+The RTC timer updates two groups of registers upon any new trigger. The first group logs the information of the current trigger, and the other logs the previous trigger. Detailed information about these two register groups is shown below:
+
+\begin{itemize}
+    \item Register group 0: logs the status of RTC timer at the current trigger.
+    \begin{itemize}
+        \item \hyperref[regdesc:RTCCNTLTIMEHIGH0REG]{RTC\_CNTL\_TIME\_HIGH0\_REG}
+        \item \hyperref[regdesc:RTCCNTLTIMELOW0REG]{RTC\_CNTL\_TIME\_LOW0\_REG}
+    \end{itemize}
+    \item Register group 1: logs the status of RTC timer at the previous trigger.
+    \begin{itemize}
+    \item \hyperref[regdesc:RTCCNTLTIMEHIGH1REG]{RTC\_CNTL\_TIME\_HIGH1\_REG}
+    \item \hyperref[regdesc:RTCCNTLTIMELOW1REG]{RTC\_CNTL\_TIME\_LOW1\_REG}
+    \end{itemize}
+\end{itemize}
+
+On a new trigger, information on previous trigger is moved from register group 0 to register group 1 (and the original trigger logged in register group 1 is overrode), and this new trigger is logged in register group 0. Therefore, only the last two triggers can be logged at any time.
+
+It should be noted that any reset / sleep other than power-up reset will not stop or reset the RTC timer.
+
+Also, the RTC timer can be used as a wakeup source. For details, see Section \ref{WakeupSource}.
+
+\subsection{Regulators}
+
+ESP32-S2 has three regulators to regulate the power supply to different power domains:
+\begin{itemize}
+    \item Digital system voltage regulator for digital power domains;
+    \item Low-power voltage regulator for RTC power domains;
+    \item Flash voltage regulator for the rest of power domains.
+\end{itemize}
+
+\begin{tiplisting}
+For more detailed description about power domains, please refer to Section \ref{rtc status}.
+\end{tiplisting}
+
+
+\subsubsection{Digital System Voltage Regulator}
+
+ESP32-S2's built-in digital system voltage regulator converts the external power supply (typically 3.3 V) to 1.1 V for digital power domains. This regulator has an adjustable output. For the architecture of the ESP32-S2 digital system voltage regulator, see Figure \ref{figure:Digital regulator}.
+
+
+
+\begin{enumerate}
+    \item When XPD\_DIG\_REG == 1, the regulator outputs a 1.1 V voltage and the power domains in digital system are able to run; when XPD\_DIG\_REG == 0, both the regulator and the power domains in digital system stop running.
+    \item DIG\_DBIAS[2:0] tunes the supply voltage of the digital system: \\
+    $$\mathrm{VDD\_DIG = 0.90 + DBIAS \times 0.05 V}$$
+    \item The current to power domains in digital system comes from pin VDD3P3\_CPU and pin VDD3P3\_RTC\_IO.
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/REG_DIGITAL.pdf}
+    \caption{Digital System Regulator}
+    \label{figure:Digital regulator}
+\end{figure}
+
+\subsubsection{Low-power Voltage Regulator}
+
+ESP32-S2's built-in low-power voltage regulator converts the external power supply (typically 3.3 V) to 1.1 V for RTC power domains. This regulator has an adjustable output to achieve lower power consumption and can output even lower voltage in Deep-sleep mode and Hibernation mode. For the architecture of the ESP32-S2 low-power voltage regulator, see Figure \ref{figure:Low-power regulator}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/REG_RTC.pdf}
+    \caption{Low-power voltage regulator}
+    \label{figure:Low-power regulator}
+\end{figure}
+
+
+\begin{enumerate}
+   \item When the pin CHIP\_PU is at a high level, the low-power voltage regulator cannot be turned off, but only switching between normal-work mode and Deep-sleep mode.
+   \item RTC\_DBIAS[2:0] can be used to tune the output voltage: \\
+    $$\mathrm{VDD\_RTC = 0.90 + DBIAS \times 0.05 V}$$
+   \item The current to the RTC power domains comes from pin VDD3P3\_RTC\_IO.
+\end{enumerate}
+
+\subsubsection{Flash Voltage Regulator}
+
+ESP32-S2's built-in flash voltage regulator can supply a voltage of 3.3 V or 1.8 V to other components outside of digital system and RTC, such as flash. For the architecture of the ESP32-S2 flash voltage regulator, see Figure \ref{figure:Flash regulator}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{\modulefiles/figures/REG1P8.pdf}
+    \caption{Flash voltage regulator}
+    \label{figure:Flash regulator}
+\end{figure}
+
+\begin{enumerate}
+    \item When XPD\_SDIO\_VREG == 1, the regulator outputs a voltage of 3.3 V or 1.8 V; when XPD\_SDIO\_VREG == 0, the output is high-impedance. In this case, the voltage is provided by the external power supply.
+    \item When SDIO\_TIEH == 1, the regulator shorts pin VDD\_SDIO to pin VDD3P3\_RTC, and outputs a voltage of 3.3 V, which is the voltage of pin VDD3P3\_RTC. When SDIO\_TIEH == 0, the regulator outputs the reference voltage VREF, which is typically 1.8 V.
+    \item DREFH\_SDIO, DREFM\_SDIO and DREFL\_SDIO could be used to fine tune the reference voltage VREF, but are not recommended because this fine tuning may jeopardize the stability of the inner loop.
+    \item When the regulator output is 3.3 V or 1.8 V, the output current comes from the pin VDD3P3\_RTC\_IO.
+\end{enumerate}
+
+The flash voltage regulator can be configured via RTC registers or eFuse controller registers.
+
+\begin{itemize}
+    \item The configuration of XPD\_SDIO\_VREG:
+    \begin{itemize}
+       \item When the chip is in active mode, RTC\_CNTL\_SDIO\_FORCE == 0 and  VDD\_SPI\_FORCE(EFUSE) == 1, the XPD\_SDIO\_VREG voltage is defined by XPD\_VDD\_SPI\_REG(EFUSE);
+       \item When the chip is in sleep modes and RTC\_CNTL\_SDIO\_PD\_EN == 1, XPD\_SDIO\_VREG is 0;
+       \item When RTC\_CNTL\_SDIO\_FORCE == 1, XPD\_SDIO\_VREG is defined by RTC\_CNTL\_XPD\_SDIO\_REG.
+    \end{itemize}
+    \item The configuration of SDIO\_TIEH:
+    \begin{itemize}
+        \item When RTC\_CNTL\_SDIO\_FORCE == 0 and VDD\_SPI\_FORCE(EFUSE) == 1, SDIO\_TIEH = VDD\_SDIO\_TIEH(EFUSE)
+        \item Otherwise, SDIO\_TIEH = RTC\_CNTL\_SDIO\_TIEH.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Brownout Detector}
+
+The brownout detector checks the voltage of pins VDD3P3\_RTC\_IO, VDD3P3\_CPU, VDDA1, and VDDA2. If the voltage of these pins drops rapidly and becomes too low, the detector would trigger a signal to shut down some power-consuming blocks (such as LNA, PA, etc.) to allow extra time for the digital system to save and transfer important data.
+
+
+The brownout detector has ultra-low power consumption and remains enabled whenever the chip is powered up.
+For the architecture of the ESP32-S2 brownout detector, see Figure \ref{figure:Brown out detector}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/BROWN_OUT_DET.pdf}
+   \caption{Brown-out detector}
+    \label{figure:Brown out detector}
+\end{figure}
+
+\begin{enumerate}
+    \item \hyperref[fielddesc:RTCCNTLRTCBROWNOUTDET]{RTC\_CNTL\_RTC\_BROWN\_OUT\_DET} indicates the output level of brown-out detector. This register is low level by default, and outputs high level when the voltage of the detected pin drops below the predefined threshold;
+    \item I2C register ULP\_CAL\_REG5[2:0] configures the trigger threshold of the brown-out detector;
+\begin{table}[H]
+\caption{Brown-out Detector Configuration}\label{table:brownout-voltage}
+\centering
+\begin{tabular}{|c|c|}
+\hline
+\rowcolor[HTML]{C0C0C0}
+ULP\_CAL\_REG5{[}2:0{]} & VDD (Unit: V) \\ \hline
+0 & 2.67 \\ \hline
+1 & 3.30 \\ \hline
+2 & 3.19 \\ \hline
+3 & 2.98 \\ \hline
+4 & 2.84 \\ \hline
+5 & 2.67 \\ \hline
+6 & 2.56 \\ \hline
+7 & 2.44 \\ \hline
+\end{tabular}
+\end{table}
+    \item \hyperref[fielddesc:RTCCNTLBROWNOUTRSTSEL]{RTC\_CNTL\_BROWN\_OUT\_RST\_SEL} configures the reset type.
+    \begin{itemize}
+        \item 0: resets the chip
+        \item 1: resets the system
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}
+For more information regarding chip reset and system reset, please refer to \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+\end{tiplisting}
+
+\section{Power Modes Management}
+
+\subsection{Power Domain}\label{powerdomain}
+
+ESP32-S2 has 10 power domains in three power domain categories:
+\begin{itemize}
+    \item RTC
+        \begin{itemize}
+            \item Power management unit
+            \item RTC peripherals
+            \item RTC slow memory
+            \item RTC fast memory
+        \end{itemize}
+    \item Digital
+        \begin{itemize}
+            \item Digital core
+            \item Wi-Fi digital circuits
+        \end{itemize}
+    \item Analog
+    \begin{itemize}
+        \item 8 MHz crystals
+        \item 40 MHz crystals
+        \item PLL
+        \item RF circuits
+    \end{itemize}
+\end{itemize}
+
+\subsection{RTC States}\label{rtc status}
+
+ESP32-S2 has three main RTC states: Active, Monitor, and Sleep. The transition process among these states can be seen in Figure \ref{figure:RTC states}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/rtc_states.pdf}
+    \caption{RTC States Transition }
+    \label{figure:RTC states}
+\end{figure}
+
+
+Under different RTC states, different power domains are powered up or down by default, but can also be force-powered-up (FPU) or force-powered-down (FPD) individually based on actual requirements. For details, please refer to Table \ref{table:RTC power domains}.
+
+\begin{table}[H]
+\caption{RTC Statues Transition}\label{table:RTC power domains}
+\centering
+\begin{tabular}{|
+>{\columncolor[HTML]{EFEFEF}}c |
+>{\columncolor[HTML]{EFEFEF}}c |c|c|c|c|}
+\hline
+\multicolumn{2}{|c|}{\cellcolor[HTML]{C0C0C0}Power Domain} &
+  \multicolumn{3}{c|}{\cellcolor[HTML]{C0C0C0}RTC States} &
+  \cellcolor[HTML]{C0C0C0} \\ \cline{1-5}
+\cellcolor[HTML]{C0C0C0} Category &
+  \cellcolor[HTML]{C0C0C0}Sub-category &
+  \cellcolor[HTML]{C0C0C0}Active &
+  \cellcolor[HTML]{C0C0C0}Monitor &
+  \cellcolor[HTML]{C0C0C0}Sleep &
+  \multirow{-2}{*}{\cellcolor[HTML]{C0C0C0}Notes} \\ \hline
+\cellcolor[HTML]{EFEFEF}                       & Power Management Unit  & ON & ON  & ON  & \hyperref[RTC_STATUS]{$^1$} \\ \cline{2-6}
+\cellcolor[HTML]{EFEFEF}                       & RTC Peripherals    & ON & ON  & OFF & \hyperref[RTC_STATUS]{$^2$} \\ \cline{2-6}
+\cellcolor[HTML]{EFEFEF}                       & RTC Slow Memory  & ON & OFF & OFF & \hyperref[RTC_STATUS]{$^3$} \\ \cline{2-6}
+\multirow{-4}{*}{\cellcolor[HTML]{EFEFEF}RTC}  & RTC Fast Memory  & ON & OFF & OFF & \hyperref[RTC_STATUS]{$^4$} \\ \hline
+\cellcolor[HTML]{EFEFEF}                       & Digital Core & ON & OFF & OFF & \hyperref[RTC_STATUS]{$^5$} \\ \cline{2-6}
+\multirow{-2}{*}{\cellcolor[HTML]{EFEFEF}Digital} & Wi-Fi Digital Circuits  & ON & OFF & OFF & \hyperref[RTC_STATUS]{$^6$} \\ \hline
+\cellcolor[HTML]{EFEFEF}                       & 8 MHz Crystals  & ON & ON  & OFF & - \\ \cline{2-6}
+\cellcolor[HTML]{EFEFEF}                       & 40 MHz Crystals & ON & OFF & OFF & - \\ \cline{2-6}
+\cellcolor[HTML]{EFEFEF}                       & PLL       & ON & OFF & OFF & - \\ \cline{2-6}
+\multirow{-4}{*}{\cellcolor[HTML]{EFEFEF}Analog} & RF Circuits      & -  & -   & -   & - \\ \hline
+\end{tabular}
+\end{table}
+
+
+\begin{tiplisting}
+\vspace{-2em}\label{RTC_STATUS}
+\begin{enumerate}
+    \item ESP32-S2's power management unit is specially designed to be ``always-on", which means it is always on when the chip is powered up. Therefore, users cannot FPU or FPD the power management unit.
+    \item The RTC peripherals include \ref{mod:ulp} \textit{\nameref{mod:ulp}} and \ref{mod:sensor} \textit{\nameref{mod:sensor}} (i.e. temperature sensor controller, touch sensor, SAR ADC controller).
+    \item RTC slow memory supports 8 KB SRAM, which can be used to reserve memory or to store ULP instructions and / or data. This memory can be accessed by CPU via PeriBUS2 (starting address is \hexprefix{}50000000), and should be force-power-on.
+    \item RTC fast memory supports 8 KB SRAM, which can be used to reserve memory. This memory can be accessed by CPU via IRAM0 / DRAM0, and should be forced-power-up.
+    \item When the digital core of the digital system is powered down, all components in the digital system are turned off. It's worth noting that, ESP32-S2's ROM and SRAM are no longer controlled as independent power domains, thus cannot be force-powered-up or force-powered-down when the digital core is powered down.
+    \item Power domain Wi-Fi digital circuits includes Wi-Fi MAC and BB (Base Band).
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Pre-defined Power Modes}
+As mentioned earlier, ESP32-S2 has five power modes, which are predefined configurations that power up different combinations of power domains. For details, please refer to Table \ref{table:predefined power modes}.
+
+\begin{table}[H]
+\caption{Predefined Power Modes}\label{table:predefined power modes}
+\centering
+\begin{tabular}{|p{2.5cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|p{1cm}|}
+\hline
+\rowcolor[HTML]{C0C0C0}
+\cellcolor[HTML]{C0C0C0}            & \multicolumn{10}{|c|}{\cellcolor[HTML]{C0C0C0}Power Domain}            \\ \cline{2-11}
+\rowcolor[HTML]{C0C0C0}
+\multirow{-2}{*}{\cellcolor[HTML]{C0C0C0}\shortstack{ Power \\ Modes}} & PMU & RTC Peripherals & RTC Slow Memory & RTC Fast Memory & Digital Core & Wi-Fi Digital Circuits & 8 MHz Crystals & 40 MHz Crystals & PLL & RF Circuits \\ \hline
+\cellcolor[HTML]{EFEFEF}Active      & ON & ON  & ON  & ON  & ON  & ON      & ON  & ON  & ON  & ON  \\ \hline
+\cellcolor[HTML]{EFEFEF}Modem-sleep & ON & ON  & ON  & ON  & ON  & ON \hyperref[configurable]{$^*$} & ON  & ON  & ON  & OFF \\ \hline
+\cellcolor[HTML]{EFEFEF}Light-sleep & ON & ON  & ON  & ON  & ON  & ON \hyperref[configurable]{$^*$} & OFF & OFF & OFF & OFF \\ \hline
+\cellcolor[HTML]{EFEFEF}Deep-sleep  & ON & ON  & ON  & ON  & OFF & OFF     & OFF & OFF & OFF & OFF \\ \hline
+\cellcolor[HTML]{EFEFEF}Hibernation & ON & OFF & OFF & OFF & OFF & OFF     & OFF & OFF & OFF & OFF \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{tiplisting}
+\label{configurable}
+* Configurable
+\end{tiplisting}
+
+By default, ESP32-S2 first enters the Modem-sleep mode after a system reset and can be configured to Active mode when transmitting or receiving packets. After the CPU stalls for a while, the chip can enter Modem-sleep, Light-sleep, Deep-sleep, and Hibernation mode to save power. From Active to Hibernation mode, the performance\hyperref[predefined-modes-notes]{$^1$} and power consumption\hyperref[predefined-modes-notes]{$^2$} decreases and wakeup latency increases. Also, the supported wakeup sources for different power modes are different\hyperref[predefined-modes-notes]{$^3$}. Users can choose a power mode based on their requirements of performance, power consumption, wakeup latency, and available wakeup sources.
+
+\begin{tiplisting}
+\vspace{-2em}
+\label{predefined-modes-notes}
+\begin{enumerate}
+    \item For details, please refer to Table \ref{table:predefined power modes}.
+    \item For details on power consumption, please refer to the Current Consumption Characteristics in \href{https://www.espressif.com/sites/default/files/documentation/esp32-s2_datasheet_en.pdf}{\it{ESP32-S2 Datasheet}}.
+    \item For details on the supported wakeup sources, please refer to Section \ref{WakeupSource}.
+\end{enumerate}
+\end{tiplisting}
+
+
+\subsection{Wakeup Source}\label{WakeupSource}
+
+The ESP32-S2 supports various wakeup sources, which could wake up the CPU in different sleep modes. The wakeup source is determined by \hyperref[fielddesc:RTCCNTLRTCWAKEUPENA]{RTC\_CNTL\_RTC\_WAKEUP\_ENA} as shown in Table \ref{table:wakeup source}.
+
+
+\begin{longtable}{ | r | l | c | c | c | r | }
+    \caption{Wakeup Source} \label{table:wakeup source} \\
+    \hline
+    \rowcolor{lightgray}
+    WAKEUP\_ENA & Wakeup Source\hyperlink{wakeup-sources-note1}{$^{11}$} &  Light-sleep & Deep-sleep & Hibernation & Notes* \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    WAKEUP\_ENA & Wakeup Source\hyperlink{wakeup-sources-note1}{$^{11}$} &  Light-sleep & Deep-sleep & Hibernation & Notes* \\
+    \hline
+    \endhead
+
+    \hline
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \hexprefix{}1 & EXT0 & Y & Y & - & \hyperlink{wakeup-sources-note1}{1} \\
+    \hline
+    \hexprefix{}2 & EXT1 & Y & Y & Y & \hyperlink{wakeup-sources-note2}{2} \\
+    \hline
+    \hexprefix{}4 & GPIO & Y & Y & - & \hyperlink{wakeup-sources-note3}{3} \\
+    \hline
+    \hexprefix{}8 & RTC timer & Y & Y & Y & -\\
+    \hline
+    \hexprefix{}20 & Wi-Fi & Y & - & - & \hyperlink{wakeup-sources-note5}{4} \\
+    \hline
+    \hexprefix{}40 & UART0 & Y & - & - & \hyperlink{wakeup-sources-note6}{5} \\
+    \hline
+    \hexprefix{}80 & UART1 & Y & - & - & \hyperlink{wakeup-sources-note6}{5} \\
+    \hline
+    \hexprefix{}100 & TOUCH & Y & Y & - &  \hyperlink{wakeup-sources-note7}{6}\\
+    \hline
+    \hexprefix{}800 & ULP-FSM & Y & Y & -  & \hyperlink{wakeup-sources-note8}{7} \\
+    \hline
+    \hexprefix{}1000 & XTAL\_32K & Y & Y & Y  & \hyperlink{wakeup-sources-note9}{8} \\
+    \hline
+    \hexprefix{}2000 & ULP-RISCV Trap & Y & Y & -  & \hyperlink{wakeup-sources-note10}{9} \\
+    \hline
+    \hexprefix{}8000 & USB & Y & - & - & \hyperlink{wakeup-sources-note11}{10} \\
+    \hline
+\end{longtable}
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item EXT0 can only wake up the chip from Light-sleep / Deep-sleep modes. If \hyperref[fielddesc:RTCCNTLEXTWAKEUP0LV]{RTC\_CNTL\_EXT\_WAKEUP0\_LV} is 1, it's triggered when the pin level is high. Otherwise, it's triggered when the pin level is low. Users can configure RTCIO\_EXT\_WAKEUP0\_SEL to select an RTC pin as a wakeup source.
+    \item EXT1 is especially designed to wake up the chip from any sleep modes, and can be triggered by a combination of pins. Users should define the combination of wakeup sources by configuring \hyperref[fielddesc:RTCCNTLEXTWAKEUP1SEL]{RTC\_CNTL\_EXT\_WAKEUP1} \hyperref[fielddesc:RTCCNTLEXTWAKEUP1SEL]{\_SEL[17:0]} according to the bitmap of selected wakeup source. When \hyperref[fielddesc:RTCCNTLEXTWAKEUP1LV]{RTC\_CNTL\_EXT\_WAKEUP1\_LV} == 1, the chip is waken up if any pin in the combination is high level. When \hyperref[fielddesc:RTCCNTLEXTWAKEUP1LV]{RTC\_CNTL\_EXT\_WAKEUP1\_LV} == 0, the chip is only waken up if any pins in the combination is low level.
+
+    {\bfseries Note} that the EXT1 hold time should be longer than three RTC slow clock cycles, otherwise the signal status will not be captured in \hyperref[regdesc:RTCCNTLEXTWAKEUP1STATUSREG]{RTC\_CNTL\_EXT\_WAKEUP1\_STATUS}.
+    \item In Deep-sleep mode, only the RTC GPIOs (not regular GPIOs) can work as a wakeup source.
+    \item To wake up the chip with a Wi-Fi source, the chip switches between the Active, Modem-sleep, and Light-sleep modes. The CPU and RF modules are woken up at predetermined intervals to keep Wi-Fi connections active.
+    \item A wakeup is triggered when the number of RX pulses received exceeds the setting in the threshold register.
+    \item A wakeup is triggered when any touch event is detected by the touch sensor.
+    \item A wakeup is triggered when \hyperref[fielddesc:RTCCNTLRTCSWCPUINT]{RTC\_CNTL\_RTC\_SW\_CPU\_INT} is configured by the ULP co-processor.
+    \item When the 32 kHz crystal is working as RTC slow clock, a wakeup is triggered upon any detection of any crystal stops by the 32 kHz watchdog timer.
+    \item A wakeup is triggered when the ULP co-processor starts capturing exceptions (e.g., stack overflow).
+    \item A wakeup is triggered when the USB host sends USB into the RESUMING state.
+    \item All wakeup sources can also be configured as the causes to reject sleep, except UART. \\
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Reject Sleep}\label{sec:lpm-reject-source}
+
+ESP32-S2 implements a hardware mechanism that equips the chip with the ability to reject to sleep, which prevents the chip from going to sleep unexpectedly when some peripherals are still working but not detected by the CPU, thus guaranteeing the proper functioning of the peripherals.
+
+All the wakeup sources specified in Table \ref{table:wakeup source} (except UART) can also be configured as the causes to reject sleep.
+
+Users can configure the reject to sleep option via the following registers.
+\begin{itemize}
+    \item Configure the \hyperref[fielddesc:RTCCNTLRTCSLEEPREJECTENA]{RTC\_CNTL\_RTC\_SLEEP\_REJECT\_ENA} field to enable or disable the option to reject to sleep:
+        \begin{itemize}
+            \item Set \hyperref[fielddesc:RTCCNTLLIGHTSLPREJECTEN]{RTC\_CNTL\_LIGHT\_SLP\_REJECT\_EN} to enable reject-to-light-sleep.
+            \item Set \hyperref[fielddesc:RTCCNTLDEEPSLPREJECTEN]{RTC\_CNTL\_DEEP\_SLP\_REJECT\_EN} to enable reject-to-deep-sleep.
+        \end{itemize}
+    \item Read \hyperref[fielddesc:RTCCNTLREJECTCAUSE]{RTC\_CNTL\_SLP\_REJECT\_CAUSE\_REG} to check the reason for rejecting to sleep.
+\end{itemize}
+
+\section{RTC Boot}
+The wakeup time for Deep-sleep and Hibernation modes are much longer, compared to the Light-sleep and Modem-sleep, because the ROMs and RAMs are both powered down in this case, and the CPU needs more time for ROM unpacking and data-copying from the flash (SPI booting). However, it's worth noting that both RTC fast memory and RTC slow memory remain powered up in the Deep-sleep mode. Therefore, users can store codes (so called ``deep sleep wake stub" of up to 8 KB) either in RTC fast memory or RTC slow memory to avoid the above-mentioned ROM unpacking and SPI booting, thus speeding up the wakeup process.
+
+\textbf{Method one: Using RTC slow memory}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:RTCCNTLPROCPUSTATVECTORSEL]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL} to 0.
+    \item Send the chip into sleep.
+    \item After the CPU is powered up, the reset vector starts resetting from \hexprefix{}50000000 instead of \hexprefix{}40000400, which does not involve any ROM unpacking and SPI booting. The codes stored in RTC slow memory starts running immediately after the CPU reset. However, note that the content in the RTC slow memory should be initialized before sending the chip into sleep.
+\end{enumerate}
+
+\textbf{Method two: Using RTC fast memory}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:RTCCNTLPROCPUSTATVECTORSEL]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL} to 1.
+    \item Calculate CRC for the RTC fast memory, and save the result in \hyperref[regdesc:RTCCNTLSTORE6REG]{RTC\_CNTL\_STORE6\_REG[31:0]}.
+    \item Set \hyperref[regdesc:RTCCNTLSTORE7REG]{RTC\_CNTL\_STORE7\_REG[31:0]} to the entry address of RTC fast memory.
+    \item Send the chip into sleep.
+    \item ROM unpacking and some of the initialization starts after the CPU is powered up. After that, calculate the CRC for the RTC fast memory again. If the result matches with register \hyperref[regdesc:RTCCNTLSTORE6REG]{RTC\_CNTL\_STORE6\_REG[31:0]}, the CPU jumps to the entry address.
+\end{enumerate}
+
+The boot flow is shown in Figure \ref{figure:RTC boot}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.1\textwidth]{\modulefiles/figures/rtc_boot.pdf}
+    \caption{ESP32-S2 Boot Flow}
+    \label{figure:RTC boot}
+\end{figure}
+
+When working under low-power modes, ESP32-S2's 40 MHz crystal oscillator and PLL are usually powered down to reduce power consumption. However, the low-power clock remains on so the chip can operate properly under low-power modes.
+
+\section{Base Address}\label{LPM_base_address}
+
+Users can access the low-power management module of ESP32-S2 with two base addresses, which can be seen in Table \ref{table:LPMENTRY}. For more information about accessing peripherals from different buses please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{Low-power Management Base Address}\label{table:LPMENTRY}
+\\\hline
+\rowcolor{lightgray}
+    Bus to Access Peripheral      & Base Address\\
+    \hline
+    PeriBUS1      & \hexprefix{}3f408000      \\
+    \hline
+    PeriBUS2      & \hexprefix{}60008000      \\
+    \hline
+\end{longtable}
+
+\hypertarget{lowpowm-reg-summ}{}
+\section{Register Summary}
+
+The addresses in the following table are relative to the Low Power Management base addresses provided in Section \ref{LPM_base_address}.
+\subfile{\modulefiles/Low_Power_Management_Reg_Summary_en.tex}
+
+\section{Registers}\label{RTC_Register}
+The addresses in this section are relative to the Low Power Management base addresses provided in Section \ref{LPM_base_address}.
+\subfile{\modulefiles/Low_Power_Management_Reg_en.tex}
+\end{document}

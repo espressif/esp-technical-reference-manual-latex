@@ -1,0 +1,1565 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./24-SPI}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{spi}{}
+\chapter{SPI Controller (SPI)}
+\label{mod:spi}
+
+\section{Overview}
+
+The ESP32-S2 chip integrates four SPI controllers SPI0, SPI1, General Purpose SPI2 (GP-SPI2), and GP-SPI3 as shown in Figure \ref{Figure:ESP_723_SPI_Block_Diagram}.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/SPI_Block_Diagram_in_ESP_723.eps}}
+    \caption{SPI Block Diagram}
+    \label{Figure:ESP_723_SPI_Block_Diagram}
+\end{figure}
+
+All the four SPI controllers can be used to communicate with external SPI devices:
+
+\begin{itemize}
+  \item SPI0 comes with two chip select (CS) lines: CS0 and CS1, CS0 for flash and CS1 for external RAM. SPI0 is only used by ESP32-S2 cache or EDMA to:
+  \begin{itemize}
+      \item Read data from an external RAM.
+      \item Write data to an external RAM.
+      \item Read data from an external flash, only applicable for cache.
+  \end{itemize}
+
+  \item SPI1 also comes with two CS lines, CS0 and CS1. SPI1 can be used by the CPU to access various external flash.
+
+  \item GP-SPI2 is a general purpose SPI controller with its own DMA channel. GP-SPI2 works as either a master or a slave. As a master, GP-SPI2 provides six CS lines, CS0 \verb+~+ CS5.
+
+  \item GP-SPI3 is also a general purpose SPI controller, but shares a DMA channel with ADC and DAC modules. GP-SPI3 works as either a master or a slave. As a master, GP-SPI3 provides three CS lines, CS0 \verb+~+ CS2.
+\end{itemize}
+
+SPI0 and SPI1 are used internally and share the same SPI signal bus via an arbiter. The name of signals shared by SPI0 and SPI1 is prefixed with "SPI": SPICLK, SPICS0 \verb+~+ SPICS1, SPID, SPIQ, SPIWP, SPIHD, SPIIO4 \verb+~+ SPIIO7, and SPIDQS. The signal buses for GP-SPI2 and GP-SPI3 are prefixed with "FSPI" and "SPI3", respectively. The prefix FSPI (Fast SPI) indicates that the recommended usage of GP-SPI2 is to communicate with external high-speed SPI devices.
+
+
+
+The I/O lines of the SPI/FSPI/SPI3 buses can be mapped to physical GPIO pads by following ways:
+
+\begin{itemize}
+  \item SPI bus signals are routed to GPIO pads via either GPIO Matrix or IO MUX.
+  \item FSPI bus signals are routed to GPIO pads via either GPIO Matrix or IO MUX.
+  \item SPI3 bus signals are routed to GPIO pads via GPIO Matrix only.
+\end{itemize}
+
+For more information, please see Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+\section{Features}
+
+SPI0 and SPI1 controllers are primarily reserved for internal use. This section and the following sections mainly focus on GP-SPI2 and GP-SPI3 controllers. For mapping between SPI signals and ESP32-S2 signals, see Table \ref{table:SPI_signals}.
+
+\subsection{GP-SPI2 Features}
+
+\subsubsection{Functioning as a Master}
+
+\begin{itemize}
+    \item The bits used in \hyperref[phase:cmd]{CMD}, \hyperref[phase:addr]{ADDR} and \hyperref[phase:data]{DATA} phases are SW-configurable.
+    \item Support accessing various SPI devices (such as flash, external RAM, LCD driver) working in different data modes:
+    \begin{itemize}
+
+      \item 1-bit SPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID and/or FSPIQ. In full-duplex communication, 1-bit SPI is supported. In half-duplex communication, 3-line half-duplex SPI is supported, and only one data line FSPID is used; 4-line half-duplex SPI is also supported, and one of the data lines FSPID and FSPIQ is used.
+
+      \item 2-bit Dual SPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID, and FSPIQ. Note: in this mode, two data lines, i.e. FSPID and FSPIQ, are used in parallel.
+
+      \item 4-bit Quad SPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID, FSPIQ, FSPIWP, and FSPIHD. Note: in this mode, 4 data lines are used in parallel, i.e. FSPID, FSPIQ, FSPIWP, and FSPIHD.
+
+      \item QPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID, FSPIQ, FSPIWP, and FSPIHD.
+
+      \item 8-bit Octal SPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID, FSPIQ, FSPIWP, FSPIHD, and FSPIIO4 \verb+~+ FSPIIO7. Note: in this mode, 8 data lines are used in parallel, i.e. FSPID, FSPIQ, FSPIWP, FSPIHD, and FSPIIO4\verb+~+FSPIIO7.
+
+      \item OPI mode, with signals FSPICLK, FSPICS0 \verb+~+ FSPICS5, FSPID, FSPIQ, FSPIWP, FSPIHD, and FSPIIO4 \verb+~+ FSPIIO7.
+    \end{itemize}
+
+    \item Support Moto6800/I8080/Parallel RGB interface 8-bit LCD driver.
+    \item Support the frequency of SPI clock: 1 \verb+~+ n division of APB clock, see the \hyperref[division-formula]{division formula}.
+    \item The level of SPI\_CD pin can be set in CMD and ADDR phases.
+    \item Provide six SPI\_CS pins for connection with six independent SPI slaves. The master can communicate with these devices with different configurations (data modes, full/half-duplex, command, address, dummy, etc.) successively.
+    \item Support configurable CS setup time and hold time.
+    \item Support single transfer and DMA segmented-configure-transfer (SCT). Have separated interrupts for both of them.
+\end{itemize}
+
+\subsubsection{Functioning as a Slave}
+  \begin{itemize}
+      \item Support the following data modes. For the bits used in CMD, ADDR and DATA phases in different data modes, see Table \ref{tab:data-modes}.
+      \begin{itemize}
+            \item 1-bit SPI, with signals FSPICLK, FSPICS0, FSPID and/or FSPIQ. In full-duplex communication, 1-bit SPI is supported. In half-duplex communication, 3-line half-duplex SPI is supported, and uses only one data line: FSPID; 4-line half-duplex SPI is also supported, and uses one of the data lines FSPID and FSPIQ.
+
+            \item 2-bit Dual SPI, with signals FSPICLK, FSPICS0, FSPID and FSPIQ.
+
+            \item 4-bit Qual SPI, with signals FSPICLK, FSPICS0, FSPID, FSPIQ, FSPIWP, and FSPIHD.
+
+            \item QPI, with signals FSPICLK, FSPICS0, FSPID, FSPIQ, FSPIWP, and FSPIHD.
+
+      \end{itemize}
+      \item Support the frequency of SPI clock up to 40 MHz.
+      \item Support the communication formats described in Section \ref{slave communication format}.
+      \item Support single transfer and segmented-transfer. Have separated interrupts for both of them.
+  \end{itemize}
+
+\subsubsection{Functioning as a Master or a Slave}
+  \begin{itemize}
+    \item Data transmission length configurable. 1 \verb+~+ 64 bytes for CPU controlled mode, 1 \verb+~+ n (unlimited) bytes for DMA controlled mode.
+    \item Support configurable read and write data bit order: most-significant bit (MSB) first, or least-significant bit (LSB) first.
+
+    \item Support full-duplex and half-duplex communications.
+    \item Support data exchange between external SPI devices and:
+      \begin{itemize}
+        \item GP-SPI2 data buffer (access by CPU)
+        \item internal RAM (access by DMA)
+        \item external RAM (access by EDMA)
+      \end{itemize}
+
+    \item Support configurable clock frequency, polarity, and phase.
+    \item Support SPI clock mode 0 \verb+~+ 3.
+  \end{itemize}
+
+\subsection{GP-SPI3 Features}
+
+\subsubsection{Functioning as a Master}
+  \begin{itemize}
+    \item Support the frequency of SPI clock: 1 \verb+~+ n division of APB clock, see the \hyperref[division-formula]{division formula}.
+    \item Support 1-bit LCD driver.
+    \item The level of SPI\_CD pin can be set in CMD and ADDR phases.
+    \item Provide three SPI\_CS pins for connection of three SPI slaves. The master can communicate with these devices with different configurations (data modes, full/half-duplex, command, address, dummy, etc.) successively.
+    \item Support configurable CS setup time and hold time.
+    \item Support single transfer and DMA segmented-configure-transfer (SCT). Have separated interrupts for both of them.
+  \end{itemize}
+
+\subsubsection{Functioning as a Slave}
+  \begin{itemize}
+    \item Support frequency of SPI clock up to 40 MHz.
+    \item Support the communication formats described in Section \ref{slave communication format}.
+    \item Support single transfer and segmented-transfer. Have separated interrupts for both of them.
+  \end{itemize}
+
+\subsubsection{Functioning as a Master or a Slave}
+  \begin{itemize}
+    \item Support 1-bit SPI. In full-duplex communication, 1-bit SPI is supported. In half-duplex communication, 3-line half-duplex SPI is supported, and uses only one data line SPI3\_D; 4-line half-duplex SPI is also supported, and uses one of the data lines SPI3\_D and SPI3\_Q.
+
+    \item Data transmission length configurable. 1 \verb+~+ 64 bytes for CPU controlled mode, 1 \verb+~+ n(unlimited) bytes for DMA controlled mode.
+    \item Support configurable read and write data bit order: most-significant bit (MSB) first, or least-significant bit (LSB) first.
+    \item Support full-duplex and half-duplex communications
+    \item Support data exchange between external SPI devices and:
+      \begin{itemize}
+        \item GP-SPI3 data buffer (access by CPU)
+        \item internal RAM (access by DMA)
+      \end{itemize}
+
+    \item Support configurable clock frequency, polarity, and phase.
+    \item Support SPI clock mode 0 \verb+~+ 3.
+  \end{itemize}
+
+\subsection{SPI Interrupt Features}
+\begin{itemize}
+    \item Support SPI interrupts, see Section \ref{Section:SPI_Interrupt}.
+    \item Support SPI DMA interrupts, see Section \ref{Section:SPI_Interrupt}.
+\end{itemize}
+
+\section{GP-SPI Interfaces}
+\label{section:GP-SPI_Interfaces}
+
+GP-SPI2 and GP-SPI3 are general purpose interfaces which can be configured as either a master or a slave to communicate with other SPI devices, see Figure \ref{Figure:ESP32-S2_GP-SPI_Block_Diagram}. The supported data modes of GP-SPI2 and GP-SPI3 are shown in Table \ref{tab:data-modes}.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/GP_SPI_Block_diagram_ESP32_S2}}
+    \caption{GP-SPI2/GP-SPI3 Block Diagram}
+    \label{Figure:ESP32-S2_GP-SPI_Block_Diagram}
+\end{figure}
+
+\newpage
+\begin{longtable}{|l|l|l|l|l|l|l|}
+\caption{Data Modes Supported by GP-SPI2 and GP-SPI3}
+\label{tab:data-modes}\\
+\hline
+\rowcolor{lightgray}
+\multicolumn{2}{|l|}{Supported Mode}            & CMD Phase& Address Phase& Data Phase& GP-SPI2 & GP-SPI3 \\ \hline
+\endhead
+\multicolumn{2}{|l|}{1-bit SPI}                       & 1-bit   & 1-bit       & 1-bit    & Y       & Y       \\ \hline
+\multirow{2}{*}{Dual   SPI} & Dual Output Read  & 1-bit   & 1-bit       & 2-bit    & Y       & \_      \\ \cline{2-7}
+                            & Dual I/O Read     & 1-bit   & 2-bit       & 2-bit    & Y       & \_      \\ \hline
+\multirow{2}{*}{Quad SPI}   & Quad Output Read  & 1-bit   & 1-bit       & 4-bit    & Y       & \_      \\ \cline{2-7}
+                            & Quad I/O Read     & 1-bit   & 4-bit       & 4-bit    & Y       & \_      \\ \hline
+\multirow{2}{*}{Octal SPI}  & Octal Output Read & 1-bit   & 1-bit       & 8-bit    & Y       & \_      \\ \cline{2-7}
+                            & Octal I/O Read    & 1-bit   & 8-bit       & 8-bit    & Y       & \_      \\ \hline
+\multicolumn{2}{|l|}{QPI}                       & 4-bit   & 4-bit       & 4-bit    & Y       & \_      \\ \hline
+\multicolumn{2}{|l|}{OPI}                       & 8-bit   & 8-bit       & 8-bit    & Y       & \_      \\ \hline
+\end{longtable}
+
+The functionalities of GP-SPI3 are nearly the same as those of GP-SPI2. GP-SPI2's functionalities are depicted in Section \ref{GP-SPI2 master mode} and Section \ref{GP-SPI2 slave mode}. The differences between GP-SPI2 and GP-SPI3 are described in Section \ref{Subsection:Differences Between GP-SPI2 and GP-SPI3}.
+GP-SPI2 supports the following settings:
+
+\begin{itemize}
+    \item Choose between full-duplex and half-duplex communications, depending on the bit \hyperref[fielddesc:SPIDOUTDIN]{SPI\_DOUTDIN} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}:
+    \begin{itemize}
+        \item 0: choose half-duplex.
+        \item 1: choose full-duplex.
+    \end{itemize}
+    \item Choose between master and slave modes, depending on the bit \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE} in register \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG}:
+    \begin{itemize}
+        \item 0: choose master mode.
+        \item 1: choose slave mode.
+    \end{itemize}
+    \item Set read/write data bit order by configuring \hyperref[fielddesc:SPIRDBITORDER]{SPI\_RD\_BIT\_ORDER} and \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} in register \hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG}, respectively:
+    \begin{itemize}
+        \item 0: LSB first.
+        \item 1: MSB first.
+    \end{itemize}
+\end{itemize}
+
+When working as master, GP-SPI2 supports single transfer and DMA segmented-configure-transfer. Every single transfer needs to be triggered by ESP32-S2 CPU, after its related registers are configured. The segmented-configure-transfer consist of several single SPI transfers but requires only one triggering from ESP32-S2 CPU. The detailed description of segmented-configure-transfer can be seen in Subsection \ref{GP-SPI DMA seg-conf-trans}.
+
+When working as slave, GP-SPI2 supports single transfer and segmented-transfer. GP-SPI2 should be configured to slave segmented-transfer mode before the SPI master starts the transfer in segments. Segmented-transfer will end when En\_SEG\_TRANS command is received correctly. The detailed description can be seen in Subsection \ref{GP-SPI2 slave seg-trans}.
+
+When GP-SPI2 is working as slave and in the half-duplex mode, the SPI master should communicate with the slave by supported commands in Table \ref{table:SPI_slave_CMD_SPI} and Table \ref{table:SPI_slave_CMD_QPI} according to their format.
+
+
+\section{GP-SPI2 Works as a Master}\label{GP-SPI2 master mode}
+
+Many features are supported in GP-SPI2 master mode. And all the features are controlled by GP-SPI2's state machine and registers. For more information, see the following subsections.
+
+\begin{itemize}
+    \item Subsection \ref{GP-SPI2 state machine}: state machine workflow
+    \item Subsection \ref{GP-SPI2 state and register configuration}: register configuration rules
+    \item Subsection \ref{GP-SPI2 1 bit} to Subsection \ref{GP-SPI DMA seg-conf-trans application}: the functions of GP-SPI2 and its typical applications
+    \item Subsection \ref{GP-SPI2 CS timing}: programmable CS setup time and hold time
+    \item Subsection \ref{Subsection:GP-SPI2 CLK}: configuration of FSPICLK frequency, polarity, and phase
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item The length of transferred data must be in unit of bytes, otherwise the extra bits will be lost. The extra bits here means the result of total data bits \% 8.
+    \item To transfer bits not in unit of bytes, consider implementing it in CMD state or ADDR state.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{State Machine} \label{GP-SPI2 state machine}
+
+GP-SPI2 is mainly used to access 1/2/4/8-bit SPI devices, such as flash, external RAM, and LCD, thus the naming of GP-SPI2 states keeps consistent with the sequence phase naming of flash, external RAM, and LCD. Figure \ref{Figure:SPI_master_mode_flow_chart} shows GP-SPI2 state flow, which is helpful to use all the functions of GP-SPI2 in master mode.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{\modulefiles/figures/SPI_master_mode_flow_chart1}
+    \caption{GP-SPI2 State Flow in Master Mode}
+    \label{Figure:SPI_master_mode_flow_chart}
+\end{figure}
+
+As shown in Figure \ref{Figure:SPI_master_mode_flow_chart}, GP-SPI2 has the following states:
+\begin{enumerate}
+    \item IDLE: GP-SPI2 is not active or is in slave mode.
+    \item CONF: only used for segmented-configure-transfer function. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRCONF]{SPI\_USR\_CONF} to enable this state. If this state is not enabled, it means this transfer now is in single transfer mode.
+    \item PREP: prepare an SPI transmission and control SPI CS setup time. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPICSSETUP]{SPI\_CS\_SETUP} to enable this state.
+    \item\label{phase:cmd} CMD: send command sequence. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND} to enable this state.
+    \item\label{phase:addr} ADDR: send address sequence. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR} to enable this state.
+    \item DUMMY (wait cycle): send dummy sequence. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY} to enable this state.
+    \item\label{phase:data} DATA: transfer data.
+    \begin{itemize}
+    \item DOUT: send data sequence. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI} to enable this state.
+    \item DIN: receive data sequence. Set the bits \hyperref[fielddesc:SPIUSR]{SPI\_USR} and \hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO} to enable this state.
+    \end{itemize}
+    \item DONE: control SPI CS hold time. Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} to enable this state.
+\end{enumerate}
+
+As shown in Figure \ref{Figure:SPI_master_mode_flow_chart}, a counter (gpc[22:0]) is used in state machine to control the cycle length of each state. The states CONF, PREP, CMD, ADDR, DUMMY, DOUT, and DIN can be enabled or disabled independently, of which the cycle lengths can also be configured independently. With the combination of the enabled states and their cycle lengths, the behavior of GP-SPI2's state machine can be controlled flexibly.
+
+\subsection{Register Configuration Rules for State Control}\label{GP-SPI2 state and register configuration}
+
+The behavior of GP-SPI2 in each state is controlled by GP-SPI2 registers. The register configuration rules, related to GP-SPI2 state control, are shown in Table \ref{table:SPI_USR1} and Table \ref{table:SPI_USR2}. Users can enable OPI mode or QPI mode for GP-SPI2 by setting the bits \hyperref[fielddesc:SPIOPIMODE]{SPI\_OPI\_MODE} and \hyperref[fielddesc:SPIQPIMODE]{SPI\_QPI\_MODE} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}, respectively. Note that the two bits can not be set at the same time.
+
+\newcolumntype{L}{>{\raggedright\arraybackslash}m}
+\begin{longtable}[c]{ |L{1.5cm}|L{5.0cm}|L{4.6cm}| }
+\caption{Register Configuration Rules for State Control in 1/2-bit Modes}
+\\\hline
+\rowcolor{lightgray}
+State & Control Registers for 1-bit Mode FSPI Bus & Control Registers for 2-bit Mode FSPI Bus \\
+     \hline
+\endhead
+\label{table:SPI_USR1}
+CMD  &\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE} \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}
+     &\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE} \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} \hyperref[fielddesc:SPIFCMDDUAL]{SPI\_FCMD\_DUAL}     \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}\\
+     \hline
+ADDR &\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}   \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}    \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR}
+     &\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}   \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}    \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR}      \hyperref[fielddesc:SPIFADDRDUAL]{SPI\_FADDR\_DUAL}\\
+     \hline
+DUMMY&\hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN}     \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}
+     &\hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN}     \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}\\
+     \hline
+DIN  &\hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO}  \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}
+     &\hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO}  \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}  \hyperref[fielddesc:SPIFREADDUAL]{SPI\_FREAD\_DUAL}\\
+     \hline
+DOUT &\hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI}       \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN}
+     &\hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI}       \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN}       \hyperref[fielddesc:SPIFWRITEDUAL]{SPI\_FWRITE\_DUAL}\\
+     \hline
+\end{longtable}
+
+
+\begin{longtable}[c]{ |L{1.5cm}|L{5.0cm}|L{4.6cm}| }
+\caption{Register Configuration Rules for State Control in 4/8-bit Modes}
+\label{table:SPI_USR2}\\\hline
+\rowcolor{lightgray}
+State & Control Registers for 4-bit Mode FSPI Bus & Control Registers for 8-bit Mode FSPI Bus \\
+     \hline
+CMD  &\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}  \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}   \hyperref[fielddesc:SPIFCMDQUAD]{SPI\_FCMD\_QUAD}    \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}
+     &\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}  \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}   \hyperref[fielddesc:SPIFCMDOCT]{SPI\_FCMD\_OCT}     \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}\\
+     \hline
+ADDR &\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}   \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}    \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR}                \hyperref[fielddesc:SPIFADDRQUAD]{SPI\_FADDR\_QUAD}
+     &\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}   \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}    \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR}      \hyperref[fielddesc:SPIFADDROCT]{SPI\_FADDR\_OCT}\\
+     \hline
+DUMMY &\hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN}     \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}
+     &\hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN}     \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}\\
+     \hline
+DIN  &\hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO}  \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}  \hyperref[fielddesc:SPIFREADQUAD]{SPI\_FREAD\_QUAD}
+     &\hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO}  \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}  \hyperref[fielddesc:SPIFREADOCT]{SPI\_FREAD\_OCT}\\
+     \hline
+DOUT &\hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI}       \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN}       \hyperref[fielddesc:SPIFWRITEQUAD]{SPI\_FWRITE\_QUAD}
+     &\hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI}       \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN}       \hyperref[fielddesc:SPIFWRITEOCT]{SPI\_FWRITE\_OCT}\\
+     \hline
+\end{longtable}
+
+As shown in Table \ref{table:SPI_USR1} and Table \ref{table:SPI_USR2}, the registers in each cell should be configured to set FSPI bus to corresponding bit mode, i.e. the mode shown in table header, at a specific state phase (corresponding to the first column).
+
+For instance, when GP-SPI2 reads data, and
+\begin{itemize}
+    \item CMD is 4-bit mode
+    \item ADDR is 2-bit mode
+    \item DUMMY is \textcolor{red}{\it{n}} clock cycles
+    \item DIN is 8-bit mode
+\end{itemize}
+The register configuration can be as follows:
+
+\begin{enumerate}
+    \item Configure CMD state related registers.
+        \begin{itemize}
+            \item Configure the required command value in \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}.
+            \item Configure command bit length in \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}. \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} = bit length expected - 1.
+            \item Set \hyperref[fielddesc:SPIFCMDQUAD]{SPI\_FCMD\_QUAD} and \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}.
+            \item Clear \hyperref[fielddesc:SPIFCMDDUAL]{SPI\_FCMD\_DUAL} and \hyperref[fielddesc:SPIFCMDOCT]{SPI\_FCMD\_OCT}.
+        \end{itemize}
+
+    \item Configure ADDR state related registers.
+        \begin{itemize}
+            \item Configure the required address value in \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}.
+            \item Configure address bit length in \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}. \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN} = bit length expected - 1.
+            \item Set \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR} and \hyperref[fielddesc:SPIFADDRDUAL]{SPI\_FADDR\_DUAL}.
+            \item Clear \hyperref[fielddesc:SPIFADDRQUAD]{SPI\_FADDR\_QUAD} and \hyperref[fielddesc:SPIFADDROCT]{SPI\_FADDR\_OCT}.
+        \end{itemize}
+
+    \item Configure DUMMY state related registers.
+        \begin{itemize}
+            \item Configure DUMMY cycles in \hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN}. \hyperref[fielddesc:SPIUSRDUMMYCYCLELEN]{SPI\_USR\_DUMMY\_CYCLELEN} = DUMMY cycles (\textcolor{red}{\it{n}}) expected - 1.
+            \item Set \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}.
+        \end{itemize}
+
+    \item Configure DIN state related registers.
+        \begin{itemize}
+            \item Configure read data bit length in \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}. \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN} = bit length expected - 1.
+            \item Set \hyperref[fielddesc:SPIFREADOCT]{SPI\_FREAD\_OCT} and \hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO}.
+            \item Clear \hyperref[fielddesc:SPIFREADDUAL]{SPI\_FREAD\_DUAL} and \hyperref[fielddesc:SPIFREADQUAD]{SPI\_FREAD\_QUAD}.
+            \item Configure GP-SPI2 DMA in DMA controlled mode. In CPU controlled mode, no action is needed.
+        \end{itemize}
+
+    \item Clear \hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI}.
+
+    \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} to start GP-SPI2 transmission.
+\end{enumerate}
+
+When write data (DOUT state), \hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI} and \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} should be configured instead, while \hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO} should be cleared. The output data bit length is the value of \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} plus 1. Output data should be configured in GP-SPI2 data buffer (\hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}) in CPU controlled mode, or DMA TX buffer in DMA controlled mode. The data byte order is incremented from LSB (byte 0) to MSB.
+
+Pay special attention to the command value in \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE} and to address value in \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}.
+
+The configuration of command value is as follows:
+
+\begin{itemize}
+
+\item If \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} < 8, the command value is written to \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7:0]. Command value is sent as follows.
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is cleared, the lower part of \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7:0] (\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[\hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}:0]) is sent first.
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is set, the higher part of \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7:0] (\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7: 7-\hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}]) is sent first.
+\end{itemize}
+
+\item If 7 < \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} < 16, the command value is written to \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[15:0]. Command value is sent as follows.
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is cleared, \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7:0] is sent first, and then the lower part of  \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[15:8] (\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[\hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}:8]) is sent.
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is set, \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[7:0] is sent first, and then the higher part of  \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[15:8] (\hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[15: 15-\hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN}]) is sent.
+\end{itemize}
+\end{itemize}
+
+
+The configuration of address value is as follows:
+
+\begin{itemize}
+
+\item If \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN} < 8, the address value is written to \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7:0]. Address value is sent as follows.
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is cleared, the lower part of \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7:0] (\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[\hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}:0]) is sent first.
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is set, the higher part of \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7:0] (\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7: 7-\hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}]) is sent first.
+\end{itemize}
+
+\item  If 7< \hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN} < 16, the ADDR value is written to \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[15:0]. Address value is sent as follows.
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is cleared, \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7:0] is sent first, and then the low part of  \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[15:8] (\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[\hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}:8]) is sent.
+    \item If \hyperref[fielddesc:SPIWRBITORDER]{SPI\_WR\_BIT\_ORDER} is set, \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[7:0] is sent first, and then the higher part of  \hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[15:8] (\hyperref[fielddesc:SPIUSRADDRVALUE]{SPI\_USR\_ADDR\_VALUE}[15: 15-\hyperref[fielddesc:SPIUSRADDRBITLEN]{SPI\_USR\_ADDR\_BITLEN}]) is sent.
+\end{itemize}
+\end{itemize}
+
+
+
+In summary, each state of GP-SPI2 can be configured to 1/2/4/8-bit mode independently. The register configuration for other applications can be found in Table \ref{table:SPI_USR1}, Table \ref{table:SPI_USR2}, and the instance above.
+
+\subsection{Full-Duplex Communication (1-bit Mode Only)}\label{GP-SPI2 1 bit}
+
+GP-SPI2 supports SPI full-duplex communication, one of the most widely used modes in electronic systems. In this mode, SPI master provides CLK and CS signals, exchanging data with SPI slave in 1-bit mode by MOSI (FSPID, sending) and MISO (FSPIQ, receiving) at the same time. Figure \ref{Figure:GP-SPI2_full_duplex} shows the block diagram of full-duplex communication.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/GP_SPI2_FD_723}
+    \caption{Full-Duplex Communication Between GP-SPI2 Master and a Slave}
+    \label{Figure:GP-SPI2_full_duplex}
+\end{figure}
+
+
+In full-duplex communication, the behavior in states CMD, ADDR, DUMMY, DOUT and DIN can be configured. Usually, the states of CMD, ADDR, DUMMY are not used in this communication. The bit length of transferred data is configured in \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} and in \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN}. The actual bit length used in communication = the value of \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} or \hyperref[fielddesc:SPIUSRMISODBITLEN]{SPI\_USR\_MISO\_DBITLEN} + 1.
+
+To start data transfer, follow the steps below:
+\begin{itemize}
+    \item Set the bit \hyperref[fielddesc:SPIDOUTDIN]{SPI\_DOUTDIN} and clear the bit \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE}, see Section \ref{section:GP-SPI_Interfaces}.
+    \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} in register \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG} to start the transfer.
+\end{itemize}
+
+The read/write data byte order in CPU-controlled transfer can be configured in \hyperref[fielddesc:SPIRDBYTEORDER]{SPI\_RD\_BYTE\_ORDER} and \hyperref[fielddesc:SPIWRBYTEORDER]{SPI\_WR\_BYTE\_ORDER} in \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}. The register configuration for DMA-controlled transfer is described in Subsection \ref{Subsection:Usage of GP-SPI2 DMA controlled mode}.
+
+\subsection{Half-Duplex Communication (1/2/4/8-bit Mode)}
+\label{GP-SPI2 1, 2, 4, 8 bits}
+
+SPI half-duplex mode is also very common in SPI communication. In this mode, SPI master provides CLK and CS signals. Only one side (SPI master or slave) can send data at a time, while the other side receives the data. The standard format of SPI half-duplex communication is CMD + [ADDR +] [DUMMY +] [DOUT or DIN]. The states ADDR, DUMMY, DOUT, and DIN are optional, and can be disabled or enabled independently.
+
+As described in Subsection \ref{GP-SPI2 state and register configuration}, the properties of GP-SPI2 states CMD, ADDR, DUMMY, DOUT and DIN, such as cycle length, value, and parallel bus bit mode, can be set independently. For the register configuration, see Table \ref{table:SPI_USR1} and Table \ref{table:SPI_USR2}.
+
+The detailed properties of half-duplex GP-SPI2 are as follows:
+
+\begin{enumerate}
+    \item CMD: 0 \verb+~+ 16 bits, master output, slave input.
+    \item ADDR: 0 \verb+~+ 32 bits, master output, slave input.
+    \item DUMMY: 0 \verb+~+ 256 FSPICLK cycles, master output, slave input.
+    \item DOUT: 0 \verb+~+ 576 bits (72 bytes) in CPU controlled mode and 0 \verb+~+ 8 Mbits in DMA controlled mode, master output, slave input.
+
+    \item DIN: 0 \verb+~+ 576 bits (72 bytes) in CPU controlled mode and 0 \verb+~+ 8 Mbits in DMA controlled mode, master input, slave output.
+\end{enumerate}
+
+The register configuration is as follows:
+\begin{enumerate}
+    \item Configure GP-SPI2 registers as shown in Table \ref{table:SPI_USR1} and Table \ref{table:SPI_USR2}.
+
+    \item Configure SPI CS setup time and hold time according to Subsection \ref{GP-SPI2 CS timing}.
+
+    \item Set the property of FSPICLK according to Subsection \ref{Subsection:GP-SPI2 CLK}.
+
+    \item Prepare data in registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} in CPU-controlled MOSI mode. Or configure DMA TX/RX link in DMA-controlled mode, as shown in Subsection \ref{Subsection:Usage of GP-SPI2 DMA controlled mode}.
+
+    \item Configure signal path of FSPI bus and interrupts. \label{step:master-interrupt}
+
+    \item Wait for SPI slave to get ready for transfer.
+
+    \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} in register \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG} to start the transfer and wait the interrupt set in Step \ref{step:master-interrupt}.
+\end{enumerate}
+
+The maximum frequency supported by GP-SPI2 is $f_{\textrm{apb}}$. FSPICLK is divided from APB\_CLK, see Section \ref{Subsection:GP-SPI2 CLK}.
+
+In addition, a timing module is provided for input and output data, to add extra delay to each I/O line in units of $T_{\textrm{apb}}/2$. The timing module configuration is described in Subsection \ref{GP-SPI Timing Compensation}. Setting DUMMY length and delay select function in GPIO Matrix, GP-SPI2 can meet the timing requirement in usage.
+
+
+\subsection{Access Flash and External RAM in Master Half-Duplex Mode}
+\label{GP-SPI2 access flash and external RAM}
+
+GP-SPI2 can be used to access 1/2/4-bit flash and external RAM, see Figure \ref{Figure:GP-SPI2_memory_inf}.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.3\textwidth]{\modulefiles/figures/FSPI_memory_inf}
+    \caption{Connection of GP-SPI2 to Flash and External RAM in 4-bit Mode}
+    \label{Figure:GP-SPI2_memory_inf}
+\end{figure}
+
+Figure \ref{Figure:communication_format_c} indicates GP-SPI2 quad read sequence according to standard flash specification. Other GP-SPI2 command sequences can be implemented in accordance with the requirements of SPI slaves.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/GP_SPI2_read_flash_723}}
+    \caption{SPI Quad Read Command Sequence Sent by GP-SPI2 to Flash}
+    \label{Figure:communication_format_c}
+\end{figure}
+
+The 1/2/4/8-bit SPI Double Transfer Rate (DTR) modes, in which data is sent and received at the positive and the negative edges of SPI clock, are also supported:
+
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPICMDDTREN]{SPI\_CMD\_DTR\_EN} is set, the CMD value will be sent in DTR mode; otherwise CMD phase will be in Single Transfer Rate (STR) mode.
+
+    \item If \hyperref[fielddesc:SPIADDRDTREN]{SPI\_ADDR\_DTR\_EN} is set, the ADDR value will be sent in DTR mode; otherwise ADDR phase will be in STR mode.
+
+    \item If \hyperref[fielddesc:SPIDATADTREN]{SPI\_DATA\_DTR\_EN} is set, the input data in state DIN or output data in state DOUT will be sent in DTR mode; otherwise the data will be in STR mode.
+
+
+\end{itemize}
+
+The control bits \hyperref[fielddesc:SPICMDDTREN]{SPI\_CMD\_DTR\_EN}, \hyperref[fielddesc:SPIADDRDTREN]{SPI\_ADDR\_DTR\_EN}, and \hyperref[fielddesc:SPIDATADTREN]{SPI\_DATA\_DTR\_EN} can be configured independently, which means CMD in STR mode, ADDR and DOUT or DIN in DTR mode are supported.
+
+GP-SPI2 can only output FSPIDQS signal, but can not receive the signal. Therefore, only flash or external RAM working in fixed dummy mode (dummy cycles in a read sequence is fixed) are supported.
+
+
+\subsection{Access 8-bit I8080/MT6800 LCD in Master Half-Duplex Mode} \label{GP-SPI2 access LCD}
+
+The connection details of GP-SPI2 to an 8-bit LCD driver is shown in Figure \ref{Figure:GP-SPI2_LCD_Block_Diagram}.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/Block_SPI2_8bit_LCD}
+    \caption{Connection of GP-SPI2 to 8-bit LCD Driver}
+    \label{Figure:GP-SPI2_LCD_Block_Diagram}
+\end{figure}
+
+Figure \ref{Figure:GP-SPI2_LCD_sequence} shows the sequence of GP-SPI2 writing to I8080 interface using 8-bit LCD driver. The register configuration is as follows:
+
+\begin{enumerate}
+    \item \hyperref[fielddesc:SPIFCMDOCT]{SPI\_FCMD\_OCT} = 1, \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND} = 1, \hyperref[fielddesc:SPIUSRCOMMANDVALUE]{SPI\_USR\_COMMAND\_VALUE}[15:0] = \hexprefix{}2C, \hyperref[fielddesc:SPIUSRCOMMANDBITLEN]{SPI\_USR\_COMMAND\_BITLEN} = \hexprefix{}F.
+
+    \item \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR} = 0, \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY} = 0, \hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO} = 0.
+
+    \item \hyperref[fielddesc:SPIFWRITEOCT]{SPI\_FWRITE\_OCT} =1, and \hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI} = 1, configure the output data bit length in \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN}. \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} = data bit length expected - 1.
+
+    \item Configure the SPI CS setup time and hold time according to Subsection \ref{GP-SPI2 CS timing}.
+
+    \item Prepare the output data in registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} in CPU-controlled MOSI mode. Or configure DMA TX link in DMA-controlled mode.
+
+    \item Set FSPICLK to SPI clock mode 3 according to Subsection \ref{Subsection:GP-SPI2 CLK}. Configure the required frequency of FSPICLK.
+
+    \item Configure signal path of FSPI bus and interrupts.  \label{lcd:interreupt}
+
+    \item Wait for the LCD driver to get ready for transfer.
+
+    \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} in register \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG} to start the transfer and wait the interrupt set in Step \ref{lcd:interreupt}.
+\end{enumerate}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/SPI2_8bits_wr_LCD}}
+    \caption{Write Command Sequence to an 8-bit LCD Driver}
+    \label{Figure:GP-SPI2_LCD_sequence}
+\end{figure}
+
+
+In I8080 LCD read operation, RDX pin is mapped to FSPICLK and WRX pin is set to high by a GPIO pin. For the application of Moto6800 interface LCD mode, please refer to the I8080 mode example above.
+
+
+\subsection{DMA Controlled Segmented-Configure-Transfer} \label{GP-SPI DMA seg-conf-trans}
+
+An SPI transfer, controlled by the registers of GP-SPI2, needs to be configured and triggered by the CPU. To reduce CPU cost and to increase the efficiency of GP-SPI2, DMA segmented-configure-transfer function is provided in DMA-controlled master mode. (Note that CPU-controlled master mode does not support segmented-configure-transfer function.) Segmented-configure-transfer enables GP-SPI2 to do as many times of transfer as configured, with only one triggering by CPU. Figure \ref{Figure:SPI_master_DMA_seg_trans} shows how the segmented-configure-transfer function works in DMA-controlled master mode.
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/seg_trans_scheme}}
+    \caption{Segmented-Configure-Transfer in DMA Controlled Master Mode}
+    \label{Figure:SPI_master_DMA_seg_trans}
+\end{figure}
+
+
+As shown in Figure \ref{Figure:SPI_master_DMA_seg_trans}, GP-SPI2 registers can be reconfigured by GP-SPI2 hardware according to the content in a Conf\_buf\textcolor{red}{\it{i}} during CONF state, before one single segmented-configure-transfer, SCT\textcolor{red}{\it{i}}, begins.
+
+It is recommended that each SCT CONF state has its own DMA CONF link and CONF buffer. A serial DMA TX link is used to connect all the CONF buffer and TX data buffer into a chain, so that the behavior of FSPI bus in each SCT can be controlled independently and can be any supported one.
+
+Meanwhile, the state of GP-SPI2, the related value and cycle length of the FSPI bus, and the behavior of DMA, can be configured independently for each SCT. When all the SCT are finished, a GP-SPI2 interrupt, \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE}, is triggered.
+
+
+For example, as shown in Figure \ref{Figure:SPI_master_DMA_seg_trans}, SCT\textcolor{red}{\it i} can be configured to DMA-controlled full-duplex communication; SCT\textcolor{red}{\it j} can be configured to DMA-controlled half-duplex MISO mode; and SCT\textcolor{red}{\it k} can be configured to DMA-controlled half-duplex MOSI mode. \textcolor{red}{\it i}, \textcolor{red}{\it j}, and \textcolor{red}{\it k} are integer variables, which can be any SCT number.
+
+In addition, GP-SPI2 CS setup time and hold time are programmable independently in each SCT, see Subsection \ref{GP-SPI2 CS timing} for detailed configuration. The CS high time in CONF state is determined by the sum of \hyperref[fielddesc:SPICONFBITLEN]{SPI\_CONF\_BITLEN}[22:0] in \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG} and \hyperref[fielddesc:SPICONFBASEBITLEN]{SPI\_CONF\_BASE\_BITLEN}[6:0] in \hyperref[regdesc:SPISLVWRBUFDLENREG]{SPI\_SLV\_WRBUF\_DLEN\_REG}. The CS high time in CONF state can be set from 2 $\mu s$ to 0.2 s when $f_{\textrm{apb}}$ is 80 MHz and FSPICLK equals to APB\_CLK (divided by 1). If the FSPICLK is slower (divided by n > 1), the CS high time can be even longer.
+
+
+Here's an example of register configuration flow in segmented-configure-transfer mode:
+ \begin{enumerate}
+   \item Prepare descriptors for DMA CONF buffer and TX data (optional) for each segmented-configure-transfer. Chain the descriptors of CONF buffer and TX buffers of several transfers into one linked list.
+
+   \item Similarly, prepare descriptors for RX buffers for each segmented-configure-transfer and chain them into a linked list.
+   \item Configure the values in all the CONF buffers, TX buffers and RX buffers, respectively for each transfers of segmented-configure-transfer before the segmented-configure-transfer begins.
+
+   \item Point \hyperref[fielddesc:SPIOUTLINKADDR]{SPI\_OUTLINK\_ADDR} to the address of the head of the CONF and TX buffer descriptor linked list, and then set \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} bit in the register \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} to start the TX DMA.
+
+
+   \item Clear \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN} bit in \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG} register. Point \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_ADDR} to the address of the head of the RX buffer descriptor linked list, and then set \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} bit in \hyperref[regdesc:SPIDMAINLINKREG]{SPI\_DMA\_IN\_LINK\_REG} to start the RX DMA.
+
+   \item Set \hyperref[fielddesc:SPIUSRCONF]{SPI\_USR\_CONF} in \hyperref[regdesc:SPISLVRDBYTEREG]{SPI\_SLV\_RD\_BYTE\_REG} to enable CONF state.
+
+   \item Set \hyperref[fielddesc:SPIINTDMASEGTRANSEN]{SPI\_INT\_DMA\_SEG\_TRANS\_EN} in \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG} to enable the \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} interrupt. Configure other interrupts if needed according to Subsection \ref{Section:SPI_Interrupt}.
+
+   \item Wait for all the segmented-configure-transfer slaves to get ready for transfer.
+
+   \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} in \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG} to start the DMA master mode segmented-configure-transfer.
+
+   \item Wait for \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} interrupt, which means the DMA segmented-configure-transfer is ended and the data has been stored into corresponding memory.
+ \end{enumerate}
+
+Only changed registers of GP-SPI2 (compared to last transmission) need to be configured to new values in CONF state. The configuration of other registers can be skipped (and keep the same) to save time and chip resources.
+
+The first word in DMA CONF buffer\textcolor{red}{\it i}, called SPI\_BIT\_MAP\_WORD, defines whether each SPI register is updated or not in segmented-configure-transfer\textcolor{red}{\it i}. The relation of SPI\_BIT\_MAP\_WORD and GP-SPI2 registers to update can be seen in Table \ref{Figure:spi_master_BM_table} Bitmap (BM) Table. If a bit is 1 in the BM table, the register value of the corresponding bit will be updated in the single transfer. Otherwise, if some registers should be kept from being changed, the related bits should be set to 0.
+
+\begin{longtable}[c]{ |L{1.5cm}|L{3.5cm}|L{1.5cm}|L{3.5cm}| }
+\caption{GP-SPI Master BM Table for CONF State}
+\label{Figure:spi_master_BM_table}\\\hline
+\rowcolor{lightgray}
+     BM Bit & Register Name     & BM Bit & Register Name       \\\hline
+     0  &  SPI\_CMD             & 14 &  SPI\_HOLD          \\\hline
+     1  &  SPI\_ADDR            & 15 &  SPI\_DMA\_INT\_ENA \\\hline
+     2  &  SPI\_CTRL            & 16 &  SPI\_DMA\_INT\_RAW \\\hline
+     3  &  SPI\_CTRL1           & 17 &  SPI\_DMA\_INT\_CLR \\\hline
+     4  &  SPI\_CTRL2           & 18 &  SPI\_DIN\_MODE     \\\hline
+     5  &  SPI\_CLOCK           & 19 &  SPI\_DIN\_NUM      \\\hline
+     6  &  SPI\_USER            & 20 &  SPI\_DOUT\_MODE    \\\hline
+     7  &  SPI\_USER1           & 21 &  SPI\_DOUT\_NUM     \\\hline
+     8  &  SPI\_USER2           & 22 &  SPI\_LCD\_CTRL     \\\hline
+     9  &  SPI\_MOSI\_DLEN      & 23 &  SPI\_LCD\_CTRL1    \\\hline
+     10 &  SPI\_MISO\_DLEN      & 24 &  SPI\_LCD\_CTRL2    \\\hline
+     11 &  SPI\_MISC            & 25 &  SPI\_LCD\_D\_MODE  \\\hline
+     12 &  SPI\_SLAVE           & 26 &  SPI\_LCD\_D\_NUM   \\\hline
+     13 &  SPI\_FSM             & -  &  -                  \\\hline
+\end{longtable}
+
+Then new values of all the registers to modify should be placed right after the SPI\_BIT\_MAP\_WORD, in consecutive words in the CONF buffer.
+
+
+To ensure the correctness of the content in each CONF buffer, the value in SPI\_BIT\_MAP\_WORD[31:28] is used as "magic value", and will be compared with \hyperref[fielddesc:SPIDMASEGMAGICVALUE]{SPI\_DMA\_SEG\_MAGIC\_VALUE}[3:0] in the register \hyperref[regdesc:SPISLVRDBYTEREG]{SPI\_SLV\_RD\_BYTE\_REG}. The value of \hyperref[fielddesc:SPIDMASEGMAGICVALUE]{SPI\_DMA\_SEG\_MAGIC\_VALUE}[3:0] should be configured before segmented-configure-transfer starts, and can not be changed in the segmented-configure-transfers.
+
+    \begin{itemize}
+        \item If SPI\_BIT\_MAP\_WORD[31:28] == \hyperref[fielddesc:SPIDMASEGMAGICVALUE]{SPI\_DMA\_SEG\_MAGIC\_VALUE}[3:0], the segmented-configure-transfer continues normally; the interrupt \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} will be triggered at the end of the segmented-configure-transfer.
+        \item If SPI\_BIT\_MAP\_WORD[31:28] != \hyperref[fielddesc:SPIDMASEGMAGICVALUE]{SPI\_DMA\_SEG\_MAGIC\_VALUE}[3:0], GP-SPI2 state (spi\_st) will go back to IDLE and the segmented-configure-transfer will be ended immediately. The interrupt \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} will still be triggered, with \hyperref[fielddesc:SPISEGMAGICERR]{SPI\_SEG\_MAGIC\_ERR} bit in \hyperref[regdesc:SPISLVRDBUFDLENREG]{SPI\_SLV\_RDBUF\_DLEN\_REG} register set to 1.
+    \end{itemize}
+
+Table \ref{Figure:spi_BM_table_example2} and Table \ref{Figure:spi_BM_table_example1} provide an example to show how to configure a CONF buffer for a transfer whose \hyperref[regdesc:SPIADDRREG]{SPI\_ADDR\_REG}, \hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG}, \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG},
+\hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG},
+\hyperref[regdesc:SPIUSER1REG]{SPI\_USER1\_REG} need to be updated.
+
+
+\begin{longtable}[c]{|L{3.5cm}|p{10cm}| }
+\caption{An Example of CONF buffer\textcolor{red}{\it i} in Segmented-Configure-Transfer}
+\label{Figure:spi_BM_table_example2}\\\hline
+\rowcolor{lightgray}
+     CONF buffer\textcolor{red}{\it i} & Note \\\hline
+     SPI\_BIT\_MAP\_WORD & The first word in this buffer, \hexprefix{}000000E6 in this example. As shown in Table \ref{Figure:spi_BM_table_example1}, bits 1, 2, 5, 6, and 7 are set, indicating the following registers will be updated. \\\hline
+     \hyperref[regdesc:SPIADDRREG]{SPI\_ADDR\_REG} & The second word, stores the new value to \hyperref[regdesc:SPIADDRREG]{SPI\_ADDR\_REG}
+     \\\hline
+     \hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG} & The third word, stores the new value to \hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG}
+     \\\hline
+     \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG} & The fourth word, stores the new value to \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG}
+     \\\hline
+     \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} & The    fifth word, stores the new value to \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}
+     \\\hline
+     \hyperref[regdesc:SPIUSER1REG]{SPI\_USER1\_REG}  & The sixth word, stores the new value to \hyperref[regdesc:SPIUSER1REG]{SPI\_USER1\_REG}
+     \\\hline
+\end{longtable}
+
+
+\begin{longtable}[c]{ |L{1.2cm}|L{1.2cm}|L{3.5cm}|L{1.2cm}|L{1.2cm}|L{4.0cm}| }
+\caption{BM Bit Value v.s. Register to Be Updated in the Example}
+\\\hline
+\rowcolor{lightgray}
+ BM Bit & Value & Register Name &  BM Bit & Value & Register Name  \\\hline
+ \endhead
+ \label{Figure:spi_BM_table_example1}
+     0  & 0 &  \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG}                & 14 & 0 & \hyperref[regdesc:SPIHOLDREG]{SPI\_HOLD\_REG}          \\\hline
+     1  & 1 &  \hyperref[regdesc:SPIADDRREG]{SPI\_ADDR\_REG}               & 15 & 0 & \hyperref[regdesc:SPIDMAINTENAREG]{SPI\_DMA\_INT\_ENA\_REG} \\\hline
+     2  & 1 &  \hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG}               & 16 & 0 & \hyperref[regdesc:SPIDMAINTRAWREG]{SPI\_DMA\_INT\_RAW\_REG} \\\hline
+     3  & 0 &  \hyperref[regdesc:SPICTRL1REG]{SPI\_CTRL1\_REG}              & 17 & 0 & \hyperref[regdesc:SPIDMAINTCLRREG]{SPI\_DMA\_INT\_CLR\_REG} \\\hline
+     4  & 0 &  \hyperref[regdesc:SPICTRL2REG]{SPI\_CTRL2\_REG}              & 18 & 0 & \hyperref[regdesc:SPIDINMODEREG]{SPI\_DIN\_MODE\_REG}     \\\hline
+     5  & 1 &  \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG}              & 19 & 0 & \hyperref[regdesc:SPIDINNUMREG]{SPI\_DIN\_NUM\_REG}      \\\hline
+     6  & 1 &  \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}               & 20 & 0 & \hyperref[regdesc:SPIDOUTMODEREG]{SPI\_DOUT\_MODE\_REG}    \\\hline
+     7  & 1 &  \hyperref[regdesc:SPIUSER1REG]{SPI\_USER1\_REG}              & 21 & 0 & \hyperref[regdesc:SPIDOUTNUMREG]{SPI\_DOUT\_NUM\_REG}     \\\hline
+     8  & 0 &  \hyperref[regdesc:SPIUSER2REG]{SPI\_USER2\_REG}              & 22 & 0 & \hyperref[regdesc:SPILCDCTRLREG]{SPI\_LCD\_CTRL\_REG}     \\\hline
+     9  & 0 &  \hyperref[regdesc:SPIMOSIDLENREG]{SPI\_MOSI\_DLEN\_REG}         & 23 & 0 & \hyperref[regdesc:SPILCDCTRL1REG]{SPI\_LCD\_CTRL1\_REG}    \\\hline
+     10 & 0 &  \hyperref[regdesc:SPIMISODLENREG]{SPI\_MISO\_DLEN\_REG}         & 24 & 0 & \hyperref[regdesc:SPILCDCTRL2REG]{SPI\_LCD\_CTRL2\_REG}    \\\hline
+     11 & 0 &  \hyperref[regdesc:SPIMISCREG]{SPI\_MISC\_REG}               & 25 & 0 & \hyperref[regdesc:SPILCDDMODEREG]{SPI\_LCD\_D\_MODE\_REG}  \\\hline
+     12 & 0 &  \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG}              & 26 & 0 & \hyperref[regdesc:SPILCDDNUMREG]{SPI\_LCD\_D\_NUM\_REG}   \\\hline
+     13 & 0 &  \hyperref[regdesc:SPIFSMREG]{SPI\_FSM\_REG}                & -  & - & -                  \\\hline
+\end{longtable}
+
+When using DMA segmented-configure-transfer, please pay special attention to the following bits:
+\begin{itemize}
+    \item \hyperref[fielddesc:SPIUSRCONF]{SPI\_USR\_CONF} in register \hyperref[regdesc:SPISLVRDBYTEREG]{SPI\_SLV\_RD\_BYTE\_REG}
+    \item \hyperref[fielddesc:SPIUSRCONFNXT]{SPI\_USR\_CONF\_NXT} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}
+    \item \hyperref[fielddesc:SPICONFBITLEN]{SPI\_CONF\_BITLEN}[22:0] in register \hyperref[regdesc:SPICMDREG]{SPI\_CMD\_REG}
+\end{itemize}
+
+Set bit \hyperref[fielddesc:SPIUSRCONF]{SPI\_USR\_CONF} before \hyperref[fielddesc:SPIUSR]{SPI\_USR} is set to enable segmented-configure-transfer function. If the segmented-configure-transfer corresponding to the CONF buffer is not the last transfer, the value of \hyperref[fielddesc:SPIUSRCONFNXT]{SPI\_USR\_CONF\_NXT} should be set to 1; otherwise the  \hyperref[fielddesc:SPIUSRCONFNXT]{SPI\_USR\_CONF\_NXT} will stop when the transfer ends.
+
+
+\subsection{Access Parallel 8-bit RGB Mode LCD via Segmented-Configure-Transfer} \label{GP-SPI DMA seg-conf-trans application}
+
+Segmented-configure-transfer is very convenient and powerful for huge numbers of data transfer. One possible application is to communicate with a parallel 8-bit RGB mode LCD. You can refer to the steps in this example for other applications.
+
+
+Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_frame_structure} shows the video frame structure of a parallel 8-bit RGB mode LCD.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/Frame_structure}
+    \caption{Video Frame Structure in Parallel RGB 8-bit LCD Mode}
+    \label{Figure:GP-SPI2_LCD_serial_RGB_frame_structure}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/frame_timing}}
+    \caption{Timing Sequence in Parallel RGB 8-bit LCD Mode}
+    \label{Figure:GP-SPI2_LCD_serial_RGB_timing}
+\end{figure}
+
+
+It can be seen from Figure \ref{Figure:SPI_master_DMA_seg_trans}, Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_frame_structure}, and Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_timing} that a good way for GP-SPI2 to output parallel 8-bit RGB frame data is as follows:
+
+    \begin{itemize}
+        \item Data is output in each frame line in a segmented-configure-transfer. One valid video line is transferred in each single transfer (i.e. SCT\textcolor{red}{\it{i}} in Figure \ref{Figure:SPI_master_DMA_seg_trans}) of segmented-configure-transfer. There are \hyperref[fielddesc:SPILCDVAHEIGHT]{SPI\_LCD\_VA\_HEIGHT}[9:0] active video region lines in a frame, so that a frame data is sent in \hyperref[fielddesc:SPILCDVAHEIGHT]{SPI\_LCD\_VA\_HEIGHT}[9:0] times of SCT\textcolor{red}{\it{i}}.
+
+        \item There is no TX buffer and just one CONF buffer in the SCT\textcolor{red}{\it{i}} corresponding to vertical blanking region. GP-SPI2 sends frame format signals in FSPI\_VSYNC, FSPI\_HSYNC, FSPI\_DE and/or FSPICLK if needed.
+
+        \item Horizontal blanking period is equal to the sum of CS high time in a CONF state, CS setup time and CS hold time, see Subsection \ref{GP-SPI DMA seg-conf-trans} and Subsection \ref{GP-SPI2 CS timing}.
+    \end{itemize}
+
+
+
+GP-SPI2 can output the frame data automatically as shown in Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_frame_structure} and Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_timing}, which significantly lowers the CPU time required to control the SPI transfer. The configuration flow is as follows:
+
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SPILCDMODEEN]{SPI\_LCD\_MODE\_EN} in register \hyperref[regdesc:SPILCDCTRLREG]{SPI\_LCD\_CTRL\_REG} to enable parallel RGB LCD mode.
+
+    \item Configure frame control registers, as shown in Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_frame_structure} and Figure \ref{Figure:GP-SPI2_LCD_serial_RGB_timing}, in accordance with the application. For example, in the application, if \textcolor{red}{\it{n}} active video lines are needed, then set \hyperref[fielddesc:SPILCDVAHEIGHT]{SPI\_LCD\_VA\_HEIGHT}[9:0] to \textcolor{red}{\it{n}}.
+
+    \item Configure CS setup time and hold time if needed.
+
+    \item Clear \hyperref[fielddesc:SPIUSRCOMMAND]{SPI\_USR\_COMMAND}, \hyperref[fielddesc:SPIUSRADDR]{SPI\_USR\_ADDR}, \hyperref[fielddesc:SPIUSRDUMMY]{SPI\_USR\_DUMMY}, and \hyperref[fielddesc:SPIUSRMISO]{SPI\_USR\_MISO} bits.
+
+    \item Set \hyperref[fielddesc:SPIFWRITEOCT]{SPI\_FWRITE\_OCT} and \hyperref[fielddesc:SPIUSRMOSI]{SPI\_USR\_MOSI} bits, configure \hyperref[fielddesc:SPIUSRMOSIDBITLEN]{SPI\_USR\_MOSI\_DBITLEN} to \hyperref[fielddesc:SPILCDHAWIDTH]{SPI\_LCD\_HA\_WIDTH}[11:0] * 8 -1.
+
+    \item Configure DMA TX link and prepare data in TX buffer. A ring-buffer or a ping-pong buffer is recommended in this application to reduce the time preparing the buffer before a transfer starts.
+
+    \item Set I/O path. Set \hyperref[fielddesc:SPIINTTRANSDONEEN]{SPI\_INT\_TRANS\_DONE\_EN} bit or other related interrupt enable bits.
+
+    \item Wait for the LCD slave to get ready for transfer.
+
+    \item Set \hyperref[fielddesc:SPIUSR]{SPI\_USR} to start the transfer. Wait for the \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} interrupt.
+\end{enumerate}
+
+
+\subsection{CS Setup Time and Hold Time Control}\label{GP-SPI2 CS timing}
+
+SPI CS setup time and hold time are very important to meet the timing requirements of various types of SPI devices (e.g. flash or PSRAM). CS setup time is the time between the CS active edge and the first latch edge of SPI CLK (rising edge for mode 0 and 3 while falling edge for mode 2 and 4). CS hold time is the time between the last latch edge of SPI CLK and the CS inactive edge.
+
+
+Set the CS setup time by specifying \hyperref[fielddesc:SPICSSETUP]{SPI\_CS\_SETUP} in \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} and  \hyperref[fielddesc:SPICSSETUPTIME]{SPI\_CS\_SETUP\_TIME} in \hyperref[regdesc:SPICTRL2REG]{SPI\_CTRL2\_REG}:
+    \begin{itemize}
+        \item If \hyperref[fielddesc:SPICSSETUP]{SPI\_CS\_SETUP} = 0, the SPI CS setup time is 0.5 x $T\_SPI\_CLK$. $T\_SPI\_CLK$: one cycle of SPI\_CLK.
+        \item If \hyperref[fielddesc:SPICSSETUP]{SPI\_CS\_SETUP} = 1, the SPI CS setup time is (\hyperref[fielddesc:SPICSSETUPTIME]{SPI\_CS\_SETUP\_TIME} + 1.5) x $T\_SPI\_CLK$.
+    \end{itemize}
+
+
+Set the CS hold time by specifying \hyperref[fielddesc:SPICSHOLD]{SPI\_CS\_HOLD} in \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} and  \hyperref[fielddesc:SPICSHOLDTIME]{SPI\_CS\_HOLD\_TIME} in \hyperref[regdesc:SPICTRL2REG]{SPI\_CTRL2\_REG}:
+    \begin{itemize}
+        \item If \hyperref[fielddesc:SPICSHOLD]{SPI\_CS\_HOLD} = 0, the SPI CS hold time is 0.5 x $T\_SPI\_CLK$;
+        \item If \hyperref[fielddesc:SPICSHOLD]{SPI\_CS\_HOLD} = 1, the SPI CS hold time is (\hyperref[fielddesc:SPICSHOLDTIME]{SPI\_CS\_HOLD\_TIME} + 1.5) x $T\_SPI\_CLK$.
+    \end{itemize}
+
+Figure \ref{Figure:SPI_SRAM_CS_Timing} and Figure \ref{Figure:SPI_flash_CS_Timing} show the recommended CS timing and configuration register value for Flash and External RAM.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/ESP723_SRAM_SPI_CS_timing}
+    \caption{Recommended CS Timing and Settings When Access External RAM}
+    \label{Figure:SPI_SRAM_CS_Timing}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/ESP723_flash_SPI_CS_timing}
+    \caption{Recommended CS Timing and Settings When Access Flash}
+    \label{Figure:SPI_flash_CS_Timing}
+\end{figure}
+
+
+GP-SPI2 can be configured as a master for many applications. The previous sections have shown how to configure the peripheral. See Section \ref{Section:SPIREGList} for more information and detailed register descriptions.
+
+
+\section{GP-SPI2 Works as a Slave}\label{GP-SPI2 slave mode}
+
+GP-SPI2 can be used as a slave to communicate with an SPI master. As a slave, GP-SPI2 supports 1-bit SPI, 2-bit dual SPI, 4-bit quad SPI, and QPI mode, with specific communication formats. To enable slave mode, the bit \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE} in register \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG} should be set to 1.
+
+The CS signal should be held low during the transmission, and its falling/rising edges indicate the start/end of a transmission. The active length of transferred data should be in unit of bytes, otherwise the extra bits will be lost.
+
+\subsection{Communication Formats}\label{slave communication format}
+
+SPI full-duplex and half-duplex communications are available in GP-SPI2 slave mode, depending on the bit \hyperref[fielddesc:SPIDOUTDIN]{SPI\_DOUTDIN} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}:
+\begin{itemize}
+    \item 1: enable full-duplex communication
+    \item 0: enable half-duplex communication
+\end{itemize}
+
+In full-duplex communication, input and output data are transmitted simultaneously from the beginning of the transmission. All bits are treated as input/output data, which means no command, address or dummy phases are expected. The interrupt \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} will be triggered when the transmission ends.
+
+In half-duplex communication, the format should be CMD+ADDR+DUMMY+DATA (Read or Write). The read data phase means that an SPI master reads data from GP-SPI2, while the write data phase means that an SPI master writes data to GP-SPI2, which is defined from the perspective of the master. The detailed properties of each phase are as follows:
+
+\begin{enumerate}
+   \item CMD: used to distinguish from different functions of SPI Slave; 1 byte from master to slave; only the values in Table \ref{table:SPI_slave_CMD_SPI} and Table \ref{table:SPI_slave_CMD_QPI} are valid; can be sent in 1-bit mode or 4-bit QPI mode.
+   \item ADDR: used to address data in CPU-controlled mode for CMD1 and 2, or placeholder bits in other modes; 1 byte from master to slave; can be sent 1-bit, 2-bit or 4-bit mode (according to the command).
+   \item DUMMY: value not meaningful, SPI Slave prepare data in this phase; 1 or 2 bytes (according to the command) from master to slave.
+
+   \item Read or write data: data length can be 0 \verb+~+ 72 bytes in CPU-controlled mode and 0 \verb+~+ 2 M-byte in DMA-controlled mode; can be  1-bit, 2-bit or 4-bit mode according to the CMD value.
+   \end{enumerate}
+
+The phases of ADDR and DUMMY can never be omitted in half-duplex communications, even in modes like the DMA-controlled slave mode.
+
+When a half-duplex transmission is ended, the transferred CMD and ADDR values will be latched in \hyperref[fielddesc:SPISLVLASTCOMMAND]{SPI\_SLV\_LAST\_COMMAND} and \hyperref[fielddesc:SPISLVLASTADDR]{SPI\_SLV\_LAST\_ADDR} bits in \hyperref[regdesc:SPISLAVE1REG]{SPI\_SLAVE1\_REG} register respectively. The \hyperref[fielddesc:SPISLVCMDERR]{SPI\_SLV\_CMD\_ERR} bit in \hyperref[regdesc:SPISLAVE1REG]{SPI\_SLAVE1\_REG} register will be set if the transferred CMD value is not supported by slave mode of GP-SPI2. The \hyperref[fielddesc:SPISLVCMDERR]{SPI\_SLV\_CMD\_ERR} bit can only be cleared by software.
+
+The CPU-controlled and DMA-controlled mode configuration can be found in Subsection \ref{Subsection:Usage of GP-SPI2 DMA controlled mode} and Subsection \ref{Subsection:GP-SPI2 CPU controlled Data Buffer}.
+
+\subsection{Supported CMD Values in Half-Duplex Communication} \label{GP-SPI2 HD salve format}
+
+In half-duplex communication, the defined values of CMD determine the transfer types. Unsupported CMD values will be disregarded, meanwhile the related transfer will be ignored and the \hyperref[fielddesc:SPISLVCMDERR]{SPI\_SLV\_CMD\_ERR} bit will be set to 1. The transfer format is CMD (8 bits) + ADDR (8 bits) + DUMMY (8 SPI cycles in 1-bit SPI mode and 4 SPI cycles in other SPI modes) + DATA (unit in bytes). The detailed description of CMD[3:0] is as follows:
+
+\begin{enumerate}
+    \item \hexprefix{}1 (Wr\_BUF): CPU-controlled write mode. Master sends data and GP-SPI2 receives data. The data will be stored in the related address of the registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}.
+
+    \item \hexprefix{}2 (Rd\_BUF): CPU-controlled read mode. Master receives the data sent by GP-SPI2. The data comes from the related address of \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}.
+
+    \item \hexprefix{}3 (Wr\_DMA): DMA-controlled write mode. Master sends data and GP-SPI2 receives data. The data will be stored in GP-SPI2 DMA RX buffer.
+
+    \item \hexprefix{}4 (Rd\_DMA): DMA-controlled read mode. Master receives the data sent by GP-SPI2. The data comes from GP-SPI2 DMA TX buffer.
+
+    \item \hexprefix{}7 (CMD7): used to generate an SPI\_SLV\_CMD7\_INT interrupt. It can also generate an SPI\_IN\_SUC\_EOF\_INT interrupt in a slave segmented-transfer when DMA RX link is used. But it will not end GP-SPI2's slave mode segmented-transfer.
+
+    \item \hexprefix{}8 (CMD8): only used to generate an SPI\_SLV\_CMD8\_INT interrupt, which will not end GP-SPI2's slave mode segmented-transfer.
+
+    \item \hexprefix{}9 (CMD9): only used to generate an SPI\_SLV\_CMD9\_INT interrupt, which will not end GP-SPI2's slave mode segmented-transfer.
+
+    \item \hexprefix{}A (CMDA): only used to generate an SPI\_SLV\_CMDA\_INT interrupt, which will not end GP-SPI2's slave mode segmented-transfer.
+
+\end{enumerate}
+
+1/2/4-bit modes in phases of CMD, ADDR, DATA are supported, which are determined by value of CMD[7:4]. The DUMMY phase is always 1-bit mode and lasts for 8 SPI cycles in 1-bit SPI mode and 4 SPI cycles in other SPI modes. The definition is as follows:
+
+\begin{enumerate}
+    \item \hexprefix{}0: all the phases of CMD, ADDR, and DATA are in 1-bit mode.
+    \item \hexprefix{}1: CMD and ADDR are in 1-bit mode. DATA is in 2-bit mode.
+    \item \hexprefix{}2: CMD and ADDR are in 1-bit mode. DATA is in 4-bit mode.
+    \item \hexprefix{}5: CMD is in 1-bit mode. ADDR and DATA are in 2-bit mode.
+    \item \hexprefix{}A: CMD is in 1-bit mode, ADDR and DATA are in 4-bit mode. Or in QPI mode. Whereas, the CMD values of \hexprefix{}A7, \hexprefix{}A8, \hexprefix{}A9 and \hexprefix{}AA are only valid in QPI mode.
+\end{enumerate}
+
+In addition, for CMD[7:0] values of \hexprefix{}05, \hexprefix{}A5, \hexprefix{}06, and \hexprefix{}DD, the phases of ADDR, DUMMY, and DATA are deleted. The definition is as follows:
+
+\begin{enumerate}
+    \item \hexprefix{}05 (End\_SEG\_TRANS): master sends \hexprefix{}05 command to end the segmented-transfer in SPI mode.
+    \item \hexprefix{}A5 (End\_SEG\_TRANS): master sends \hexprefix{}A5 command to end the segmented-transfer in QPI mode.
+    \item \hexprefix{}06 (En\_QPI): GP-SPI2 enters QPI mode when receives the \hexprefix{}06 command and the \hyperref[fielddesc:SPIQPIMODE]{SPI\_QPI\_MODE} bit in \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} register will be set.
+    \item \hexprefix{}DD (Ex\_QPI): GP-SPI2 exits QPI mode when receives the \hexprefix{}DD command and the \hyperref[fielddesc:SPIQPIMODE]{SPI\_QPI\_MODE} bit will be cleared.
+\end{enumerate}
+
+
+All the GP-SPI2 supported CMD values are given in Table \ref{table:SPI_slave_CMD_SPI} and Table \ref{table:SPI_slave_CMD_QPI}.
+
+\begin{longtable}[c]{ |L{2.6cm}|L{1.8cm}|L{1.9cm}|L{1.9cm}|L{1.9cm}|L{1.9cm}| }
+\caption{Supported CMD Values in SPI Mode}
+\\\hline
+\rowcolor{lightgray}
+    Transfer Type    & CMD[7:0]  &  CMD Phase & ADDR Phase & DUMMY Phase & DATA Phase\\
+    \hline
+\endhead
+\label{table:SPI_slave_CMD_SPI}
+    \multirow{6}*{Wr\_BUF} & \hexprefix{}01 & 1-bit mode & 1-bit mode & 8 cycles & 1-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}11 & 1-bit mode & 1-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}21 & 1-bit mode & 1-bit mode & 4 cycles & 4-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}51 & 1-bit mode & 2-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}A1 & 1-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+
+    \multirow{6}*{Rd\_BUF} & \hexprefix{}02 & 1-bit mode & 1-bit mode & 8 cycles & 1-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}12 & 1-bit mode & 1-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}22 & 1-bit mode & 1-bit mode & 4 cycles & 4-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}52 & 1-bit mode & 2-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}A2 & 1-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+
+    \multirow{6}*{Wr\_DMA} & \hexprefix{}03 & 1-bit mode & 1-bit mode & 8 cycles & 1-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}13 & 1-bit mode & 1-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}23 & 1-bit mode & 1-bit mode & 4 cycles & 4-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}53 & 1-bit mode & 2-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}A3 & 1-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+
+    \multirow{6}*{Rd\_DMA} & \hexprefix{}04 & 1-bit mode & 1-bit mode & 8 cycles & 1-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}14 & 1-bit mode & 1-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}24 & 1-bit mode & 1-bit mode & 4 cycles & 4-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}54 & 1-bit mode & 2-bit mode & 4 cycles & 2-bit mode \\
+    \cline{2-6}
+                           & \hexprefix{}A4 & 1-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+
+    \multirow{6}*{CMD7}    & \hexprefix{}07 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}17 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}27 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}57 & 1-bit mode & - & - & - \\
+    \hline
+
+    \multirow{6}*{CMD8}    & \hexprefix{}08 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}18 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}28 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}58 & 1-bit mode & - & - & - \\
+    \hline
+
+    \multirow{6}*{CMD9}    & \hexprefix{}09 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}19 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}29 & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}59 & 1-bit mode & - & - & - \\
+    \hline
+
+    \multirow{6}*{CMDA}    & \hexprefix{}0A & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}1A & 1-bit mode & - & - & - \\
+    \cline{2-6}                            & \hexprefix{}2A & 1-bit mode & - & - & - \\
+    \cline{2-6}
+                           & \hexprefix{}5A & 1-bit mode & - & - & - \\
+    \hline
+
+    End\_SEG\_TRANS        & \hexprefix{}05 & 1-bit mode & - & - & - \\
+    \hline
+    En\_QPI                & \hexprefix{}06 & 1-bit mode & - & - & - \\
+    \hline
+
+\end{longtable}
+
+
+\begin{longtable}[c]{ |L{3cm}|L{1.8cm}|L{1.8cm}|L{1.8cm}|L{1.8cm}|L{1.8cm}| }
+\caption{Supported CMD Values in QPI Mode}
+\label{table:SPI_slave_CMD_QPI}\\\hline
+\rowcolor{lightgray}
+    Transfer Type & CMD[7:0] &  CMD Phase & ADDR Phase & DUMMY Phase   & DATA Phase\\
+    \hline
+    Wr\_BUF       & \hexprefix{}A1       & 4-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+    Rd\_BUF       & \hexprefix{}A2       & 4-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+    Wr\_DMA       & \hexprefix{}A3       & 4-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+    Rd\_DMA       & \hexprefix{}A4       & 4-bit mode & 4-bit mode & 4 cycles & 4-bit mode \\
+    \hline
+
+    CMD7          & \hexprefix{}A7       & 4-bit mode & - & - & - \\
+    \hline
+    CMD8          & \hexprefix{}A8       & 4-bit mode & - & - & - \\
+    \hline
+    CMD9          & \hexprefix{}A9       & 4-bit mode & - & - & - \\
+    \hline
+    CMDA          & \hexprefix{}AA       & 4-bit mode & - & - & - \\
+    \hline
+
+    End\_SEG\_TRANS  & \hexprefix{}A5    & 4-bit mode & - & - & - \\
+    \hline
+    Ex\_QPI          & \hexprefix{}DD    & 4-bit mode & - & - & - \\
+    \hline
+\end{longtable}
+
+
+Master should send \hexprefix{}06 CMD (En\_QPI) to set GP-SPI2 slave to QPI mode and all the phases of supported transfer will be in 4-bit mode afterwards. If \hexprefix{}DD CMD (Ex\_QPI) is received, GP-SPI2 slave will be back to SPI mode.
+
+The other transfer types will be ignored. If the transferred bit length is smaller than 8, there will be no effect on GP-SPI2 as if it has not happened. However, if the bit length is larger than 8, \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} will be triggered. For more information on interrupts triggered at the end of transmission, please refer to Subsection \ref{Section:SPI_Interrupt}.
+
+
+\subsection{GP-SPI2 Slave Mode Single Transfer}\label{GP-SPI2 slave single transfer}
+
+In single transfer, CPU/DMA-controlled full-duplex and half-duplex communications are supported in GP-SPI2 slave mode. The register configuration flow is as follows:
+\begin{enumerate}
+    \item Set the bits \hyperref[fielddesc:SPIDOUTDIN]{SPI\_DOUTDIN} and \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE} as shown in Section \ref{section:GP-SPI_Interfaces}.
+
+    \item Prepare data in registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} in CPU-controlled mode, if needed.
+
+    \item If in DMA-controlled mode, configure DMA descriptors and start DMA, as shown in Subsection \ref{Subsection:Usage of GP-SPI2 DMA controlled mode}.
+
+    \item Clear \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} in register \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG} to enable single transfer mode.
+
+    \item Set \hyperref[fielddesc:SPIINTTRANSDONEEN]{SPI\_INT\_TRANS\_DONE\_EN} in \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG} and wait the interrupt \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}. In DMA-controlled mode, waiting for the interrupt SPI\_IN\_SUC\_EOF\_INT is better when DMA RX buffer is used, which means that data has been stored in the related memory.
+\end{enumerate}
+
+\subsection{GP-SPI2 Slave Mode Segmented-Transfer}\label{GP-SPI2 slave seg-trans}
+
+To enhance the communication efficiency and reliability, segmented-transfer function is supported in GP-SPI2 slave mode. Since the registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} must be addressable in CPU-controlled slave half-duplex mode, the CPU-controlled segmented-transfer is not supported. Only DMA-controlled full-duplex and half-duplex segmented-transfer are available in GP-SPI2 slave mode.
+
+In GP-SPI2 slave segmented-transfer mode, master supports all transfer types given in Table \ref{table:SPI_slave_CMD_SPI} and Table \ref{table:SPI_slave_CMD_QPI}, in a segmented-transfer. It means that CPU-controlled transfer and DMA-controlled transfer can be mixed in one segmented-transfer.
+
+It is recommended that in a segmented-transfer:
+
+\begin{itemize}
+    \item CPU-controlled transfer is used in handshake communication and small-size data transfer, with related interrupts shown in Subsection \ref{Section:SPI_Interrupt}.
+
+    \item  DMA-controlled transfer is used for huge numbers of data transfer with related interrupts in Subsection \ref{Section:SPI_Interrupt}.
+\end{itemize}
+
+When End\_SEG\_TRANS (\hexprefix{}05 in SPI mode, \hexprefix{}A5 in QPI mode) is received by GP-SPI2, the segmented-transfer will be ended and the interrupt \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} will be triggered. The register configuration flow is as follows:
+
+\begin{enumerate}
+    \item Set the bit \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE} in \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG}.
+    \item Prepare data in registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}  \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} in CPU-controlled mode, if needed.
+
+    \item Configure DMA descriptors and start DMA. Clear \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN} bit in \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG}.
+
+    \item Set \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} in \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG} to enable slave segmented-transfer mode.
+
+    \item Set \hyperref[fielddesc:SPIINTDMASEGTRANSEN]{SPI\_INT\_DMA\_SEG\_TRANS\_EN} in \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG} and wait for the interrupt \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE}, which means that segmented-transfer ends and data has been put into the related memory. Other interrupts described in Subsection \ref{Section:SPI_Interrupt} can also be used in this application.
+\end{enumerate}
+
+In DMA full-duplex segmented-transfer, the data should be transferred from and to the DMA buffer. CPU-controlled mode is not supported in this segmented-transfer. The interrupt SPI\_IN\_SUC\_EOF\_INT\_ST will be triggered when the transfer ends. The configuration flow is as follows:
+
+\begin{enumerate}
+    \item Set the bit \hyperref[fielddesc:SPIDOUTDIN]{SPI\_DOUTDIN} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} and the bit \hyperref[fielddesc:SPISLAVEMODE]{SPI\_SLAVE\_MODE} in register \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG}.
+    \item Configure DMA descriptors and start DMA.
+
+    \item Set the bit \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN} in register \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG}. The bits \hyperref[fielddesc:SPISLVDMARDBYTELEN]{SPI\_SLV\_DMA\_RD\_BYTELEN}[19:0] in register \hyperref[regdesc:SPISLVRDBUFDLENREG]{SPI\_SLV\_RDBUF\_DLEN\_REG} should be configured to the receive data byte lengths of DMA.
+
+    \item Set \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} in \hyperref[regdesc:SPIDMACONFREG]{SPI\_DMA\_CONF\_REG} to enable segmented-transfer mode.
+
+    \item Set \hyperref[fielddesc:SPIINSUCEOFINTENA]{SPI\_IN\_SUC\_EOF\_INT\_ENA} in \hyperref[regdesc:SPIDMAINTENAREG]{SPI\_DMA\_INT\_ENA\_REG} and wait for the interrupt SPI\_IN\_SUC\_EOF\_INT\_ST.
+\end{enumerate}
+
+\section{Differences Between GP-SPI2 and GP-SPI3}\label{Subsection:Differences Between GP-SPI2 and GP-SPI3}
+The feature differences between GP-SPI2 and GP-SPI3 are as follows:
+\begin{itemize}
+    \item The communication mode for each GP-SPI2 state (CMD, ADDR, DOUT or DIN) can be configured independently. Data can either be in 1/2/4/8-bit master mode or 1/2/4-bit slave mode. Whereas GP-SPI3 supports only 1-bit communication mode which does not allow for such flexibility.
+    \item The supported CMD values of GP-SPI2 slave mode are shown in Table \ref{table:SPI_slave_CMD_SPI} and Table \ref{table:SPI_slave_CMD_QPI}. While only \hexprefix{}01, \hexprefix{}02, \hexprefix{}03, \hexprefix{}04, \hexprefix{}05, \hexprefix{}07, \hexprefix{}08, \hexprefix{}09 and \hexprefix{}0A of the CMD values are supported in GP-SPI3 slave mode.
+    \item The I/O lines of GP-SPI2 can be mapped to physical GPIO pads either via GPIO Matrix or IO MUX. However, GP-SPI3 lines can be configured only via GPIO Matrix.
+    \item GP-SPI2 has six CS signals in master mode. GP-SPI3 only has three CS signals in master mode.
+\end{itemize}
+Apart from that, the functions of GP-SPI2 and GP-SPI3 are the same. GP-SPI2 can use all the GP-SPI registers, while GP-SPI3 can only use some of the GP-SPI registers, see Table \ref{tab:The deleted registers of GP-SPI3 vs to GP-SPI2} for details.
+
+
+\begin{longtable}{|l|l|}
+\caption{Invalid Registers and Fields for GP-SPI3}
+\\\hline
+\rowcolor{lightgray}
+Invalid Register   & Invalid Field                                                                                                                                                                                                                 \\ \hline
+\endhead
+\label{tab:The deleted registers of GP-SPI3 vs to GP-SPI2}
+\hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}           & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIQPIMODE]{SPI\_QPI\_MODE} \hyperref[fielddesc:SPIOPIMODE]{SPI\_OPI\_MODE}\\    \hyperref[fielddesc:SPIFWRITEDUAL]{SPI\_FWRITE\_DUAL}\\    \hyperref[fielddesc:SPIFWRITEQUAD]{SPI\_FWRITE\_QUAD}\\    \hyperref[fielddesc:SPIFWRITEOCT]{SPI\_FWRITE\_OCT}\end{tabular}                                                                                          \\ \hline
+\hyperref[regdesc:SPICTRLREG]{SPI\_CTRL\_REG}          & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIFADDRDUAL]{SPI\_FADDR\_DUAL}\\    \hyperref[fielddesc:SPIFADDRQUAD]{SPI\_FADDR\_QUAD}\\    \hyperref[fielddesc:SPIFADDROCT]{SPI\_FADDR\_OCT}\\    \hyperref[fielddesc:SPIFCMDDUAL]{SPI\_FCMD\_DUAL}\\    \hyperref[fielddesc:SPIFCMDQUAD]{SPI\_FCMD\_QUAD}\\    \hyperref[fielddesc:SPIFCMDOCT]{SPI\_FCMD\_OCT}\\    \hyperref[fielddesc:SPIFREADDUAL]{SPI\_FREAD\_DUAL}\\    \hyperref[fielddesc:SPIFREADQUAD]{SPI\_FREAD\_QUAD}\\    \hyperref[fielddesc:SPIFREADOCT]{SPI\_FREAD\_OCT}\end{tabular} \\ \hline
+\hyperref[regdesc:SPIMISCREG]{SPI\_MISC\_REG}          & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPICS3DIS]{SPI\_CS3\_DIS}\\    \hyperref[fielddesc:SPICS4DIS]{SPI\_CS4\_DIS}\\    \hyperref[fielddesc:SPICS5DIS]{SPI\_CS5\_DIS}\\    \hyperref[fielddesc:SPIMASTERCSPOL]{SPI\_MASTER\_CS\_POL}{[}5:3{]}\\    \hyperref[fielddesc:SPIQUADDINPINSWAP]{SPI\_QUAD\_DIN\_PIN\_SWAP}\end{tabular}                                                                      \\ \hline
+\hyperref[regdesc:SPISLAVE1REG]{SPI\_SLAVE1\_REG}        & \hyperref[fielddesc:SPISLVNOQPIEN]{SPI\_SLV\_NO\_QPI\_EN}                                                                                                                                                                                                              \\ \hline
+\hyperref[regdesc:SPIDMAINTENAREG]{SPI\_DMA\_INT\_ENA\_REG} & \hyperref[fielddesc:SPISLVCMD6INTENA]{SPI\_SLV\_CMD6\_INT\_ENA}                                                                                                                                                                                                           \\ \hline
+\hyperref[regdesc:SPIDMAINTRAWREG]{SPI\_DMA\_INT\_RAW\_REG} & \hyperref[fielddesc:SPISLVCMD6INTRAW]{SPI\_SLV\_CMD6\_INT\_RAW}                                                                                                                                                                                                           \\ \hline
+\hyperref[regdesc:SPIDMAINTSTREG]{SPI\_DMA\_INT\_ST\_REG}  & \hyperref[fielddesc:SPISLVCMD6INTST]{SPI\_SLV\_CMD6\_INT\_ST}                                                                                                                                                                                                            \\ \hline
+\hyperref[regdesc:SPIDMAINTCLRREG]{SPI\_DMA\_INT\_CLR\_REG} & \hyperref[fielddesc:SPISLVCMD6INTCLR]{SPI\_SLV\_CMD6\_INT\_CLR}                                                                                                                                                                                                           \\ \hline
+\hyperref[regdesc:SPIDINMODEREG]{SPI\_DIN\_MODE\_REG}     & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIDIN2MODE]{SPI\_DIN2\_MODE}\\    \hyperref[fielddesc:SPIDIN3MODE]{SPI\_DIN3\_MODE}\\    \hyperref[fielddesc:SPIDIN4MODE]{SPI\_DIN4\_MODE}\\    \hyperref[fielddesc:SPIDIN5MODE]{SPI\_DIN5\_MODE}\\    \hyperref[fielddesc:SPIDIN6MODE]{SPI\_DIN6\_MODE}\\    \hyperref[fielddesc:SPIDIN7MODE]{SPI\_DIN7\_MODE}\end{tabular}                                                                   \\ \hline
+\hyperref[regdesc:SPIDINNUMREG]{SPI\_DIN\_NUM\_REG}      & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIDIN2NUM]{SPI\_DIN2\_NUM}\\    \hyperref[fielddesc:SPIDIN3NUM]{SPI\_DIN3\_NUM}\\    \hyperref[fielddesc:SPIDIN4NUM]{SPI\_DIN4\_NUM}\\    \hyperref[fielddesc:SPIDIN5NUM]{SPI\_DIN5\_NUM}\\    \hyperref[fielddesc:SPIDIN6NUM]{SPI\_DIN6\_NUM}\\    \hyperref[fielddesc:SPIDIN7NUM]{SPI\_DIN7\_NUM}\end{tabular}                                                                         \\ \hline
+\hyperref[regdesc:SPIDOUTMODEREG]{SPI\_DOUT\_MODE\_REG}    & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIDOUT2MODE]{SPI\_DOUT2\_MODE}\\    \hyperref[fielddesc:SPIDOUT3MODE]{SPI\_DOUT3\_MODE}\\    \hyperref[fielddesc:SPIDOUT4MODE]{SPI\_DOUT4\_MODE}\\    \hyperref[fielddesc:SPIDOUT5MODE]{SPI\_DOUT5\_MODE}\\    \hyperref[fielddesc:SPIDOUT6MODE]{SPI\_DOUT6\_MODE}\\    \hyperref[fielddesc:SPIDOUT7MODE]{SPI\_DOUT7\_MODE}\end{tabular}                                                             \\ \hline
+\hyperref[regdesc:SPIDOUTNUMREG]{SPI\_DOUT\_NUM\_REG}     & \begin{tabular}[c]{@{}l@{}}\hyperref[fielddesc:SPIDOUT2NUM]{SPI\_DOUT2\_NUM}\\    \hyperref[fielddesc:SPIDOUT3NUM]{SPI\_DOUT3\_NUM}\\    \hyperref[fielddesc:SPIDOUT4NUM]{SPI\_DOUT4\_NUM}\\    \hyperref[fielddesc:SPIDOUT5NUM]{SPI\_DOUT5\_NUM}\\    \hyperref[fielddesc:SPIDOUT6NUM]{SPI\_DOUT6\_NUM}\\    \hyperref[fielddesc:SPIDOUT7NUM]{SPI\_DOUT7\_NUM}\end{tabular}                                                                   \\ \hline
+\end{longtable}
+
+GP-SPI3 has the same 1-bit mode functions and register configuration rules as to GP-SPI2. GP-SPI3 interface can be seen as a 1-bit mode GP-SPI2 interface. By such way, the guidelines on how to use GP-SPI3 can be deduced from the material provided in Section \ref{GP-SPI2 master mode} and Section \ref{GP-SPI2 slave mode}.
+
+\section{CPU Controlled Data Transfer}\label{Subsection:GP-SPI2 CPU controlled Data Buffer}
+
+CPU-controlled transfer, in which the source or destination of data is GP-SPI data buffer, is supported in master mode and slave mode of GP-SPI. CPU-controlled mode can be used together with full-duplex communication, half-duplex communication, and functions described in Subsection \ref{GP-SPI2 master mode} and   Subsection \ref{GP-SPI2 slave mode}. As shown in Figure \ref{Figure:SPI_BUFFER}, GP-SPI provides 18 x 32-bit data buffers, i.e., \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}. The data to send should be ready before the transmission.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/SPI_BUFFER}
+    \caption{Data Buffer Used in CPU-Controlled Mode}
+    \label{Figure:SPI_BUFFER}
+\end{figure}
+
+
+\subsection{CPU Controlled Master Mode} \label{GP-SPI2 Master CPU}
+
+In a master full-duplex and half-duplex CPU-controlled transmission, the readable or writable data can be to/from \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24] or to/from \hyperref[regdesc:SPIW8REG]{SPI\_W8\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[7:0] in high-part mode. The bits \hyperref[fielddesc:SPIUSRMOSIHIGHPART]{SPI\_USR\_MOSI\_HIGHPART} and \hyperref[fielddesc:SPIUSRMISOHIGHPART]{SPI\_USR\_MISO\_HIGHPART} in the register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG} control the sent and received data byte order respectively:
+
+\begin{itemize}
+    \item If \hyperref[fielddesc:SPIUSRMOSIHIGHPART]{SPI\_USR\_MOSI\_HIGHPART} = 0, the sent data is from \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24], and the data address increases by 1 on each byte transferred. If the data byte length is greater than 72, the address will be the modular operation of 72, and the content of \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} may be sent for more than once.
+
+    \item If \hyperref[fielddesc:SPIUSRMOSIHIGHPART]{SPI\_USR\_MOSI\_HIGHPART} = 1, the sent data is from \hyperref[regdesc:SPIW8REG]{SPI\_W8\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24], and the data address increases by 1 on each byte transferred. If the data byte length is greater than 40, the data in \hyperref[regdesc:SPIW8REG]{SPI\_W8\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24] may be sent more than once.
+
+    \item If \hyperref[fielddesc:SPIUSRMISOHIGHPART]{SPI\_USR\_MISO\_HIGHPART} = 0, the received data is saved to \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24], and the data address increases 1 on each byte transferred. If the data byte length is greater than 72, the address will be the modular operation of 72. And the content of \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} may be replaced.
+
+    \item If \hyperref[fielddesc:SPIUSRMISOHIGHPART]{SPI\_USR\_MISO\_HIGHPART} = 1, the received data saved to \hyperref[regdesc:SPIW8REG]{SPI\_W8\_REG}[7:0] \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24], and the data address increases by 1 on each byte transferred. If the data byte length is greater than 40, the content of \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} may be replaced.
+
+\end{itemize}
+
+The bit \hyperref[fielddesc:SPIDMARXENA]{SPI\_DMA\_RX\_ENA} in register \hyperref[regdesc:SPIDMAINLINKREG]{SPI\_DMA\_IN\_LINK\_REG} and the \hyperref[fielddesc:SPIDMATXENA]{SPI\_DMA\_TX\_ENA} bit in register \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} should be cleared during the transmission:
+\begin{itemize}
+    \item \hyperref[fielddesc:SPIDMARXENA]{SPI\_DMA\_RX\_ENA}
+    \begin{itemize}
+        \item 1: receive data in DMA-controlled RX mode
+        \item 0: receive data in CPU-controlled mode
+    \end{itemize}
+    \item \hyperref[fielddesc:SPIDMATXENA]{SPI\_DMA\_TX\_ENA}
+    \begin{itemize}
+        \item 1: send data in DMA-controlled TX mode
+        \item 0: send data in CPU-controlled mode
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{CPU Controlled Slave Mode} \label{GP-SPI2 slave CPU}
+
+In CPU-controlled slave full-duplex mode, the buffers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} are byte-addressable and the data address starts from 0 and increases by 1 on each byte. If the data address is greater than 71, only the content of \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24] will be updated.
+
+In CPU-controlled slave half-duplex mode, the registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} are all 32-bit buffers and byte addressable. The ADDR value in transmission format is the start address of the read or write data, corresponding to the registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}  \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}. The read or write address increments by 1 on every byte, corresponding to \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG}  \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}. If the address is greater than 71, the highest byte address of \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24], the address will always be 71 and only the content of \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG}[31:24] will be changed. Meanwhile, the \hyperref[fielddesc:SPISLVADDRERR]{SPI\_SLV\_ADDR\_ERR} bit in \hyperref[regdesc:SPISLAVE1REG]{SPI\_SLAVE1\_REG} register will be 1.
+
+The registers \hyperref[regdesc:SPIW0REG]{SPI\_W0\_REG} \verb+~+ \hyperref[regdesc:SPIW17REG]{SPI\_W17\_REG} can all be used as data buffer, partial data buffer and partial status buffer, or all status buffer according to the application. In addition, the bits \hyperref[fielddesc:SPIDMARXENA]{SPI\_DMA\_RX\_ENA} and \hyperref[fielddesc:SPIDMATXENA]{SPI\_DMA\_TX\_ENA} can be 1 in the slave CPU-controlled mode.
+
+
+\section{DMA Controlled Data Transfer}\label{Subsection:Usage of GP-SPI2 DMA controlled mode}
+
+DMA-controlled transfer, in which DMA RX module receives data and DMA TX module sends data, is supported both in master mode and in slave mode. Data is transferred by DMA engine from or to the DMA-linked memory, without CPU operation.
+
+DMA-controlled mode can be used together with full-duplex communication, half-duplex communication and functions described in Subsection \ref{GP-SPI2 master mode} and Subsection \ref{GP-SPI2 slave mode}. Meanwhile, DMA RX module is independent from DMA TX module, which means that there are four kinds of full-duplex communications:
+
+\begin{itemize}
+    \item Data is received in DMA-controlled mode and sent in DMA-controlled mode.
+
+    \item Data is received in DMA-controlled mode and sent in CPU-controlled mode.
+
+    \item Data is received in CPU-controlled mode and sent in DMA-controlled mode.
+
+    \item Data is received in CPU-controlled mode and sent in CPU-controlled mode.
+
+\end{itemize}
+
+In half-duplex communication, the transfers of Wr\_BUF, Rd\_BUF, Wr\_DMA and Rd\_DMA can be supported in a slave segmented-transfer, see Subsection \ref{GP-SPI2 slave seg-trans}. GP-SPI master segmented-configure-transfer only supports DMA-controlled transfer.
+
+Both for the DMA-controlled master mode and slave mode, the main configuration flow is as follows:
+
+\begin{itemize}
+    \item Configure a DMA TX descriptor and set the bit \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} in register \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} to start a DMA TX engine. Before all the DMA TX buffer is used or the DMA TX engine is reset, \hyperref[fielddesc:SPIOUTLINKRESTART]{SPI\_OUTLINK\_RESTART} bit can be set to add a new TX buffer to the end of last TX buffer in use.
+
+    \item DMA RX buffer can be linked by setting bits \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} and \hyperref[fielddesc:SPIINLINKRESTART]{SPI\_INLINK\_RESTART} in the same way as the DMA TX buffer.
+
+    \item The sent and received data lengths are determined by the configured DMA TX and RX buffer respectively, both of which can be 0 \verb+~+ 2 M-byte.
+
+    \item DMA inlink and outlink should be initialized before DMA starts. The bit \hyperref[fielddesc:SPIDMARXENA]{SPI\_DMA\_RX\_ENA} in register \hyperref[regdesc:SPIDMAINLINKREG]{SPI\_DMA\_IN\_LINK\_REG} and the bit \hyperref[fielddesc:SPIDMATXENA]{SPI\_DMA\_TX\_ENA} in register \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} should be set during the transmission.
+
+\end{itemize}
+
+The only difference between DMA-controlled transfers in master mode and in slave mode is on the DMA RX control:
+
+\begin{itemize}
+    \item Clear the bit \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN}.
+        \begin{itemize}
+            \item In master mode, the interrupt SPI\_IN\_SUC\_EOF\_INT can be triggered when a single transfer or a DMA segmented-configure-transfer is ended;
+
+            \item In slave mode, the interrupt SPI\_IN\_SUC\_EOF\_INT can be triggered when a single transfer is ended and the \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} bit is 0. It can also be triggered when \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} bit is 1 and a CMD7 or End\_SEG\_TRANS command is received correctly in a slave segmented-transfer.
+        \end{itemize}
+
+    \item Set the bit \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN}.
+        \begin{itemize}
+            \item In master mode, the interrupt SPI\_IN\_SUC\_EOF\_INT can be triggered when a single transfer or a DMA segmented-configure-transfer is ended and the total DMA RX received data length is equal to the value of \hyperref[fielddesc:SPIMSTDMARDBYTELEN]{SPI\_MST\_DMA\_RD\_BYTELEN}.
+
+            \item In slave mode, the total DMA RX received data length should be equal to the value of \hyperref[fielddesc:SPISLVDMARDBYTELEN]{SPI\_SLV\_DMA\_RD\_BYTELEN}. The interrupt SPI\_IN\_SUC\_EOF\_INT can be triggered when a single slave mode transfer is ended and the \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} bit is 0. It can also be triggered when \hyperref[fielddesc:SPIDMASLVSEGTRANSEN]{SPI\_DMA\_SLV\_SEG\_TRANS\_EN} bit is 1 and a CMD7 or End\_SEG\_TRANS command is received correctly in a slave segmented-transfer.
+        \end{itemize}
+
+\end{itemize}
+
+In addition, if the configured DMA TX buffer length is smaller than the length of real transferred data, the extra data will be the same as the last transferred data. \hyperref[fielddesc:SPIOUTFIFOEMPTYERRINTRAW]{SPI\_OUTFIFO\_EMPTY\_ERR\_INT\_RAW} and \hyperref[fielddesc:SPIOUTEOFINTRAW]{SPI\_OUT\_EOF\_INT\_RAW} in the register \hyperref[regdesc:SPIDMAINTRAWREG]{SPI\_DMA\_INT\_RAW\_REG} will be set.
+
+If the configured DMA TX buffer length is greater than the length of real transferred data, the TX buffer is not fully used, and the rest of the buffer will be available for further usage even if a new TX buffer is linked later. Keep it in mind or save the unused data and reset DMA.
+
+If the configured DMA RX buffer length is smaller than the length of real transferred data, the extra data will be lost. The bit \hyperref[fielddesc:SPIINFIFOFULLERRINTRAW]{SPI\_INFIFO\_FULL\_ERR\_INT\_RAW} in register \hyperref[regdesc:SPIDMAINTRAWREG]{SPI\_DMA\_INT\_RAW\_REG} and \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} will be valid. But no valid \hyperref[fielddesc:SPIINSUCEOFINTRAW]{SPI\_IN\_SUC\_EOF\_INT\_RAW} interrupt will be generated.
+
+If the configured DMA RX buffer length is greater than the length of real transferred data, the RX buffer is not fully used, and the rest of the buffer will be available for further usage even if a new RX buffer is linked later. Keep it in mind or reset DMA.
+
+
+\section{GP-SPI Clock Control}\label{Subsection:GP-SPI2 CLK}
+In master mode, the maximum output clock frequency of GP-SPI is $f_{\textrm{apb}}$. To have slower rates, the output clock frequency can be divided as follows:
+
+    \[
+    f_{\textrm{spi}}=\frac{f_{\textrm{apb}}} {\textrm{(\hyperref[fielddesc:SPICLKCNTN]{SPI\_CLKCNT\_N}+1)(\hyperref[fielddesc:SPICLKDIVPRE]{SPI\_CLKDIV\_PRE}+1)}}
+    \] \label{division-formula}
+
+The values of \hyperref[fielddesc:SPICLKCNTN]{SPI\_CLKCNT\_N} and \hyperref[fielddesc:SPICLKDIVPRE]{SPI\_CLKDIV\_PRE} in register \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG} can be configured to change the frequency. When the bit \hyperref[fielddesc:SPICLKEQUSYSCLK]{SPI\_CLK\_EQU\_SYSCLK} in register \hyperref[regdesc:SPICLOCKREG]{SPI\_CLOCK\_REG} is 1, the output clock frequency of GP-SPI will be $f_{\textrm{apb}}$. And for other integral clock divisions, \hyperref[fielddesc:SPICLKEQUSYSCLK]{SPI\_CLK\_EQU\_SYSCLK} should be 0.
+
+In slave mode, the maximum supported input clock frequency of GP-SPI is $f_{\textrm{apb}}$/2, and all the lower frequencies are available.
+
+\subsection{GP-SPI Clock Phase and Polarity}
+There are four clock modes in SPI protocol, modes 0 \verb+~+ 3, see Figure \ref{Figure:SPI_CLK0_2} and Figure \ref{Figure:SPI_CLK1_3}:
+
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/mode0_2}}
+    \caption{SPI CLK Mode 0 or 2}
+    \label{Figure:SPI_CLK0_2}
+\end{figure}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/mode1_3}}
+    \caption{SPI CLK Mode 1 or 3}
+    \label{Figure:SPI_CLK1_3}
+\end{figure}
+\begin{enumerate}
+    \item Mode 0: CPOL = 0, CPHA = 0; SCK is 0 when the SPI is in idle state; data is changed on the negative edge of SCK and sampled on the positive edge.
+
+    \item Mode 1: CPOL = 0, CPHA = 1; SCK is 0 when the SPI is in idle state; data is changed on the positive edge of SCK and sampled on the negative edge.
+
+    \item Mode 2: CPOL = 1, CPHA = 0; SCK is 1 when the SPI is in idle state; data is changed on the positive edge of SCK and sampled on the negative edge.
+
+    \item Mode 3: CPOL = 1, CPHA = 1; SCK is 1 when the SPI is in idle state; data is changed on the negative edge of SCK and sampled on the positive edge.
+\end{enumerate}
+
+
+\subsection{GP-SPI Clock Control in Master Mode}\label{GP-SPI2 master clock control}
+
+The four clock modes 0\verb+ ~ +3 are supported in GP-SPI master mode. The polarity and phase of GP-SPI are controlled by the bit \hyperref[fielddesc:SPICKIDLEEDGE]{SPI\_CK\_IDLE\_EDGE} in register \hyperref[regdesc:SPIMISCREG]{SPI\_MISC\_REG} and the bit \hyperref[fielddesc:SPICKOUTEDGE]{SPI\_CK\_OUT\_EDGE} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}. The register configuration for SPI mode 0\verb+ ~ +3 can be seen in Table \ref{table:clock_pol_master}, and can be changed according to the path delay in application.
+
+\begin{table}[H]
+    \centering
+    \caption{Clock Phase and Polarity Configuration in Master Mode}
+    \label{table:clock_pol_master}
+    \begin{tabular}[c]{|p{3.5cm}|c|c|c|c|}
+    \hline
+    \rowcolor{lightgray}
+    Control Bit & Mode 0 & Mode 1 & Mode 2 & Mode 3\\
+    \hline
+    \hyperref[fielddesc:SPICKIDLEEDGE]{SPI\_CK\_IDLE\_EDGE}  & 0     & 0     & 1     & 1\\
+    \hline
+    \hyperref[fielddesc:SPICKOUTEDGE]{SPI\_CK\_OUT\_EDGE}   & 0     & 1     & 1     & 0\\
+    \hline
+    \end{tabular}
+\end{table}
+
+\hyperref[fielddesc:SPICLKMODE]{SPI\_CLK\_MODE}[1:0] in register \hyperref[regdesc:SPICTRL1REG]{SPI\_CTRL1\_REG} can be used to select the number of positive edges of FSPICLK, when CS raises high, to be 0, 1, 2 or FSPICLK always on.
+
+\subsection{GP-SPI Clock Control in Slave Mode}\label{GP-SPI2 slave clock control}
+
+GP-SPI slave mode also supports clock modes 0\verb+ ~ +3. The polarity and phase are configured by the bits \hyperref[fielddesc:SPITSCKIEDGE]{SPI\_TSCK\_I\_EDGE} and \hyperref[fielddesc:SPIRSCKIEDGE]{SPI\_RSCK\_I\_EDGE} in register \hyperref[regdesc:SPIUSERREG]{SPI\_USER\_REG}. The output edge of data is controlled by \hyperref[fielddesc:SPICLKMODE13]{SPI\_CLK\_MODE\_13} in register \hyperref[regdesc:SPICTRL1REG]{SPI\_CTRL1\_REG}. The detailed register configuration is shown in Table \ref{table:spi-clock_pol_slave}:
+
+\begin{table}[H]
+    \centering
+    \caption{Clock Phase and Polarity Configuration in Slave Mode}
+    \label{table:spi-clock_pol_slave}
+    \begin{tabular}[c]{|p{3.5cm}|c|c|c|c|}
+    \hline
+    \rowcolor{lightgray}
+    Control Bit & Mode 0 & Mode 1 & Mode 2 & Mode 3\\
+    \hline
+    \hyperref[fielddesc:SPITSCKIEDGE]{SPI\_TSCK\_I\_EDGE}   & 0 & 1 & 1 & 0\\
+    \hline
+    \hyperref[fielddesc:SPIRSCKIEDGE]{SPI\_RSCK\_I\_EDGE}   & 0 & 1 & 1 & 0\\
+    \hline
+    \hyperref[fielddesc:SPICLKMODE13]{SPI\_CLK\_MODE\_13}     & 0 & 1 & 0 & 1\\
+    \hline
+    \end{tabular}
+\end{table}
+
+
+\subsection{GP-SPI Timing Compensation} \label{GP-SPI Timing Compensation}
+
+The I/O lines can be mapped via GPIO Matrix or IO MUX. There is no timing adjustment in IO MUX. The input data and output data can be delayed for 0, 1 or 2 cycles of APB\_CLK at the positive or negative edge in GPIO Matrix. The detailed register configuration can be seen in Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+In GP-SPI master mode, there are some timing adjustment modules for every input and output data, which can be used to achieve integral numbers of T\_APB\_CLK (one cycle of APB\_CLK) delay on positive or negative edge. The registers \hyperref[regdesc:SPIDINMODEREG]{SPI\_DIN\_MODE\_REG} and \hyperref[regdesc:SPIDINNUMREG]{SPI\_DIN\_NUM\_REG} can be used to select the latch edge of input data. \hyperref[regdesc:SPIDOUTMODEREG]{SPI\_DOUT\_MODE\_REG} and \hyperref[regdesc:SPIDOUTNUMREG]{SPI\_DOUT\_NUM\_REG} can be used to select the latch of output data. The detailed description can be seen in Subsection \ref{Section:SPIREG}. Meanwhile, the DUMMY cycle length can be changed to compensate the real I/O line delays, so as to enhance the performance of GP-SPI.
+
+In GP-SPI slave mode, if the bit \hyperref[fielddesc:SPIRSCKDATAOUT]{SPI\_RSCK\_DATA\_OUT} in register \hyperref[regdesc:SPICTRL1REG]{SPI\_CTRL1\_REG} is set to 1, the output data will be sent at latch edge, which will be half an SPI clock cycle earlier. It can be used for slave mode timing compensation.
+
+\section{SPI Pin Mapping} \label{Section:SPI_Pin_Mapping}
+
+The IO path mapping between FSPI bus signals and GPIO pads can be seen in Figure \ref{Figure:GP-SPI2_full_duplex}, Figure \ref{Figure:GP-SPI2_memory_inf}, and Figure \ref{Figure:GP-SPI2_LCD_Block_Diagram}, which can also be used for the IO path of SPI0/1 and GP-SPI3.
+
+The mapping between SPI/FSPI/SPI3 bus signals and GPIO pads in different communication modes is shown in Table \ref{table:SPI_signals}. The signals in a line corresponds to each other. For example, the signal FSPID is connected to MOSI in GP-SPI2 full-duplex communication, and FSPIQ to MISO, see Figure \ref{Figure:GP-SPI2_full_duplex}. SPI3\_Q will connect to MISO pin in half-duplex communication for GP-SPI3.
+
+
+\begin{longtable}[c]{|p{2.0cm}|p{2.0cm}|p{2.0cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|}    \caption{Mapping of SPI Signal Buses and Chip Pads}
+\label{table:SPI_signals}\\
+\hline
+    \rowcolor{lightgray}
+    \multicolumn{2}{c|}{Standard SPI} & \multicolumn{4}{c|}{Extended SPI}\\
+    \hline
+    \rowcolor{lightgray}
+    Full-Duplex & Half-Duplex & \multicolumn{4}{c|}{Chip Pad Signals}\\
+    \hline
+    \rowcolor{lightgray}
+    \multirow{-1}{*}{SPI Signal Bus} & \multirow{-1}{*}{SPI Signal Bus} & \multirow{-1}{*}{Pin Functions} & SPI Signal Bus & FSPI Signal Bus & SPI3 Signal Bus \\
+    \hline
+    MOSI & MOSI   & D  & SPID             & FSPID  & SPI3\_D \\
+    \hline
+    MISO & (MISO) & Q  & SPIQ             & FSPIQ  & SPI3\_Q \\
+    \hline
+      CS & CS     & CS & SPICS0  \verb+~+ 1  & FSPICS0  \verb+~+ 5
+                  & SPI3\_CS0 \verb+~+ 2  \\
+    \hline
+     CLK & CLK    & CLK& SPICLK           & FSPICLK& SPI3\_CLK \\
+    \hline
+       - & -      & WP & SPIWP            & FSPIWP & -        \\
+    \hline
+       - & -      & HD & SPIHD            & FSPIHD & SPI3\_HD \\
+    \hline
+       - & -      & CD & -               & FSPICD & SPI3\_CD \\
+    \hline
+       - & -      & DQS & SPIDQS         & FSPIDQS & SPI3\_DQS \\
+    \hline
+       - & -      & IO4 \verb+~+ 7 & SPIIO4 \verb+~+ 7   & FSPIIO4 \verb+~+ 7 & - \\
+    \hline
+       - & -      & VSYNC & -      & FSPI\_VSYNC & - \\
+    \hline
+       - & -      & HSYNC & -      & FSPI\_HSYNC & - \\
+    \hline
+       - & -      & DE    & -      & FSPI\_DE & - \\
+    \hline
+\end{longtable}
+
+\section{GP-SPI Interrupt Control} \label{Section:SPI_Interrupt}
+
+There are two kinds of interrupts in GP-SPI2: SPI interface interrupts SPI\_INT and SPI DMA interface interrupts SPI\_DMA\_INTR. When SPI transfer is ended, an interrupt will be generated.
+
+The interrupt lists of GP-SPI are given in Table \ref{Table:Mst_Int_Table} and Table  \ref {Table:Slv_Int_Table}. Set the interrupt enable bit of SPI\_INT\_*\_EN in register \hyperref[regdesc:SPISLAVEREG]{SPI\_SLAVE\_REG} or SPI\_*\_INT\_ENA in \hyperref[regdesc:SPIDMAINTENAREG]{SPI\_DMA\_INT\_ENA\_REG} and wait for the SPI\_INT or SPI\_DMA\_INTR interrupt. When the transfer ends, the related interrupt will be triggered and should be cleared by software before the next transfer.
+
+\begin{landscape}
+\begin{longtable}[c]{|c|l|l|l|}
+\caption{GP-SPI Master Mode Interrupts}
+\label{Table:Mst_Int_Table}\\
+\hline
+\rowcolor{lightgray}
+Transfer Type  & Communication Mode & Controlled by & Interrupt \\ \hline
+\endhead
+\multirow{6}{*}{Single Transfer} & \multirow{2}{*}{Full-duplex} & DMA & \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT} \hyperref[spi-note1]{$^1$} \\ \cline{3-4}
+&& CPU & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} \hyperref[spi-note2]{$^2$}  \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Output Slave Input Mode} & DMA & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} \\ \cline{3-4}
+&& CPU & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}  \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Input Slave Output Mode} & DMA & \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT} \\ \cline{3-4}
+&& CPU & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} \\ \hline
+\multirow{6}{*}{Segmented-Configure-Transfer} & \multirow{2}{*}{Full-duplex} & DMA & \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} \hyperref[note3]{$^3$} \\ \cline{3-4}
+&& CPU & Not supported       \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Output Slave Input Mode} & DMA  & \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} \\ \cline{3-4}
+&& CPU           & Not supported       \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Input Slave Output Mode} & DMA & \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} \\ \cline{3-4}
+&& CPU & Not supported       \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+
+\item If \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT} is triggered, it means all the push data has been stored in RX buffer, and the pop data has been sent to the slave.\label{spi-note1}
+
+\item \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} raises high when CS is high, which indicates that master has completed the data exchange in W0 \verb+~+ W17 with slave in this mode.\label{spi-note2}
+
+\item If \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE} is triggered, it means that the segmented-transfer ends, and the push data has been stored in RX buffer completely, which also indicates all the pop data has been sent out. \label{note3}
+\end{enumerate}
+\end{tiplisting}
+
+\newpage
+\begin{longtable}[c]{|c|l|l|l|}
+\caption{GP-SPI Slave Mode Interrupts}
+\label{Table:Slv_Int_Table}\\
+\hline
+\rowcolor{lightgray}
+Transfer Type  & Communication Mode & Controlled by & Interrupt \\ \hline
+\endhead
+\multirow{6}{*}{Single Transfer} & \multirow{2}{*}{Full-duplex} & DMA & \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT} \hyperref[slave-note-1]{$^1$} \\ \cline{3-4}
+&& CPU & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} \hyperref[slave-note-2]{$^2$}  \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Output Slave Input Mode} & DMA (Wr\_DMA) & \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT}\hyperref[slave-note-3]{$^3$}\\ \cline{3-4}
+&& CPU (Wr\_BUF) & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}\hyperref[slave-note-4]{$^4$}  \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Input Slave Output Mode} & DMA (Rd\_DMA) & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}\hyperref[slave-note-5]{$^5$} \\ \cline{3-4}
+&& CPU (Rd\_BUF) & \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}\hyperref[slave-note-6]{$^6$} \\ \hline
+\multirow{6}{*}{Segmented-Transfer} & \multirow{2}{*}{Full-duplex} & DMA & \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT}\hyperref[slave-note-7]{$^7$} \\ \cline{3-4}
+&& CPU & Not supported\hyperref[slave-note-8]{$^8$} \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Output Slave Input Mode} & DMA (Wr\_DMA)  & \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE}\hyperref[slave-note-9]{$^9$} \\ \cline{3-4}
+&& CPU (Wr\_BUF)           & Not supported\hyperref[slave-note-10]{$^1$$^0$}       \\ \cline{2-4}
+& \multirow{2}{*}{Half-duplex Master Input Slave Output Mode} & DMA (Rd\_DMA) & \hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE}\hyperref[slave-note-11]{$^1$$^1$} \\ \cline{3-4}
+&& CPU (Rd\_BUF) & Not supported\hyperref[slave-note-12]{$^1$$^2$}       \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+\item If \hyperref[int:SPIINSUCEOFINT]{SPI\_IN\_SUC\_EOF\_INT} is triggered, it means all the push data has been stored in RX buffer, and the pop data has been sent to slave. \label{slave-note-1}
+\item \hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE} raises high when CS is high, which indicates that master has completed the data exchange in W0 \verb+~+ W17 with slave in this mode.\label{slave-note-2}
+\item \hyperref[fielddesc:SPISLVWRDMADONE]{SPI\_SLV\_WR\_DMA\_DONE} just means that the transmission on the SPI bus is done, but can not ensure that all the push data has been stored in the RX buffer. For this reason, SPI\_IN\_SUC\_EOF\_INT is recommended. \label{slave-note-3}
+\item Or wait for \hyperref[fielddesc:SPISLVWRBUFDONE]{SPI\_SLV\_WR\_BUF\_DONE}.\label{slave-note-4}
+\item Or wait for \hyperref[fielddesc:SPISLVRDDMADONE]{SPI\_SLV\_RD\_DMA\_DONE}.\label{slave-note-5}
+\item Or wait for \hyperref[fielddesc:SPISLVRDBUFDONE]{SPI\_SLV\_RD\_BUF\_DONE}.\label{slave-note-6}
+\item Slave should set the total read data byte length in \hyperref[fielddesc:SPISLVDMARDBYTELEN]{SPI\_SLV\_DMA\_RD\_BYTELEN}[19:0] before transmit begins. And set \hyperref[fielddesc:SPIRXEOFEN]{SPI\_RX\_EOF\_EN} 0->1 before the end of the interrupt program.\label{slave-note-7}
+\item Master and slave should define a segmented-transfer end method, such as through GPIO as interrupt and so on.\label{slave-note-8}
+\item Master sends COM5 to end segmented-transfer or slave sets the total read data byte length in \hyperref[fielddesc:SPISLVDMARDBYTELEN]{SPI\_SLV\_DMA\_RD\_BYTELEN}[19:0] and waits for SPI\_DMA\_IN\_SUC\_EOF \_INT\_ST.\label{slave-note-9}
+\item Half-duplex Wr\_BUF single transfer can occur during DMA segmented-transfer.\label{slave-note-10}
+\item Master sends COM5 to end segmented-transfer.\label{slave-note-11}
+\item Half-duplex Rd\_BUF single transfer can occur during DMA segmented-transfer.\label{slave-note-12}
+\end{enumerate}
+\end{tiplisting}
+\end{landscape}
+
+\subsection{GP-SPI Interrupt} \label{Section:SPI_INT}
+
+The description of SPI\_INT interrupt sources is as follows:
+\begin{itemize}
+\item \label{int:SPITRANSDONEINT}\hyperref[fielddesc:SPITRANSDONE]{SPI\_TRANS\_DONE}: triggered at the end of SPI bus transfer in both master mode and slave mode.
+\item \label{int:SPISLVWRSTAINT}\hyperref[fielddesc:SPISLVWRDMADONE]{SPI\_SLV\_WR\_DMA\_DONE}: triggered at the end of Wr\_DMA transfer in slave mode.
+\item \label{int:SPISLVRDSTAINT}\hyperref[fielddesc:SPISLVRDDMADONE]{SPI\_SLV\_RD\_DMA\_DONE}: triggered at the end of Rd\_DMA transfer in slave mode.
+\item \label{int:SPISLVWRBUFINT}\hyperref[fielddesc:SPISLVWRBUFDONE]{SPI\_SLV\_WR\_BUF\_DONE}: triggered at the end of Wr\_BUF transfer in slave mode.
+\item \label{int:SPISLVRDBUFINT}\hyperref[fielddesc:SPISLVRDBUFDONE]{SPI\_SLV\_RD\_BUF\_DONE}: triggered at the end of Rd\_BUF transfer in slave mode.
+\item \label{int:SPISEGTRANSINT}\hyperref[fielddesc:SPIDMASEGTRANSDONE]{SPI\_DMA\_SEG\_TRANS\_DONE}: triggered at the end of End\_SEG\_TRANS transfer in GP-SPI slave segmented-transfer mode or at the end of master segmented-configure-transfer mode.
+\item \hyperref[fielddesc:SPISEGMAGICERR]{SPI\_SEG\_MAGIC\_ERR\_INT}: triggered when a Magic error occurs in CONF buffer during master DMA segmented-configure-transfer.
+\end{itemize}
+
+\subsection{GP-SPI DMA Interrupts} \label{Section:SPI_DMA_INT}
+
+The description of SPI\_DMA\_INTR interrupt sources is as follows:
+\begin{itemize}
+\item \label{int:SPISLVCMDAINT} SPI\_SLV\_CMDA\_INT: triggered when CMDA is received correctly in GP-SPI slave mode and the SPI transfer is ended.
+
+\item \label{int:SPISLVCMD9INT} SPI\_SLV\_CMD9\_INT: triggered when CMD9 is received correctly in GP-SPI slave mode and the SPI transfer is ended.
+
+\item \label{int:SPISLVCMD8INT} SPI\_SLV\_CMD8\_INT: triggered when CMD8 is received correctly in GP-SPI slave mode and the SPI transfer is ended.
+
+\item \label{int:SPISLVCMD7INT} SPI\_SLV\_CMD7\_INT: triggered when CMD7 is received correctly in GP-SPI slave mode and the SPI transfer is ended.
+
+\item \label{int:SPISLVCMD6INT} SPI\_SLV\_CMD6\_INT: triggered when En\_QPI or Ex\_QPI is received correctly in GP-SPI slave mode and the SPI transfer is ended.
+
+\item \label{int:SPIOUTFIFOEMPTYERRINT}SPI\_OUTFIFO\_EMPTY\_ERR\_INT: triggered when DMA TX FIFO length is smaller than the real transferred data length.
+\item \label{int:SPIINFIFOFULLERRINT}SPI\_INFIFO\_FULL\_ERR\_INT: triggered when DMA RX FIFO length is smaller than the real transferred data length.
+\item \label{int:SPIOUTTOTALEOFINT}SPI\_OUT\_TOTAL\_EOF\_INT: triggered when all the data in out\_link buffer has been sent out.
+\item \label{int:SPIOUTEOFINT}SPI\_OUT\_EOF\_INT: triggered when each out link buffer has been used up.
+\item \label{int:SPIOUTDONEINT}SPI\_OUT\_DONE\_INT: triggered when the length of last out link is 0.
+\item \label{int:SPIINSUCEOFINT}SPI\_IN\_SUC\_EOF\_INT: triggered when all the in\_link buffers are full.
+\item \label{int:SPIINERREOFINT}SPI\_IN\_ERR\_EOF\_INT: triggered when there is an error in the in\_link.
+\item \label{int:SPIINDONEINT}SPI\_IN\_DONE\_INT: triggered when the length of last in link is 0.
+\item \label{int:SPIINLINKDSCRERRORINT}SPI\_INLINK\_DSCR\_ERROR\_INT: triggered when there is an error in the in\_link descriptor.
+\item \label{int:SPIOUTLINKDSCRERRORINT}SPI\_OUTLINK\_DSCR\_ERROR\_INT: triggered when the out\_link in use is invalid.
+\item \label{int:SPIINLINKDSCREMPTYINT}SPI\_INLINK\_DSCR\_EMPTY\_INT: triggered when there is no valid in\_link descriptor.
+\end{itemize}
+
+\section{Register Base Address}\label{Section:SPI Register Base Address}
+
+Users can access SPI0, SPI1, GP-SPI2, and GP-SPI3 registers with the base address as shown in Table \ref{table:spi base address}. For more information, see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}[c]{|l|l|c|}
+\caption{SPI Base Address}
+\label{table:spi base address}
+\\\hline
+\rowcolor{lightgray}
+    Module &   Bus to Access Peripheral      & Base Address \\\hline
+    \multirow{2}*{SPI0}&  PeriBUS1     & \hexprefix{}3F403000      \\\cline{2-3}
+     &  PeriBUS2        &  \hexprefix{}60003000  \\\hline
+    \multirow{2}*{SPI1}&  PeriBUS1     & \hexprefix{}3F402000      \\\cline{2-3}
+    & PeriBUS2       & \hexprefix{}60002000 \\\hline
+    \multirow{2}*{GP-SPI2}&  PeriBUS1     & \hexprefix{}3F424000      \\\cline{2-3}
+    & PeriBUS2       & \hexprefix{}60024000 \\\hline
+    \multirow{2}*{GP-SPI3}&  PeriBUS1     & \hexprefix{}3F425000      \\\cline{2-3}
+    & PeriBUS2       & \hexprefix{}60025000 \\\hline
+\end{longtable}
+
+
+\hypertarget{spi-reg-summ}{}
+\section{Register Summary}\label{Section:SPIREGList}
+
+
+The addresses in the following table are relative to the SPI base addresses provided in Section \ref{Section:SPI Register Base Address}.
+
+\subfile{\modulefiles/spi_reg_summary__EN}
+
+\section{Registers}\label{Section:SPIREG}
+\subfile{\modulefiles/spi_reg__EN}
+\end{document}
