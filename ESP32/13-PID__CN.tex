@@ -1,0 +1,239 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./13-PID}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{pidctrl}{}
+\chapter{PID 控制器 (PID)}
+\label{mod:pid}
+
+\section{概述}
+ESP32 双核芯片可以同时处理多个线程。PID 控制器在进程切换的过程中，
+辅助完成进程号 PID 的切换。此外，PID 控制器还可以通过记录 CPU 处理中断的状态来管理嵌套中断。因此，PID 控制器可以使得用户在应用中更有效地管理进程切换和嵌套中断。
+
+\section{主要特性}
+PID 控制器有以下特性：
+\begin{itemize}
+    \item 管理进程优先级
+    \item 切换进程号PID
+    \item 记录中断信息
+    \item 管理中断嵌套
+\end{itemize}
+
+\section{功能描述}
+CPU 具有 8 个进程，进程号 PID 分别为 0 \verb+~+ 7。
+这 8 个进程中，
+PID 为 0/1 的进程比 PID 为 2 \verb+~+ 7 的进程拥有更多的权限。
+
+CPU 在两种情形下会进行进程切换。
+\begin{itemize}
+    \item 当中断发生，CPU 从中断向量入口地址取指的时候。
+无论中断发生之前正在运行的是哪个进程，
+系统此时都将中断取指视为 PID 为 0 的进程。
+  \item 当前进程主动切换进程时。
+能够主动进行进程切换的进程一定是 PID 为 0/1 的高权限进程。
+\end{itemize}
+
+\subsection{中断识别}
+
+CPU 一共有
+Level 1、Level 2、Level 3、Level 4、Level 5、Level 6（Debug）、NMI
+七个优先级的中断。
+每一级中断有一个中断向量入口地址。
+PID 控制器识别到 CPU 从中断向量入口地址取指的时候
+自动切换 PID 至 0。
+如果 CPU 只是对中断向量入口地址做数据访问，
+那么 PID 控制器不采取任何动作。
+
+PID 控制器能够识别的中断优先级取决于寄存器 \hyperref[regdesc:PIDCTRLINTERRUPTENABLEREG]{PIDCTRL\_INTERRUPT\_ENABLE\_REG}。
+寄存器 \hyperref[regdesc:PIDCTRLINTERRUPTENABLEREG]{PIDCTRL\_INTERRUPT\_ENABLE\_REG} 中的某位为 1 时，
+当 CPU 从此位对应的中断向量入口地址取指时，PID 控制器将切换进程；若寄存器 \hyperref[regdesc:PIDCTRLINTERRUPTENABLEREG]{PIDCTRL\_INTERRUPT\_ENABLE\_REG} 中的某位为 0 时，则 PID 控制器不采取任何动作。
+这七级中断各自的中断向量入口地址由寄存器 PIDCTRL\_INTERRUPT\_ADDR\_1\_REG \verb+~+ PIDCTRL\_INTERRUPT\_ADDR\_7\_REG 决定，详见表 \ref{table:Interrupt}。
+
+\input{./13-PID/tables/Interrupt_cn.tex}
+
+\subsection{信息记录}
+
+当 PID 控制器识别到中断时，
+除了自动切换 PID 为 0，
+还会记录 3 条信息：
+\begin{enumerate}
+    \item 当前中断的优先级
+    \item 系统的上一次中断状态
+    \item CPU 运行的上一个进程
+\end{enumerate}
+PID 控制器会将当前发生的中断的优先级
+记录到寄存器 \hyperref[regdesc:PIDCTRLLEVELREG]{PIDCTRL\_LEVEL\_REG}，详见表 \ref{table:PIDCTRL_LEVEL_REG}。
+
+\input{./13-PID/tables/PIDCTRL_LEVEL_REG_cn.tex}
+
+PID 控制器还将当前中断发生之前的状态
+记录进寄存器 \hyperref[regdesc:PIDCTRLFROMnREG]{PIDCTRL\_FROM\_\textcolor{red}{\it{n}}\_REG}。
+寄存器 \hyperref[regdesc:PIDCTRLFROMnREG]{PIDCTRL\_FROM\_\textcolor{red}{\it{n}}\_REG} 的位宽为 7。
+其高 4 位表示此寄存器对应中断发生之前
+系统的中断状态。
+低 3 位表示此寄存器对应中断发生之前
+系统处于哪个进程。
+详见表 \ref{table:PIDCTRL_FROM_n_REG}。
+
+\input{./13-PID/tables/PIDCTRL_FROM_n_REG_cn.tex}
+
+PID 控制器拥有寄存器 PIDCTRL\_FROM\_1\_REG \verb+~+ PIDCTRL\_FROM\_7\_REG，
+它们分别对应
+Level 1、Level 2、Level 3、Level 4、Level 5、Level 6（Debug）、NMI
+七级中断。
+系统通过这些寄存器处理中断嵌套，如图 \ref{figure:Interrupt_Nesting} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/Interrupt-Nesting_cn.png}}
+    \caption{中断嵌套}
+    \label{figure:Interrupt_Nesting}
+\end{figure}
+
+
+如果中断发生，
+但是由于寄存器 \hyperref[regdesc:PIDCTRLINTERRUPTENABLEREG]{PIDCTRL\_INTERRUPT\_ENABLE\_REG} 的配置，
+而使得 PID 控制器没有识别到它，
+那么 PID 控制器不会做任何记录，
+也不会更改寄存器 \hyperref[regdesc:PIDCTRLLEVELREG]{PIDCTRL\_LEVEL\_REG}、\hyperref[regdesc:PIDCTRLFROMnREG]{PIDCTRL\_FROM\_\textcolor{red}{\it{n}}\_REG} 的值。
+
+\subsection{进程主动切换进程}
+
+只有 PID 为 0/1 的进程可以主动切换进程。
+切换之后的进程可以是 PID 为 0 \verb+~+ 7 中的任何一个。
+进程主动切换进程的关键在于，
+从当前进程的最后一条指令跳转到新进程的第一条指令的时候，
+PID 要刚好从 0/1 变为新进程的 PID。
+
+进程主动切换进程的软件流程为
+
+\newcounter{STEP_MASK_NON_NMI}
+\newcounter{STEP_MASK_NMI}
+\newcounter{STEP_SET_DELAY}
+\newcounter{STEP_SET_PID_NEW}
+\newcounter{STEP_RESTORE}
+\newcounter{STEP_CHANGE}
+\newcounter{STEP_RELEASE_NON_NMI}
+\newcounter{STEP_JUMP}
+\begin{enumerate}
+    \item 软件屏蔽除 NMI 中断之外的所有中断
+        \setcounter{STEP_MASK_NON_NMI}{\theenumi}
+    \item 将寄存器 \hyperref[regdesc:PIDCTRLNMIMASKENABLEREG]{PIDCTRL\_NMI\_MASK\_ENABLE\_REG} 置 1，生成 CPU NMI 中断屏蔽信号
+        \setcounter{STEP_MASK_NMI}{\theenumi}
+    \item 配置寄存器 \hyperref[regdesc:PIDCTRLPIDDELAYREG]{PIDCTRL\_PID\_DELAY\_REG}、\hyperref[regdesc:PIDCTRLNMIDELAYREG]{PIDCTRL\_NMI\_DELAY\_REG}
+        \setcounter{STEP_SET_DELAY}{\theenumi}
+    \item 配置寄存器 \hyperref[regdesc:PIDCTRLPIDNEWREG]{PIDCTRL\_PID\_NEW\_REG}
+        \setcounter{STEP_SET_PID_NEW}{\theenumi}
+    \item 配置寄存器 \hyperref[regdesc:PIDCTRLLEVELREG]{PIDCTRL\_LEVEL\_REG}、\hyperref[regdesc:PIDCTRLFROMnREG]{PIDCTRL\_FROM\_\textcolor{red}{\it{n}}\_REG}
+        \setcounter{STEP_RESTORE}{\theenumi}
+    \item 将寄存器 \hyperref[regdesc:PIDCTRLPIDCONFIRMREG]{PIDCTRL\_PID\_CONFIRM\_REG}、\hyperref[regdesc:PIDCTRLNMIMASKDISABLEREG]{PIDCTRL\_NMI\_MASK\_DISABLE\_REG} 置 1
+        \setcounter{STEP_CHANGE}{\theenumi}
+    \item 撤销对 NMI 中断之外的中断的屏蔽
+        \setcounter{STEP_RELEASE_NON_NMI}{\theenumi}
+    \item 切换到新进程取指
+        \setcounter{STEP_JUMP}{\theenumi}
+\end{enumerate}
+
+虽然系统可以处理中断嵌套的情况，
+但 PID 为 0/1 的进程不应在进程切换时被新的中断打断，
+因此在步骤 \arabic{STEP_MASK_NON_NMI}、步骤 \arabic{STEP_MASK_NMI} 中屏蔽了所有中断。
+
+步骤 \arabic{STEP_SET_DELAY} 中配置的
+寄存器 \hyperref[regdesc:PIDCTRLPIDDELAYREG]{PIDCTRL\_PID\_DELAY\_REG}、\hyperref[regdesc:PIDCTRLNMIDELAYREG]{PIDCTRL\_NMI\_DELAY\_REG} 的值
+将会作用于步骤 \arabic{STEP_CHANGE}。
+
+步骤 \arabic{STEP_SET_PID_NEW} 中配置的
+寄存器 \hyperref[regdesc:PIDCTRLPIDNEWREG]{PIDCTRL\_PID\_NEW\_REG} 的值
+将会在步骤 \arabic{STEP_CHANGE} 之后成为新的进程 PID。
+
+如果当前处于嵌套中断中且要恢复到上一个中断，
+那么在步骤 \arabic{STEP_RESTORE} 中需要根据
+寄存器 \textcolor{red}{\it{n}} 中记录的信息恢复寄存器 \hyperref[regdesc:PIDCTRLLEVELREG]{PIDCTRL\_LEVEL\_REG}。
+
+步骤 \arabic{STEP_CHANGE} 中，将
+寄存器 \hyperref[regdesc:PIDCTRLPIDCONFIRMREG]{PIDCTRL\_PID\_CONFIRM\_REG}、\hyperref[regdesc:PIDCTRLNMIMASKDISABLEREG]{PIDCTRL\_NMI\_MASK\_DISABLE\_REG} 置 1 后，
+PID 控制器并不会立即将 PID 切换为 \hyperref[regdesc:PIDCTRLPIDNEWREG]{PIDCTRL\_PID\_NEW\_REG} 中的值，
+也不会立即关闭 CPU NMI 中断屏蔽信号，
+而是会分别等待一定数量的时钟周期数后才会执行这两个任务。
+这两段等待时钟周期数即寄存器 \hyperref[regdesc:PIDCTRLPIDDELAYREG]{PIDCTRL\_PID\_DELAY\_REG}、\hyperref[regdesc:PIDCTRLNMIDELAYREG]{PIDCTRL\_NMI\_DELAY\_REG} 中的值。
+
+在步骤 \arabic{STEP_RELEASE_NON_NMI} 中还可以执行其他任务，
+只需要在步骤 \arabic{STEP_SET_DELAY} 中配置
+寄存器 \hyperref[regdesc:PIDCTRLPIDDELAYREG]{PIDCTRL\_PID\_DELAY\_REG}、\hyperref[regdesc:PIDCTRLNMIDELAYREG]{PIDCTRL\_NMI\_DELAY\_REG} 时包含这些任务的时间开销即可。
+
+\hypertarget{pidctrl-reg-summ}{}
+\section{寄存器列表}\label{sec:pidctrl-reg-summ}
+
+\subfile{\modulefiles/pidc_reg-summary_cn}
+
+\section{寄存器}
+
+本小节括号中的地址均为相对于 PID Controller 基地址的地址偏移量（相对地址），具体基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。寄存器绝对地址见章节 \ref{sec:pidctrl-reg-summ} \textit{\nameref{sec:pidctrl-reg-summ}}。
+
+\subfile{\modulefiles/pidc_reg_cn}
+
+\end{document}

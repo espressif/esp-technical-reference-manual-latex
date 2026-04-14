@@ -1,0 +1,216 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./02-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\setenglishformatting
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\hypertarget{dma}{}
+\chapter{DMA Controller (DMA)}
+\label{mod:dma}
+
+\section{Overview}
+
+Direct Memory Access (DMA) is used for high-speed data transfer between peripherals and memory, as well as from memory to memory. Data can be quickly moved with DMA without any CPU intervention, thus allowing for more efficient use of the cores when processing data.
+
+In ESP32, the following peripherals support DMA:
+\begin{itemize}
+    \item Three UART interfaces, namely UART0, UART1, and UART2, which use \nameref{sec:UDMA}.
+    \item Three SPI interfaces, namely SPI1, SPI2, and SPI3, which use \nameref{sec:dma-spi-dma}.
+    \item Two I2S interfaces, namely I2S0 and I2S1, which use \nameref{sec:dma-i2s-dma}.
+        \begin{tiplisting}
+            The ADC controller can use DMA through the I2S interface. See Section \nameref{sec:i2s-adc-dac} for details.
+        \end{tiplisting}
+    \item The SDIO slave interface, which uses the dedicated DMA described in \nameref{mod:sdioslave}.
+    \item The SD/MMC host interface, which uses the dedicated DMA described in \nameref{mod:sdhost}.
+    \item The Ethernet MAC (EMAC) interface, which uses the dedicated DMA described in \nameref{mod:ethernetmac}.
+    \item Bluetooth (BT).
+    \item Wi-Fi.
+\end{itemize}
+
+In the ESP32, 13 peripherals are capable of using DMA for data transfer, namely, UART0, UART1, UART2, SPI1, SPI2, SPI3, I2S0, I2S1, SDIO slave, SD/MMC host, EMAC, BT, and Wi-Fi.
+
+\section{Features}
+
+The DMA controllers in the ESP32 feature:
+
+\begin{itemize}
+    \item AHB bus architecture
+    \item Support for full-duplex and half-duplex data transfers
+    \item Programmable data transfer length in bytes
+    \item Support for 4-beat burst transfer
+    \item 328 KB DMA address space
+    \item All high-speed communication modules powered by DMA
+\end{itemize}
+
+\section{Functional Description}
+
+All modules that require high-speed data transfer in bulk contain a DMA controller. DMA addressing uses the same data bus as the CPU to read/write to the internal RAM.
+
+Each DMA controller features different functions. However, the architecture of the DMA engine (DMA\_ENGINE) is the same in all DMA controllers.
+
+\subsection{DMA Engine Architecture}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.5\textwidth]{./02-DMA/figures/DMA_ENGINE}}
+\centering
+\caption{DMA Engine Architecture}
+\label{Figure:DMA_ENGINE}
+\end{figure}
+
+The DMA Engine accesses SRAM over the AHB BUS. In Figure \ref{Figure:DMA_ENGINE}, the RAM represents the internal SRAM banks available on ESP32. Further details on the SRAM addressing range can be found in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. Software can use a DMA Engine by assigning a linked list to define the DMA operational parameters.
+
+The DMA Engine transmits the data from the RAM to a peripheral, according to the contents of the out\_link descriptor. Also, the DMA Engine stores the data received from a peripheral into a specified RAM location, according to the contents of the in\_link descriptor.
+
+\subsection{Linked List}
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{./02-DMA/figures/link_descriptor}
+\centering
+\caption{Linked List Structure}
+\label{Figure:link_descriptor}
+\end{figure}
+
+The DMA descriptor's linked lists (out\_link and in\_link) have the same structure. As shown in Figure \ref{Figure:link_descriptor}, a linked-list descriptor consists of three words. The meaning of each field is as follows:
+
+\begin{itemize}
+    \item owner (DW0) [31]: The allowed operator of the buffer corresponding to the current linked list.
+    \\ 1'b0: the allowed operator is the CPU;
+    \\ 1'b1: the allowed operator is the DMA controller.
+    \item eof (DW0) [30]: End-Of-File character.
+    \\ 1'b0: the linked-list item does not mark the end of the linked list;
+    \\ 1'b1: the linked-list item is at the end of the linked list.
+    \item reserved (DW0) [29:24]: Reserved bits.
+    \\ Software should not write 1's in this space.
+    \item length (DW0) [23:12]: The number of valid bytes in the buffer corresponding to the current linked list. The field value indicates the number of bytes to be transferred to/from the buffer denoted by word DW1.
+    \item size (DW0) [11:0]: The size of the buffer corresponding to the current linked list.
+    \\ {\bfseries NOTE}: The size must be word-aligned.
+    \item buffer address pointer (DW1): Buffer address pointer. This is the address of the data buffer.
+    \\ {\bfseries NOTE}: The buffer address must be word-aligned.
+    \item next descriptor address (DW2): The address pointer of the next linked-list item. The value is 0, if the current linked-list item is the last on the list (eof=1).
+\end{itemize}
+
+When receiving data, if the data transfer length is smaller than the specified buffer size, DMA will not use the remaining space. This enables the DMA engine to be used for transferring an arbitrary number of data bytes.
+
+\section{UART DMA (UDMA)}\label{sec:UDMA}
+
+The ESP32 has three UART interfaces that share two UDMA (UART DMA) controllers. The UHCI\_UART\textcolor{red}{\it{x}}\_CE (\textcolor{red}{\it{x}} is 0, 1, or 2) is used for selecting the UART controller to use the UDMA.
+
+\begin{figure}[H]
+\includegraphics[width=0.5\textwidth]{./02-DMA/figures/UDMA}
+\centering
+\caption{Data Transfer in UDMA Mode}
+\label{Figure:UDMA}
+\end{figure}
+
+Figure \ref{Figure:UDMA} shows the data transfer in UDMA mode. Before the DMA Engine receives data, software must initialize the receive-linked-list. UHCI\_INLINK\_ADDR is used to point to the first in\_link descriptor. The register must be programmed with the lower 20 bits of the address of the initial linked-list item. After UHCI\_INLINK\_START is set, the Universal Host Controller Interface (UHCI) will transmit the data received by UART to the Decoder. After being parsed, the data will be stored in the RAM as specified by the receive-linked-list descriptor.
+
+Before DMA transmits data, software must initialize the transmit-linked-list and the data to be transferred. UHCI\_\\OUTLINK\_ADDR is used to point to the first out\_link descriptor. The register must be programmed with the lower 20 bits of the address of the initial transmit-linked-list item. After UHCI\_OUTLINK\_START is set, the DMA Engine will read data from the RAM location specified by the linked-list descriptor and then transfer the data through the Encoder. The DMA Engine will then shift the data out serially through the UART transmitter.
+
+The UART DMA follows a format of (separator + data + separator). The Encoder is used for adding separators before and after data, as well as using special-character sequences to replace data that are the same as separators. The Decoder is used for removing separators before and after data, as well as replacing the special-character sequences with separators. There can be multiple consecutive separators marking the beginning or end of data. These separators can be configured through UHCI\_SEPER\_CH, with the default values being 0xC0. Data that are the same as separators can be replaced with UHCI\_ESC\_SEQ0\_CHAR0 (0xDB by default) and UHCI\_ESC\_SEQ0\_CHAR1 (0xDD by default). After the transmission process is complete, a UHCI\_OUT\_TOTAL\_EOF\_INT interrupt will be generated. After the reception procedure is complete, a UHCI\_IN\_\\SUC\_EOF\_INT interrupt will be generated.
+
+\begin{tiplisting}
+Please note that the buffer address pointer field in in\_link descriptors should be word-aligned, and the size field in the last in\_link descriptor should be at least 4 bytes larger than the length of received data.
+\end{tiplisting}
+
+\section{SPI DMA Interface}\label{sec:dma-spi-dma}
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.45\textwidth]{./02-DMA/figures/SPI_DMA}}
+\centering
+\caption{SPI DMA}
+\label{Figure:SPI_DMA}
+\end{figure}
+
+ESP32 SPI modules can use DMA as well as the CPU for data exchange with peripherals. As can be seen from Figure \ref{Figure:SPI_DMA}, two DMA channels are shared by SPI1, SPI2 and SPI3 controllers. Each DMA channel can be used by any one SPI controller at any given time.
+
+The ESP32 SPI DMA Engine also uses a linked list to receive/transmit data. Burst transmission is supported. The data size for a single transfer must be four bytes aligned. Consecutive data transfer is also supported.
+
+SPI1\_DMA\_CHAN\_SEL[1:0], SPI2\_DMA\_CHAN\_SEL[1:0] and SPI3\_DMA\_CHAN\_SEL[1:0] in DPORT\_SPI\_DMA\_\\CHAN\_SEL\_REG must be configured to enable the SPI DMA interface for a specific SPI controller. Each SPI controller corresponds to one domain which has two bits with values 0, 1 and 2. Value 3 is reserved and must not be configured for operation.
+
+Considering SPI1 as an example, \\
+if SPI SPI1\_DMA\_CHAN\_SEL[1:0] = 0, then SPI1 does not use any DMA channel;
+\\if SPI1\_DMA\_CHAN\_SEL[1:0] = 1, then SPI1 enables DMA channel1;
+\\if SPI1\_DMA\_CHAN\_SEL[1:0] = 2, then SPI1 enables DMA channel2.
+
+The SPI\_OUTLINK\_START bit in SPI\_DMA\_OUT\_LINK\_REG and the SPI\_INLINK\_START bit in SPI\_DMA\_IN\_LINK\_REG are used for enabling the DMA Engine. The two bits are self-cleared by hardware. When SPI\_OUTLINK\_START is set to 1, the DMA Engine starts processing the outbound linked list descriptor and prepares to transmit data. When SPI\_INLINK\_START is set to 1, then the DMA Engine starts processing the inbound linked-list descriptor and gets prepared to receive data.
+
+Software should configure the SPI DMA as follows:
+\begin{enumerate}
+    \item Reset the DMA state machine and FIFO parameters;
+    \item Configure the DMA-related registers for operation;
+    \item Configure the SPI-controller-related registers accordingly;
+    \item Set SPI\_USR to enable DMA operation.
+\end{enumerate}
+
+\section{I2S DMA Interface}\label{sec:dma-i2s-dma}
+The ESP32 integrates two I2S modules, I2S0 and I2S1, each of which is powered by a DMA channel. The REG\_I2S\_DSCR\_EN bit in I2S\_FIFO\_CONF\_REG is used for enabling the DMA operation. ESP32 I2S DMA uses the standard linked-list descriptor to configure DMA operations for data transfer. Burst transfer is supported. However, unlike the SPI DMA channels, the data size for a single transfer is one word, or four bytes. REG\_I2S\_RX\_EOF\_NUM[31:0] bit in I2S\_RXEOF\_NUM\_REG is used for configuring the data size of a single transfer operation, in multiples of one word.
+
+I2S\_OUTLINK\_START bit in I2S\_OUT\_LINK\_REG and I2S\_INLINK\_START bit in I2S\_IN\_LINK\_REG are used for enabling the DMA Engine and are self-cleared by hardware. When I2S\_OUTLINK\_START is set to 1, the DMA Engine starts processing the outbound linked-list descriptor and gets prepared to send data. When I2S\_INLINK\_START is set to 1, the DMA Engine starts processing the inbound linked-list descriptor and gets prepared to receive data.
+
+Software should configure the I2S DMA as follows:
+\begin{enumerate}
+    \item Configure I2S-controller-related registers;
+    \item Reset the DMA state machine and FIFO parameters;
+    \item Configure DMA-related registers for operation;
+    \item In I2S master mode, set I2S\_TX\_START bit or I2S\_RX\_START bit to initiate an I2S operation;\\
+    In I2S slave mode, set I2S\_TX\_START bit or I2S\_RX\_START bit and wait for data transfer to be initiated by the host device.
+\end{enumerate}
+
+For more information on I2S DMA interrupts, please see Section \hyperref[DMA Interrupts]{DMA Interrupts}, in Chapter \ref{mod:i2s} \textit{\nameref{mod:i2s}}.
+\end{document}

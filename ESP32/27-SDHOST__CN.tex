@@ -1,0 +1,512 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./27-SDHOST}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sdhost}{}
+\chapter{SD/MMC 主机控制器 (SDHOST)}
+\label{mod:sdhost}
+
+\section{概述}
+
+ESP32 存储卡控制器提供了一个访问安全数字输入输出卡 (SDIO)、MMC 卡和 CE-ATA 设备的硬件接口，用于连接高级外围设备总线 (APB) 和外部存储设备。ESP32 支持两个外部卡（卡0 和卡1）。
+
+\section{主要特性}
+ESP32 存储卡控制器具有以下特性：
+
+\begin{itemize}
+\item 支持两个外部卡
+\item 支持 SD 存储卡 3.0 和 3.01 标准
+\item 支持 MMC 版本 4.41、4.5、4.51
+\item 支持 CE-ATA 版本 1.1
+\item 支持 1-bit、4-bit 和 8-bit（仅卡 0 支持）模式
+\end{itemize}
+
+SD/MMC 外设连接的拓扑结构如图 \ref{Figure:card_system_topo} 所示。存储卡控制器支持两组外设工作，但不支持同时工作。
+
+\begin{figure}[h]
+    \includegraphics[width=0.6\textwidth]{./27-SDHOST/figures/cardsystemtopo.eps}
+    \centering
+    \caption{SD/MMC 外设连接的拓扑结构}
+    \label{Figure:card_system_topo}
+\end{figure}
+
+
+\section{SD/MMC 外部接口信号}
+
+SD/MMC 的外部接口信号主要为 clk、cmd、data 信号等，还包括卡中断、卡检测和写保护信号等。各个信号的方向如图 \ref{Figure:SDIO_HOST_IF} 所示。每个管脚的方向和描述如表 \ref{SDMMC Signal Description} 所示。
+
+\begin{figure}[H]
+    \includegraphics[width=0.7\textwidth]{./27-SDHOST/figures/SDIO_HOST_IF}
+    \centering
+    \caption{SD/MMC 外部接口信号}
+    \label{Figure:SDIO_HOST_IF}
+\end{figure}
+
+\begin{longtable}[c]{ |p{3cm}|p{4cm}|p{8cm}| }
+\caption{SD/MMC 管脚描述} \label{SDMMC Signal Description}\\
+\hline
+\rowcolor{lightgray}
+管脚 &方向 & 描述 \\
+\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+管脚 &方向 & 描述  \\
+\hline
+\endhead
+\endfoot
+cclk\_out & 输出 & 主机输出给从机的时钟线	\\\hline
+ccmd & 双向 & 指令／响应双向传输线 \\\hline
+cdata & 双向 & 数据读写双向传输线	\\\hline
+card\_detect\_n & 输入 & 探测接口上是否有卡存在的输入线 \\\hline
+card\_write\_prt & 输入 & 卡写保护输入线	\\\hline
+\end{longtable}
+
+\section{功能描述}
+\subsection{SD/MMC 架构}
+SD/MMC 的结构主要分为总线接口单元 (BIU) 和卡接口单元 (CIU) 两部分，如图 \ref{Figure:SDIO_HOST_block_diagram} 所示。其中：
+
+BIU 模块：提供寄存器访问的 APB 接口、FIFO 方式读写数据，和数据读写操作的 DMA 访问。
+
+CIU 模块：控制外部存储卡的接口协议，还提供时钟控制。
+
+\begin{figure}[H]
+    \includegraphics[width=0.7\textwidth]{./27-SDHOST/figures/SDIO_HOST_block_diagram}
+    \centering
+    \caption{SD/MMC 基本架构}
+    \label{Figure:SDIO_HOST_block_diagram}
+\end{figure}
+
+\subsubsection{BIU 模块}
+该模块通过主机接口单元 (HIU) APB 总线的方式访问寄存器和数据 FIFO。此外，它通过 DMA 接口提供独立的数据访问。图 \ref{Figure:SDIO_HOST_block_diagram} 中展示了 BIU 结构框图。
+
+BIU 提供以下功能模块：
+
+\begin{itemize}
+	\item 主机接口
+	\item DMA 接口
+	\item 中断控制
+	\item 寄存器访问
+	\item FIFO 访问
+	\item 上电/上拉控制和卡检测
+\end{itemize}
+
+\subsubsection{CIU 模块}
+该模块实现控制卡的接口协议。在 CIU 中，命令通路 (Cmd Path) 控制单元和数据通路 (Data Path) 控制单元将控制器连接到 SD/MMC/CE-ATA 卡的命令和数据端口。CIU 还提供时钟控制逻辑。图 \ref{Figure:SDIO_HOST_block_diagram} 展示了 CIU 结构框图。
+
+CIU 包含以下主要功能模块：
+
+\begin{itemize}
+	\item 命令通路
+	\item 数据通路
+	\item SDIO 中断控制
+	\item 时钟控制
+	\item Mux/Demux 单元
+\end{itemize}
+
+\subsection{命令通路}
+该命令通路具有以下功能：
+\begin{itemize}
+	\item 设置时钟参数
+	\item 设置卡命令参数
+	\item 向卡总线发送命令（ccmd\_out 线）
+	\item 接收卡总线响应（ccmd\_in 线）
+	\item 向 BIU 发送响应
+	\item 在命令线上发送 P-bit 位
+\end{itemize}
+
+命令通路状态机如图 \ref{Figure:cmd_state_machine} 所示。
+
+\begin{figure}[H]
+    \includegraphics[width=0.58\textwidth]{./27-SDHOST/figures/cmd_state_machine}
+    \centering
+    \caption{命令通路状态机}
+    \label{Figure:cmd_state_machine}
+\end{figure}
+
+\subsection{数据通路}
+
+数据通路模块在写入数据发送时弹出 FIFO 中的数据并在 cdata\_out 上发送数据；或者在读取数据时接收 cdata\_in 上的数据并将其导入 FIFO。只有数据发送命令不运行时，数据通路才会加载新的数据参数，包括 expected data、读/写数据发送、流/块发送、块大小、字节计数、卡类型、超时寄存器等。
+
+如果在命令寄存器中设置了 data\_expected 位，则新命令是数据传输命令，数据通路将开始执行以下操作：
+
+\begin{itemize}
+\item 若读/写位为 1 时，发送数据
+\item 若读/写位为 0 时，接收数据
+\end{itemize}
+
+\subsubsection{数据发送}
+数据发送状态机如图 \ref{Figure:tx_data_state_machine} 所示。模块在接收到数据写入命令的响应之后的两个时钟周期开始发送数据；即使命令通路检测到响应错误或循环冗余检查 (CRC) 错误，也会出现这种情况。如果由于响应超时而没有从卡接收到响应，则不发送数据。根据命令寄存器中 transfer\_mode 位的值，数据发送状态机将数据以流或块的形式放在卡数据总线上。
+
+\begin{figure}[H]
+    \includegraphics[width=0.6\textwidth]{./27-SDHOST/figures/tx_data_state_machine}
+    \centering
+    \caption{数据传输状态机}
+    \label{Figure:tx_data_state_machine}
+\end{figure}
+
+\subsubsection{数据接收}
+数据接收状态机如图 \ref{Figure:rx_data_state_machine} 所示。模块在数据读取命令完成后的两个时钟周期开始接收数据；即使命令通路检测到响应错误或响应 CRC 错误，也会如此。如果由于响应超时而未从卡接收到响应，那么 BIU 接收不到数据传输完成的信号。如果 CIU 发送的命令是卡的非法操作，那么卡无法读取数据，BIU 也不会接收到数据传输完成的信号。
+
+若在数据超时前未接收到数据，则数据通路向 BIU 发出数据超时信号并结束数据传输。根据命令寄存器中的 transfer\_mode 位的值，数据接收状态机以流或块的形式从卡数据总线获取数据。
+
+\begin{figure}[H]
+    \includegraphics[width=0.6\textwidth]{./27-SDHOST/figures/rx_data_state_machine}
+    \centering
+    \caption{数据接收状态机}
+    \label{Figure:rx_data_state_machine}
+\end{figure}
+
+\section{CIU 操作的软件限制}
+\begin{itemize}
+	\item 一次只能选择一个卡进行命令或数据传输。例如，当卡传送数据时，不应将新命令发送到另一张卡。但是新命令可以发送到同一张卡，用于读取状态或停止数据传输。
+	\item 一次只能发出一个数据传输命令。
+	\item 在开放式卡写操作期间，如果卡时钟因为 FIFO 为空而停止，那么软件必须首先将数据填充到 FIFO 中并启动卡时钟，然后才可以向卡发出一个停止/中止命令。
+	\item 在 SDIO/COMBO 卡传输期间，如果卡功能暂停，并且软件要恢复所暂停的传输，则必须首先重置 FIFO 并启动恢复命令，这和启动一个新的数据传输命令相似。
+	\item 在进行卡传输时发出卡复位命令（CMD0、CMD15 或者 CMD52\_reset），软件必须在命令寄存器上设置 stop\_abort\_cmd 位，保证 CIU 可以在发出卡复位命令后停止数据传输。
+	\item 当在 RINTSTS 寄存器中设置数据结束位错误时，CIU 不能保证 SDIO 中断。所以软件应忽略 SDIO 中断，并向卡发出停止/中止命令，使得卡停止进行读取数据传输。
+    \item 若在一个读卡过程中因为 FIFO 已满而停止卡时钟，软件应该至少读取两个 FIFO 地址来重启卡时钟。
+	\item 在一次命令/数据传输中只能选取一个 CE-ATA 设备。例如，当一个 CE-ATA 设备传输数据，其它 CE-ATA 设备不可传输新命令。
+	\item 使能 CE-ATA 设备的中断（nIEN = 0），若运行时有正在进行的 RW\_BLK 命令，则不应将新的 RW\_BLK 命令发送到同一设备（在此数据库中使用的 RW\_BLK 命令是由 CE-ATA 规格书定义的 RW\_MULTIPLE\_BLOCK MMC 命令）。只有在等待 CCS 时可以发送 CCSD。
+	\item 对同一设备来说，若中断在 CE-ATA 设备上未使能 (nIEN = 1)，则需要一个新命令来读取状态信息。
+	\item CE-ATA 设备不支持开放式传输。
+	\item CE-ATA 传输不支持 send\_auto\_stop 信号（软件不应设置 send\_auto\_stop 位）。
+\end{itemize}
+
+当命令起始位被置上去之后，在命令被 发送出去之前以下寄存器的值不能改变：
+
+\begin{itemize}
+	\item CMD --- 命令
+	\item CMDARG --- 命令参数
+	\item BYTCNT --- 字节计数
+	\item BLKSIZ --- 块大小
+	\item CLKDIV --- 时钟分频器
+	\item CKLENA --- 时钟使能
+	\item CLKSRC --- 时钟源
+	\item TMOUT --- 超时
+	\item CTYPE --- 卡类型
+\end{itemize}
+
+\section{收发数据 RAM}
+数据 RAM 子模块是一个收发数据缓冲区，分为接收和发送两个单元。收发时可以通过 CPU 的 APB 接口和 DMA 两种方式来进行读写操作，DMA 方式在章节 \ref{linkedlist} 中有详细介绍。
+
+\subsection{发送 RAM 模块}
+写数据有两种方式：DMA 方式和 CPU 读写。
+
+如果使能 SDIO 发送，那么可以通过 APB 总线接口或 DMA 方式将数据写入到发送的 RAM 里面。 其中，APB 的方式为 CPU 直接将数据写入寄存器 EMAC\_FIFO。
+
+\subsection{接收 RAM 模块}
+读数据有两种方式：DMA 方式和 CPU 读写。
+
+当数据通路子单元接收到数据时，该子数据会写入接收的 RAM 里面。在读取端可以通过 APB 总线或 DMA 的方式读出放入 RAM 中的数据。其中，APB 的方式为 CPU 直接读取寄存器 EMAC\_FIFO 中的值。
+
+\section{链表环结构}
+每一组链表由两部分组成：链表本身和数据 buffer。每一个链表指向一个唯一的数据 buffer 和 下一个链表。链表环结构如图 \ref{Figure:Chain_Descriptor} 所示。
+
+\begin{figure}[H]
+    \includegraphics[width=0.6\textwidth]{./27-SDHOST/figures/Chain_Descriptor}
+    \centering
+    \caption{链表环结构}
+    \label{Figure:Chain_Descriptor}
+\end{figure}
+
+\section{链表结构}\label{linkedlist}
+每个链表的结构如下，每个链表由 4 个 word 组成，如图 \ref{Figure:Descriptor} 所示。表 \ref{DES0}、表 \ref{DES1}、表 \ref{DES2}、表 \ref{DES3} 为链表描述。
+
+\begin{figure}[H]
+    \includegraphics[width=0.65\textwidth]{./27-SDHOST/figures/Descriptor}
+    \centering
+    \caption{链表结构}
+    \label{Figure:Descriptor}
+\end{figure}
+
+DES0 单元包含了控制和状态信息。
+
+\begin{longtable}[c]{ |p{1cm}|p{6cm}|p{8cm}| }
+\caption{DES0 链表描述}\label{DES0}\\\hline
+\rowcolor{lightgray}
+位 &名称 & 描述 \\
+\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述  \\
+\hline
+\endhead
+\endfoot
+\multirow{3}{*}{31} & \multirow{3}{*}{OWN} & 当设置时，该位表明链表归 DMAC 所有。当该位被重置，该位表明链表归主机所有。DMAC 在完成数据传输后清除该位。\\\hline
+\newpage
+\multirow{11}{*}{30} & \multirow{11}{*}{CES (Card Error Summary)} & 这些错误位表明了卡读/写的状态。 \\
+ & & 这些位也存在于 RINTSTS 之中，CES 是下列位的或运算：
+ \begin{itemize}
+     \item{EBE：结束位错误}
+     \item{RTO：响应超时}
+     \item{RCRC：响应 CRC}
+     \item{SBE：起始位错误}
+     \item{DRTO：读取数据超时}
+     \item{DCRC：用于接收的数据循环冗余校验}
+     \item{RE：响应错误}
+ \end{itemize}\vspace{-1.7em}
+ \\\hline
+29:6 & Reserved & Reserved	\\\hline
+\multirow{2}{*}{5} &\multirow{2}{*}{ER (End of Ring)}& 置位时，该位表示链表已经到达最后一个链表。DMAC 返回到链表的基地址，创建一个链表环。\\\hline
+\multirow{2}{*}{4} &\multirow{2}{*}{CH (Second Address Chained)}& 置位时，该位表示链表的第二个地址是下一个链表地址。置位该位时，BS2 (DES1[25:13]) 应该都归零。 \\\hline
+\multirow{3}{*}{3} & \multirow{3}{*}{FD (First Descriptor)}& 置位时，该位表示该链表包含了数据的第一缓冲区。若第一个缓冲区的大小为 0，则下一个链表包含数据的开始。\\\hline
+\multirow{5}{*}{2} & \multirow{5}{*}{LD (Last Descriptor)}& 该位与 DMA 传输的最后一个数据块相关。置位时，该位表示通过该链表指向的缓冲区是数据的最后一个缓冲区。在该链表完成之后，剩余字节计数为 0。换句话说，带有被置位的 LD 位的链表完成之后，剩余字节计数应为 0。\\\hline
+\multirow{3}{*}{1} & \multirow{3}{*}{DIC (Disable Interrupt on Completion)}& 置位时，为了保留在该链表指向的缓冲区中结束的数据，该位将阻止 DMAC 状态寄存器 (IDSTS) 上 TI/RI 位的设置。\\\hline
+0 & Reserved & Reserved\\\hline
+\end{longtable}
+
+DES1 元素包含了缓冲区大小。
+
+\begin{longtable}[c]{ |p{3cm}|p{4cm}|p{8cm}| }
+\caption{DES1} \label{DES1}\\
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述 \\
+\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述 \\
+\hline
+\endhead
+\endfoot
+31:26 & Reserved& Reserved  \\\hline
+25:13 & Reserved& Reserved\\\hline
+\multirow{3}{*}{12:0} & \multirow{3}{*}{BS1（Buffer 1 大小）}&  这些位表示数据缓冲区字节大小。缓冲区大小必须是 4 的倍数。如果缓冲区大小不是 4 的倍数，其结果暂未定义。该区不应为 0。\\\hline
+\end{longtable}
+
+DES2 元素包含了指向数据缓冲区的地址指针。
+
+\newpage
+\begin{longtable}[c]{ |p{3cm}|p{4cm}|p{8cm}| }
+\caption{DES2} \label{DES2}\\
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述 \\\hline
+31:0 &\makecell[l]{Buffer Address Pointer 1\\ （数据缓冲区地址指针）}& 这些位表示数据缓冲区的物理地址。\\\hline
+\end{longtable}
+
+如果当前的链表不是链表结构中的最后一个链表，那么 DES3 元素会包含指向下一个链表的地址指针。
+
+\begin{longtable}[c]{ |p{3cm}|p{4cm}|p{8cm}| }
+\caption{DES3} \label{DES3}\\
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述 \\
+\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+位 & 名称 & 描述 \\
+\hline
+\endhead
+\endfoot
+\multirow{4}{*}{31:0}& \multirow{4}{*}{\makecell[l]{Next Descriptor Address\\（下一个链表地址）}}& 如果置位第二个地址链字节 (DES0[4])，则该位会包含此地址包含指向下一个链表存在的物理内存的指针。\\
+&&如果这不是最后一个链表，则下一个链表地址指针必须满足 DES3[1:0] ＝ 0。\\\hline
+\end{longtable}
+
+\section{初始化}
+\subsection{DMAC 初始化}
+DMAC 初始化在以下情况出现：
+\begin{enumerate}
+\item 向 DMAC Bus Mode Register (BMOD\_REG) 来设置主机总线访问参数。
+\item 向 DMAC Interrupt Enable Register (IDINTEN) 写入数据来屏蔽不必要的中断类型。
+\item 软件驱动器创建传输链表列表或者接收链表列表。然后写入 DMAC 链表列表基址寄存器 (BDADDR)，为 DMAC 提供列表的起始地址。
+\item DMAC 引擎尝试从链表列表获取链表。
+\end{enumerate}
+
+\subsection{DMAC 数据发送初始化}
+使用 DMAC 发送应遵循以下配置：
+\begin{enumerate}
+\item 软件设置用于发送的元素 (DES0-DES3)，设置 OWN 位 (DES0[31])，并准备了数据缓冲区。
+\item 软件在 BIU 中的 CMD 寄存器中配置写数据命令。
+\item 软件还将设置所需的发送阈值大小（即 FIFOTH 寄存器中的 TX\_WMARK 字段）。
+\item DMAC 引擎读取链表并检查 OWN 位。如果 OWN 位未置位，则表明软件拥有链表。在这种情况下，DMAC 挂起，并在 IDSTS 寄存器中产生 Descriptor Unable 中断。此时，主机需要通过将任何值写入 PLDMND\_REG 来释放 DMAC。
+\item 然后软件等待 Command Done 位，如果没有错误从 BIU 报出，则表明可以完成发送。
+\item 然后 DMAC 引擎等待来自于 BIU 的 DMA 接口请求 (dw\_dma\_req)。该请求将基于配置的发送阈值生成。对于使用突发而不能访问的最后一个字节，则在 AHB 主接口上执行单次发送。
+\item DMAC 从软件内存的数据缓冲区读取发送数据，并通过 FIFO 将其传入卡中。
+\item 当数据跨越多个链表时，DMAC 将获取下一个链表，并继续使用下一个链表对其进行操作。最后一位链表位表明数据是否跨越多个链表。
+\item 当数据发送完成时，通过设置发送中断来更新 IDSTS 寄存器中的状态信息。另外，OWN 位由 DMAC 通过对 DES0 执行写操作来清零。
+\end{enumerate}
+
+\subsection{DMAC 数据接收初始化}
+使用 DMAC 接收应遵循以下配置：
+
+\begin{enumerate}
+\item 软件为接收数据建立元素 (DES0 - DES3)，设置 OWN 位 (DES0[31])。
+\item 软件通过 BIU 配置命令寄存器中为读数据命令。
+\item 软件设置所需的接收阈值（FIFOTH 寄存器中的 RX\_WMARK 字段）。
+\item DMAC 引擎读取链表并检查 OWN 位。如果 OWN 位未设置，则表明软件拥有链表。在这种情况下，DMAC 挂起，并在 IDSTS 寄存器中产生 Descriptor Unable 中断。此时，软件需要通过将任何值写入 PLDMND\_REG 来释放 DMAC。
+\item 然后软件等待 Command Done 位，如果没有错误从 BIU 报出，则表明可以完成接收。
+\item DMAC 引擎现在将等待来自于 BIU 的 DMA 接口请求 (dw\_dma\_req)。该请求将基于配置的发送阈值生成。对于使用 burst 而不能访问的最后一个字节，则在 AHB 上执行单次传输。
+\item DMAC 通过 FIFO 读取数据，并传输至软件内存。
+\item 当数据跨越多个链表时，DMAC 将获取下一个链表，并继续使用下一个链表对其进行操作。最后一位链表位表明数据是否跨越多个链表。
+\item 当数据传输完成时，通过设置发送中断来更新 IDSTS 寄存器中的状态信息。另外，OWN 位由 DMAC 通过对 DES0 执行写操作来清零。
+\end{enumerate}
+
+\section{SD/MMC 时序}
+
+图 \ref{fig:sdmmc-timing} 为高速 (HS) 模式下 SD/MMC 接口的时序图，表 \ref{tab:sdmmc-timing} 为时序要求。这些时序要求对保证数据通信的可靠性和同步性至关重要。
+
+\begin{figure}[h]
+    \includegraphics[width=0.7\textwidth]{./27-SDHOST/figures/esp32-sdmmc-timing}
+    \centering
+    \caption{HS 模式下 SD/MMC 时序图}\label{fig:sdmmc-timing}
+\end{figure}
+\clearpage
+\begin{longtable}[c]{|l|l|l|r|r|r|c|}
+    \caption{高速模式下 SD/MMC 接口时序要求}
+    \label{tab:sdmmc-timing}
+    \\\hline
+    \rowcolor{lightgray}
+\textbf{符号} & \textbf{参数} & \textbf{条件} & \textbf{最小值} & \textbf{典型值} & \textbf{最大值} & \textbf{单位} \\\hline
+t$_{W(CKL)}$ & 时钟低电平时间 & f$_{PP}$ = 80 MHz & 11.5 & 12.5 & --- & ns \\\hline
+t$_{W(CKH)}$ & 时钟高电平时间 & f$_{PP}$ = 80 MHz & 11.5 & 12.5 & --- & ns \\\hline
+t$_{ISU}$ & 输入建立时间 & f$_{PP}$ = 80 MHz & 3.4 & --- & --- & ns \\\hline
+t$_{IH}$ & 输入保持时间 & f$_{PP}$ = 80 MHz & 1.1 & --- & --- & ns \\\hline
+t$_{OV}$ & 输出有效时间 & f$_{PP}$ = 80 MHz & --- & --- & 5.9 & ns \\\hline
+t$_{OH}$ & 输出保持时间 & f$_{PP}$ = 80 MHz & 0.5 & --- & --- & ns \\\hline
+\end{longtable}
+
+\textbf{说明：}
+
+\begin{itemize}
+    \item f$_{PP}$ - 数据传输的时钟频率。
+    \item t$_{W(CKL)}$/t$_{W(CKH)}$ - 时钟低/高电平时间：表示在时钟频率 (f$_{PP}$) 为 80 MHz 时，时钟信号 (CK) 应保持在低电平或高电平状态的时间。
+    \item t$_{ISU}$ - 输入建立时间：指的是 CMD 和 D 数据线上的输入信号达到稳定所需的时间。
+    \item t$_{IH}$ - 输入保持时间：指的是 CMD 和 D 数据线上的输入信号需要保持稳定的时间。
+    \item t$_{OV}$ - 输出有效时间：指的是 CMD 和 D 数据线上的输出信号达到稳定、可以使用所需要的时间。
+    \item t$_{OH}$ - 输出保持时间：指的是 CMD 和 D 数据线上的输出信号保持有效的时间。
+    \item CMD 和 D 输入/输出的时序是相对于时钟信号 CK 来测量的。
+\end{itemize}
+
+
+
+
+\section{时钟相位选择}\label{sdmmc_phase_sel}
+如果输入信号或输出信号的采样有时序问题，用户可以参照下图改变时钟相位。
+\begin{figure}[h]
+    \fbox{\includegraphics[width=0.7\textwidth]{./27-SDHOST/figures/sdmmc_phase_sel}}
+    \centering
+    \caption{时钟相位选择}
+\end{figure}
+
+有关时钟相位选择寄存器 \hyperref[regdesc:CLKEDGESEL]{CLK\_EDGE\_SEL} 的说明，请见寄存器章节。
+
+
+\section{中断}
+中断可以通过各种情况产生。IDSTS 寄存器包含了可能导致中断的所有位。IDINTEN 寄存器包含了一个适用于所有能导致中断情况的使能位。
+
+IDSTS 寄存器中有两组中断汇总—正常中断汇总 bit8 NIS 和异常中断汇总 bit9 AIS。将 1 写入相应的位，可以清除中断。当某组中的所有使能中断都被清除，相应的汇总位将被清零。当两组的汇总位都被清零，中断信号 dmac\_intr\_o 将取消。
+
+中断不排序，如果中断在驱动程序响应之前发生，则不会产生其他中断。 例如，接收中断 IDSTS [1] 表示一个或多个数据已传输到主机缓冲区。
+
+多个事件同时只会产生一个中断。驱动程序必须扫描 IDSTS 寄存器来查找导致中断的原因。
+
+\hypertarget{sdhost-reg-summ}{}
+\section{寄存器列表}\label{sec:sdmmc-reg-summ}
+
+本小节的所有地址均为相对于 SDMMC 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+\subfile{\modulefiles/sdmmc_reg_summary_cn.tex}
+
+\section{寄存器}
+
+SD/MMC 寄存器通过 CPU 的 APB 总线访问。
+
+本小节的所有地址均为相对于 SD/MMC 加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/sdmmc_reg_cn.tex}
+
+\end{document}

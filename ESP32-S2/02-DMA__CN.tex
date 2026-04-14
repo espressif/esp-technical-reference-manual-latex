@@ -1,0 +1,416 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./02-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{dma}{}
+\chapter{DMA 控制器 (DMA)}
+\label{mod:dma}
+
+\section{概述}
+
+直接存储访问 (Direct Memory Access, DMA) 用于在外设与存储器之间以及存储器与存储器之间提供高速数据传输。可以在无需任何 CPU 操作的情况下通过 DMA 快速移动数据，从而提高了 CPU 的效率。
+
+ESP32-S2 包括三种DMA：Internal DMA，EDMA和Copy DMA。Internal DMA只能访问片内RAM，用于内存与外设之间的数据传输；EDMA既能访问片内RAM也能访问片外RAM，用于存储器与外设之间的数据传输；Copy DMA只能访问片内RAM，用于内存与内存之间的高速数据传输。
+
+ESP32-S2 中有 8 个外设具有 DMA 功能。如表\ref{Figure:Module_with_DMA}所示，UART0与UART1共用一个Internal DMA；SPI3与ADC Controller共用一个Internal DMA；AES与SHA共用一个 EDMA （即加密 DMA）；SPI2与I2S0各有一个单独的 EDMA。除此之外，CPU Peripheral 模块下还包括一个Copy DMA。
+
+\begin{figure}[!ht]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/module_with_dma_transfer.eps}}
+\centering
+\caption{具有 DMA 功能的模块和支持的数据传输类型}
+\label{Figure:Module_with_DMA}
+\end{figure}
+\section{特性}
+
+DMA 控制器具有以下几个特点：
+
+\begin{itemize}
+    \item AHB 总线架构
+    \item 支持半双工和全双工收发数据
+    \item 数据传输以字节为单位，传输数据量可软件编程
+    \item 访问内部RAM时，支持 INCR burst 传输
+    \item DMA 能够访问的内部 RAM 最大地址空间为320 KB
+    \item DMA 能够访问的最大外部地址空间为10.5 MB
+    \item 通过 DMA 实现高速数据传输
+\end{itemize}
+
+\section{功能描述}
+
+ESP32-S2 中所有需要进行高速数据传输的模块都具有 DMA 功能。DMA 控制器与 CPU 的数据总线使用相同的地址空间访问内部和外部RAM。根据各自模块的需求，各个模块的 DMA 控制器功能有所差别，但是 DMA 引擎 (DMA\_ENGINE) 的结构相同。
+
+\subsection{DMA 引擎 的架构}
+
+\begin{figure}[!ht]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/DMA_ENGINE}}
+\centering
+\caption{DMA 引擎 的架构}
+\label{Figure:DMA_ENGINE}
+\end{figure}
+
+DMA 引擎通过 AHB\_BUS 将数据存入外部或内部 RAM 或者将数据从外部或内部RAM 取出。图 \ref{Figure:DMA_ENGINE} 为 DMA 引擎 基本架构图。RAM 的具体使用范围详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。软件可以通过挂载链表的方式来使用 DMA 引擎。DMA\_ENGINE 根据 outlink 中的内容将相应 RAM 中的数据发送出去，也可根据 inlink 中的内容将接收的数据存入指定 RAM 地址空间。
+
+
+\subsection{链表}
+
+\begin{figure}[!ht]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_descriptor}
+\centering
+\caption{链表结构图}
+\label{Figure:link_descriptor}
+\end{figure}
+
+图 \ref{Figure:link_descriptor} 所示为链表的结构图。发送链表与接收链表结构相同。每个链表由一个或者若干个描述符构成，一个描述符由 3 个字组成。链表应存放在内部 RAM 中，供 DMA 引擎使用。描述符每一字段的意义如下：
+
+\begin{itemize}
+    \item owner (DW0) [31]：表示当前描述符对应的 buffer 允许的操作者。\\
+    1'b0：允许的操作者为 CPU；\\
+    1'b1：允许的操作者为 DMA 控制器。\\
+    在 DMA 使用完该描述符对应的 buffer 后，硬件会将该 bit 清零。也可通过置位 \textcolor{red}{\it{PERI}}\_IN\_LOOP\_TEST 位关闭硬件自动清零的功能。软件在挂载链表时需要将该 bit 置1。
+
+    {\bfseries 注意： }\textcolor{red}{\it{PERI}} 指包含DMA的外设模块名，如I2S，SPI，UHCI等。
+    \item suc\_eof (DW0) [30]：表示结束标志。\\
+    1'b0：当前描述符不是链表中的最后一个描述符；\\
+    1'b1：当前描述符为数据包的最后一个描述符。\\
+    对于接收描述符，需要软件将该 bit 写 0，硬件会在收完 1 个包后将该 bit 置1。对于发送描述符，需要软件在包的最后一个描述符中的该 bit 置 1。
+    \item Reserved (DW0) [29]：保留。
+    \item err\_eof (DW0) [28]：表示接收结束错误标志。\\
+    该bit只用于UART DMA接收数据。对于接收描述符，硬件在收完1个包并检测到接收数据错误会将该bit置1。
+    \item Reserved (DW0) [27:24]：保留。
+    \item length (DW0) [23:12]：表示当前描述符对应的 buffer 中的有效字节数。对于发送描述符，该段由软件填写，表示从 buffer 中读取数据时能够读取的字节数；对于接收描述符该段由硬件使用完该 buffer 后自动填写，向 buffer 中存储数据时表示已存数据的字节数。
+    \item size (DW0) [11:0]：表示当前描述符对应的 buffer 的大小。\\
+    当 DMA 访问片外 RAM 时，该大小必须是16/32/64 bytes 的整数倍，详情见章节 \ref{access_exram} \textit{\nameref{access_exram}}。
+    \item buffer address pointer (DW1)：buffer 地址指针。\\
+    当 DMA 访问片外 RAM 时，写地址必须根据 \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE 大小对齐，详情见章节 \ref{access_exram} \textit{\nameref{access_exram}}。
+    \item next descriptor address (DW2)：下一个描述符的地址指针。当前描述符为链表中最后一个描述符时 (suc\_eof = 1)，该值可以为 0。并且描述符的地址指针只能在片内RAM。\\
+\end{itemize}
+
+
+用 DMA 接收数据时，如果接收数据的长度小于当前描述符指定的 buffer 长度，那么下一个描述符对应的接收数据不会占用该 buffer 的剩余空间。
+
+\subsection{启动DMA}
+
+软件通过挂载链表的方式来使用DMA。对于接收数据，软件挂载好接收链表，配置 \textcolor{red}{\it{PERI}}\_INLINK\_ADDR字段指向第一个接收链表描述符。置位 \textcolor{red}{\it{PERI}}\_INLINK\_START位启动DMA。对于发送数据，软件挂载好发送链表并准备好发送数据，配置 \textcolor{red}{\it{PERI}}\_OUTLINK\_ADDR 字段指向第一个发送链表描述符。置位 \textcolor{red}{\it{PERI}}\_OUTLINK\_START 位启动DMA。\textcolor{red}{\it{PERI}}\_INLINK\_START 与 \textcolor{red}{\it{PERI}}\_OUTLINK\_START位由硬件自动清零。
+
+DMA支持Restart功能。如果不确定已挂载链表的使用状态（使用完或正在使用中），又希望挂载新的链表，利用Restart功能，可以完成挂载新的链表而又不影响已挂载链表的正常使用。软件使用该功能时，需要重写已挂载链表的最后一个描述符，使其第三个word中的内容指向新链表的首地址；然后挂载新的链表，如图 \ref{Figure:link_restart}所示；并置位 \textcolor{red}{\it{PERI}}\_INLINK\_RESTART 或者 \textcolor{red}{\it{PERI}}\_OUTLINK\_RESTART（这两个位由硬件自动清零）。硬件会在读取已挂载链表的最后一个描述符时，获取新挂载链表的地址，从而继续读取新挂载的链表。
+
+\begin{figure}[!ht]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/link_restart}
+\centering
+\caption{链表关系图}
+\label{Figure:link_restart}
+\end{figure}
+
+
+\subsection{读链表}
+
+软件在配置并启动 DMA 后，DMA会从内部RAM读取链表。置位 \textcolor{red}{\it{PERI}}\_IN\_DSCR\_ERR\_INT\_ENA 或者 \textcolor{red}{\it{PERI}}\_OUT\_DSCR\_ERR\_INT\_ENA 位使能描述符错误中断。访问片内RAM时，当描述符中第二个word指示的地址不在 \hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF；访问片外RAM时，当描述符中第二个word指示的地址不在 \hexprefix{}3F500000 \verb+~+ \hexprefix{}3FF7FFFF时，产生描述符错误中断。\\
+{\bfseries 注意：}描述符的第三个word指示的地址只能在片内，指向下一个可用描述符；所有描述符都需存在内存中。
+
+
+\subsection{数据传输结束标志}
+
+DMA通过EOF来指示数据传输结束。发送数据时，置位 \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT\_ENA 位使能\\ \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT中断， 当带有 EOF 标志的描述符对应 buffer 的数据传输完成后， DMA 会产生该中断。 接收数据时， 置位 \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT\_ENA 位使能 \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT 中断，表示数据接收完成。对于 UART DMA 还支持中断 UHCI\_IN\_ERR\_EOF\_INT，置位 \hyperref[fielddesc:UHCIINERREOFINTENA]{UHCI\_IN\_ERR\_EOF\_INT\_ENA}使能该中断中断，表示接收完成但接收数据有错误。
+
+软件在检测到 \textcolor{red}{\it{PERI}}\_OUT\_TOTAL\_EOF\_INT 或 \textcolor{red}{\it{PERI}}\_IN\_SUC\_EOF\_INT 中断时，可以记录 \textcolor{red}{\it{PERI}}\_OUTLINK\_DSCR\_ADDR 或 \textcolor{red}{\it{PERI}}\_INLINK\_DSCR\_ADDR 字段的值，即最后一个描述符的地址。需要注意，这两个地址为真实描述符地址右移两bit的结果。这样，软件可以知道哪些描述符已经被使用并根据需要回收描述符。
+
+{\bfseries 注意：}本章中提到发送链表描述符的 EOF 为 suc\_eof，接收链表描述符的 EOF 可以为 suc\_eof 和 err\_eof。
+
+\subsection{Internal DMA} \label{internal DMA}
+Internal DMA 只能访问片内 RAM，对应的外设包括 UART0, UART1，SPI3 和 ADC Controller。Internal DMA 可访问的片内 RAM 地址空间为：\hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF。Internal DMA 访问片内 RAM 时，链表描述符中的参数（size，length，buffer address pointer）支持非word对齐模式。即 Internal DMA 可以从可访问地址空间的任意起始地址读取长度为 length 的数据，或者将长度为 length 的数据写入可访问地址空间的任意连续地址。
+
+\subsection{EDMA} \label{edma}
+EDMA 既可以访问片内 RAM 也可以访问片外 RAM，对应的外设包括 I2S0，SPI2，AES 和 SHA。
+
+\subsubsection{访问片内RAM}
+
+EDMA访问片内 RAM 时，可访问的地址空间与 Internal DMA一样，为\hexprefix{}3FFB0000 \verb+~+ \hexprefix{}3FFFFFFF。此时，链表描述符中的参数（size，length，buffer address pointer）也支持非word对齐模式。需要注意的是，
+EDMA 接收数据时，当两帧数据中有一个以上数据带有 null 标识符时（null标识符表示该数据为空，EDMA不会将该空数据写入 memory，并且null标识符只能与EOF同时产生），如图\ref{Figure:inter_receive_data}所示，第一帧数据的EOF与第二帧数据的EOF间隔必须大于3字节。这里EOF可以为suc\_eof也可以为err\_eof。
+
+对于发送数据，EDMA 还支持突发传输以提高发送数据传输效率，置位 \textcolor{red}{\it{PERI}}\_OUT\_DATA\_BURST\_EN 位，使能发送数据突发传输。
+
+\begin{figure}[!ht]
+\includegraphics[width=0.5\textwidth]{\modulefiles/figures/inter_receive_data}
+\centering
+\caption{EDMA访问片内RAM时的数据帧示意图}
+\label{Figure:inter_receive_data}
+\end{figure}
+
+\subsection{访问片外RAM} \label{access_exram}
+EDMA 访问片外 RAM 时，对应的地址空间为：\hexprefix{}3F500000 \verb+~+ \hexprefix{}3FF7FFFF。EDMA 支持三种不同的 block size，即16/32/64字节，分别对应一次传输 16/32/64 字节。通过配置 \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE 位来选择不同的block size，并且所有的 EDMA 需要配置成相同的 block size。
+
+访问片外 RAM 时，链表描述符中的参数需要遵循按block size对齐的要求。 具体如下，对于接收链表描述符，size，buffer address pointer 需要保持 16/32/64 字节对齐。当接收的数据长度不为 16/32/64 的整数倍时，EDMA 将在一帧数据的结尾填入无效数据使总共的接收数据长度为 16/32/64 的整数倍。软件可以在查询到 \textcolor{red}{\it{PERI}}\_DMA\_IN\_SUC\_EOF\_INT 后，检查接收链表描述符中的参数 length 得到接收有效数据长度。对于发送链表描述符，其参数 size、length 和 buffer address pointer 没有 block size 对齐要求。 表\ref{table:external ram excess} 显示了\textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE 与对齐方式的关系。
+
+\begin{longtable}[c]{|p{4cm}|p{3cm}|p{3cm}|}
+\caption{配置寄存器、block size 和对齐方式的关系表}
+\label{table:external ram excess}\\
+\hline
+    \rowcolor{lightgray}    \textcolor{red}{\it{PERI}}\_EXT\_MEM\_BK\_SIZE & Block Size & 对齐方式\\
+    \hline
+    0   & 16 字节 &  16 字节对齐 \\
+    \hline
+    1   & 32 字节 &  32 字节对齐 \\
+    \hline
+    2   & 64 字节 &  64 字节对齐  \\
+    \hline
+\end{longtable}
+
+\section{Copy DMA控制器}
+
+Copy DMA用于芯片内存与内存之间数据的传输，并且只能访问片内RAM。 图\ref{Figure:copy_dma}所示为Copy DMA引擎的架构，与Internal DMA与EDMA不同的是，Copy DMA通过发送链表将片内RAM的数据取出存入DMA内部FIFO，并通过接收链表将内部FIFO中的数据写入目标片内RAM。
+
+Copy DMA 的软件配置流程如下：
+\begin{enumerate}
+   \item 将 \hyperref[fielddesc:CPDMAINRST]{CP\_DMA\_IN\_RST}、\hyperref[fielddesc:CPDMAOUTRST]{CP\_DMA\_OUT\_RST}、\hyperref[fielddesc:CPDMAFIFORST]{CP\_DMA\_FIFO\_RST} 和 \hyperref[fielddesc:CPDMACMDFIFORST]{CP\_DMA\_CMDFIFO\_RST} 位先置 1 后置 0，复位 Copy DMA 状态机和 FIFO 指针；
+   \item 挂载好发送链表，配置 \hyperref[fielddesc:CPDMAOUTLINKADDR]{CP\_DMA\_OUTLINK\_ADDR} 指向第一个发送链表描述符；
+   \item 挂载好接收链表，配置 \hyperref[fielddesc:CPDMAINLINKADDR]{CP\_DMA\_INLINK\_ADDR} 指向第一个接收链表描述符；
+   \item 置位 \hyperref[fielddesc:CPDMAOUTLINKSTART]{CP\_DMA\_OUTLINK\_START} 启动DMA发送；
+   \item 置位 \hyperref[fielddesc:CPDMAINLINKSTART]{CP\_DMA\_INLINK\_START} 启动DMA接收。
+\end{enumerate}
+
+
+\begin{figure}[!ht]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/copy_dma}
+\centering
+\caption{Copy DMA引擎架构}
+\label{Figure:copy_dma}
+\end{figure}
+
+\section{UART DMA (UDMA) 控制器}
+
+ESP32-S2 中有 2 个 UART 接口，它们共用 1 个 UDMA 控制器。UHCI\_UART\_CE 寄存器用于选择 哪个串口占用UDMA。
+
+\begin{figure}[!ht]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/UDMA}
+\centering
+\caption{UDMA 模式数据传输}
+\label{Figure:UDMA}
+\end{figure}
+
+图 \ref{Figure:UDMA} 为 UDMA 方式数据传输图。在 UDMA 接收数据前，软件将接收链表准备好。\hyperref[fielddesc:UHCIINLINKADDR]{UHCI\_INLINK\_ADDR} 用于指向第一个接收链表描述符。 置位 \hyperref[fielddesc:UHCIINLINKSTART]{UHCI\_INLINK\_START} 之后，通用主机控制器接口 (UHCI) 会将 UART 接收到的数据传送给 Decoder。经过 Decoder 解析之后的数据在 UDMA 的控制下存入接收链表指定的 RAM 空间。
+
+在 UDMA 发送数据前，软件需要将发送链表和发送数据准备好，\hyperref[fielddesc:UHCIOUTLINKADDR]{UHCI\_OUTLINK\_ADDR} 用于指向第一个发送链表描述符。 置位 \hyperref[fielddesc:UHCIOUTLINKSTART]{UHCI\_OUTLINK\_START} 之后，DMA 引擎即从链表中指定的 RAM 地址读取数据，并通过 Encoder 进行数据包封装，然后经 UART 的发送模块串行发送出去。
+
+UDMA 的数据包格式为（分隔符+数据+分隔符）。Encoder 用于在数据前后加上分隔符，并将数据中和分隔符一样的数据用特殊字符替换。Decoder 用于去除数据包前后分隔符，并将数据中的特殊字符进行替换为分隔符。数据前后的分隔符可以有连续多个。分隔符可由 \hyperref[fielddesc:UHCISEPERCHAR]{UHCI\_SEPER\_CHAR} 进行配置，默认值为 \hexprefix{}C0。数据中与分隔符一样的数据可以用 \hyperref[fielddesc:UHCIESCSEQ0CHAR0]{UHCI\_ESC\_SEQ0\_CHAR0}（默认为 \hexprefix{}DB）和 \hyperref[fielddesc:UHCIESCSEQ0CHAR1]{UHCI\_ESC\_SEQ0\_CHAR1}（默认为\hexprefix{}DD）进行替换。当数据全部发送完成后，会产生 UHCI\_OUT\_TOTAL\_EOF\_INT 中断。当数据接收完成后，会产生 UHCI\_IN\_SUC\_EOF\_INT 中断。
+
+\section{SPI DMA 控制器}
+
+\begin{figure}[!ht]
+\fbox{\includegraphics[width=0.4\textwidth]{\modulefiles/figures/spi_dma}}
+\centering
+\caption{SPI DMA}
+\label{Figure:spi_dma}
+\end{figure}
+
+ESP32-S2 SPI 除了使用 CPU 实现与外设的数据交换外，还可以使用 DMA 。如图 \ref{Figure:spi_dma} 所示，SPI2和SPI3分别单独使用一个DMA。
+
+ESP32-S2 SPI DMA 使用链表接收/发送数据，发送数据支持 burst 操作，一次接收/发送的数据长度至少为 1 个字节。
+
+寄存器 \hyperref[regdesc:SPIDMAOUTLINKREG]{SPI\_DMA\_OUT\_LINK\_REG} 的 \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} 位和寄存器 \hyperref[regdesc:SPIDMAINLINKREG]{SPI\_DMA\_IN\_LINK\_REG} 的 \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} 位用于使能 DMA 引擎，这两个位由硬件清零。当 \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} 位被置为 1 时，DMA 引擎 开始处理发送链表，并准备发送数据；当 \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} 位被置为 1 时， DMA 引擎 开始处理接收链表，并准备接收数据。
+
+SPI DMA 接收数据时软件配置流程如下：
+\begin{enumerate}
+    \item 将 \hyperref[fielddesc:SPIINRST]{SPI\_IN\_RST}、\hyperref[fielddesc:SPIAHBMFIFORST]{SPI\_AHBM\_FIFO\_RST} 和 \hyperref[fielddesc:SPIAHBMRST]{SPI\_AHBM\_RST} 位先置 1 后置 0，复位 DMA 状态机和 FIFO 指针；
+    \item 挂载好接收链表，配置 \hyperref[fielddesc:SPIINLINKADDR]{SPI\_INLINK\_ADDR} 指向第一个接收链表描述符；
+    \item 置位 \hyperref[fielddesc:SPIINLINKSTART]{SPI\_INLINK\_START} 启动 DMA 接收。\\
+\end{enumerate}
+
+SPI DMA 发送数据时的软件配置流程如下：
+\begin{enumerate}
+    \item 将 \hyperref[fielddesc:SPIOUTRST]{SPI\_OUT\_RST}、\hyperref[fielddesc:SPIAHBMFIFORST]{SPI\_AHBM\_FIFO\_RST} 和 \hyperref[fielddesc:SPIAHBMRST]{SPI\_AHBM\_RST} 位先置 1 后置 0，复位 DMA 状态机和 FIFO 指针；
+    \item 挂载好发送链表，配置寄存器 \hyperref[fielddesc:SPIOUTLINKADDR]{SPI\_OUTLINK\_ADDR} 指向第一个发送链表描述符；
+    \item 置位 \hyperref[fielddesc:SPIOUTLINKSTART]{SPI\_OUTLINK\_START} 启动 DMA 发送。
+\end{enumerate}
+
+{\bfseries 注意: }在使用SPI2与SPI3 DMA实现片内 RAM 与片外 RAM 之间数据传输时，需要置位\hyperref[fielddesc:SPIMEMTRANSEN]{SPI\_MEM\_TRANS\_EN}。
+
+
+SPI2与SPI3 DMA还支持分段传输模式，具体内容请参考章节 \ref{mod:spi} \textit{\nameref{mod:spi}}。
+
+\section{I2S DMA 控制器}
+
+ESP32-S2 I2S 单独使用一个 DMA。寄存器 \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG} 的 \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} 位用于使能 I2S 的 DMA 操作。ESP32-S2 I2S DMA 使用链表接收/发送数据，发送数据支持 burst 操作。 寄存器 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 的 \hyperref[fielddesc:I2SRXEOFNUM]{I2S\_RX\_EOF\_NUM}[31:0] 位用于配置 DMA 一次接收数据个数，单位为字。
+
+寄存器 \hyperref[regdesc:I2SOUTLINKREG]{I2S\_OUT\_LINK\_REG} 的 \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} 位和寄存器 \hyperref[regdesc:I2SINLINKREG]{I2S\_IN\_LINK\_REG} 的
+\hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} 位用于使能 DMA 引擎, 这两个位由硬件清零。 当 \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} 位被置为 1 时， DMA 引擎 开始处理发送链表，并准备发送数据，当 \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} 位被置为 1 时， DMA 引擎 开始处理接收链表，并准备接收数据。
+
+I2S DMA 接收数据时的软件配置流程如下：
+\begin{enumerate}
+   \item 将 \hyperref[fielddesc:I2SINRST]{I2S\_IN\_RST}、\hyperref[fielddesc:I2SAHBMFIFORST]{I2S\_AHBM\_FIFO\_RST} 和 \hyperref[fielddesc:I2SAHBMRST]{I2S\_AHBM\_RST} 位先置 1 后置 0，复位 DMA 状态机和 FIFO 指针；
+   \item 挂载好接收链表，配置 \hyperref[fielddesc:I2SINLINKADDR]{I2S\_INLINK\_ADDR} 指向第一个接收链表描述符；
+   \item 置位 \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} 启动 DMA 接收。
+\end{enumerate}
+
+I2S DMA 发送数据时的软件配置流程如下：
+\begin{enumerate}
+   \item 对 \hyperref[fielddesc:I2SOUTRST]{I2S\_OUT\_RST}、\hyperref[fielddesc:I2SAHBMFIFORST]{I2S\_AHBM\_FIFO\_RST} 和 \hyperref[fielddesc:I2SAHBMRST]{I2S\_AHBM\_RST} 位置 1 然后置 0，复位 DMA 状态机和 FIFO 指针；
+   \item 挂载好发送链表，配置 \hyperref[fielddesc:I2SOUTLINKADDR]{I2S\_OUTLINK\_ADDR} 指向第一个发送链表描述符；
+   \item 置位 \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} 启动 DMA 发送。
+\end{enumerate}
+
+ {\bfseries 注意: }在使用I2S DMA实现片内 RAM 与片外 RAM 之间数据传输时，需要置位\hyperref[fielddesc:I2SMEMTRANSEN]{I2S\_MEM\_TRANS\_EN}。
+
+I2S DMA在 I2S 模式下数据在 buffer 中的存放格式请参考章节 \ref{mod:i2s} \textit{\nameref{mod:i2s}} 中 I2S 模式的相关描述；I2S DMA在LCD模式下数据在buffer中的存放格式请参考章节 \ref{mod:i2s} \textit{\nameref{mod:i2s}} 中 LCD 模式的相关描述。\\
+I2S DMA 中断说明详见章节 \ref{mod:i2s} \textit{\nameref{mod:i2s}} \ref{section:DMA interrupts} \textit{\nameref{section:DMA interrupts}}。
+
+\section{加密 DMA 控制器}\label{subsection:dma-crypto}
+ESP32-S2 的加密模块 AES 和 SHA 有一个专用的 EDMA，称为加密 DMA。置位比特 \hyperref[fielddesc:CRYPTODMAAESSHASELECT]{CRYPTO\_DMA\_AES\_SHA\_SELECT} 选择由 SHA 使用加密 DMA，清零比特 \hyperref[fielddesc:CRYPTODMAAESSHASELECT]{CRYPTO\_DMA\_AES\_SHA\_SELECT} 选择由 AES 使用加密 DMA。
+
+加密 DMA 接收数据时，DMA 的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:CRYPTODMAINRST]{CRYPTO\_DMA\_IN\_RST}/\hyperref[fielddesc:CRYPTODMAAHBMFIFORST]{CRYPTO\_DMA\_AHBM\_FIFO\_RST}/\hyperref[fielddesc:CRYPTODMAAHBMRST]{CRYPTO\_DMA\_AHBM\_RST} 置 1 然后置 0，复位 DMA 状态机和 FIFO 指针；
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:CRYPTODMAINLINKADDR]{CRYPTO\_DMA\_INLINK\_ADDR} 指向第一个接收链表描述符；
+    \item 置位 \hyperref[fielddesc:CRYPTODMAINLINKSTART]{CRYPTO\_DMA\_INLINK\_START} 启动 DMA 接收。
+\end{enumerate}
+
+加密 DMA 发送数据时，DMA 模块的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:CRYPTODMAOUTRST]{CRYPTO\_DMA\_OUT\_RST}/\hyperref[fielddesc:CRYPTODMAAHBMFIFORST]{CRYPTO\_DMA\_AHBM\_FIFO\_RST}/\hyperref[fielddesc:CRYPTODMAAHBMRST]{CRYPTO\_DMA\_AHBM\_RST} 置 1 然后置 0，复位 DMA 状态机和 FIFO 指针；
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:CRYPTODMAOUTLINKADDR]{CRYPTO\_DMA\_OUTLINK\_ADDR} 指向第一个接收链表描述符；
+    \item 置位 \hyperref[fielddesc:CRYPTODMAOUTLINKSTART]{CRYPTO\_DMA\_OUTLINK\_START} 启动 DMA 接收。
+\end{enumerate}
+
+{\bfseries 注意: }在使用加密 DMA实现片内 RAM 与片外 RAM 之间数据传输时，需要置位 \hyperref[fielddesc:CRYPTODMAMEMTRANSEN]{CRYPTO\_DMA\_MEM\_TRANS\_EN}。
+
+\section{Copy DMA 中断}
+\begin{itemize}
+\item \label{int:CPDMAOUTTOTALEOFINT}CP\_DMA\_OUT\_TOTAL\_EOF\_INT：当一个链表（可包含多个链表描述符）对应的所有数据都已发送完成时触发此中断。
+\item \label{int:CPDMAINDSCREMPTYINT}CP\_DMA\_IN\_DSCR\_EMPTY\_INT：当接收链表描述符指向的 buffer 大小小于待接收数据长度时触发此中断。
+\item \label{int:CPDMAOUTDSCRERRINT}CP\_DMA\_OUT\_DSCR\_ERR\_INT：当发送链表描述符里有错误时触发此中断。
+\item \label{int:CPDMAINDSCRERRINT}CP\_DMA\_IN\_DSCR\_ERR\_INT：当接收链表描述符里有错误时触发此中断。
+\item \label{int:CPDMAOUTEOFINT}CP\_DMA\_OUT\_EOF\_INT：当发送描述符的 EOF 位为 1，并且该描述符对应的数据发送完成时触发此中断。
+\item \label{int:CPDMAOUTDONEINT}CP\_DMA\_OUT\_DONE\_INT：当一个发送链表描述符对应的数据发送完成时触发此中断。
+\item \label{int:CPDMAINSUCEOFINT}CP\_DMA\_IN\_SUC\_EOF\_INT：当一个数据包接收完成时触发此中断。
+\item \label{int:CPDMAINDONEINT}CP\_DMA\_IN\_DONE\_INT：当一个接收链表描述符对应的数据接收完成时触发此中断。
+\end{itemize}
+
+\section{加密 DMA 中断}
+\begin{itemize}
+\item \label{int:CRPDAMINFIFOFULLWM}CRYPTO\_DMA\_INFIFO\_FULL\_WM\_INT：当 DMA 接收 FIFO 中的数据量大于阈值 （\hyperref[fielddesc:CRYPTODMAINFIFOFULLTHRS]{CRYPTO\_DMA\_INFIFO\_FULL\_THRS}） 时触发此中断。
+\item \label{int:CRPDMAOUTTOTALEOFINT}CRYPTO\_DMA\_OUT\_TOTAL\_EOF\_INT： 当一个链表（可包含多个链表描述符）对应的所有数据都已发送完成时触发此中断。
+\item \label{int:CRPDMAINDSCREMPTYINT}CRYPTO\_DMA\_IN\_DSCR\_EMPTY\_INT：当接收链表描述符指向的 buffer 大小小于待接收数据长度时触发此中断。
+\item \label{int:CRPDMAOUTDSCRERRINT}CRYPTO\_DMA\_OUT\_DSCR\_ERR\_INT： 当发送链表描述符里有错误时触发此中断。
+\item \label{int:CRPDMAINDSCRERRINT}CRYPTO\_DMA\_IN\_DSCR\_ERR\_INT： 当接收链表描述符里有错误时触发此中断。
+\item \label{int:CRPDMAOUTEOFINT}CRYPTO\_DMA\_OUT\_EOF\_INT： 当发送描述符的 EOF 位为 1，并且该描述符对应的数据发送完成时触发此中断。
+\item \label{int:CRPDMAOUTDONEINT}CRYPTO\_DMA\_OUT\_DONE\_INT：当一个发送链表描述符对应的数据发送完成时触发此中断。
+\item \label{int:CRPDMAINERREOFINT}CRYPTO\_DMA\_IN\_ERR\_EOF\_INT：保留。
+\item \label{int:CRPDMAINSUCEOFINT}CRYPTO\_DMA\_IN\_SUC\_EOF\_INT： 当一个数据包接收完成时触发此中断。
+\item \label{int:CRPDMAINDONEINT}CRYPTO\_DMA\_IN\_DONE\_INT： 当一个接收链表描述符对应的数据接收完成时触发此中断。
+\end{itemize}
+
+\section{基地址}\label{DMA-Base-Addresses}
+用户可以通过两个不同的寄存器基地址访问 Copy DMA 和加密 DMA，如表 \ref{table:dma_base_addr} 所示。其他外设对应的 DMA 寄存器请参考相应的外设章节。更多信息，请访问 \ref{mod:sysmem} \textit{系统与存储器}章节。
+\newpage
+
+\begin{longtable}[c]{|l|l|c|}
+\caption{Copy DMA 与加密 DMA 基地址}\label{table:dma_base_addr}
+\\\hline
+\rowcolor{lightgray}
+    模块 &   访问总线      & 基地址 \\\hline
+    \multirow{1}*{Copy DMA}       &  PeriBUS1    & \hexprefix{}3F4C3000 \\\hline
+    \multirow{2}*{CRYPTO DMA}   & PeriBUS1     & \hexprefix{}3F43F000 \\\cline{2-3}
+                                 & PeriBUS2     & \hexprefix{}6003F000 \\\hline
+\end{longtable}
+
+\hypertarget{dma-reg-summ}{}
+\section{寄存器列表}
+
+
+请注意，下面的地址是相对于 Copy DMA 基地址的地址偏移量（相对地址），请参阅章节 \ref{DMA-Base-Addresses} 获取有关 Copy DMA 基地址的信息。
+
+\subfile{\modulefiles/cp_dma_summary_cn.tex}
+
+请注意，下面的地址是相对于加密 DMA 基地址的地址偏移量（相对地址）,请参阅章节 \ref{DMA-Base-Addresses} 获取有关加密 DMA 基地址的信息。
+
+\subfile{\modulefiles/crypto_dma_summary_cn.tex}
+
+\section{寄存器}
+\subfile{\modulefiles/cp_dma_reg_cn.tex}
+\subfile{\modulefiles/crypto_dma_reg_cn.tex}
+
+\end{document}

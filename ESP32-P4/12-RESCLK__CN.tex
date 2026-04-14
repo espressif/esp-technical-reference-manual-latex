@@ -1,0 +1,752 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./12-RESCLK}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{resclk}{}
+\chapter{复位和时钟}
+\label{mod:resclk}
+
+
+\section{复位}
+\subsection{概述}
+\chipname{} 提供四种级别的复位方式，分别是 CPU 复位 (CPU reset)、内核复位 (Core reset)、系统复位 (System reset) 和芯片复位 (Chip reset)。除芯片复位外，其他复位方式不影响片上内存存储的数据。图 \ref{figure:Reset} 展示了整个芯片系统的结构以及四种复位等级。
+
+
+\subsection{结构图}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/reset-overview-new.pdf}
+    \caption{四种复位等级}
+    \label{figure:Reset}
+\end{figure}
+\chipname{} 的数字系统分为两部分：\hyperref[mod:riscvcpu]{高性能系统 (High Performance System, HP system)} 和 \hyperref[mod:lowpowm]{低功耗系统 (Low Power System, LP system)}。其中高性能系统包含数字内核 (Digital Core) 和 HP MEM，低功耗系统中包含低功耗常开系统（Low Power Always On，LP AON）、低功耗内核 (LP Core)、LP MEM。 详细信息可参考图 \ref{figure:Reset}（HP MEM 和 LP MEM 不会复位，因此未在图中标注）。
+
+\subsection{特性}
+\label{sec:resclk-features}
+\begin{itemize}
+    \item 支持四种复位等级：
+    \begin{itemize}
+        \item CPU 复位：复位 CPU 核，HP CPU0、HP CPU1、LP CPU 各有一套独立复位。其中：
+        \begin{itemize}
+            \item HP CPU0 上电后会自动释放复位，从 CPU Reset Vector (0x30100000) 开始执行；
+            \item HP CPU1 上电后默认处于复位状态，需要向 \hyperref[fielddesc:HPSYSCLKRSTRSTENCORE1GLOBAL]{HP\_SYS\_CLKRST\_RST\_EN\_CORE1\_GLOBAL} 写 0 手动释放复位。复位释放后，程序将从 CPU Reset Vector (0x30100000) 开始执行；
+            \item LP CPU 上电后处于复位状态，需要配置 PMU 释放。复位释放后，LP CPU 将从 LP\_SYSTEM\_LP\_CPU\_BOOT\_ADDR（默认为 0x50100000）开始执行，详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}；
+        \end{itemize}
+        \item 内核复位：包括 HP 以及 LP 的内核复位，复位除 LP AON 以外的其他数字系统。HP 内核复位包括 HP CPU0、HP CPU1、HP 外设、HP GPIO 等，LP 内核复位包括 LP CPU、LP 外设等；
+        \item 系统复位：复位包括低功耗系统在内的整个数字系统；
+        \item 芯片复位：复位整个芯片。
+    \end{itemize}
+    \item 支持软件复位和硬件复位：
+    \begin{itemize}
+        \item 软件复位：CPU 配置相关寄存器可触发软件复位，见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}；
+        \item 硬件复位：硬件复位直接由硬件电路触发。
+    \end{itemize}
+\end{itemize}
+
+\subsection{功能描述}
+上述任一复位发生时，CPU 将立刻被复位。复位释放后，可通过读取以下字段获取复位源：
+\begin{itemize}
+    \item HP CPU0：\hyperref[fielddesc:LPCLKRSTHPCORE0RESETCAUSE]{LP\_CLKRST\_HPCORE0\_RESET\_CAUSE}
+    \item HP CPU1：\hyperref[fielddesc:LPCLKRSTHPCORE0RESETCAUSE]{LP\_CLKRST\_HPCORE1\_RESET\_CAUSE}
+    \item LP CPU：\hyperref[fielddesc:LPCLKRSTLPCORERESETCAUSE]{LP\_CLKRST\_LPCORE\_RESET\_CAUSE}
+\end{itemize}
+
+表 \ref{tab:resclk-hp-reset-src} 和 \ref{tab:resclk-lp-reset-src} 列出了从上述寄存器中可能读出的复位源及其触发的复位等级。
+
+
+
+\begin{longtable}[c]{ |l|m{3.5cm}|m{2.7cm}|m{8.7cm}| }
+    \caption{HP CPU 复位源}
+    \label{tab:resclk-hp-reset-src}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{编码} & \textbf{复位源} & \textbf{复位等级} &   \textbf{说明} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{4}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{编码} & \textbf{复位源} & \textbf{复位等级} &   \textbf{说明} \\\hline
+    \endhead
+
+    \multicolumn{4}{r}{\textbf{见下页}} \\
+    \endfoot
+    \endlastfoot
+        0x01 & 芯片复位\tnote{1} & 芯片复位 & ---\\
+        \hline
+        0x03 & 系统软件复位 & HP 内核复位 & 通过写 \hyperref[fielddesc:LPSYSTEMSYSSWRST]{LP\_SYSTEM\_SYS\_SW\_RST} 寄存器触发的系统复位 \\\hline
+        0x05 & PMU 内核复位 & HP 内核复位 & 详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} \\\hline
+        0x07 & MWDT 内核复位\tnote{2} & HP 内核复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}} \\\hline
+        0x09 & RWDT 内核复位 & HP 内核复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}} \\\hline
+        0x0B & MWDT CPU 复位 & HP CPU0/1 复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}} \\
+        \hline
+        0x0C & 软件 CPU 复位 & HP CPU0/1 复位 & 配置对应寄存器 \hyperref[fielddesc:LPCLKRSTHPCORE0SWRESET]{LP\_CLKRST\_HPCORE0\_SW\_RESET} 或 \hyperref[fielddesc:LPCLKRSTHPCORE1SWRESET]{LP\_CLKRST\_HPCORE1\_SW\_RESET} 触发\\
+        \hline
+        0x0D & RWDT CPU 复位 & HP CPU0/1 复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}  \\
+        \hline
+        0x0F & 欠压系统复位 & 芯片复位或系统复位 & 欠压检测器触发的复位。欠压检测器在检测到欠压状态时，将根据寄存器配置，选择触发系统复位或者芯片复位，详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}\\
+        \hline
+        0x10 & RWDT 系统复位 & 系统复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}
+        \\\hline
+        0x12 & 超级看门狗复位 & 系统复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}
+        \\\hline
+        0x13 & 电源毛刺复位 & 系统复位 & 详见章节 \ref{mod:brownout} \textit{\nameref{mod:brownout}}
+        \\\hline
+        \tagged{ESP32-P4-latest}{0x1B & PSDET 复位 & 系统复位 & 详见章节 \ref{mod:psdet} \textit{\nameref{mod:psdet}} \\
+        \hline}
+        0x14 & eFuse 复位 & HP 内核复位 & eFuse CRC 校验错误触发复位
+        \\\hline
+        0x16 & USB (JTAG) 复位 & HP 内核复位 & 外部 USB 主机发送特定命令给 USB Serial/JTAG 控制器的 JTAG 接口将触发此复位，详见章节 \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}} \\\hline
+        0x17 & USB (UART) 复位 & HP 内核复位 & 外部 USB 主机发送特定命令给 USB Serial/JTAG 控制器的 Serial 接口将触发此复位，详见章节 \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}} \\\hline
+        0x18 & JTAG CPU 复位 & HP CPU0/1 复位 & 接收 “GDB 复位 CPU” 指令时触发
+        \\\hline
+        0x1A & lockup 复位 & HP CPU0/1 复位 & CPU 发生 lockup 时复位。可通过配置寄存器 \hyperref[fielddesc:LPCLKRSTHPCORE0LOCKUPRESETEN]{LP\_CLKRST\_HPCORE\textcolor{red}{x}\_LOCKUP\_RESET\_EN} 控制 HP CPU0、HP CPU1 能否被 lockup 复位 \\
+        \hline
+\end{longtable}
+
+\begin{itemize}
+    \item 芯片复位的触发源包括以下两项：
+    \begin{itemize}
+        \item 芯片上电
+        \item 欠压检测器
+    \end{itemize}
+    \item HP 包含两个看门狗定时器，称作主系统看门狗定时器 (MWDT)，可通过 \hyperref[fielddesc:HPSYSCLKRSTHPCORE0WDTRESETSOURCESEL]{HP\_SYS\_CLKRST\_HPCORE0\_WDT\_RESET\_SOURCE\_SEL} 和 \\\hyperref[fielddesc:HPSYSCLKRSTHPCORE1WDTRESETSOURCESEL]{HP\_SYS\_CLKRST\_HPCORE0\_WDT\_RESET\_SOURCE\_SEL} 分别配置 HP CPU0 和 HP CPU1 可被哪个 MWDT 复位。
+\end{itemize}
+
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] 芯片上电后， LP CPU 处于被 PMU 复位状态。为了在 LP CPU 第一次运行时能得到正确的复位源（即 0x01），PMU LP CPU 复位 (0x0A) 的 复位源 处于被屏蔽状态。在 LP CPU 第一次正常运行后，需要清零 \hyperref[fielddesc:LPCLKRSTLPCORERESETCAUSEPMULPCPUMASK]{LP\_CLKRST\_LPCORE\_RESET\_CAUSE\_PMU\_LP\_CPU\_MASK} 寄存器以取消对 0x0A 复位源 的屏蔽。
+\end{TableNotes}
+
+\begin{longtable}[c]{ |l|m{3.5cm}|m{2.2cm}|m{9.0cm}| }
+    \caption{LP CPU 复位源}
+    \label{tab:resclk-lp-reset-src}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{编码} & \textbf{复位源} & \textbf{复位等级} &   \textbf{说明} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{4}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{编码} & \textbf{复位源} & \textbf{复位等级} &   \textbf{说明} \\\hline
+    \endhead
+
+    \multicolumn{4}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \insertTableNotes
+    \endlastfoot
+        0x01 & 芯片复位 & 芯片复位 & ---\\
+        \hline
+        0x09 & PMU LP PERI 复位 & LP 内核复位 & 详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} \\
+        \hline
+        0x0A & PMU LP CPU 复位\tnote{1} & LP CPU 复位 & 详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}} \\
+        \hline
+        0x0F & 欠压系统复位 & 芯片复位或系统复位 & 欠压检测器触发的复位\\
+        \hline
+        0x10 & RWDT 系统复位 & 系统复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}
+        \\\hline
+        0x12 & 超级看门狗复位 & 系统复位 & 详见章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}
+        \\\hline
+        0x13 & 电源毛刺复位 & 系统复位 & 详见章节 \ref{mod:brownout} \textit{\nameref{mod:brownout}}
+        \\\hline
+        0x14 & 软件 LP CPU 复位 & LP CPU 复位 & 配置寄存器 \hyperref[fielddesc:LPPERIRSTENLPCORE]{LPPERI\_RST\_EN\_LP\_CORE} 触发
+        \\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+
+\subsection{外设复位}
+
+外设可单独复位，也可通过配置内核复位、系统复位、芯片复位连带复位。
+
+
+\chipname{} 外设复位寄存器包括三个模块：HP\_SYS\_CLKRST、LP\_CLKRST、LPPERI，可通过章节 \ref{sec:resclk-reg-summ}\textit{\nameref{sec:resclk-reg-summ}} 查看各外设对应的复位寄存器。
+
+\section{时钟}
+
+\subsection{概述}
+
+\chipname{} 的时钟主要来源于振荡器（oscillator, OSC，包括 RC 振荡电路）、晶振 (XTAL) 和 PLL 时钟生成电路。上述时钟源产生的时钟经时钟分频器或时钟选择器等时钟模块的处理，使得大部分功能模块可以根据不同功耗和性能需求来获取及选择对应频率的工作时钟。图 \ref{figure:Clock} 为 HP
+ 和 LP 系统时钟结构，图中包含主时钟通路和典型的外设时钟产生电路，由于 \chipname{} 外设数量庞大，受限于篇幅，没有将所有外设的时钟呈现在图中。
+
+\subsection{结构图}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/clock-diagram-new.pdf}
+    \caption{HP/LP 系统时钟}
+    \label{figure:Clock}
+\end{figure}
+
+
+\subsection{特性}
+
+\chipname{} 的时钟根据频率不同，可分为：
+\begin{itemize}
+    \item 高性能时钟，主要为 HP CPU0/1 和 HP 数字外设提供工作时钟
+    \begin{itemize}
+        \item CPLL\_CLK：360 MHz 内部 PLL 时钟（参考时钟是 XTAL\_CLK）
+        \item MPLL\_CLK：500 MHz 内部 PLL 时钟（参考时钟是 XTAL\_CLK）
+        \item SPLL\_CLK：480 MHz 内部 PLL 时钟（参考时钟是 XTAL\_CLK）
+    \end{itemize}
+    \item 低功耗时钟，主要为低功耗系统以及部分处于低功耗模式的外设提供工作时钟
+    \begin{itemize}
+        \item XTAL32K\_CLK：32 kHz 外部晶振时钟
+	\item RC\_SLOW\_CLK：150 kHz 内置慢速 RC 振荡器
+	\item OSC\_SLOW\_CLK：外置低速时钟，通常频率为 32 kHz，通过 \hyperref[tab:ANA-IO-MUX-CN]{XTAL\_32K\_N} 输入，在配置好这个 GPIO 的状态后需要配置 Hold 功能，具体请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} >  \ref{PadHold} \textit{\nameref{PadHold}}
+        \item XTAL\_CLK：40 MHz 外部晶振时钟
+        \item RC\_FAST\_CLK：内置快速 RC 振荡器时钟，频率可调节（通常为 20 MHz）
+        \item PLL\_LP\_CLK：内部 PLL 时钟，通常为 8 MHz，参考时钟可选为 XTAL32K\_CLK
+    \end{itemize}
+\end{itemize}
+
+
+
+\subsection{功能描述}
+
+\subsubsection{高性能系统时钟}
+
+如图 \ref{figure:Clock} 所示，XTAL\_CLK、CPLL\_CLK 和 RC\_FAST\_CLK 经过三选一逻辑产生 ROOT\_CLK，ROOT\_CLK 的时钟源选择请参考表 \ref{tab:resclk-cpu-clk-src}。
+
+\begin{longtable}[c]{|l|l| }
+       \caption{ROOT\_CLK 时钟源选择}
+		\label{tab:resclk-cpu-clk-src} \\
+	    \hline
+
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:LPCLKRSTHPROOTCLKSRCSEL]{LP\_CLKRST\_HP\_ROOT\_CLK\_SRC\_SEL}} & \textbf{时钟源} \\
+
+        \hline
+        0 & XTAL\_CLK \\
+        \hline
+        1 & CPLL\_CLK \\
+        \hline
+        2 & RC\_FAST\_CLK \\
+        \hline
+\end{longtable}
+
+ROOT\_CLK 通过一系列串行结构的分频器依次产生：
+\begin{itemize}
+    \item CPU\_CLK：驱动 HP CPU 及其相联逻辑
+    \item MEM\_CLK：驱动内部 memory（L2 Cache、L2MEM、ROM）及其相关逻辑
+    \item SYS\_CLK：HP 高速总线时钟，主要驱动 AXI/AHB 总线逻辑
+    \item APB\_CLK：HP 低速总线时钟，主要驱动 APB 总线逻辑
+\end{itemize}
+
+以上四类衍生时钟是 SoC 时钟，与章节 \ref{sec:peri_clk} \textit{\nameref{sec:peri_clk}} 提到的相区别和对应（SoC 时钟均为同步时钟，SoC 时钟与任何外设时钟均为异步关系，外设时钟之间除非特别标注均互为异步关系）。
+
+以上 SoC 时钟允许的最高频率如下，软件需要保证 SoC 时钟频率不超过最高频率：
+\begin{itemize}
+    \item CPU\_CLK：360 MHz
+    \item MEM\_CLK：200 MHz
+    \item SYS\_CLK：200 MHz
+    \item APB\_CLK：100 MHz
+\end{itemize}
+
+
+
+
+
+每个模块使用到的 SoC 时钟会受到一个独立的时钟门控单元控制，例如用户期望打开 HP CPU0 的时钟而关闭 HP CPU1 的时钟，可以置位寄存器 \hyperref[fielddesc:HPSYSCLKRSTCORE0CPUCLKEN]{HP\_SYS\_CLKRST\_CORE0\_CPU\_CLK\_EN}，清零 \hyperref[fielddesc:HPSYSCLKRSTCORE1CPUCLKEN]{HP\_SYS\_CLKRST\_CORE1\_CPU\_CLK\_EN} 实现，其中寄存器域名字中的 "CPU\_CLK" 代表其属于图 \ref{figure:Clock} 中 CPU\_CLK 这一时钟组。
+
+\chipname{} 的内部 PLL 时钟 MPLL\_CLK 和 SPLL\_CLK 通过一组并行分频器产生供外设使用的参考时钟。
+
+除了上述两个 PLL 外，还有两个特定模块专用的 PLL：
+\begin{itemize}
+    \item SDIO\_PLL，输出三个时钟：
+        \begin{itemize}
+            \item SDIO\_PLL0\_CLK，用于 SDIO 的高速 SDIO\_SLF\_CLK 时钟（内部信号时钟），也能作为 SDIO 低速时钟的源
+            \item SDIO\_PLL1\_CLK 用于 SDIO 的高速 SDIO\_DRV\_CLK 时钟（输出信号驱动时钟）
+            \item SDIO\_PLL2\_CLK 用于 SDIO 的高速 SDIO\_SAM\_CLK 时钟（输入信号采样时钟）
+        \end{itemize}
+    \item APLL\_CLK， I2S 的专用时钟
+\end{itemize}
+
+一个典型的外设时钟产生电路由时钟选择器、时钟门控单元和分频器组成。在高性能模式下，通过选择高速时钟源以及不对时钟分频来获取更高处理速度；在低功耗模式下，可通过选择低速时钟源或使用高倍率分频系数降低功耗；在外设关断情况下，可以直接关断时钟。
+
+\begin{tiplisting}
+任何对 \hyperref[regdesc:HPSYSCLKRSTROOTCLKCTRL0REG]{HP\_SYS\_CLKRST\_ROOT\_CLK\_CTRL\textcolor{red}{0/1/2/3}\_REG} 寄存器的修改，都必须置位
+\\ \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 字段后才能真正生效。
+\end{tiplisting}
+
+
+\subsubsection{低功耗系统时钟}
+
+低功耗系统能够在大多数时钟源关闭的状态下工作。低功耗系统时钟包括 LP\_SLOW\_CLK 时钟、LP\_FAST\_CLK、LP\_DYN\_SLOW\_CLK、LP\_DYN\_FAST\_CLK、XTAL\_D2\_CLK 时钟。
+
+LP\_SLOW\_CLK 和 LP\_FAST\_CLK 的时钟源为低频时钟，其中：
+\begin{itemize}
+    \item LP\_SLOW\_CLK 时钟有四种可能的时钟源，见表 \ref{tab:lp-slow-clk-src}：
+
+        \begin{longtable}[c]{|p{6cm}|p{7cm}| }
+           \caption{LP\_SLOW\_CLK 时钟源选择}
+    		\label{tab:lp-slow-clk-src} \\
+    	    \hline
+            \rowcolor{lightgray}
+            \textbf{\hyperref[fielddesc:LPCLKRSTSLOWCLKSEL]{LP\_CLKRST\_SLOW\_CLK\_SEL}} & \textbf{时钟源} \\
+            \hline
+            0 & RC\_SLOW\_CLK \\\hline
+            1 & XTAL32K\_CLK \\\hline
+            2 & 无效值 \\\hline
+            3 & OSC\_SLOW\_CLK \\\hline
+        \end{longtable}
+
+    \item LP\_FAST\_CLK 时钟有三种可能的时钟源，见表 \ref{tab:lp-fast-clk-src}：
+
+        \begin{longtable}[c]{|p{6cm}|p{7cm}| }
+           \caption{LP\_FAST\_CLK 时钟源选择}
+    		\label{tab:lp-fast-clk-src} \\
+    	    \hline
+            \rowcolor{lightgray}
+            \textbf{\hyperref[fielddesc:LPCLKRSTFASTCLKSEL]{LP\_CLKRST\_FAST\_CLK\_SEL}} & \textbf{时钟源} \\
+            \hline
+            0 & RC\_FAST\_CLK \\\hline
+            1 & XTAL\_CLK \\\hline
+            2 & PLL\_LP\_CLK \\\hline
+        \end{longtable}
+
+\end{itemize}
+
+
+LP\_DYN\_SLOW\_CLK 和 LP\_DYN\_FAST\_CLK 时钟源均为 LP\_SLOW\_CLK 或 LP\_FAST\_CLK，根据芯片电源的模式（详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}）选择时钟源，保证在各种电源模式下这两个时钟均能正常工作，用于驱动 LP AON 的模块。LP\_DYN\_SLOW\_CLK 和 LP\_DYN\_FAST\_CLK 始终保持同步关系：
+\begin{itemize}
+    \item 芯片电源为 Active 模式时始终选择 LP\_FAST\_CLK 作为时钟源，但此时 LP\_DYN\_SLOW\_CLK 频率和 LP\_SLOW\_CLK 相同，相位和 LP\_FAST\_CLK 一致；
+    \item 芯片电源为 Deep-sleep 模式时根据 PMU 配置选择时钟。若 LP CPU 关闭，则选择 LP\_SLOW\_CLK 作为时钟源，此时 LP\_DYN\_FAST\_CLK 频率、相位和 LP\_SLOW\_CLK 相同；若 LP CPU 使能，则选择 LP\_FAST\_CLK 为时钟源。
+\end{itemize}
+
+LP\_PERI\_CLK 经过 LP\_DYN\_FAST\_CLK 分频得到，驱动所有 LP 外设总线。
+
+XTAL\_D2\_CLK 为 XTAL\_CLK 的二分频。
+
+
+
+\subsubsection{外设时钟}\label{sec:peri_clk}
+
+表 \ref{tab:resclk-periph-clks-root-hp2}、表 \ref{tab:resclk-periph-clks-hp2}、表 \ref{tab:resclk-periph-clks-root-lp}、 和表 \ref{tab:resclk-periph-clks-lp} 分别列出了接入各个外设时钟的衍生高性能/低功耗时钟源、接入高性能系统各个外设的时钟以及接入低功耗系统各个外设的时钟。
+
+
+
+\begin{landscape}
+
+\setlength\tabcolsep{0.8pt}
+
+\begin{tiny}
+
+\begin{longtable}[c]{|m{2cm}|c|c|c|c|c|c|c|c|c|c|c|c|c|c| }
+ \caption{衍生高性能时钟源}
+    \label{tab:resclk-periph-clks-root-hp2} \\
+  \hline
+\rowcolor{lightgray}
+ & \multicolumn{7}{c|}{\textbf{源时钟}} & \multicolumn{7}{c|}{\textbf{衍生时钟}} \\ \cline{2-15}
+\rowcolor{lightgray}
+\multicolumn{1}{|c|}{\multirow{-2}{*}{\textbf{衍生时钟}}} & \textbf{RC\_FAST\_CLK} & \textbf{XTAL\_CLK} & \textbf{CPLL\_CLK} & \textbf{MPLL\_CLK} & \textbf{SPLL\_CLK} & \textbf{APLL\_CLK} & \textbf{SDIO\_PLL0\_CLK} & \textbf{ROOT\_CLK} & \textbf{CPU\_CLK} & \textbf{MEM\_CLK} & \textbf{SYS\_CLK} & \textbf{PLL\_F80M\_CLK} & \textbf{PLL\_F160M\_CLK} & \textbf{PLL\_F240M\_CLK} \\ \hline
+ROOT\_CLK & Y & Y & Y &  &  &  &  &  &  &  &  &  &  & \\ \hline
+CPU\_CLK &  &  &  &  &  &  &  & Y &  &  &  &  &  & \\ \hline
+MEM\_CLK &  &  &  &  &  &  &  &  & Y &  &  &  &  & \\ \hline
+SYS\_CLK &  &  &  &  &  &  &  &  &  & Y &  &  &  & \\ \hline
+APB\_CLK &  &  &  &  &  &  &  &  &  &  & Y &  &  & \\ \hline
+PLL\_F50M\_CLK &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F25M\_CLK &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F240M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F160M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F120M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F80M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F20M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F12M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PLL\_F48M\_CLK &  &  &  &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+FLASH\_CLK &  & Y & Y &  & Y &  &  &  &  &  &  &  &  & \\ \hline
+PSRAM\_CLK &  & Y & Y & Y & Y &  &  &  &  &  &  &  &  & \\ \hline
+GPSPI\_CLK & Y & Y &  &  & Y & Y & Y &  &  &  &  &  &  & \\ \hline
+ADC\_CLK & Y & Y &  &  &  &  &  &  &  &  &  & Y &  & \\ \hline
+UART\_CLK & Y & Y &  &  &  &  &  &  &  &  &  & Y &  & \\ \hline
+CRYPTO\_CLK & Y & Y &  &  &  &  &   &  &  &  &  &  & Y & Y \\ \hline
+\end{longtable}
+
+
+\begin{longtable}[c]{|p{2.2cm}|p{2.2cm}|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|L{1.8cm}| }
+    \caption{高性能外设时钟}
+       \label{tab:resclk-periph-clks-hp2} \\
+     \hline
+   \rowcolor{lightgray}
+    &  & \multicolumn{15}{c|}{\textbf{时钟源}} & \multicolumn{6}{c|}{\textbf{衍生时钟}} &  \\ \cline{3-24}
+   \rowcolor{lightgray}
+   \multicolumn{1}{|c|}{\multirow{-2}{*}{\textbf{外设}}} & \multicolumn{1}{c|}{\multirow{-2}{*}{\textbf{时钟}}} & \textbf{\makecell{RC\_FAST\\\_CLK}} & \textbf{\makecell{XTAL\_\\CLK}} & \textbf{\makecell{APLL\_\\CLK}} & \textbf{\makecell{CPLL\_\\CLK}} & \textbf{\makecell{SPLL\_\\CLK}} & \textbf{\makecell{MPLL\_\\CLK}} & \textbf{\makecell{SDIO\_PLL0\\\_CLK}} & \textbf{\makecell{PLL\_F12M\\\_CLK}} & \textbf{\makecell{PLL\_F20M\\\_CLK}} & \textbf{\makecell{PLL\_F25M\\\_CLK}} & \textbf{\makecell{PLL\_F48M\\\_CLK}} & \textbf{\makecell{PLL\_F80M\\\_CLK}} & \textbf{\makecell{PLL\_F120M\\\_CLK}} & \textbf{\makecell{PLL\_F160M\\\_CLK}} & \textbf{\makecell{PLL\_F240M\\\_CLK}} & \textbf{\makecell{FLASH\_CLK}} & \textbf{PSRAM\_CLK} & \textbf{GPSPI\_CLK} & \textbf{ADC\_CLK} & \textbf{UART\_CLK} & \textbf{CRYPTO\_CLK} & \multicolumn{1}{|c|}{\multirow{-2}{*}{\textbf{Clock from IO}}} \\ \hline
+   \endfirsthead
+
+   \multicolumn{24}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+   \rowcolor{lightgray}
+    &  & \multicolumn{15}{c|}{\textbf{时钟源}} & \multicolumn{6}{c|}{\textbf{衍生时钟}} &  \\ \cline{3-21}
+   \rowcolor{lightgray}
+   \multicolumn{1}{|c|}{\multirow{-2}{*}{\textbf{外设}}} & \multicolumn{1}{c|}{\multirow{-2}{*}{\textbf{时钟}}} & \textbf{\makecell{RC\_FAST\\\_CLK}} & \textbf{\makecell{XTAL\_\\CLK}} & \textbf{\makecell{APLL\_\\CLK}} & \textbf{\makecell{CPLL\_\\CLK}} & \textbf{\makecell{SPLL\_\\CLK}} & \textbf{\makecell{MPLL\_\\CLK}} & \textbf{\makecell{SDIO\_PLL0\\\_CLK}} & \textbf{\makecell{PLL\_F12M\\\_CLK}} & \textbf{\makecell{PLL\_F20M\\\_CLK}} & \textbf{\makecell{PLL\_F25M\\\_CLK}} & \textbf{\makecell{PLL\_F48M\\\_CLK}} & \textbf{\makecell{PLL\_F80M\\\_CLK}} & \textbf{\makecell{PLL\_F120M\\\_CLK}} & \textbf{\makecell{PLL\_F160M\\\_CLK}} & \textbf{\makecell{PLL\_F240M\\\_CLK}} & \textbf{\makecell{FLASH\_CLK}} & \textbf{PSRAM\_CLK} & \textbf{GPSPI\_CLK} & \textbf{ADC\_CLK} & \textbf{UART\_CLK} & \textbf{CRYPTO\_CLK} & \multicolumn{1}{|c|}{\multirow{-2}{*}{\textbf{Clock from IO}}} \\ \hline
+   \endhead
+
+   \multicolumn{24}{r}{\textbf{见下页}} \\
+   \endfoot
+   \endlastfoot
+
+    & FLASH\_PLL\_CLK &  &  & &  & & & &  &  &  &  &  &  &  &  & Y &  &  &  &  &  & \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:spi]{SPI0/1 (flash)}} & FLASH\_CORE\_CLK &  &  &  & & &  &  &  &  &  &  &  &  &  &  & Y &  &  &  &  &  & \\ \hline
+    & PSRAM\_PLL\_CLK &  & & & &  &  &  &  &  &  &  &  &  &  &  &  & Y &  &  &  &  & \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:spi]{SPI0/1 (PSRAM)}} & PSRAM\_CORE\_CLK &  &  &  &  &  & & &  &  &  &  &  &  &  &  &  & Y &  &  &  &  & \\ \hline
+   & I2S\_RX\_CLK &  & Y & Y &  &  & & &  &  &  &  &  &  & Y &  &  &  &  &  &  &  & PAD\_I2S\_MCLK \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:i2s]{I2S}} & I2S\_TX\_CLK &  & Y & Y &  &  & &  &  &  &  &  &  &  & Y &  &  &  &  &  &  &  & PAD\_I2S\_MCLK \\ \hline
+   \hyperref[mod:i2c]{I2C} & I2C\_CLK & Y & Y &  &  &  &  &  & & & &  &  &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:mcpwm]{MCPWM} & MCPWM\_CLK & Y & Y &  &  &  &  & & &  &  &  &  &  & Y &  &  &  &  &  &  &  & \\ \hline
+    & TIMERGRP\_T0\_CLK & Y & Y &  &  &  &  & & &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:timg]{TIMG}} & TIMERGRP\_T1\_CLK & Y & Y &  &  & & &  &  &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:wdt]{MWDT} & TIMERGRP\_WDT\_CLK & Y & Y &  &  &  &  & & & &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:twai]{TWAI} & TWAI\_CLK & Y & Y &  &  &  &  & & &  &  &  &  &  &  &  &  &  &  &  &  &  & \\ \hline
+    & GPSPI\_HS\_CLK &  &  &  &  &  &  &  &  &  &  & & &  &  &  &  &  & Y &  &  &  & \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:spi]{GP-SPI2/GP-SPI3}} & GPSPI\_MST\_CLK &  &  &  &  &  &  &  &  &  &  & & &  &  &  &  &  & Y &  &  &  & \\ \hline
+    & EMAC\_RMII\_CLK &  &  &  &  &  &  &  & & & &  &  &  &  &  &  &  &  &  &  &  & \makecell[c]{PAD\_EMAC\_TXRX\_CLK\\ PAD\_EMAC\_RX\_CLK\\ PAD\_EMAC\_TX\_CLK} \\ \cline{2-24}
+    & EMAC\_RX\_CLK &  &  &  &  &  &  &  &  & & &  &  &  &  &  &  &  &  &  &  &  & \makecell[c]{PAD\_EMAC\_TXRX\_CLK\\ PAD\_EMAC\_RX\_CLK} \\ \cline{2-24}
+    & EMAC\_TX\_CLK &  &  &  &  &  &  &  & & & &  &  &  &  &  &  &  &  &  &  &  & \makecell[c]{PAD\_EMAC\_TXRX\_CLK\\ PAD\_EMAC\_TX\_CLK} \\ \cline{2-24}
+   \multirow{-8}{*}{\hyperref[mod:ethernetmac]{EMAC}} & EMAC\_PTP\_REF\_CLK &  & Y &  &  &  & & &  &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:camlcdctrl]{CAM OUT} & CAM\_CLK &  & Y & Y &  &  &  &  & & &  &  &  &  & Y &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:iomuxgpio]{IO MUX} & IOMUX\_CLK &  & Y &  &  &  & & &  &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:camlcdctrl]{LCD} & LCD\_CLK &  & Y & Y &  &  &  &  & & &  &  &  &  & Y &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:ledpwm]{LEDC} & LEDC\_CLK & Y & Y &  &  &  & & & &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+    & HPADC\_CLK &  &  &  &  &  &  &  &  &  & & &  &  &  &  &  &  &  & Y &  &  & \\ \cline{2-24}
+    & HPADC1\_SARCLK &  &  &  &  &  &  &  &  & & &   &  &  &  &  &  &  &  & Y &  &  & \\ \cline{2-24}
+   \multirow{-3}{*}{\hyperref[mod:adc]{ADC}} & HPADC2\_SARCLK &  &  &  & & &  &  &  &  &  &  &  &  &  &  &  &  &  & Y &  &  & \\ \hline
+   \iftagged{ESP32-P4-latest}{\makecell[l]{\hyperref[mod:aes]{AES}\\\hyperref[mod:sha]{SHA}\\\hyperref[mod:rsa]{RSA}\\\hyperref[mod:ecc]{ECC}\\\hyperref[mod:digsig]{RSA\_DS}\\\hyperref[mod:hmac]{HMAC}\\\hyperref[mod:keymng]{Key Manager}\\\hyperref[mod:ecdsa]{ECDSA\_DS}} & \makecell[l]{AES\_CLK\\SHA\_CLK\\RSA\_CLK\\ECC\_CLK\\DSA\_CLK\\HMAC\_CLK\\KM\_CLK\\ECDSA\_DS\_CLK\\SEC\_CLK} &   &   &  &  &  &  &  &  &  &  &  &   &  & &  &  &  &  &  &  & Y & \\ \hline}{
+    \makecell[l]{\hyperref[mod:aes]{AES}\\\hyperref[mod:sha]{SHA}\\\hyperref[mod:rsa]{RSA}\\\hyperref[mod:ecc]{ECC}\\\hyperref[mod:digsig]{RSA\_DS}\\\hyperref[mod:hmac]{HMAC}\\\hyperref[mod:ecdsa]{ECDSA\_DS}} & \makecell[l]{AES\_CLK\\SHA\_CLK\\RSA\_CLK\\ECC\_CLK\\DSA\_CLK\\HMAC\_CLK\\ECDSA\_DS\_CLK\\SEC\_CLK} &   &   &  &  &  &  &  &  &  &  &  &   &  & &  &  &  &  &  &  & Y & \\ \hline
+   }
+   \hyperref[mod:rmt]{RMT} & RMT\_CLK & Y & Y &  &  &  & & &  &  &  &  & Y &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:systimer]{System Timer} & SYSTIMER\_CLK & Y & Y &  &  &  & & &  &  &  &  &  &  &  &  &  &  &  &  &  &  & \\ \hline
+    & UART\_FCLK &  &  &  &  &  &  &  & & &  &  &  &  &  &  &  &  &  &  & Y &  & \\ \cline{2-24}
+    & UART\_SCLK &  &  &  &  &  &  &  &  & & & &  &  &  &  &  &  &  &  & Y &  & \\ \cline{2-24}
+   \multirow{-3}{*}{\hyperref[mod:uart]{UART}} & UART\_SLP\_CLK &  &  &  &  &  &  &  & & & &  &  &  &  &  &  &  &  &  &  &  & PAD\_UART\_SLP\_CLK \\ \hline
+    & PARLIO\_RX\_CLK & Y & Y &  &  &  & & &  &  &  &  &  &  & Y &  &  &  &  &  &  &  & PAD\_PARLIO\_RX\_CLK \\ \cline{2-24}
+   \multirow{-2}{*}{\hyperref[mod:parlio]{PARLIO}} & PARLIO\_TX\_CLK & Y & Y &  &  &  & & &   &  &  &  &  &  & Y &  &  &  &  &  &  &  & PAD\_PARLIO\_TX\_CLK \\ \hline
+   \hyperref[mod:i3c]{I3S} & I3C\_MST\_CLK &  & Y &  &  &  &  &  &  & & &  &  & Y & Y &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:isp]{ISP} & ISP\_CLK &  & Y &  &  &  &  &  & & &  &  &  &  & Y & Y &  &  &  &  &  &  & \\ \hline
+    & DSI\_DPHY\_CFG\_CLK & Y &   &  & & & &  &  & Y & Y  &  &  &  &  &  &  &  &  &  &  &  & \\ \cline{2-24}
+   & DSI\_DPHY\_PLL\_REFCLK &  &  Y & Y & Y & Y & Y & & &  &  &  &  &  &  &  &  &  &  &  &  &  & \\ \cline{2-24}
+    \multirow{-3}{*}{\hyperref[mod:mipidsi]{MIPI DSI}} & DSI\_DPICLK &  & Y & Y &  &  & & &  &  &  &  &  &  & Y & Y &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:mipicsi]{MIPI CSI} & CSI\_DPHY\_CFG\_CLK & Y &  &   & & &  &  & & Y & Y &  &  &  &  &  &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:h264enc]{H264} & H264\_CLK &  & Y &  &  &  &  &  & & &  &  &  &  &  & Y &  &  &  &  &  &  & \\ \hline
+   \hyperref[mod:usbserialjtag]{USB\_SERIAL\_JTAG} & USB\_SERIAL\_JTAG\_CLK &  &  & & &  &  &  &  &  &  & Y &  &  &  &  &  &  &  &  &  &  & \\ \hline
+   \nameref{mod:usbotgfs} & USB\_OTG11\_CLK &  &  & & & &  &  &  &  &  & Y &  &  &  &  &  &  &  &  &  &  & \\ \hline
+   \nameref{mod:usbotghs} & USB\_HS\_PHY\_REFCLK &  &  & & & &  &  & Y & Y &  &  &  &  &  &  &  &  &  &  &  &  & \makecell[l]{PAD\_USB\_HSPHY\_\\REFCLK} \\ \hline
+   \nameref{mod:sdhost}  & \makecell[l]{SDIO\_DRV\_CLK (low-speed)\\SDIO\_SLF\_CLK (low-speed)\\SDIO\_SAM\_CLK (low-speed)} &  & & & &  &  & Y &  &  &  &  &  &  & Y &  &  &  &  &  &  &  & \\ \hline
+   \end{longtable}
+
+
+
+\begin{longtable}[c]{|m{1.7cm}|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c| }
+
+ \caption{衍生低功耗时钟源}
+    \label{tab:resclk-periph-clks-root-lp} \\
+  \hline
+    \rowcolor{lightgray}
+    & \multicolumn{6}{c|}{\textbf{源时钟}} & \multicolumn{5}{c|}{\textbf{衍生时钟}} & \\ \cline{2-12}
+    \rowcolor{lightgray}
+    \multirow{-2}{*}{\textbf{衍生时钟}} & \textbf{\makecell{RC\_SLOW\_CLK\\150 kHz}} & \textbf{\makecell{XTAL32K\_CLK\\32 kHz}} & \textbf{\makecell{OSC\_SLOW\_CLK\\32 kHz}} & \textbf{\makecell{RC\_FAST\_CLK\\20 MHz}} & \textbf{\makecell{XTAL\_CLK\\40 MHz}} & \textbf{\makecell{PLL\_LP\_CLK\\8 MHz}} & \textbf{\makecell{LP\_SLOW\_CLK}} & \textbf{\makecell{LP\_FAST\_CLK}} & \textbf{\makecell{LP\_DYN\_SLOW\_CLK}} & \textbf{LP\_DYN\_FAST\_CLK} & \textbf{XTAL\_D2\_CLK} & \multirow{-2}{*}{\textbf{\makecell{Clock\\from IO}}} \\ \hline
+
+        \endfirsthead
+
+    \multicolumn{19}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    & \multicolumn{6}{c|}{\textbf{源时钟}} & \multicolumn{5}{c|}{\textbf{衍生时钟}} & \\ \cline{2-12}
+    \rowcolor{lightgray}
+    \multirow{-2}{*}{\textbf{衍生时钟}} & \textbf{\makecell{RC\_SLOW\_CLK\\150 kHz}} & \textbf{\makecell{XTAL32K\_CLK\\32 kHz}} & \textbf{\makecell{OSC\_SLOW\_CLK\\32 kHz}} & \textbf{\makecell{RC\_FAST\_CLK\\20 MHz}} & \textbf{\makecell{XTAL\_CLK\\40 MHz}} & \textbf{\makecell{PLL\_LP\_CLK\\8 MHz}} & \textbf{\makecell{LP\_SLOW\_CLK}} & \textbf{\makecell{LP\_FAST\_CLK}} & \textbf{\makecell{LP\_DYN\_SLOW\_CLK}} & \textbf{LP\_DYN\_FAST\_CLK} & \textbf{XTAL\_D2\_CLK} & \multirow{-2}{*}{\textbf{\makecell{Clock\\from IO}}} \\ \hline
+    \endhead
+
+    \multicolumn{19}{r}{\textbf{见下页}} \\
+    \endfoot
+    \endlastfoot
+    \hline
+
+    LP\_FAST\_CLK &   &   &   & Y & Y & Y &   &   &   &   &   &  \\ \hline
+    LP\_SLOW\_CLK & Y & Y & Y &   &   &   &   &   &   &   &   &  \\ \hline
+    LP\_DYN\_FAST\_CLK &   &   &  &   &   &   & Y & Y &   &   &   &  \\ \hline
+    LP\_DYN\_SLOW\_CLK &   &   &   &   &   &   & Y & Y &   &   &   &  \\ \hline
+    LP\_PERI\_CLK &   &   &   &   &   &   &   &   &   & Y &   &  \\ \hline
+    XTAL\_D2\_CLK &   &   &   &   & Y &   &   &   &   &   &   &  \\ \hline
+
+\end{longtable}
+
+\begin{longtable}[c]{|m{2.1cm}|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c| }
+
+ \caption{低功耗系统外设时钟}
+    \label{tab:resclk-periph-clks-lp} \\
+  \hline
+    \rowcolor{lightgray}
+    & \multicolumn{6}{c|}{\textbf{源时钟}} & \multicolumn{6}{c|}{\textbf{衍生时钟}} & \\ \cline{2-13}
+    \rowcolor{lightgray}
+    \multirow{-2}{*}{\textbf{衍生时钟}} & \textbf{\makecell{RC\_SLOW\_CLK\\150 kHz}} & \textbf{\makecell{XTAL32K\_CLK\\32 kHz}} & \textbf{\makecell{OSC\_SLOW\_CLK\\32 kHz}} & \textbf{\makecell{RC\_FAST\_CLK\\20 MHz}} & \textbf{\makecell{XTAL\_CLK\\40 MHz}} & \textbf{\makecell{PLL\_LP\_CLK\\8 MHz}} & \textbf{\makecell{LP\_SLOW\_CLK}} & \textbf{\makecell{LP\_FAST\_CLK}} & \textbf{\makecell{LP\_DYN\_SLOW\_CLK}} & \textbf{LP\_DYN\_FAST\_CLK} & \textbf{LP\_PERI\_CLK} & \textbf{XTAL\_D2\_CLK} & \multirow{-2}{*}{\textbf{\makecell{Clock\\from IO}}} \\ \hline
+        \endfirsthead
+
+    \multicolumn{20}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    & \multicolumn{6}{c|}{\textbf{源时钟}} & \multicolumn{6}{c|}{\textbf{衍生时钟}} & \\ \cline{2-13}
+    \rowcolor{lightgray}
+    \multirow{-2}{*}{\textbf{衍生时钟}} & \textbf{\makecell{RC\_SLOW\_CLK\\150 kHz}} & \textbf{\makecell{XTAL32K\_CLK\\32 kHz}} & \textbf{\makecell{OSC\_SLOW\_CLK\\32 kHz}} & \textbf{\makecell{RC\_FAST\_CLK\\20 MHz}} & \textbf{\makecell{XTAL\_CLK\\40 MHz}} & \textbf{\makecell{PLL\_LP\_CLK\\8 MHz}} & \textbf{\makecell{LP\_SLOW\_CLK}} & \textbf{\makecell{LP\_FAST\_CLK}} & \textbf{\makecell{LP\_DYN\_SLOW\_CLK}} & \textbf{LP\_DYN\_FAST\_CLK} & \textbf{LP\_PERI\_CLK} & \textbf{XTAL\_D2\_CLK} & \multirow{-2}{*}{\textbf{\makecell{Clock\\from IO}}} \\ \hline
+    \endhead
+
+    \multicolumn{20}{r}{\textbf{见下页}} \\
+    \endfoot
+    \endlastfoot
+    \hline
+
+    \nameref{mod:efuse} &   &   &   &   &   &   &   &   &   &   &   & Y &  \\ \hline
+    \hyperref[mod:wdt]{RTC 看门狗定时器 (RWDT)} & Y &   &   &   &   &   &   &   & Y & Y &   &   &   \\ \hline
+    \nameref{mod:rtctimer} &   &   &   &   &   &   &   &   & Y & Y &   &   &   \\ \hline
+    \nameref{mod:brownout} &   &   &   &   &   &   &   &   &   & Y &   &   &  \\ \hline
+    \hyperref[mod:lowpowm]{电源管理单元 (PMU)} & Y &   &   &   &   &   &   & Y & Y & Y &   &   &  \\ \hline
+    \hyperref[mod:uart]{LP UART} &   &   &   &   &   & Y &   &   &   & Y &   & Y & PAD\_LP\_UART\_SLP\_CK \\ \hline
+    \hyperref[mod:spi]{LP SPI} &   &   &   &   &   &   &   &   &   &   &   &   & PAD\_LP\_SPI\_CK \\ \hline
+    \hyperref[mod:i2c]{LP I2C} &   &   &   &   &   & Y &   &   &   & Y &   & Y &  \\ \hline
+    \nameref{mod:anai2c} &   &   &   &   &   &   &   & Y &   &   &   &   &  \\ \hline
+    \nameref{mod:lpi2s} &   &   &   &   &   & Y &   &   &   & Y &   & Y &  \\ \hline
+    \hyperref[mod:adc]{LP ADC 控制器} &   &   &   &   &   &   &   &   &   &   & Y &   &  \\ \hline
+\end{longtable}
+\end{tiny}
+\end{landscape}
+
+
+\begin{tiplisting}
+为了防止 DPA (Differential Power Analysis) 攻击加解密外设，加解密功能时钟采用随机分频策略。根据随机分频范围划分为三个安全等级。可通过配置 \hyperref[fielddesc:HPSYSCLKRSTSECDPACFGSEL]{HP\_SYS\_CLKRST\_SEC\_DPA\_CFG\_SEL} 选择安全等级。\\当 \hyperref[fielddesc:HPSYSCLKRSTSECDPACFGSEL]{HP\_SYS\_CLKRST\_SEC\_DPA\_CFG\_SEL} 为 1 时，安全等级由 \hyperref[fielddesc:HPSYSCLKRSTSECDPALEVEL]{HP\_SYS\_CLKRST\_SEC\_DPA\_LEVEL} 决定，否则由 \\EFUSE\_SEC\_DPA\_LEVEL 决定。
+\end{tiplisting}
+
+\section{配置流程}
+\label{sec:resclk-prog-procedures}
+
+
+\subsection{高性能系统时钟配置}
+
+\begin{itemize}
+
+\item 可配置 \hyperref[fielddesc:HPSYSCLKRSTCPUCLKDIVNUM]{HP\_SYS\_CLKRST\_CPU\_CLK\_DIV\_NUM}（分频系数整数部分）、\hyperref[fielddesc:HPSYSCLKRSTCPUCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CPU\_CLK\_DIV\_NUMERATOR}（分频系数小数部分分子）、\hyperref[fielddesc:HPSYSCLKRSTCPUCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CPU\_CLK\_DIV\_DENOMINATOR}（分频系数小数部分分母）控制 CPU\_CLK 的分频；\\
+向 \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 写 1 使 CPU\_CLK 配置的分频系数生效。
+
+\item 可配置 \hyperref[fielddesc:HPSYSCLKRSTMEMCLKDIVNUM]{HP\_SYS\_CLKRST\_MEM\_CLK\_DIV\_NUM}（分频系数整数部分）、\hyperref[fielddesc:HPSYSCLKRSTMEMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_MEM\_CLK\_DIV\_NUMERATOR}（分频系数小数部分分子）、\hyperref[fielddesc:HPSYSCLKRSTMEMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_MEM\_CLK\_DIV\_DENOMINATOR}（分频系数小数部分分母）控制 MEM\_CLK 的分频；\\
+向 \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 写 1 使 MEM\_CLK 配置的分频系数生效。
+
+
+\item 可配置 \hyperref[fielddesc:HPSYSCLKRSTSYSCLKDIVNUM]{HP\_SYS\_CLKRST\_SYS\_CLK\_DIV\_NUM}（分频系数整数部分）、\hyperref[fielddesc:HPSYSCLKRSTSYSCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_SYS\_CLK\_DIV\_NUMERATOR}（分频系数小数部分分子）、\hyperref[fielddesc:HPSYSCLKRSTSYSCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_SYS\_CLK\_DIV\_DENOMINATOR}（分频系数小数部分分母）控制 SYS\_CLK 的分频；\\
+向 \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 写 1 使 SYS\_CLK 配置的分频系数生效。
+
+\item 可配置 \hyperref[fielddesc:HPSYSCLKRSTAPBCLKDIVNUM]{HP\_SYS\_CLKRST\_APB\_CLK\_DIV\_NUM}（分频系数整数部分）、\hyperref[fielddesc:HPSYSCLKRSTAPBCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_APB\_CLK\_DIV\_NUMERATOR}（分频系数小数部分分子）、\hyperref[fielddesc:HPSYSCLKRSTAPBCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_APB\_CLK\_DIV\_DENOMINATOR}（分频系数小数部分分母）控制 APB\_CLK 的分频；\\
+向 \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 写 1 使 APB\_CLK 配置的分频系数生效。
+
+
+
+
+\item 可配置 \hyperref[fielddesc:LPCLKRSTHPROOTCLKSRCSEL]{LP\_CLKRST\_HP\_ROOT\_CLK\_SRC\_SEL} 选择 HP 的 ROOT\_CLK 时钟源。
+
+\begin{importantlisting}
+\vspace{-0.5em}
+\begin{enumerate}
+    \item 推荐在上述 SoC 时钟分频配置完成并更新配置之后再进行 ROOT\_CLK 时钟源选择配置。
+    \item 切换 ROOT\_CLK 时钟源前软件需要保证使用了正确的 SoC 时钟分频，防止各时钟超过允许的最大频率。
+    \item 向 \hyperref[fielddesc:HPSYSCLKRSTSOCCLKDIVUPDATE]{HP\_SYS\_CLKRST\_SOC\_CLK\_DIV\_UPDATE} 写 1 会同时使 CPU\_CLK、MEM\_CLK、SYS\_CLK、APB\_CLK 配置的分频系数生效，但不推荐一次性生效所有分配系数。建议每配置一个模块生效一次。
+    \item 在高分频系数向低分频系数切换过程中，推荐按照 APB\_CLK -> SYS\_CLK -> MEM\_CLK -> CPU\_CLK 的顺序配置；在低分频系数向高分频系数切换过程中，推荐按照 CPU\_CLK -> MEM\_CLK -> SYS\_CLK -> APB\_CLK 的顺序配置；以防止出现高频时钟毛刺。
+\end{enumerate}
+\end{importantlisting}
+
+\end{itemize}
+
+
+\subsection{低功耗系统时钟配置}
+
+\begin{itemize}
+\item 可配置 \hyperref[fielddesc:LPCLKRSTSLOWCLKSEL]{LP\_CLKRST\_SLOW\_CLK\_SEL} 选择 LP\_SLOW\_CLK 的时钟源。
+
+\item 可配置 \hyperref[fielddesc:LPCLKRSTFASTCLKSEL]{LP\_CLKRST\_FAST\_CLK\_SEL} 选择 LP\_FAST\_CLK 的时钟源。
+
+\item 可配置 \hyperref[fielddesc:LPCLKRSTLPPERIDIVNUM]{LP\_CLKRST\_LP\_PERI\_DIV\_NUM} 设置 LP\_PERI\_CLK 的时钟分频系数。
+\end{itemize}
+
+\subsection{外设时钟复位配置}
+
+\begin{importantlisting}
+\vspace{-0.5em}
+
+\chipname{} 具有低功耗特性，因此有些外设时钟默认为关闭状态。在启用这些外设之前，必须将外设的时钟打开，即把相应的 CLK\_EN 位置为 1，并且解除外设的复位状态，即把相应的 RST\_EN 位置为 0。
+\end{importantlisting}
+
+大部分外设模块的时钟都可以分为总线时钟和功能时钟。外设模块的总线时钟主要是用于配置外设模块的寄存器。功能时钟主要是模块工作所使用的时钟，例如 UART 的参考时钟。大部分模块的功能时钟可以选择多个时钟源。在门控寄存器的描述中会说明该寄存器属于总线（SYS\_CLK、APB\_CLK）时钟门控寄存器还是功能时钟门控寄存器。
+
+\chipname{} 的总线时钟开关、功能时钟的开关以及时钟源选择和时钟分频的配置寄存器均放在了 HP\_SYS\_CLKRST、LP\_CLKRST、LPPERI 中。其中 HP 的外设，除了 EMAC、SDMMC、USB Serial/JTAG、全速 USB 2.0 OTG、高速 USB 2.0 OTG 的复位配置寄存器在 LP\_CLKRST 外，其余所有均在 HP\_SYS\_CLKRST。更多信息，详见章节 \ref{sec:resclk-reg-summ} \textit{\nameref{sec:resclk-reg-summ}}。
+
+修改时钟配置时，推荐先把对应门控关闭，修改好分频、时钟源选择等配置后，再重新开。
+
+功能模块不工作时，可以配置对应寄存器关闭功能时钟，关闭模块功能时钟不会影响系统其他部分。
+下文以 I2C 时钟配置为例：
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/sys_clk_struct_pcr_new.pdf}
+    \caption{时钟配置示例}
+    \label{figure:Clock Config}
+\end{figure}
+
+
+图 \ref{figure:Clock Config} 是 I2C 的时钟结构图，其他模块的时钟结构类似。其中 CLK\_SWITCH 的功能是选择一个时钟输出，CLK\_GATE 的功能是打开/关闭时钟。
+
+对于要求低功耗的场景，当模块不工作时，除了关闭功能时钟，还可以关闭模块的总线时钟来进一步降低功耗。注意，如果先关闭模块总线时钟，那么模块的功能时钟还是有可能继续工作，所以推荐先关闭功能时钟再关闭总线时钟，打开时钟时推荐先打开总线时钟再打开功能时钟。
+
+
+\begin{tiplisting}
+本章节中所有分频寄存器配置的值为实际分频值减去 1。
+\end{tiplisting}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{resclk-reg-summ}{}
+\section{寄存器列表}
+\label{sec:resclk-reg-summ}
+
+\subsection{复位与时钟 (HP\_SYS\_CLKRST) 寄存器列表}
+本小节所有地址均为相对于 HP\_SYS\_CLKRST 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/12-HP-CLK-reg-summ__CN}
+
+\subsection{LP 常开时钟与复位 (LP\_CLKRST) 寄存器列表}
+本小节地址均为相对于 LP\_CLKRST 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}
+
+\subfile{\modulefiles/12-LP-CLK-reg-summ__CN}
+
+\subsection{LP 外设时钟与复位 (LPPERI) 寄存器列表}
+本小节地址均为相对于 LPPERI 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}
+
+\subfile{\modulefiles/12-LP-PERI-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+
+\section{寄存器}
+
+\subsection{复位与时钟 (HP\_SYS\_CLKRST) 寄存器}
+
+本小节的所有地址均为相对于 HP\_SYS\_CLKRST 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/12-HP-CLK-reg__CN}
+
+\subsection{LP 常开时钟与复位 (LP\_CLKRST) 寄存器}
+
+本小节的所有地址均为相对于 LP\_CLKRST 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/12-LP-CLK-reg__CN}
+
+\subsection{LP 外设时钟与复位 (LPPERI) 寄存器}
+
+本小节的所有地址均为相对于 LPPERI 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/12-LP-PERI-reg__CN}
+
+\end{document}

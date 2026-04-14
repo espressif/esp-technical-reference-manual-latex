@@ -1,0 +1,515 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./37-SDIOSLAVE}
+% To add an external file, use:
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sdioslave}{}
+\chapter{SDIO 从机控制器 (SDIO)}
+\label{mod:sdioslave}
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{概述}
+\chipname{} 支持安全数字输入输出 (SDIO) 设备接口，符合 SDIO 规范 V2.00。主机 (host) 可以通过 SDIO 总线协议访问 \chipname{}。
+     
+主机可以直接访问 \chipname{} SDIO 接口寄存器，或通过使用直接存储访问 (DMA) 引擎访问设备上的共享存储器，在保证性能的同时减少了处理器开销。
+
+\section{主要特性}
+SDIO 从机控制器具有以下特性：
+
+\begin{itemize}
+    \item 符合 SDIO 物理层规范 V2.00 和 SDIO 规范 V2.00
+    \item 支持 2 个 IO functions（除 function 0 外）
+    \item 支持 SPI、1-bit SDIO 和 4-bit SDIO 传输模式
+    \item 0 \verb+~+ 50 MHz 时钟范围
+    \item 采样时钟沿或驱动时钟沿可配置
+    \item 为信息交互设定的特定寄存器
+    \item 支持 SDIO 中断机制
+    \item 支持自动填充 SDIO 总线上的发送数据，同样支持自动丢弃 SDIO 总线上的填充数据
+    \item 高达 512 字节的块大小
+    \item 主机与从机 (slave) 间有中断向量可以相互中断对方
+    \item 带有数据传输的 DMA
+    \item 支持在保持连接的状态下进行休眠唤醒
+\end{itemize}
+
+\section{结构描述}
+SDIO从机的功能结构图如图 \ref{fig:sdioslave-slave-block-diagram} 所示。
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/37-SDIOSLAVE-SDIO-slave-block-diagram}
+    \caption{SDIO从机功能结构图}    
+    \label{fig:sdioslave-slave-block-diagram}
+\end{figure}   
+
+上图中，Host（主机）代表任一符合 SDIO 规范 V2.00 的主机设备。主机通过标准 SDIO 总线与作为 SDIO从机的 \chipname{} 互动。SDIO 设备接口模块通过直接提供 SDIO 接口寄存器并使能 DMA 操作来与主机通信，实现高级性能总线 (AHB) 上的高速数据传输，并且不需要 CPU 的参与。
+\section{协议标准}
+\chipname{} SDIO 从机控制器符合以下协议标准：
+\begin{itemize}
+    \item 《SD 卡规范第一部分：物理层规范，版本 2.00》（SD Specifications Part1 Physical Layer Specification Version 2.00，本章中简称为“物理层规范 V2.00”）
+    \item 《SD 卡规范 E1 部分：SDIO 规范，版本 2.00》（SD Specifications Part E1 SDIO Specification Version 2.00, January 30, 2007，本章中简称为“SDIO 规范 V2.00”）
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\subsection{物理总线}
+
+\begin{itemize}
+     \item 总线模式：支持 SPI、1-bit SDIO 和 4-bit SDIO 传输模式。
+     \item 总线信号：标准 SDIO 规范 V2.00 的物理总线信号。SPI 传输模式主要包括 CS/DI/SCLK/DO/IRQ 信号；1-bit SDIO 传输模式主要包括 CMD/CLK/DATA/IRQ 信号；4-bit SDIO 传输模式主要包括 CMD/CLK/DAT[3:0]。
+     \item 总线速度模式：全速卡模式 0 \verb+~+ 50 MHz 时钟范围；低速卡模式 0 \verb+~+ 400 kHz 时钟范围。
+     \item IO functions：除 function 0 外，还支持 2 个 IO function。其中，function 0 只用于 CCCR/FBR/CIS 操作；function 1/2 可同时用于应用数据传输（如 Wi-Fi 包和蓝牙包）和访问 SLC Host 寄存器。
+\end{itemize}
+
+详见“物理层规范 V2.00”和“SDIO 规范 V2.00”。
+ 
+\subsection{支持命令}
+
+SDIO 从机控制器支持的主要数据传输命令为 IO\_RW\_DIRECT (CMD52) 和 IO\_RW\_EXTENDED (CMD53) 。
+
+命令 IO\_RW\_DIRECT (CMD52) 可以用来访问寄存器和传输数据，但通常只会用来访问寄存器。其组成如图  \ref{fig:sdioslave-cmd52-content} 所示，各部分具体含义请查看 SDIO 规范 V2.00。
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/37-SDIOSLAVE-cmd52-content.eps}
+    \caption{CMD52 内容}
+    \label{fig:sdioslave-cmd52-content}
+\end{figure}  
+
+命令 IO\_RW\_EXTENDED (CMD53) 用来发起任意长度的包传输。其组成如图 \ref{fig:sdioslave-cmd53-content} 所示，各部分具体含义请查看 SDIO 规范 V2.00。
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/37-SDIOSLAVE-cmd53-content.eps}
+    \caption{CMD53 内容}
+    \label{fig:sdioslave-cmd53-content}
+\end{figure}  
+
+\subsection{I/O function 0 地址空间}
+ 
+I/O function 0 只用于卡通用控制寄存器 (CCCR) 、功能基本寄存器 (FBR) 、卡信息结构寄存器 (CIS) 的操作，它的地址空间如图 \ref{fig:sdioslave-fun0-map} 所示。I/O function 0 的地址空间是 SDIO 规范规定的，各部分具体含义请查看 SDIO 规范。
+ 
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/37-SDIOSLAVE-fun0-map.eps}
+    \caption{function 0 地址空间}
+    \label{fig:sdioslave-fun0-map}
+\end{figure}  
+
+CCCR、FBR、CIS 分别是 SDIO 协议规定的通用控制寄存器、各 function 的控制配置寄存器、以及有关版本、功耗、制造商等卡信息的状态寄存器。这些控制或配置寄存器对应的功能是可选的，其含义详见 SDIO 规范。\chipname{} SDIO从机的 CCCR 设置如表 \ref{tab:sdioslave-cccr} 所示，FBR 设置如表 \ref{tab:sdioslave-fbr} 所示。
+
+\subfile{\modulefiles/tables/37-SDIOSLAVE-cccr-fbr__CN}
+ 
+\subsection{I/O function 1/2 地址空间}
+\label{sec:sdioslave-fun12-mem-map}
+I/O function 1 和 2 的功能与权限完全相同，二者可同时或独立传输应用数据（例如 Wi-Fi 包和蓝牙包），都可以传输固定地址包和递增地址包。function 1 和 2 还可以访问同一组 SLC Host 寄存器，它们的地址空间如图 \ref{fig:sdioslave-fun12-map} 所示。主机可通过 I/O function 1 和 2 访问图中的所有地址段。
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/37-SDIOSLAVE-fun12-map.eps}
+    \caption{function 1/2 地址空间}
+    \label{fig:sdioslave-fun12-map}
+\end{figure}  
+   
+\subsubsection{访问 SLC HOST 寄存器空间}
+
+为了方便主机与从机之间的信息交互，主机可以通过 I/O function 1/2 访问从机中的特定寄存器。这些寄存器在 0x40 – 0x3FF 的连续地址段内，主机访问时只需将 CMD52 或 CMD53 中的寄存器地址设置为对应寄存器地址的低 10 位。主机可以使用 CMD53 同时访问多个寄存器，提高了数据传输的速率。
+
+SLCHOST\_CONF\_W0\_REG 到 SLCHOST\_CONF\_W15\_REG 共有 52 个字节的区域可供主机和从机任意访问和修改，方便了主机与从机之间的信息交互。
+
+主机与从机侧的软件可以同时访问 SLC Host 寄存器空间，因此需要用户设计上层机制保证主机与从机侧的软件不会同时访问相同的寄存器地址，避免两侧同时访问同一寄存器字段而造成的错误。
+
+\subsubsection{使用递增地址传输包} 
+
+主机使用地址 0x400 - 0x1F7FF 连续传输多个应用数据包（如 Wi-Fi 包）时，CMD53 中的地址字段应设置为递增模式，OP Code 字段应固定为1。
+
+例如：主机希望使用 CMD53，从起始地址 0x500 开始，传输 3 个数据块。那么主机应该将 CMD53 中的字段 Block Mode 设为 1，表示以数据块为单位进行数据传输；将字段 OP Code 设为1，表示递增地址模式；将 Register Address 字段设为 0x500，表示起始地址为 0x500；将字段 Byte/Block Count 设为 0x3，表示传输 3 个数据块；其余字段依据 SDIO 规范设置。
+
+主机与从机间通过CMD53传输数据包时，从机会判定当前数据包的有效数据是否结束，从而进行无效数据的填充与丢弃。数据填充与丢弃机制详见 \ref{sec:sdioslave-dummy-data} 所述。
+
+\subsubsection{使用固定地址传输包} 
+
+主机使用地址0x0传输应用数据包（如蓝牙包）时，CMD53中的地址字段和OP Code字段应固定为0。
+
+例如：主机希望使用 CMD53，从固定地址 0x0，传输3个数据块。那么主机应该将 CMD53 中的字段 Block Mode 设为1，表示以数据块为单位进行数据传输；将字段 OP Code 设为0，表示固定地址模式；将 Register Address 字段设为 0x0，表示固定地址为 0x0；将字段 Byte/Block Count 设为 0x3，表示传输 3 个数据块；其余字段依据 SDIO 规范设置。
+
+主机与从机间通过CMD53传输数据包时，从机会判定当前数据包的有效数据是否结束，从而进行无效数据的填充与丢弃。数据填充与丢弃机制详见 \ref{sec:sdioslave-dummy-data} 所述。
+
+\subsection{DMA}
+\label{sec:sdioslave-dma}
+
+SDIO从机有一个专门的 DMA 用于从系统存储 (RAM) 空间获取或存储传输数据，如图 \ref{fig:sdioslave-slave-block-diagram} 所示，DMA 通过 AHB 访问 RAM。SDIO 从机控制器有权限访问的 RAM 空间详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。SDIO 从机控制器一次传输可以访问的存储地址范围，可以通过配置 SCL 寄存器中的 *SHAREMEM*\_REG 相关字段控制，详见 \ref{sec:sdioslave-reg-summ} 节所述。
+
+DMA有2个通道，SLC0 和SLC1，传输固定地址包时，会通过DMA的SLC1通道完成；传输递增地址包时，会通过DMA的SLC0通道完成。为了用户使用上的方便，SDIO从机提供了function 1/2用于数据传输，I/O function 1/2 的地址范围详见 \ref{sec:sdioslave-fun12-mem-map} 节所述。 建议通过function 1传输递增地址包，使用DMA的SLC0通道；通过function 2传输固定地址包，使用DMA的SLC1通道。
+
+DMA 通过 AHB 访问 RAM，可以通过配置 \hyperref[regdesc:SDIOSLCCONF0REG]{SDIO\_SLCCONF0\_REG} 和 \hyperref[regdesc:SDIOSLCBURSTLENREG]{SDIO\_SLC\_BURST\_LEN\_REG} 中的相关字段，设置 AHB 接口是否可以使用 Burst 操作，以及可以使用的 Burst 操作类型，详见 \ref{sec:sdioslave-reg-summ} 节所述。
+
+\subsubsection{链表}
+\label{sec:sdioslave-linked-list}
+
+从机软件可以通过挂载链表的方式来使用 DMA 引擎。DMA 根据 RX（从机到主机） 链表中的内容将相应 RAM 中的数据发送出去，也可根据 TX（主机到从机）链表中的内容将接收的数据存入指定 RAM 地址空间。每张链表由若干个描述符组成。
+
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/37-SDIOSLAVE-descriptor.eps}
+    \caption{SDIO 从机 DMA 链表描述符结构}
+    \label{fig:sdioslave-linked-list-struc}
+\end{figure}  
+
+TX 链表描述符与 RX 链表描述符结构相同，图 \ref{fig:sdioslave-linked-list-struc} 所示为描述符的结构图，一个描述符由 3 个字组成。每一字段的意义如下：
+
+\begin{itemize}
+    \item owner (DW0)[31]：表示当前描述符对应的 buffer 允许的操作者。\\
+    0：允许的操作者为 CPU；\\
+    1：允许的操作者为 DMA 引擎。\\
+    从机软件创建描述符时应将该字段置为1；使能DMA回写权限并且DMA使用完对应buffer后，会将该字段清0。
+    \item eof (DW0)[30]：表示数据包结束标志。\\
+    0：当前描述符不是数据包的最后一个描述符；\\
+    1：当前描述符为数据包的最后一个描述符。\\
+    主机向从机发送包，从机软件创建描述符时应将该字段置为0，DMA会在一个包结束时将对应描述符的该字段置1；主机从从机接收包，从机软件创建描述符时根据包结束情况进行设置。
+    \item reserved (DW0)[29:28]：reserved。\\
+    从机软件需将该字段设置为 0x0。
+    \item length (DW0)[27:14]：表示当前描述符对应的 buffer 中的有效字节数。DMA 引擎从 buffer 中读取数据时表示能够读取的字节数；DMA 引擎向 buffer 中存储数据时表示已存数据的字节数。\\
+    主机向从机发送包，从机软件创建描述符时应将该字段置为0x0，DMA会在对应buffer使用完后回写该字段；主机从从机接收包，从机软件创建描述符时应将该字段置为对应buffer中能够读取的字节数。
+    \item size (DW0)[13:0]：表示当前描述符对应的 buffer 的大小，单位为字节。\\
+    从机软件创建描述符时设置。\\
+       {\bfseries 注意}：大小必须字对齐。
+    \item buffer address pointer (DW1)：buffer 地址指针。\\
+    从机软件创建描述符时设置。\\
+    {\bfseries 注意}：地址必须字对齐。
+    \item next descriptor address (DW2)：下一个描述符的地址。下一个描述符不存在时，该值为 0。\\
+    从机软件创建描述符时设置。
+\end{itemize}
+
+DMA回写链表描述符字段详见 \ref{sec:linked-list-wr-back} 所述。
+
+从机软件可以将多个描述符通过next descriptor address (DW2) 字段组成链表，SDIO从机DMA 链表如图 \ref{fig:sdioslave-linked-list} 所示：
+ 
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\textwidth]{\modulefiles/figures/37-SDIOSLAVE-descriptor-chain}
+    \caption{SDIO 从机 DMA 链表}
+    \label{fig:sdioslave-linked-list}    
+\end{figure}     
+
+为了更清晰的理解链表和 eof 位，举例如下：假设从机侧软件构造了链表，包含3个描述符。描述符0指向的数据大小为500字节，eof 位为0；描述符1指向的数据大小为200字节，eof 位为1；描述符2指向的数据大小为200字节，eof 位为1。若第1个 CMD53 命令要求读取400字节的数据，则 DMA 会将描述符0指向的前400字节数据发送给主机。若第2个 CMD53 命令要求读取400字节的数据，则 DMA 会先将描述符0指向的后100字节剩余数据发送给主机；之后再将描述符1指向的200字节数据发送给主机；之后由于描述符1的 eof 位为1，DMA 判定当前命令的有效数据结束，从而向主机发送100字节的无效数据0x0。若第3个 CMD53 命令要求读取400字节的数据，则 DMA 会先将描述符2指向的200字节数据发送给主机；之后由于描述符2的 eof 位为1，DMA 判定当前命令的有效数据结束，从而向主机发送200字节的无效数据0x0。
+
+\subsubsection{链表回写}
+\label{sec:linked-list-wr-back}
+主机向从机发送包的过程中，当一个链表描述符指定的 buffer 被写满，或者一个包传输结束时，DMA 引擎需要跳到下一个描述符来存储后续的数据。在跳转之前，DMA会对当前的描述符进行回写。DMA可以回写描述符的 DW0，将 eof 和 length 位写入最新的值，owner位的值由 \hyperref[regdesc:SDIOSLCCONF0REG]{SDIO\_SLCCONF0\_REG} 中的 SDIO\_SLC0/1\_TX\_LOOP\_TEST 决定。
+
+主机从从机接收包的过程中，当一个链表描述符指定的 buffer 被读空时，DMA 引擎需要跳到下一个描述符来读取后续的数据。在此之前，从机侧软件可将 \hyperref[regdesc:SDIOSLCCONF0REG]{SDIO\_SLCCONF0\_REG} 中的 SDIO\_SLC0/1\_RX\_AUTO\_WRBACK 置1，DMA会对当前的描述符进行回写。可以回写描述符的 DW0，将owner位写入最新的值，owner位的值由 \hyperref[regdesc:SDIOSLCCONF0REG]{SDIO\_SLCCONF0\_REG} 中的 SDIO\_SLC0/1\_RX\_LOOP\_TEST 决定，而其他位的值保持不变。
+
+相关寄存器字段详见 \ref{sec:sdioslave-reg-summ} 节所述。
+
+\subsubsection{数据填充与丢弃}
+\label{sec:sdioslave-dummy-data}
+
+为了实现块传输，主机和从机都需要将 SDIO 总线上发送的数据填充为整个块。从机在发包时会自动填充数据，在收包时自动丢弃填充数据。
+\begin{itemize}
+    \item 主机向从机通过CMD53发送数据包时，当数据量达到数据包长度时，SDIO从机判定当前数据包有效数据结束。此时DMA会回写当前链表描述符，将当前描述符的eof位置1，并产生 \hyperref[int:SLC01TXSUCEOFINT]{SLC0/1\_TX\_SUC\_EOF\_INT} 中断。判定有效数据结束后，当前数据包的剩余数据会被认为是无效数据，不再经DMA收入buffer。直至下一个CMD53，从机才会重新开始将数据接收进入下一个buffer。
+    \begin{itemize}
+        \item 对于递增地址包，从机判断有效数据是由地址决定的，当数据地址大于等于 0x1F800 后会被判定为无效数据从而丢弃。因此，主机应将 CMD53 起始地址字段设为 0x1F800 – Packet\_length（Packet\_length 的单位是字节）。递增地址包在 SDIO 总线上的数据流如图 \ref{fig:sdioslave-sdio-bus-packet-trans} 所示。
+        \begin{figure}[H]
+        \centering
+        \fbox{\includegraphics[width=0.65\textwidth]{\modulefiles/figures/37-SDIOSLAVE-sdio-bus-packet-tran.eps}}
+        \caption{主机向从机发送递增地址包的数据流}
+        \label{fig:sdioslave-sdio-bus-packet-trans}    
+        \end{figure}
+        \item 对于固定地址包，从机使用数据包的前3个字节作为包长度（包长度包括前3个字节，并且前3个字节也会被存入链表指定的buffer中），当收到的数据长度达到包长度后，之后的数据会被认为是无效数据而丢弃。
+    \end{itemize}
+    \item 主机从从机通过CMD53获取数据包（包括递增地址包和固定地址包）时，当DMA读取到某个buffer的最后一个字节，且DMA链表描述符的eof位为1时，SDIO从机会认为当前包的有效数据结束。此时DMA会回写当前描述符，并产生 \hyperref[int:SLC01RXEOFINT]{SLC0/1\_RX\_EOF\_INT} 中断。判定有效数据结束后，当前数据包的剩余数据会被无效数据0x0填充，不再经DMA从buffer读取。直至下一个CMD53，从机才会重新开始经DMA从buffer读取数据。\\
+    {\bfseries 注意}：主机从从机获取数据包时，无论递增地址包和固定地址包都使用 DMA 链表描述符的 eof 位作为数据结束的判断依据，而不是地址 0x1F800。因此，主机下发多个 CMD53 获取多个数据包，只要 DMA 没有遇到描述符 eof 位为1，就会按照链表对应的 buffer 顺序依次获取数据，依次传输给主机；当 DMA 遇到描述符 eof 位为1时，会从对应的 buffer 中取完数据，然后添加无效数据完成当前 CMD53 命令，下一个 CMD53 命令将会使用下一个描述符指向的 buffer 数据。
+\end{itemize}
+
+\subsection{SDIO 总线时序}\label{sec:sdioslave-sdio-slave-timing}
+
+主机与从机间是通过 PCB 走线连接，所以延迟大。为了保证总线上时序正确，从机支持调整 SDIO 总线输入的采样时钟沿和输出的驱动时钟沿。
+
+当从主机来的数据变化的时刻靠近时钟的上升沿时，从机会选择时钟的下降沿进行采样。采样时序图如图 \ref{fig:sdioslave-sampling-timing} 所示： 
+
+ \begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/37-SDIOSLAVE-sampling.eps}}
+    \caption{采样时序图}
+    \label{fig:sdioslave-sampling-timing}    
+\end{figure}     
+
+从机管脚采样沿默认由 MTMS (GPIO4) strapping 值决定，但通过配置 \hyperref[regdesc:SLCHOSTCONFREG]{SLCHOST\_CONF\_REG} 寄存器可以强制决定模式（优先级从高到低）：(1) 置位 SLCHOST\_FRC\_POS\_SAMP，对应管脚强制上升沿采样；(2) 置位 SLCHOST\_FRC\_NEG\_SAMP，对应管脚强制下降沿采样。
+
+SLCHOST\_FRC\_POS\_SAMP 和 SLCHOST\_FRC\_NEG\_SAMP 的位宽均为 5 bit，5 个 bit 分别对应 CMD 线和 4 个 DATA 线 (0-3) 。置位这两个域使得从机对相应的线在时钟上升沿或下降沿上进行采样。
+
+从机还可以选择时钟的上升沿还是下降沿对数据输出线进行驱动，以适应不同的延迟。时序图如图 \ref{fig:sdioslave-output-sequence} 所示：
+
+  \begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/37-SDIOSLAVE-driving.eps}}
+    \caption{输出时序图}
+    \label{fig:sdioslave-output-sequence}    
+\end{figure}    
+
+从机管脚输出沿默认由 MTDI (GPIO5) strapping 值决定，但通过配置以下寄存器可以强制决定模式（优先级从高到低）：(1) 置位 \hyperref[regdesc:SLCHOSTCONFREG]{SLCHOST\_CONF\_REG} 中的 SLCHOST\_FRC\_SDIO11，对应管脚强制下降沿输出；(2) 置位 \hyperref[regdesc:SLCHOSTCONFREG]{SLCHOST\_CONF\_REG} 中的 SLCHOST\_FRC\_SDIO22，对应管脚强制上升沿输出；(3) 置位 \hyperref[regdesc:HINFCFGDATA1REG]{HINF\_CFG\_DATA1\_REG} 中的 HINF\_HIGHSPEED\_ENABLE 和 \hyperref[regdesc:SLCHOSTCONFREG]{SLCHOST\_CONF\_REG} 中的 SLCHOST\_HSPEED\_CON\_EN 后，主机通过配置 CCCR 中的 EHS (Enable High-Speed) 为 1 强制上升沿输出。
+
+SLCHOST\_FRC\_SDIO11 和 SLCHOST\_FRC\_SDIO22 的位宽均为 5 bit，5 个 bit 分别对应 CMD 线和 4 个 DATA 线 (0-3) 。置位这两个域使得从机在时钟下降沿或上升沿上对相应的线进行驱动。
+
+\textbf{关于优先级的说明}：无论输入还是输出，strapping 管脚的配置也被包含在优先级范围内（优先级最低）。每一级有效的前提是比它高的优先级都不生效。例如 MTMS (GPIO4) strapping 的配置决定对应管脚的采样沿，生效的前提是 SCLHOST\_FRC\_POS\_SAMP 没有置 1，SCLHOST\_FRC\_NEG\_SAMP 也没有置 1。
+
+\section{中断}
+
+主机和从机间可以通过配置中断向量灵活地中断对方。主机和从机 DMA 每个 SLC 通道之间各有 8 个中断向量可用于中断对方。在配置中断向量寄存器后就会向对方发送中断（配置相应的中断使能寄存器）。
+
+\subsection{主机侧中断}
+\begin{itemize}
+\item {\it SLCHOST\_SLC0/1\_RX\_NEW\_PACKET\_INT \label{int:SLCHOSTSLC01RXNEWPACKETINT}}：SDIO Slave有数据包需要向主机发送。以下任意一种情况可触发该中断：
+    \begin{itemize}
+        \item 软件配置 \hyperref[regdesc:SDIOSLC0RXLINKREG]{SDIO\_SLC0RX\_LINK\_REG} 或 \hyperref[regdesc:SDIOSLC1RXLINKREG]{SDIO\_SLC1RX\_LINK\_REG} 中的 SDIO\_SLC0/1\_RXLINK\_START 字段启动DMA时
+        \item DMA处理完eof字段为1的 RX 链表描述符，之后又有新的RX链表描述符时
+        \item 数据包需要重传时
+    \end{itemize}
+\item {\it SLCHOST\_SLC0/1\_TX\_OVF\_INT \label{int:SLCHOSTSLC01TXOVFINT}}：从机 TX buffer 溢出中断
+\item {\it SLCHOST\_SLC0/1\_RX\_UDF\_INT \label{int:SLCHOSTSLC01RXUDFINT}}：从机 RX buffer 下溢中断
+\item {\it SLCHOST\_SLC0/1\_TOHOST\_BIT\textcolor{red}{\it{n}}\_INT \label{int:SLCHOSTSLC01TOHOSTBITnINT}} (\textcolor{red}{\it{n}}: 0 \verb+~+ 7) ：从机中断主机
+\end{itemize}
+
+\subsection{从机侧中断}
+\begin{itemize}
+\item {\it SLC0/1\_RX\_DSCR\_ERR\_INT \label{int:SLC01RXDSCRERRINT}}：从机 RX 链表描述符错误中断
+\item {\it SLC0/1\_TX\_DSCR\_ERR\_INT \label{int:SLC01TXDSCRERRINT}}：从机 TX 链表描述符错误中断
+\item {\it SLC0/1\_RX\_EOF\_INT \label{int:SLC01RXEOFINT}}：从机 RX 操作完成中断
+\item {\it SLC0/1\_RX\_DONE\_INT \label{int:SLC01RXDONEINT}}：单个 buffer 由从机 RX 完成的中断
+\item {\it SLC0/1\_TX\_SUC\_EOF\_INT \label{int:SLC01TXSUCEOFINT}}：从机 TX 操作完成中断
+\item {\it SLC0/1\_TX\_DONE\_INT \label{int:SLC01TXDONEINT}}：单个 buffer 在从机 TX 操作时填满了的中断
+\item {\it SLC0/1\_TX\_OVF\_INT \label{int:SLC01TXOVFINT}}：从机 TX buffer 溢出中断
+\item {\it SLC0/1\_RX\_UDF\_INT \label{int:SLC01RXUDFINT}}：从机 RX buffer 下溢中断
+\item {\it SLC0/1\_TX\_START\_INT \label{int:SLC01TXSTARTINT}}：从机 TX 操作开始中断
+\item {\it SLC0/1\_RX\_START\_INT \label{int:SLC01RXSTARTINT}}：从机 RX 操作开始中断
+\item {\it SLC\_FRHOST\_BIT\textcolor{red}{\it{n}}\_INT \label{int:SLCFRHOSTBITnINT}} (\textcolor{red}{\it{n}}: 0 \verb+~+ 15) ：主机中断从机，其中中断向量 Bit[7:0] 通过 DMA SLC0 通道处理 中断，中断向量 Bit[15:8] 通过 DMA SLC1 通道处理中断
+\end{itemize}
+
+\section{包的发送和接收流程}
+
+SDIO 主机与从机间的包传输需要两者按照特定的流程配合完成。在基于 SDIO 规范协议的基础上， \chipname{} 针对Wi-Fi/蓝牙等更高抽象层次的数据传输应用场景，需要额外遵循如下特定的数据传输过程。
+
+\subsection{从机向主机发送包}
+
+包的发送是由从机发起，通过中断来通知主机（中断实现方式参看 SDIO 协议）。主机从从机读取相关信息后发起 SDIO 总线传输。整个流程如图 \ref{fig:sdioslave-package-sending-procedure} 所示：
+
+ \begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.4\textwidth]{\modulefiles/figures/37-SDIOSLAVE-transition-flow__CN.eps}}
+    \caption{从机向主机发送包的流程}
+    \label{fig:sdioslave-package-sending-procedure}    
+\end{figure}  
+
+\begin{enumerate}
+    \item 从机 CPU 根据传输数据包的具体情况，构建链表。更多关于构建链表的信息请参考 \ref{sec:sdioslave-linked-list} 小节。
+    \item 从机 CPU 通过寄存器 \hyperref[regdesc:SDIOSLC0LENCONFREG]{SDIO\_SLC0\_LEN\_CONF\_REG} 向主机更新要发送的数据长度信息。
+    \item 从机 CPU 启动 DMA。需要先将链表第一个描述符的32位地址写到寄存器 \hyperref[regdesc:SDIOSLC0RXLINKADDRREG]{SDIO\_SLC0RX\_LINK\_ADDR\_REG} 或 \hyperref[regdesc:SDIOSLC1RXLINKADDRREG]{SDIO\_SLC1RX\_LINK\_ADDR\_REG} 中，再配置 \hyperref[regdesc:SDIOSLC0RXLINKREG]{SDIO\_SLC0RX\_LINK\_REG} 或 \hyperref[regdesc:SDIOSLC1RXLINKREG]{SDIO\_SLC1RX\_LINK\_REG} 的 SDIO\_SLC0/1\_RXLINK\_START 字段来启动 DMA。更多关于 DMA 的信请参考 \ref{sec:sdioslave-dma} 小节。
+    \item 从机 DMA 向主机发送中断。
+    \item 主机收到中断后，通过访问 \hyperref[regdesc:SLCHOSTSLC0HOSTINTSTREG]{SLCHOST\_SLC0HOST\_INT\_ST\_REG}、\hyperref[regdesc:SLCHOSTSLC1HOSTINTSTREG]{SLCHOST\_SLC1HOST\_INT\_ST\_REG} 和 \hyperref[regdesc:SLCHOSTPKTLENREG]{SLCHOST\_PKT\_LEN\_REG} 这3个寄存器从从机读取相关信息。
+    \begin{itemize}
+        \item SLCHOST\_SLC0/1HOST\_INT\_ST\_REG：中断状态寄存器，其中 bit SLCHOST\_SLC0/1\_RX\_NEW\_PACKET\_INT\_ST 为 1 表明中断的原因是从机发包。
+        \item SLCHOST\_PKT\_LEN\_REG：从机发送包长度累加寄存器，主机 用本次读取值减去上次读取值就可以得到本次发送包的长度。
+    \end{itemize}  
+    \item 主机通过CMD52命令清除中断。
+    \item 主机通过CMD53命令从从机处获取数据包。数据传输过程中，当从机判定当前包的有效数据结束时，之后的数据会使用无效数据0x0填充。关于从机如何判定有效数据结束的信息，请参考 \ref{sec:sdioslave-dummy-data} 小节。
+    \item 数据包发送完成后, 从机 DMA 会向 CPU 发送中断，这时 CPU 可以回收 buffer。
+\end{enumerate}
+
+\textbf{注意：}
+
+\begin{itemize}
+    \item 不建议链表中 eof 位全设置为0。如果链表中没有设置 eof 位为1，DMA 可能会将下一个包的数据发送给当前命令，造成错误。若链表不含 eof 位为1的描述符，Slave 侧软件应该负责填充数据，将每个数据包的长度对齐到数据块的大小，避免 DMA 将下一个包的数据发送给当前命令。Host 发送 CMD53 读取数据时应该准确控制每个包的数据块个数，避免多取或少取数据，同时 Host 应该有识别填充数据的能力。
+    \item 建议用户一个 CMD53 命令只传输一个数据包，每个数据包只使用一个链表，避免复杂传输造成未知异常。
+    \item 不建议通过一个链表发送多个数据包，Host 及软件可能很难对数据包进行分割。如果软件希望通过一个链表发送多个数据包，应该在构造链表时通过 eof 字段对数据包进行分割，方便 DMA 根据链表对不同的数据包做数据填充（建议每个数据包的长度都要对齐到数据块的大小，可以避免 DMA 填充数据），同时 Host 应该有识别填充数据的能力。
+\end{itemize}
+
+
+\subsection{从机从主机接收包}   
+
+包的接收是由主机发起，从机通过 DMA 接收数据并存储到 RAM 中，传输完成后通过中断通知 CPU 进行数据处理。整个流程如图 \ref{fig:sdioslave-package-receiving-procedure} 所示：
+
+ \begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.45\textwidth]{\modulefiles/figures/37-SDIOSLAVE-receive-flow__CN.eps}}
+    \caption{从机从主机接收包的流程}
+    \label{fig:sdioslave-package-receiving-procedure}    
+\end{figure}  
+
+主机通过访问寄存器 \hyperref[regdesc:SLCHOSTSLC0HOSTTOKENRDATAREG]{SLCHOST\_SLC0HOST\_TOKEN\_RDATA\_REG} 或 \hyperref[regdesc:SLCHOSTSLC1HOSTTOKENRDATAREG]{SLCHOST\_SLC1HOST\_TOKEN\_RDATA\_REG} 获取从机侧可用于接收包的 buffer 数。从机侧的 CPU 要在准备好用于接收包的 DMA 链表后更新这个值。
+
+\hyperref[fielddesc:SLCHOSTHOSTSLCHOSTSLC0TOKEN1]{SLCHOST\_HOSTSLCHOST\_SLC0\_TOKEN1} 或 \hyperref[fielddesc:SLCHOSTHOSTSLCHOSTSLC1TOKEN1]{SLCHOST\_HOSTSLCHOST\_SLC1\_TOKEN1} 存放可用 buffer 的累计值。主机通过该字段的值减去已用掉的 buffer 数就得到了当前可用的 buffer 数。当 buffer 不够用时，主机需要通过不停地访问该寄存器直到 buffer 够用为止。
+
+主机通过CMD53命令向从机发送数据包的过程中，当一个DMA链表描述符指定的区域被写满，或者一个包传输结束时，DMA 便会跳到下一个描述符来存储后续的数据。从机判定当前数据包有效数据结束时，会丢弃当前包的无效填充数据，DMA 会将当前的描述符 eof 位回写为1，并产生 \hyperref[int:SLC01TXSUCEOFINT]{SLC0/1\_TX\_SUC\_EOF\_INT}中断。
+
+DMA 功能、链表、以及数据丢弃详见 \ref{sec:sdioslave-dma} 小节所述。
+
+为了保证有充足的 buffer 来接收包，从机的 CPU 必须不停地在接收链表上挂载 buffer。挂载的流程如图 \ref{fig:sdioslave-receive-load-buffer} 所示。
+   
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.3\textwidth]{\modulefiles/figures/37-SDIOSLAVE-load-buffer__CN.eps}
+    \caption{从机CPU 挂载 buffer 的流程}
+    \label{fig:sdioslave-receive-load-buffer}    
+\end{figure}    
+   
+CPU 首先需要将新的 buffer 组成链表并且挂载在 DMA 正在使用的链表结尾。
+   
+然后，CPU 需要通知 DMA 链表已更新，可以通过置位 \hyperref[fielddesc:SDIOSLC0TXLINKRESTART]{SDIO\_SLC0\_TXLINK\_RESTART} 或 \hyperref[fielddesc:SDIOSLC1TXLINKRESTART]{SDIO\_SLC1\_TXLINK\_RESTART} 字段来实现。注意，CPU 在首次启动 DMA 用于收包时需置位 \hyperref[fielddesc:SDIOSLC0TXLINKSTART]{SDIO\_SLC0\_TXLINK\_START} 或 \hyperref[fielddesc:SDIOSLC1TXLINKSTART]{SDIO\_SLC1\_TXLINK\_START} 字段。
+
+\textbf{RESTART字段说明}：DMA RESTART只适用于2种情况：
+\begin{itemize}
+    \item 配置相关寄存器中的*\_STOP字段暂停了DMA的工作，之后可以通过配置*\_RESTART字段使DMA继续工作
+    \item 因为缺乏链表描述符导致DMA暂停工作，补充描述符后可以通过配置*\_RESTART字段使DMA继续工作。
+\end{itemize}
+
+最后，CPU 通过配置 \hyperref[regdesc:SDIOSLC0TOKEN1REG]{SDIO\_SLC0TOKEN1\_REG} 或 \hyperref[regdesc:SDIOSLC1TOKEN1REG]{SDIO\_SLC1TOKEN1\_REG} 寄存器更新可用的 buffer。
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+\clearpage
+\hypertarget{sdioslave-reg-summ}{}
+\section{寄存器列表}
+\label{sec:sdioslave-reg-summ}
+
+本小节的所有地址均为相对于 SDIO 从机控制器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subsection{HINF 寄存器列表}
+\label{sec:sdioslave-hinf-reg-summ}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-hinf-reg-summary__CN}
+
+\subsection{SLC 寄存器列表}
+\label{sec:sdioslave-slc-reg-summ}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-slc-reg-summary__CN}
+
+\subsection{SLC Host 寄存器列表}
+\label{sec:sdioslave-slc-host-reg-summ}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-host-reg-summary__CN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 SDIO 从机控制器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subsection{HINF 寄存器}
+\label{sec:sdioslave-hinf-reg}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-hinf-reg__CN}
+
+\subsection{SLC 寄存器}
+\label{sec:sdioslave-slc-reg}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-slc-reg__CN}
+
+\subsection{SLC Host 寄存器}
+\label{sec:sdioslave-slc-host-reg}
+
+\subfile{\modulefiles/37-SDIOSLAVE-sdio-host-reg__CN}
+
+\end{document}

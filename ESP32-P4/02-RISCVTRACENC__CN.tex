@@ -1,0 +1,978 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./02-RISCVTRACENC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvtracenc}{}
+\chapter{RISC-V 追踪编码器 (TRACE)}
+\label{mod:riscvtracenc}
+
+
+\chipname{} 的 高性能 CPU (HP CPU) 通过追踪编码器 (Trace Encoder) 实现了对指令追踪接口的支持。追踪编码器连接 CPU 的指令追踪接口，将信息压缩成更小的数据包，存入内部 SRAM（详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}）中。
+
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=0.8\textwidth]{\modulefiles/figures/trace.pdf}
+        \caption{追踪编码器概述图}
+        \label{fig:encoder}
+\end{figure}
+
+\section{术语}
+
+为了更好地说明 RISC-V 追踪编码器的功能，本章使用了以下术语。
+
+\begin{longtable}[c]{ R{5cm} p{10cm} }
+\textbf{hart} &  RISC-V 硬件线程 \\
+\textbf{分支 (branch)} & 在一定条件下改变执行流程的指令 \\
+\textbf{无法推测的不连续地址 (uninferable discontinuity, or updiscon)} & 无法仅通过程序二进制文件推测出的程序计数器地址偏移\\
+\textbf{增量 (delta)} & 指令在存储器中的存储地址不连续时，程序计数器的地址偏移\\
+\textbf{陷阱 (trap)} & 异常或中断，会触发陷阱处理程序 \\
+\textbf{筛选 (qualification)} & 指令符合筛选条件，即称为通过筛选，才会被追踪 \\
+\textbf{te\_inst} & 编码器发送的数据包的名称 \\
+\textbf{退役 (retire)} & 机器状态更新时，执行指令的最后一个阶段 \\
+\textbf{EPC} & 异常程序计数器 \\
+
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{介绍}
+
+对于复杂的系统来说，了解程序执行流程并非易事。造成软件不按预期工作的可能有很多种因素，比如与其他核、外设、实时事件的交互，执行不畅，或以上所有因素的结合。
+
+调试器很难实时监测系统运行中的程序执行流程，因为调试器是侵入性的，会破坏系统的运行状态。但是，监测程序执行又很重要。
+
+此时，可使用指令追踪来追踪程序执行。
+
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=1\textwidth]{\modulefiles/figures/trace_over.pdf}
+        \caption{指令追踪流程概览}
+        \label{fig:trace}
+\end{figure}
+
+图 \ref{fig:trace}  为指令增量追踪的流程。每个 HP 核都有一个单独的编码器，可以独立工作，追踪流程相同：
+\begin{itemize}
+    \item HP CPU 核有一个指令追踪接口，可以输出 HP CPU 执行指令的信息，包括指令地址、指令类型等。更多关于 \chipname{} HP CPU 指令追踪接口的信息，可参考章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}。
+    \item 追踪编码器通过 HP CPU 的指令追踪接口获取相关指令追踪信息，将信息压缩成带宽更小的数据包，存入系统存储器中。
+    \item 调试器（即图中的 Debug Host）可以将系统存储器中的追踪数据包通过 JTAG 或 USB Serial/JTAG 导出，然后用解码器解压缩、重建程序的执行流。追踪解码器通常是外部 PC 上的软件，在获取追踪数据包后，根据在 hart 上运行的程序二进制数据，重建程序的指令流。解码可以离线进行，也可以在 hart 执行时实时进行。
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{特性}
+\label{sec:riscvtracenc-features}
+
+\begin{itemize}
+    \item 兼容 Efficient Trace for RISC-V Version 2.0（RISC-V 高效追踪规范 v2.0），实现的参数详见表 \ref{tab:encoder_parameters}
+    \item 支持 增量地址模式和完整地址模式
+    \item 支持过滤器
+    \item 支持通过调试触发器或过滤器报告指令地址
+    \item 支持下列边带信号 (sideband signals) 控制追踪数据流
+        \begin{itemize}
+            \item 调试触发器启动或关闭编码器
+            \item hart 暂停时，编码器在报告最后一个数据包后停止工作
+            \item hart 复位后，编码器在报告最后一个数据包后停止工作
+            \item FIFO 即将变满时暂停 hart
+        \end{itemize}
+    \item 支持任意地址范围用作追踪存储器
+    \item 可配置的同步模式：
+        \begin{itemize}
+            \item 同步计数器按包计数
+            \item 同步计数器按周期计数
+            \item 关闭同步计数器
+        \end{itemize}
+    \item 支持丢包状态标识
+    \item 支持丢包后自动重启
+    \item 写追踪存储器时支持循环和非循环模式
+    \item 具有两个中断：
+        \begin{itemize}
+            \item 包的大小超过配置的存储器空间时触发中断
+            \item 丢包时触发中断
+        \end{itemize}
+    \item 具有 128 × 8 位 FIFO，用于缓存数据包
+    \item 支持 AHB 突发传输，突发长度可配置
+\end{itemize}
+
+\begin{longtable}[c]{ |l|r|l| }
+    \caption{追踪编码器参数}
+    \label{tab:encoder_parameters}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{参数名称} & \textbf{值} & \textbf{描述} \\\hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    \textbf{参数名称} & \textbf{值} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    arch\_p & 0 & 追踪器符合 RISC-V 追踪规范初始版本  \\\hline
+    bpred\_size\_p & 0 & 不支持分支预测模式 \\\hline
+    cache\_size\_p & 0 & 不支持跳转目标缓存模式 \\\hline
+    call\_counter\_size\_p & 0 & 不支持隐式返回模式 \\\hline
+    ctype\_width\_p & 0 & ctype 总线宽度 \\\hline
+    context\_width\_p & 0 & context 总线宽度 \\\hline
+    ecause\_width\_p & 6 & 异常原因宽度 \\\hline
+    ecause\_choice\_p & 0 & 不支持多选 \\\hline
+    f0s\_width\_p & 0 & 不支持格式 0 数据包 \\\hline
+    filter\_context\_p & 0 & 不支持过滤上下文信息 \\\cline{1-2}
+    filter\_excint\_p & 1 & 支持过滤异常原因或中断 \\\hline
+    filter\_privilege\_p & 1 & 支持过滤特权 \\\cline{1-2}
+    filter\_tval\_p & 1 & 支持过滤陷阱值 \\\hline
+    iaddress\_lsb\_p & 1 & 支持压缩指令 \\\hline
+    iaddress\_width\_p & 32 & 指令总线为 32 位 \\\hline
+    iretire\_width\_p & 1 & iretire 总线宽度 \\\hline
+    ilastsize\_width\_p & 0 & ilastsize 总线宽度 \\\hline
+    itype\_width\_p & 3 & itype 总线宽度  \\\hline
+    nocontext\_p & 1 & 在 te\_inst 数据包中去掉上下文信息 \\\hline
+    notime\_p & 1 & 在 te\_inst 数据包中去掉时间信息 \\\hline
+    privilege\_width\_p & 1 & 仅支持机器和用户模式 \\\hline
+    retires\_p & 1 & 每个块退役指令的最大数量 \\\hline
+    return\_stack\_size\_p & 0 & 不支持隐式返回模式 \\\hline
+    sijump\_p & 0 & 不支持根据顺序推测跳转 \\\hline
+    taken\_branches\_p & 1 & 每个时钟周期仅一条指令退役 \\\hline
+    impdef\_width\_p & 0 & 未实现 \\\hline
+
+ \end{longtable}
+上述参数的具体描述，详见 Efficient Trace for RISC-V Version 2.0 > 章节 Parameters and Discovery。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{架构概览}
+\label{sec:riscvtracenc-arch-overview}
+
+
+本章节主要介绍 \chipname{} 追踪编码器的具体实现。
+
+如图 \ref{fig:encoder} 所示，追踪编码器包含一个编码器、一个 FIFO、一个寄存器配置模块和一个发送控制模块。
+
+编码器通过指令追踪接口接收 HP CPU 的指令信息，将指令信息压缩成不同的数据包，写入内部 FIFO。
+
+发送控制模块通过 AHB 总线将 FIFO 中的数据写入内部 SRAM。
+
+FIFO 的深度为 128，宽度为 8 位。存储器写入带宽不足时，FIFO 可能会溢出，发生丢包。如果发生丢包，编码器会发送一个包通知丢包情况，在 FIFO 变空前一直停止工作，如果中断已使能还会触发中断。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional 描述 %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:riscvtracenc-func-desc}
+
+\subsection{同步}
+
+为保障追踪的有效性，追踪过程中必须定期同步。同步可以通过发送完整的指令地址实现。同步计数器的值达到 \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG} 寄存器的 \hyperref[fielddesc:TRACERESYNCPROLONGED]{TRACE\_RESYNC\_PROLONGED} 字段的值时，编码器会发送一个同步数据包（格式 3 子格式 0，见章节 \ref{sec:riscvtracenc-format-3-sub-0}）。
+
+追踪编码器支持两种同步模式，可通过 \hyperref[fielddesc:TRACERESYNCMODE]{TRACE\_RESYNC\_MODE} 配置：
+\begin{itemize}
+    \item 0：关闭同步计数器
+    \item 1：无效值，没有作用
+    \item 2：同步计数器按数据包计数
+    \item 3：同步计数器按周期计数
+\end{itemize}
+
+可通过增加 \hyperref[fielddesc:TRACERESYNCPROLONGED]{TRACE\_RESYNC\_PROLONGED} 的值，降低发送同步数据包的频率，从而降低同步数据包对带宽的占用。
+
+\subsection{地址模式}
+
+\chipname{} 支持两种地址模式：增量地址模式和完整地址模式。
+\begin{itemize}
+    \item 增量地址模式（默认）：在 增量地址模式下，地址会编码为当前指令的实际地址与上一个包含地址的数据包报告的指令实际地址的差值。这种差值编码所需的位比完整地址少，可以令追踪压缩更高效。
+    \item 完整地址模式：在完整地址模式下，追踪的所有地址会编码为绝对地址，而不是差值。这种编码方式相对低效，但是可以辅助软件解码器开发者进行调试。该模式可以通过置位 \hyperref[fielddesc:TRACEFULLADDRESS]{TRACE\_FULL\_ADDRESS} 使能。
+\end{itemize}
+
+\subsection{可选边带信号}
+
+Efficient Trace for RISC-V Version 2.0 > 章节 Optional Sideband Signals 介绍了用于控制编码器的可选边带信号。\chipname{} 实现了下列信号：
+
+\begin{longtable}[c]{ |l|L{12cm}| }
+    \caption{可选边带信号}
+    \label{tab:sideband_signal}
+    \\\hline\rowcolor{lightgray}
+    \textbf{信号} & \textbf{功能}  \\\hline
+    \endfirsthead
+     \textbf{信号} & \textbf{功能}  \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    trigger[2:0] &
+        \begin{itemize}
+            \item 位 0 的脉冲可以令编码器开始追踪，并持续追踪直到另有通知。追踪时还需要满足其他过滤条件。
+            \item 位 1 的脉冲可以令编码器停止追踪，直到另有通知。
+            \item 位 2 的脉冲可以令编码器报告特定地址。
+        \end{itemize}
+        该功能可通过置位 \hyperref[fielddesc:TRACEDMTRIGGERENA]{TRACE\_DM\_TRIGGER\_ENA} 使能。触发器地址匹配时，建立 trigger 信号。例如，若 \hyperref[regdesc:MCONTROL]{mcontrol} 寄存器的 \hyperref[fielddesc:MCONTROLACTION]{action} 字段为 2，则触发器地址匹配时 trigger 信号的位 0 变为高电平；若 \hyperref[fielddesc:MCONTROLACTION]{action} 字段为 3，则触发器地址匹配时 trigger 信号的位 1 变为高电平。更多信息，详见表 \ref{tab:debug_mcontrol}。\\\hline
+
+    halted & 暂停 hart。halted 信号建立时，编码器先输出一个数据包报告 hart 暂停前退役的最后一条指令的地址，然后再输出一个支持数据包指示追踪已暂停。halted 信号失效时，编码器重新开始追踪，从同步数据包开始。该功能可通过置位 \hyperref[fielddesc:TRACEHALTENA]{TRACE\_HALT\_ENA} 使能。 \\\hline
+
+    reset & 复位 hart。具体行为同上文 halted 的描述。 \\\hline
+
+    stall & 请求 hart 暂停。如果某些应用需要无损追踪，便可以在追踪编码器不能输出追踪数据包（内部 FIFO 将满）时使用该信号暂停 hart。该功能通过置位 \hyperref[fielddesc:TRACESTALLENA]{TRACE\_STALL\_ENA} 使能。\\\hline
+
+\end{longtable}
+
+
+
+\subsection{过滤}\label{sec:riscvtracenc-filter}
+
+过滤机制控制编码器追踪的标准。比如，过滤机制可以让编码器在出现下列情况时追踪：
+\begin{itemize}
+    \item 指令地址在特定范围内时追踪
+    \item 从一个指令地址开始追踪，到出现第二个指令地址时结束追踪
+    \item 针对一个或多个特定特权等级追踪
+    \item 出现异常及/或特定异常原因出发中断处理程序时追踪
+\end{itemize}
+
+每个过滤器单元包含一个过滤器和一个比较器单元。
+
+每个比较器单元实际包含一对比较器（主比较器和次比较器，简称 P、S），可根据要求设置与信号单元匹配的范围，并支持：
+
+\begin{itemize}
+    \item 从 iaddress 和 tval 中选择输入
+    \item 每个比较器可以独立选择运算方式（$<$、$>$、$=$、$!=$ 等）
+    \item 次匹配值可以是主比较器的屏蔽值
+    \item 两个比较器有多种一起使用的方式：$P$、$P\&\&S$、$!(P\&\&S)$、锁存（P 匹配时置 1，S 匹配时清零）
+    \item 每个比较器可以报告特定指令地址
+\end{itemize}
+
+每个过滤器可以指定要过滤的 hart 指令，并具有以下功能：
+\begin{itemize}
+    \item 选择比较器单元进行匹配
+    \item 可以选择多个特权等级和异常原因作为输入进行匹配
+    \item 选择匹配中断
+\end{itemize}
+
+\subsection{锚定}
+
+由于数据包的长度不定，为在写入存储器时分清数据包之间的边界，\chipname{} 编码器在数据包之间插入 0：
+\begin{itemize}
+    \item 数据包的长度最大为 13 字节，因此正常数据包中不能出现连续 14 个值为 0 的字节。连续 14 个及以上值为 0 的字节后，第一个不为 0 的字节肯定是数据包的第一个字节。
+    \item 每发送 128 个数据包，编码器会向存储器写入 14 个值为 0 的字节作为锚定符。
+\end{itemize}
+
+
+\subsection{写存储器模式}
+
+写追踪存储器时，追踪数据包的大小可能会超过追踪存储器的容量。此时可配置写存储器的模式，选择是否循环写入数据包：
+
+\begin{itemize}
+    \item 循环模式：追踪数据包的大小超过追踪存储器的容量（即 \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} 的值达到 \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG} 的值）时，存储器循环写入数据，回到存储器的起始地址 \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG}，此前写入的数据会被新数据覆盖。
+    \item 非循环模式：追踪数据包的大小超过追踪存储器的容量时，存储器不循环，停在 \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG}，此前写入的数据保留。
+\end{itemize}
+
+\subsection{自动重启}
+
+因 FIFO 溢出而丢包时，编码器将停止工作，需要软件手动恢复或硬件自动重启。如果 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} 位为 1，FIFO 清空后编码器会自动重启。
+
+如果使能自动重启功能，编码器无论出现什么情况都会自动重启。因此，要关闭编码器，必须先清除 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} 位从而关闭自动重启。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Encoder Output Packets %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{编码器输出数据包}
+\label{sec:riscvtracenc-packetes}
+
+本节主要介绍 \chipname{} 追踪编码器输出的数据包格式。
+
+追踪数据包包括头部、索引和有效载荷，依次按照头部、索引和有效载荷的顺序以比特流形式传输。头部、索引和有效载荷中的字段按照下文表格的罗列顺序依次传输，多位字段先传输最低有效位。
+
+
+
+\subsection{头部}
+
+头部为 1 个字节，格式如表 \ref{tab:header} 所示。
+
+
+\begin{longtable}[c]{ |l|r|l|l| }
+    \caption{头部格式}
+    \label{tab:header}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段} & \textbf{位} & \textbf{描述} & \textbf{值}\\\hline
+    \endfirsthead
+    \hline\rowcolor{lightgray}
+    \textbf{字段} & \textbf{位} & \textbf{描述} & \textbf{值}\\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    length & 5 & 数据包的总长度 & 4\verb+~+13 \\\hline
+    flow & 2 & 保留 & 0 \\\hline
+    timestamp & 1 & 保留 & 0 \\\hline
+ \end{longtable}
+
+
+\subsection{索引}
+
+索引为 2 个字节，格式如表 \ref{tab:index} 所示。
+
+\begin{longtable}[c]{ |l|r|l|l| }
+    \caption{索引格式}
+    \label{tab:index}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段} & \textbf{位} & \textbf{描述} & \textbf{值}\\\hline
+    \endfirsthead
+    \textbf{字段} & \textbf{位} & \textbf{描述} & \textbf{值}\\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    index & 16 & 每个数据包的索引 & 0\verb+~+65536 \\\hline
+ \end{longtable}
+
+\subsection{有效载荷}
+
+有效载荷的宽度为 1 至 10 字节。
+
+\subsubsection{格式 3}
+
+格式 3 的数据包用于同步和发送支持信息。规范中定义了四种子格式，\chipname{} 仅支持 3 种。
+
+\subparagraph{格式 3 子格式 0 - 同步}\label{sec:riscvtracenc-format-3-sub-0}
+
+该格式的数据包包含解码器完全识别指令所需的全部信息。开始追踪第一条指令时（除非指令恰好是异常处理程序中的第一条指令），或同步定时器超时触发同步时，编码器会发送该格式的数据包。该格式数据包有效载荷的长度为 5 个字节。
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 3 子格式 0}
+    \label{tab:f3s0}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync)：同步 \\\hline
+    subformat & 2 & 00 (start)：开始追踪，或开始同步 \\\hline
+    branch & 1 & \makecell[l]{0：地址指向分支指令，且分支跳转\\1：指令非分支指令，或分支没有跳转} \\\hline
+    privilege & 1 & 所追踪指令的特权等级 \\\hline
+    address & 31 & 指令的完整地址。字段值需左移 1 位，以复原字节地址 \\\hline
+    sign\_extend & 3 & 保留 \\\hline
+ \end{longtable}
+
+
+\subparagraph{格式 3 子格式 1 - 异常}
+该格式的数据包同样包含解码器完全识别指令所需的全部信息。发生异常或触发中断时，编码器会发送该格式的数据包。该格式的数据包中包含了异常原因、异常指令的“陷阱值”，陷阱处理程序的地址和异常指令的地址。该格式数据包有效载荷的长度不定：如果 interrupt 字段为 1，则 tvalepc 字段省略，长度为 6 个字节；否则长度为 10 个字节。
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 3 子格式 1}
+    \label{tab:f3s1}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endfirsthead
+    \hline
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync)：同步 \\\hline
+    subformat & 2 & 01 (exception)：异常原因和陷阱处理程序的地址 \\\hline
+    branch & 1 & \makecell[l]{0：地址指向分支指令，且分支跳转\\1：指令非分支指令，或分支没有跳转} \\\hline
+    privilege & 1 & 所追踪指令的特权等级 \\\hline
+    ecause & 6 & 异常原因 \\\hline
+    interrupt & 1 & 中断 \\\hline
+    theaddr & 1 & 该字段为 1 时，address 字段指向陷阱处理程序的地址。该字段为 0 时，如果异常情况是无法推测出程序计数器的目标地址偏移量，则 address 字段指向异常程序计数器的值，如果是其他异常中断，则 address 字段不定义。 \\\hline
+    address & 31 & 指令的完整地址。地址必须向左偏移 1 位，以复原字节地址 \\\hline
+    tvalepc & 32 & utval、stval 或 mtval 控制/状态寄存器的值。如果 interrupt 字段为 1，该字段省略。 \\\hline
+    sign\_extend & 3 & 保留 \\\hline
+ \end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subparagraph{格式 3 子格式 3 - 支持}
+
+该格式的数据包包含解码器需要的辅助信息，在追踪结束时、过滤器匹配失败或丢包时发出。该格式数据包有效载荷的长度为 2 个字节。
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 3 子格式 3}
+    \label{tab:f3s3}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync)：同步 \\\hline
+    subformat & 2 & 11 (support)：解码器需要的辅助信息 \\\hline
+    enable & 1 & 表示编码器已开启 \\\hline
+    encoder\_mode & 1 & 永远为 0。仅分支追踪支持 \\\hline
+    qual\_status & 2 & 表示指令的筛选状态：
+    \begin{itemize}
+        \item 00 (no\_change)：指令筛选状态没有变化
+        \item 01 (ended\_rep)：指令筛选已结束，上一个指令为最后一个通过筛选的指令
+        \item 10 (trace lost)：丢失了一个或多个包
+        \item 11 (ended\_upd)：指令筛选已结束，即便上一个 te\_inst 不是最后一个通过筛选的指令，也会因指令地址不连续、无法推测而发送
+        \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+    ioptions & 6 & 表示以下可选模式：
+    \begin{itemize}
+        \item 根据顺序推测跳转（位 5）： 该位为 1 时，不会报告根据顺序推测出的跳转目标地址。该功能未实现，因此此位始终为 0
+        \item 分支预测（位 4）：该位为 1 时，使能分支预测。该功能未实现，因此此位始终为 0
+        \item 缓存跳转目标（位 3）：该位为 1 时，使能跳转目标缓存。该功能未实现，因此此位始终为 0
+        \item 完整地址（位 2）：
+        \begin{itemize}
+            \item 0：增量地址模式
+            \item 1：完整地址模式
+        \end{itemize}
+        \item 隐式异常（位 1）：如果可以通过 ecause 字段（异常原因）确定陷阱向量，则格式 3 子格式 1 数据包不包含地址。该功能未实现，因此此位始终为 0
+        \item 隐式返回（位 0）：该位为 1 时，不报告函数的返回地址。该功能未实现，因此此位始终为 0
+    \end{itemize}
+    \\\hline
+    sign\_extend & 2 & 保留 \\\hline
+
+ \end{longtable}
+
+
+
+
+\subsubsection{格式 2}
+
+该格式的数据包仅包含指令地址，在必须报告指令地址时使用（比如指令目标地址为无法推测的不连续地址，或指令为发生异常之前的最后一个指令），包中没有分支信息。
+
+增量地址模式使能时，该格式数据包有效载荷的长度不定，在 5 到 8 个字节之间。地址字段宽度可为 8、16、24 或 32 位，取决于数据包长度。例如，如果数据包头部为 $n$ 字节，则地址字段宽度为 $n-4$ 字节。地址字段需要通过有符号扩展到 32 位。
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 2}
+    \label{tab:f2}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 10 (addr-only)：无分支信息 \\\hline
+    notify & 1 & 若该位的值与地址字段的最高有效位不同，则表示 trigger[2] 或过滤器匹配触发了通知请求，数据包报告指令的目标地址不是无法推测的不连续地址 \\\hline
+    updiscon & 1 & 若该位的值与 notify 的值不同，则表示指令的目标地址为无法推测的不连续地址，且该地址为异常、特权变更或同步之前的最后一条指令 \\\hline
+    zero\_extend & 4 & 保留 \\\hline
+    address & 不定 & 指令的 增量地址，位宽为 8、16、24 或 32 位 \\\hline
+ \end{longtable}
+
+
+\subsubsection{格式 1}
+
+该格式的数据包包含分支信息，在必须报告分支信息（比如分支映射已满时）或在上一个包后出现至少一个分支、必须报告指令地址时使用。
+
+增量地址模式使能时，该格式数据包有效载荷的长度不定，在 5 到 12 个字节之间。地址字段宽度可为 8、16、24 或 32 位，取决于数据包长度。例如：
+\begin{itemize}
+    \item 数据包头部为 $n$ 字节
+    \item format 字段的值为 1
+    \item branch 字段的值为：
+        \begin{itemize}
+            \item 0：数据包为不包含地址的格式 1 数据包
+            \item 1：branch\_map 宽度为 1 位，zero\_ext 宽度为 6 位，address 宽度为 $n-5$ 位
+            \item 2 \verb+~+ 3：branch\_map 宽度为 3 位，zero\_ext 宽度为 4 位，address 宽度为 $n-5$ 位
+            \item 4 \verb+~+ 7：branch\_map 宽度为 7 位，zero\_ext 宽度为 0 位，address 宽度为 $n-5$ 位
+            \item 8 \verb+~+ 15：branch\_map 宽度为 15 位，zero\_ext 宽度为 0 位，address 宽度为 $n-6$ 位
+            \item 16 \verb+~+ 31：branch\_map 宽度为 31 位，zero\_ext 宽度为 0 位，address 宽度为 $n-8$ 位
+        \end{itemize}
+\end{itemize}
+
+
+\subparagraph{格式 1，有地址时 branch\_map 字段}
+
+
+有效载荷长度不定。
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 1，有地址}
+    \label{tab:f1a}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \multicolumn{1}{c|}{\textbf{位}} & \textbf{描述} \\\hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    \textbf{字段名} & \multicolumn{1}{c|}{\textbf{位}} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 01：包含分支信息 \\\hline
+
+    branches & 5 & 该字段的值决定了 branch\_map 的位宽（branch\_map 的有效位数量），具体如下：
+    \begin{itemize}
+        \item 0：（该格式中此值无效）
+        \item 1：1 位
+        \item 2 \verb+~+ 3：3 位
+        \item 4 \verb+~+ 7：7 位
+        \item 8 \verb+~+ 15：15 位
+        \item 16 \verb+~+ 31：31 位
+    \end{itemize}
+    比如，若 branches = 12，则 branch\_map 为 15 位，低 12 位有效。
+    \\\hline
+    branch\_map & 不定 & 表示分支是否跳转的位数组。位 0 对应最早执行的分支指令。每个位的含义如下：
+    \begin{itemize}
+        \item 0：分支已跳转
+        \item 1：分支未跳转
+    \end{itemize}
+    该字段的位宽不定，取决于 branches 字段的值 \\\hline
+    notify & 1 & 若该位的值与地址字段的最高有效位不同，则表示 trigger[2] 或过滤器匹配触发了通知请求，数据包报告指令的目标地址不是无法推测的不连续地址 \\\hline
+    updiscon & 1 & 若该位的值与 notify 的值不同，则表示指令的目标地址为无法推测的不连续地址，且该地址为异常、特权变更或同步之前的最后一条指令 \\\hline
+
+    \multirow{4}{*}{zero\_ext} & \multirow{4}{*}{不定} & 该字段的宽度取决于 branches 字段，具体如下：
+    \begin{itemize}
+        \item 1：6 位
+        \item 2 \verb+~+ 3：4 位
+        \item 4 \verb+~+ 31：0 位
+    \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+    address & 不定 & 指令的 增量地址，位宽为 8、16、24 或 32 位 \\\hline
+ \end{longtable}
+
+ \subparagraph{格式 1， 无地址时 branch\_map 字段}
+
+该格式数据包有效载荷的长度为 5 个字节。
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{格式 1，无地址}
+    \label{riscvtracenc-format-1-wo-address}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endfirsthead
+    \textbf{字段名} & \textbf{位} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 01：包含分支信息 \\\hline
+    branches & 5 & 该字段的值决定了 branch\_map 的位宽，仅 0 有效，对应 branch\_map 的位宽为 31 位 \\\hline
+
+    branch\_map & 31 & 表示分支是否跳转的位数组。位 0 对应最早执行的分支指令。每个位的含义如下：
+    \begin{itemize}
+        \item 0：分支已跳转
+        \item 1：分支未跳转
+    \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+
+    sign\_extend & 2 & 保留 \\\hline
+ \end{longtable}
+
+%%%%%%%%%%%%%%%%%
+%%% Interrupt %%%
+%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的 CORE\regindex{n}\_TRACE（即 HP CPU 核 0 或 HP CPU 核 1 的追踪编码器）可以生成 CORE\regindex{n}\_TRACE\_INTR 中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+CORE\regindex{n}\_TRACE\_INTR 中断信号由 CORE\regindex{n}\_TRACE 的内部中断源生成。表 \ref{tab:riscvtracenc-int-sources} 列出了 CORE\regindex{n}\_TRACE 的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{5cm} | L{7cm} | L{3.5cm} | }
+\caption{CORE\regindex{n}\_TRACE's 的内部中断源} \label{tab:riscvtracenc-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+
+TRACE\_MEM\_FULL\_INTR & 数据包大小超过追踪存储器容量（即 \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} 的值达到 \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG} 的值）时触发。如有必要，可使能中断通知 HP CPU 处理，比如可再申请新的存储器空间 & CORE\regindex{n}\_TRACE\_INTR \\\hline
+
+TRACE\_FIFO\_OVERFLOW\_INTR & 内部 FIFO 溢出时触发，表示一个或多个数据包丢失 & CORE\regindex{n}\_TRACE\_INTR \\\hline
+
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:riscvtracenc-reg-summ} \textit{\nameref{sec:riscvtracenc-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{编程流程}
+\label{sec:riscvtracenc-prog-procedures}
+
+\subsection{配置编码器选项}
+
+编码器具有一些可选的配置选项。
+
+\begin{itemize}
+    \item 完整地址模式
+        \begin{itemize}
+            \item 编码器默认使用 增量地址模式。可以置位 \hyperref[fielddesc:TRACEFULLADDRESS]{TRACE\_FULL\_ADDRESS} 以启用完整地址模式用来调试。
+        \end{itemize}
+
+        \item 丢包后重启
+            \begin{itemize}
+                \item 因 FIFO 溢出而丢失追踪数据包时，如果 \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} 为 1，编码器将自动停止。FIFO 为空时，编码器将重新开始报告数据包。
+            \end{itemize}
+
+        \item FIFO 将满时暂停 CPU
+            \begin{itemize}
+                \item 如果 \hyperref[fielddesc:TRACESTALLENA]{TRACE\_STALL\_ENA} 为 1，FIFO 将满时会向 CPU 发出暂停请求，CPU 会一直暂停，直到请求失效。
+            \end{itemize}
+
+        \item CPU 暂停时停止追踪
+
+            如果 \hyperref[fielddesc:TRACEHALTENA]{TRACE\_HALT\_ENA} 为 1，编码器会在 CPU 暂停时先输出一个数据包，报告暂停前最后一条指令的地址，然后再输出一个支持数据包指示追踪已停止。halted 信号失效时，编码器重新开始追踪，从同步数据包开始。
+
+        \item CPU 复位时停止追踪
+
+            如果 \hyperref[fielddesc:TRACERESETENA]{TRACE\_RESET\_ENA} 为 1，编码器会单独复位。编码器会在 CPU 复位时先输出一个数据包，报告复位前最后一条指令的地址，然后再输出一个支持数据包指示追踪已停止。CPU 退出复位状态时，编码器重新开始追踪，从同步数据包开始。
+
+        \item 使用调试模块的触发输出
+
+            RISC-V hart 的调试模块有一个触发单元，其匹配控制寄存器（\hyperref[regdesc:MCONTROL]{mcontrol}）有一个 4 位的 \hyperref[fielddesc:MCONTROLACTION]{action} 字段，该字段值为 2 \verb+~+ 4 时用于追踪。\chipname{} 已实现此功能。\hyperref[fielddesc:MCONTROLACTION]{action} 字段的值详见表 \ref{tab:debug_mcontrol}。
+
+            \begin{longtable}[c]{ |l|l| }
+    \caption{调试模块的触发支持（\hyperref[regdesc:MCONTROL]{mcontrol} 寄存器的 \hyperref[fielddesc:MCONTROLACTION]{action} 字段）}
+    \label{tab:debug_mcontrol}
+    \\\hline\rowcolor{lightgray}
+    \textbf{值} & \textbf{描述} \\\hline
+    \endfirsthead
+    \textbf{值} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    2 & 开始追踪 \\\hline
+    3 & 结束追踪 \\\hline
+    4 & 通知编码器报告地址 \\\hline
+
+    \end{longtable}
+\end{itemize}
+
+有关调试模块触发单元的详细信息，请参考章节 \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}。
+
+
+\subsection{配置过滤器}
+
+章节 \ref{sec:riscvtracenc-filter} 中描述的过滤单元可以按以下方式配置：
+
+\begin{enumerate}
+    \item 选择以下任一匹配模式：
+        \begin{itemize}
+            \item 置位 \hyperref[fielddesc:TRACEMATCHPRIVILEGE]{TRACE\_MATCH\_PRIVILEGE} 启用特权匹配模式：
+                \begin{itemize}
+                    \item 通过 \hyperref[fielddesc:TRACEMATCHCHOICEPRIVILEGE]{TRACE\_MATCH\_CHOICE\_PRIVILEGE} 配置特权级别
+                \end{itemize}
+            \item 置位 \hyperref[fielddesc:TRACEMATCHECAUSE]{TRACE\_MATCH\_ECAUSE} 启用 ecause 匹配模式：
+                \begin{itemize}
+                    \item 通过 \hyperref[fielddesc:TRACEMATCHCHOICEECAUSE]{TRACE\_MATCH\_CHOICE\_ECAUSE} 配置 ecause 值
+                \end{itemize}
+            \item 置位 \hyperref[fielddesc:TRACEMATCHINTERRUPT]{TRACE\_MATCH\_INTERRUPT} 启用中断匹配模式：
+                \begin{itemize}
+                    \item 通过 \hyperref[fielddesc:TRACEMATCHVALUEINTERRUPT]{TRACE\_MATCH\_VALUE\_INTERRUPT} 配置中断级别
+                \end{itemize}
+            \item 置位 \hyperref[fielddesc:TRACEMATCHCOMP]{TRACE\_MATCH\_COMP} 启用比较器匹配模式：
+                \begin{itemize}
+                    \item 配置主比较器：
+                        \begin{itemize}
+                            \item 通过 \hyperref[fielddesc:TRACEPINPUT]{TRACE\_P\_INPUT} 选择输入
+                            \item 通过 \hyperref[fielddesc:TRACEPFUNCTION]{TRACE\_P\_FUNCTION} 选择比较器运算符
+                            \item 通过 \hyperref[regdesc:TRACEFILTERPCOMPARATORMATCHREG]{TRACE\_FILTER\_P\_COMPARATOR\_MATCH\_REG} 配置匹配值
+                        \end{itemize}
+                    \item 必要时配置次比较器：
+                        \begin{itemize}
+                            \item 通过 \hyperref[fielddesc:TRACESINPUT]{TRACE\_S\_INPUT} 选择输入
+                            \item 通过 \hyperref[fielddesc:TRACESFUNCTION]{TRACE\_S\_FUNCTION} 选择比较器运算符
+                            \item 通过 \hyperref[regdesc:TRACEFILTERSCOMPARATORMATCHREG]{TRACE\_FILTER\_S\_COMPARATOR\_MATCH\_REG} 配置匹配值
+                        \end{itemize}
+                    \item 通过 \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE} 选择用于匹配的比较器：
+                        \begin{itemize}
+                            \item 0：仅主比较器用于匹配，次比较器无效
+                            \item 1：主比较器和次比较器都用于匹配 ($P\&\&S$)
+                            \item 2：主比较器或次比较器都不用于匹配 $!(P\&\&S)$
+                            \item 3：主比较器匹配时开始过滤，次比较器匹配时结束过滤
+                        \end{itemize}
+                \end{itemize}
+                如果置位 \hyperref[fielddesc:TRACEPNOTIFY]{TRACE\_P\_NOTIFY} 或 \hyperref[fielddesc:TRACESNOTIFY]{TRACE\_S\_NOTIFY}，比较器会以通知的形式报告匹配地址，指令不会过滤。例如：
+                \begin{itemize}
+                    \item 如果 \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE} 为 0，并且 \hyperref[fielddesc:TRACEPNOTIFY]{TRACE\_P\_NOTIFY} 为 1，则所有指令都会追踪，指令与主比较器匹配时会发出通知。
+                    \item 如果 \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE} 为 0，并且 \hyperref[fielddesc:TRACESNOTIFY]{TRACE\_S\_NOTIFY} 为 1，则指令将通过主比较器过滤，指令与次比较器匹配时会发出通知。
+                \end{itemize}
+        \end{itemize}
+    \item 置位 \hyperref[fielddesc:TRACEFILTEREN]{TRACE\_FILTER\_EN} 以启用过滤单元。
+\end{enumerate}
+
+\subsection{使能编码器}
+
+
+\begin{itemize}
+    \item 通过 \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG} 和 \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG} 配置追踪存储器的地址空间。编码器可以访问 L2 MEM 和 PSRAM：
+        \begin{itemize}
+            \item L2MEM: 0x4FF00000 \verb+~+ 0x4FFBFFFF
+            \item PSRAM: 0x48000000 \verb+~+ 0x4BFFFFFF
+        \end{itemize}
+    \item 置位 \hyperref[fielddesc:TRACEMEMCURRENTADDRUPDATE]{TRACE\_MEM\_CURRENT\_ADDR\_UPDATE}，将 \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} 的值更新为 \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG} 的值
+
+    \item（可选）通过 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACEMEMLOOP]{TRACE\_MEM\_LOOP} 位配置写存储器的模式
+        \begin{itemize}
+            \item 0：非循环模式
+            \item 1：循环模式（默认）
+        \end{itemize}
+
+
+    \item 通过 \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG} 寄存器的 \hyperref[fielddesc:TRACERESYNCMODE]{TRACE\_RESYNC\_MODE} 位配置同步模式
+        \begin{itemize}
+            \item 0：关闭同步计数器（默认）
+            \item 1：无效值，没有作用
+            \item 2：同步计数器按数据包计数
+            \item 3：同步计数器按周期计数
+                \end{itemize}
+
+    \item（可选）通过 \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG} 配置同步计数器的阈值，默认为 128
+
+    \item（可选）使能中断
+        \begin{itemize}
+            \item 向 \hyperref[regdesc:TRACEINTRENAREG]{TRACE\_INTR\_ENA\_REG} 寄存器的相应位写 1 开启对应中断
+            \item 向\hyperref[regdesc:TRACEINTRCLRREG]{TRACE\_INTR\_CLR\_REG} 寄存器的相应位写 1 清除对应中断
+            \item 读 \hyperref[regdesc:TRACEINTRRAWREG]{TRACE\_INTR\_RAW\_REG} 寄存器的值，获取中断状态
+        \end{itemize}
+
+    \item（可选）向 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} 位写 1，使能自动重启。该功能默认开启
+
+    \item 向 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACETRIGGERON]{TRACE\_TRIGGER\_ON} 字段写 1，使能编码器
+
+    \item 使能追踪编码器，有以下两种方式：
+        \begin{itemize}
+            \item 向 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACETRIGGERON]{TRACE\_TRIGGER\_ON} 位写 1
+            \item 通过调试模块的 \hyperref[fielddesc:MCONTROLACTION]{action} 字段使能编码器。触发器地址匹配且 \hyperref[fielddesc:MCONTROLACTION]{action} 字段为 2 时，编码器使能。触发器的配置，请参考 RISC-V Debug Specification。
+    \end{itemize}
+\end{itemize}
+
+编码器使能后，会一直追踪 HP CPU 的指令接口，向追踪存储器写入数据包。
+
+\subsection{关闭编码器}
+
+停止输出追踪数据包，有以下两种方式：
+\begin{enumerate}
+    \item 向 \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} 寄存器的 \hyperref[fielddesc:TRACETRIGGEROFF]{TRACE\_TRIGGER\_OFF} 位写 1 关闭编码器
+    \item 通过调试模块的 \hyperref[fielddesc:MCONTROLACTION]{action} 字段关闭编码器。触发器地址匹配且 \hyperref[fielddesc:MCONTROLACTION]{action} 字段为 3 时，编码器关闭。触发器的配置，请参考 RISC-V Debug Specification。
+\end{enumerate}
+
+由于内部 FIFO 的存在，数据包在追踪结束后不会立即写入存储器。建议查询\hyperref[regdesc:TRACEFIFOSTATUSREG]{TRACE\_FIFO\_STATUS\_REG} 确认数据是否全部写入存储器。
+
+\begin{longtable}[c]{ |l|L{10cm}| }
+    \caption{追踪状态}
+    \label{riscvtracenc-trace-status}
+    \\\hline\rowcolor{lightgray}
+    \textbf{字段} & \textbf{描述} \\\hline
+    \endfirsthead
+
+    \rowcolor{lightgray}
+    \textbf{字段} & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    \hyperref[fielddesc:TRACEFIFOEMPTY]{TRACE\_FIFO\_EMPTY} & 该字段如果为 1，则表示 FIFO 为空，所有数据已写入内存 \\\hline
+    \hyperref[fielddesc:TRACEWORKSTATUS]{TRACE\_WORK\_STATUS} & 编码器的工作状态：
+    \begin{itemize}
+        \item 0：空闲状态，编码器未启动
+        \item 1：编码器正常工作，输出数据包
+        \item 2：编码器未输出数据包，CPU 已暂停或复位
+        \item 3：编码器未输出数据包，发生数据包丢失，等待 FIFO 为空时重新启动
+    \end{itemize}
+    \\\hline
+
+\end{longtable}
+
+\subsection{通知}
+
+如果一个目标地址很特殊，即使不是无法推测的不连续地址，用户也可能想要报告。
+
+通知和报告特殊地址有以下两种方式：
+\begin{enumerate}
+    \item 调试模块的触发器地址匹配，并且 \hyperref[fielddesc:MCONTROLACTION]{action} 为 4
+    \item 过滤器比较器匹配
+\end{enumerate}
+
+收到通知请求时，编码器会发出格式 2 或格式 1 的数据包报告地址，具体取决于 branch\_map 字段。如果 branch\_map 为 0，则发送格式 2 数据包，否则发送格式 1 数据包。notify 字段表示数据包是否报告的是通知地址。如果地址是无法推测的不连续地址，即使是通知用的数据包，notify 字段也不会变为高电平，否则解码器无法正确重建指令流。
+
+\subsection{解码数据包}
+
+\begin{itemize}
+    \item 找到解码的第一个地址
+        \begin{itemize}
+            \item 读 \hyperref[regdesc:TRACEINTRRAWREG]{TRACE\_INTR\_RAW\_REG} 寄存器的 \hyperref[fielddesc:TRACEMEMFULLINTRRAW]{TRACE\_MEM\_FULL\_INTR\_RAW} 位，查看追踪存储器是否已满
+            \begin{itemize}
+                \item 如果值为 0，从 \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG} 寄存器读取追踪数据包
+                \item 如果值为 1，且开启了存储器循环模式，则之前的数据包已被覆盖。此时，读取 \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} 的值，获取最后一个写入的地址，该地址即为解码器处理的第一个地址
+            \end{itemize}
+        \end{itemize}
+
+    \item 用解码器解码数据包
+        \begin{itemize}
+            \item 解码器从第一个地址开始读取所有数据包，结合二进制文件重建数组
+            \item 如章节 \ref{sec:riscvtracenc-packetes} 所述，编码器向存储器分区边界写 14 个值为 0 的字节。因此出现 14 个值为 0 的字节时，则表示下一个非 0 字节为新数据包的头部
+        \end{itemize}
+\end{itemize}
+
+\subsection{AHB 配置}
+
+\chipname{} 编码器支持 AHB 总线，可选配置项可以控制编码器的传输带宽。
+
+如果有多个 DMA 主机，可以通过 \hyperref[regdesc:TRACEAHBCONFIGREG]{TRACE\_AHB\_CONFIG\_REG} 配置 AHB 突发传输，增加编码器的带宽。
+\begin{itemize}
+    \item \hyperref[fielddesc:TRACEHBURST]{TRACE\_HBURST} 支持以下配置：
+        \begin{itemize}
+            \item 0x0：SINGLE
+            \item 0x1：INCR（长度未定义）
+            \item 0x2：INCR4
+            \item 0x4：INCR8
+            \item 其他值：保留
+        \end{itemize}
+        突发传输意味着仲裁成功后，可以连续传输多个字。SINGLE 传输为 1 拍，INCR 长度未定义，INCR4 为 4 拍，INCR  为 8 拍。突发长度越长，带宽越大。
+
+    \item 传输配置为 INCR 时，由于传输长度不确定，为了避免编码器长时间占用总线，传输长度达到 \hyperref[fielddesc:TRACEMAXINCR]{TRACE\_MAX\_INCR} 后 INCR 传输结束，重新开始总线仲裁。
+\end{itemize}
+
+该配置用于调整带宽。带宽足够时，不需要配置突发传输，可使用默认配置。
+
+\subsection{软件保留}
+
+\hyperref[fielddesc:TRACEWORKSTATUS]{TRACE\_WORK\_STATUS} 表示编码器的状态。编码器不处于空闲状态时，必须备份配置，并在芯片进入睡眠状态时还原配置。
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{riscvtracenc-reg-summ}{}
+\section{寄存器列表}
+\label{sec:riscvtracenc-reg-summ}
+
+本小节的所有地址均为相对于 RISC-V 追踪编码器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/02-RISCVTRACENC-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 RISC-V 追踪编码器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/02-RISCVTRACENC-reg__CN}
+
+
+\end{document}

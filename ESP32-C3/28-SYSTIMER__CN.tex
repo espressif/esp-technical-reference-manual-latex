@@ -1,0 +1,326 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./28-SYSTIMER}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{systimer}{}
+\chapter{系统定时器 (SYSTIMER)}
+\label{mod:systimer}
+\section{概述}
+\chipname{} 芯片内置一组 52 位系统定时器。该定时器可用于生成操作系统所需的滴答定时中断，也可以用作普通的定时器生成周期或单次延时中断。
+
+系统定时器内置两个计数器（UNIT0 和 UNIT1）以及三个比较器（COMP0、COMP1 和 COMP2）。比较器用于监控计数器的计数值是否达到报警值。定时器的功能块图见图 \ref{fig:system-timer-structure}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{28-SYSTIMER/figures/systimer_components_20220718}
+    \caption{系统定时器结构图}
+    \label{fig:system-timer-structure}
+\end{figure}
+
+\section{主要特性}
+\begin{itemize}
+    \item 由两个 52 位计数器和三个 52 位比较器组成
+    
+    \item 软件通过 APB\_CLK 访问寄存器
+    \item 计数采用 CNT\_CLK 时钟，两次计数周期的平均频率为 16 MHz
+    \item CNT\_CLK 的时钟源为 XTAL\_CLK (40 MHz)
+    \item 支持 52 位报警值 (t) 和 26 位报警周期 ($\delta$t)
+    \item 支持两种报警模式：
+    \begin{itemize}
+        \item 单次报警模式：根据设定的目标报警值 (t)，生成一次性报警
+        \item 周期报警模式：根据设定的报警周期 ($\delta$t)，生成周期性报警
+    \end{itemize}
+    \item 三个比较器可根据设置的报警值 (t) 或报警周期 ($\delta$t) 生成三个独立中断
+    \item 支持软件配置基准计数值。例如，支持从 Light-sleep 唤醒之后，系统定时器通过软件加载 RTC 定时器记录的睡眠时间，并进行补偿
+    \item CPU 处于停止状态或处于在线调试状态时，系统定时器可选择停止运行或继续运行
+\end{itemize}
+
+\section{时钟源选择}
+计数器和比较器使用 XTAL\_CLK 用作时钟源。XTAL\_CLK 经分数分频后，在一个计数周期生成频率为 $f_{XTAL\_CLK}/3$ 的时钟信号，然后在另一个计数周期生成频率为 $f_{XTAL\_CLK}/2$ 的时钟信号。因此，计数器使用的时钟 CNT\_CLK，其实际平均频率为 $f_{XTAL\_CLK}/2.5$，即 16 MHz，见图  \ref{fig:system-timer-Alarm-Generation}。每个 CNT\_CLK 时钟周期，计数递增 1/16 $\mu s$，即 16 个周期递增 1 $\mu s$。
+
+配置寄存器等软件操作则是由 APB\_CLK 提供时钟信号。更多有关 APB\_CLK 的信息，见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+用户可使用以下系统寄存器的相关位来控制系统定时器：
+
+\begin{itemize}
+    \item 置位寄存器 SYSTEM\_PERIP\_CLK\_EN0\_REG 中 SYSTEM\_SYSTIMER\_CLK\_EN 位使能系统定时器的 APB\\\_CLK 信号；
+    \item 置位寄存器 SYSTEM\_PERIP\_CLK\_EN0\_REG 中 SYSTEM\_SYSTIMER\_RST 位，复位系统定时器。
+\end{itemize}
+注意，复位后，系统定时器的寄存器将恢复到默认值。更多信息可参考章节 \ref{mod:sysreg} \textit{\nameref{mod:sysreg}} 中表：外设时钟门控与复位控制位。 
+
+\section{功能描述}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{28-SYSTIMER/figures/726systimer_architecture_20210621.eps}
+    \caption{系统定时器生成报警}
+    \label{fig:system-timer-Alarm-Generation}
+\end{figure}
+
+图 \ref{fig:system-timer-Alarm-Generation} 展示了系统定时器生成报警的过程。在上述过程中用到一个计数器和一个比较器，比较器将根据比较结果，生成报警中断。
+
+
+\subsection{计数器}
+系统定时器提供两个 52 位计数器，下文用 UNIT\regindex{n} 表示，\regindex{n} 可以取 0 或 1。计数器使用 16 MHz CNT\_CLK 作为计数时钟。用户可通过配置寄存器 \hyperref[regdesc:SYSTIMERCONFREG]{SYSTIMER\_CONF\_REG} 中下面两个位来控制计数器 UNIT\regindex{n}：
+\begin{itemize}
+    \item \hyperref[fielddesc:SYSTIMERTIMERUNIT1WORKEN]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_WORK\_EN}：置位此位，使能计数器 UNIT\regindex{n}；
+    \item \hyperref[fielddesc:SYSTIMERTIMERUNIT1CORE0STALLEN]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_CORE0\_STALL\_EN}：置位此位，CPU 停止运行后，计数器 UNIT\regindex{n} 也将停止工作。CPU 恢复运行后，计数器重新开始工作。
+\end{itemize}
+
+UNIT\regindex{n} 的具体配置见下表，其中假设 CPU 当前状态为停止工作。 
+\begin{table}[H]
+    \centering
+    \caption{UNIT\regindex{n} 配置控制位}
+    \label{tab:systimer-config-bits}
+
+    \begin{threeparttable}
+    \begin{tabular}{ | c | c | p{4.5cm}| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{SYSTIMER\_TIMER\_} & \textbf{SYSTIMER\_TIMER\_} & \textbf{计数器} \\
+        \rowcolor{lightgray}
+        \textbf{UNIT\regindex{n}\_WORK\_EN} & \textbf{UNIT\regindex{n}\_CORE0\_STALL\_EN}& \textbf{UNIT\regindex{n}} \\\hline
+        % table contents
+        0 & x\tnote{ *} & 未处于工作状态。 \\\hline
+        \multirow{2}{*}{1} & \multirow{2}{*}{1} & 暂停计数，但 CPU 苏醒后，会继续计数。 \\\hline
+        1 & 0 & 不受影响，照常计数。 \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[*] x：无关项
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+计数器 UNIT\regindex{n} 处于工作状态时，计数值按计数周期递增。UNIT\regindex{n} 停止工作，则计数值将保持不变，不再递增。
+
+计数起始值的低 32 位和高 20 位分别从 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO} 和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_\\LOAD\_HI} 装载。置位 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD} 将触发重装载事件，当前计数起始值立即更新。如果计数器 UNIT\regindex{n} 处于工作状态，则将从新装载的计数值开始计数。
+
+置位 \hyperref[fielddesc:SYSTIMERTIMERUNIT0UPDATE]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_UPDATE} 将触发更新事件，当前计数值的低 32 位和高 20 位被锁存至寄存器 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} 和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI} 后，\hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEVALID]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_\\VALUE\_VALID} 会被置起。\hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} 和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI} 寄存器中的值保持不变，直至下次更新事件发生。
+
+
+
+
+\subsection{比较器和报警}
+系统定时器有三个 52 位比较器，用 COMP\regindex{x} 表示，其中 \regindex{x} 可以取 0、1、2。比较器可根据设置的不同报警值 (t) 或报警周期 ($\delta$t)，触发不同的中断。
+
+用户可配置寄存器 \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE} 选择比较器 COMP\regindex{x} 生成报警的模式：
+\begin{itemize}
+    \item 1：选择周期报警模式
+    \item 0：选择单次报警模式
+\end{itemize}
+
+选择周期报警模式时，寄存器 \hyperref[fielddesc:SYSTIMERTARGET2PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD} 中的值为报警周期 ($\delta$t)。假设当前计数值为 t1，经过一段时间，当计数值达到 t1 + $\delta$t 时，将触发一次报警中断。再经过一段时间，当计数值达到 t1 + 2*$\delta$t 时，将再次触发一次报警中断，以此类推。通过上述方式即可实现周期性报警。
+
+选择单次报警模式时，\hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO} 和 \hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI} 分别提供报警值 (t) 的低 32 位和高 20 位。假设当前计数值为 t2 (t2 <= t)，经过一段时间，当计数到报警值 (t) 时，则触发一次报警。与周期报警模式不同，单次报警模式仅生成一次报警中断。
+
+用户可配置寄存器 \hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} 选择用于与 COMP\regindex{x} 进行比较的计数器值，然后生成报警：
+
+\begin{itemize}
+        \item 1：选择与计数器 UNIT\regindex{1} 的计数值进行比较
+        \item 0：选择与计数器 UNIT\regindex{0} 的计数值进行比较
+\end{itemize}
+
+置位 \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN}，COMP\regindex{x} 开始进行比较：
+\begin{itemize}
+    \item 在单次报警模式下，COMP\regindex{x} 将比较计数器中的实际计数值与寄存器中设置的报警值 (t)；
+    \item 在周期报警模式下，COMP\regindex{x} 将比较计数器中的实际计数值与 t1 + n*$\delta$t (n = 1,2,3...)。
+\end{itemize}
+
+实际计数值等于报警值 (t)，或等于 t1 + n*$\delta$t (n = 1,2,3...)，则触发一次报警中断。但如果设定的报警值 (t) 小于当前计数值，即报警值 (t) 已成为过去，或当前计数值超过设定的报警值  (t) 一定范围 (0 \verb+~+ $2^{51}$ -1)，则也将立即触发中断。当前计数值 $t_{c}$、报警值 $t_{t}$ 和触发报警的关系如下表所示：
+
+\begin{longtable}[c]{ | p{4cm} | p{6.5cm} |}
+\caption{报警触发条件}
+\\\hline
+\rowcolor{lightgray}
+\textbf{$t_{c}$ 与 $t_{t}$ 的关系}  & \textbf{触发条件} \\ \hline
+$t_{c}$- $t_{t}$ <= 0 & 当 $t_{c}$ = $t_{t}$ 时，触发报警\\ \hline 
+0 <= $t_{c}$ - $t_{t}$ < $2^{51}$ - 1 \newline （$t_{c}$ < $2^{51}$ 且 $t_{t}$ < $2^{51}$；\newline 或 $t_{c}$ >= $2^{51}$ 且 $t_{t}$ >= $2^{51}$）& 立即触发报警\\ \hline 
+\multirow{2}{*}{$t_{c}$ - $t_{t}$ >= $2^{51}$ - 1} & $t_{c}$ 达到最大值 52'hfffffffffffff 后溢出，然后从
+
+0 开始计数，计数达到 $t_{t}$ 时触发报警 \\ \hline 
+\end{longtable}
+
+\subsection{同步操作}
+软件操作与计数器和比较器工作在不同时钟频率下，因此需要对部分配置寄存器进行同步。完整的同步过程包括下面两个步骤：
+
+\begin{enumerate}
+    \item 通过软件向配置寄存器写入合适的值，见表 \ref{synchronization-configuration-table} 第一列；
+    \item 通过软件置位相应的同步使能位，开始同步操作，见表  \ref{synchronization-configuration-table} 第二列。
+\end{enumerate}
+
+\begin{longtable}[c]{ | p{5.5cm} | p{5.5cm} |}
+\caption{同步操作}\\\hline
+\rowcolor{lightgray}
+\label{synchronization-configuration-table}
+ \textbf{需要同步的字段}&\textbf{同步使能位}\\ \hline
+\hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO}
+   
+\hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_HI}& \multirow{2}{*}{\hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD}} 
+\\ \hline 
+\hyperref[fielddesc:SYSTIMERTARGET2PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD}
+
+\hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI}
+
+\hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO} & \multirow{3}{*}{\hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD}}
+\\ \hline 
+\end{longtable}
+
+
+\subsection{中断}
+上述三个比较器均有一个对应的报警中断，即 SYSTIMER\_TARGET\regindex{x}\_INT 中断，该中断为电平类型中断。比较器开始触发报警，即拉高中断信号。中断信号将一直保持高电平，直至软件清除中断。用户可置位 \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\\\regindex{x}\_INT\_ENA} 使能中断。
+
+
+\section{编程示例}\label{sec:instructions-of-usage}
+注意，在配置 COMP\regindex{x} 和 UNIT\regindex{n} 过程中，需保证对应的 COMP 和 UNIT 处于工作状态。
+\subsection{读取当前计数器的值}\label{sec:to-read-system-timer-value}
+\begin{enumerate}
+    \item 置位 \hyperref[fielddesc:SYSTIMERTIMERUNIT0UPDATE]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_UPDATE}，将计数器 UNIT\regindex{n} 的值更新至寄存器 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\\\_VALUE\_HI} 和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO}；
+    \item 轮询 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEVALID]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_VALID}，直至其值为 1。
+    之后，用户可从寄存器 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_\\VALUE\_HI} 和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} 中读取计数器的值；
+    \item 读取寄存器 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO}（低 32 位）和 \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI}（高 20 位）。
+    \iffalse
+    \item When simulation time reaches (t0 + 50 )ns, it is allowed to take steps 1-3 to read system timer value again
+    \fi
+\end{enumerate}
+
+\subsection{在单次报警模式下配置一次性报警}
+\begin{enumerate}
+    \item 设置 \hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} 选择与 COMP\regindex{x} 进行比较的计数器；
+    \item 读取当前计数器的值，步骤见章节  \ref{sec:to-read-system-timer-value}。读取的当前值可用于计算步骤 4 中的报警值 (t)；
+    \item 清除 \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE}，使能单次报警模式；
+    \item 设置报警值 (t)，并将报警值 (t) 的低 32 位和高 20 位分别写入   \hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO} 和 \hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI}；
+    \item 置位 \hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD}，同步报警值 (t)，即将报警值 (t) 装载至比较器 COMP\regindex{x}；   
+    \item 置位 \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN} 使能选择的比较器 COMP\regindex{x}；比较器 COMP\regindex{}开始比较计数值与报警值 (t)；
+    \item 置位 \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\regindex{x}\_INT\_ENA}，使能中断。Unit\regindex{n} 达到报警值 (t) 则触发一次报警中断 SYSTIMER\_\\TARGET\regindex{x}\_INT。
+\end{enumerate}
+
+\subsection{在周期报警模式下配置周期性报警}
+\begin{enumerate}
+    \item 设置 \hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} 选择与 COMP\regindex{x} 进行比较的计数器；
+    \item 将报警周期 ($\delta$t) 写入 \hyperref[fielddesc:SYSTIMERTARGET0PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD}；
+    \item 置位 \hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD} 同步报警周期值，即将 ($\delta$t) 装载至比较器 COMP\regindex{x}；
+    \item 先清除再置位 \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE} 将 COMP\regindex{x} 配置为周期报警模式；
+    \item 置位 \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN} 使能选择的比较器 COMP\regindex{x}；比较器 COMP\regindex{x} 开始将计数值与计数初始值 + n*$\delta$t (n = 1, 2, 3...) 进行比较；
+    \item 置位 \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\regindex{x}\_INT\_ENA}，使能中断。Unit\regindex{n} 计数达到计数初始值 + n*$\delta$t (n = 1, 2, 3...)，则触发一次 SYSTIMER\_TARGET\regindex{x}\_INT 中断。
+\end{enumerate}
+
+
+\subsection{唤醒后时间补偿}
+\begin{enumerate}
+    \item 在芯片进入 Light-sleep 之前，用户需配置 RTC 定时器用于精确记录睡眠时间，见低功耗管理章节；
+    \item 系统从 Light-sleep 模式唤醒后，读取 RTC 定时器记录的睡眠时间； 
+    \item 读取当前系统定时器的计数值，见章节  \ref{sec:to-read-system-timer-value}；
+    \item 将 RTC 记录的睡眠时间，单位：RTC\_SLOW\_CLK 周期，转换成以 CNT\_CLK (16 MHz) 周期为单位的睡眠时间。例如，如果 RTC\_SLOW\_CLK 频率为 32 kHz，则 RTC 定时器记录的时间乘以 500 即可。 
+    \item 将 RTC 定时器转换后的值加到系统定时器当前计数值：
+    \begin{itemize}
+        \item 将计算所得值，低 32 位写入 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO}，高 20 位写入 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_\\UNIT\regindex{n}\_LOAD\_HI}；
+        \item 置位 \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD}，将新的定时器值装载到系统定时器。这样即可完成系统定时器更新。
+        \end{itemize}
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{systimer-summ}{}
+\section{寄存器列表}
+\label{sec:28-systimer-reg-summ}
+
+本小节的所有地址均为相对于系统定时器基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/28-SYSTIMER-reg-summ-cn}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于系统定时器基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/28-SYSTIMER-reg-cn}
+
+
+\end{document}

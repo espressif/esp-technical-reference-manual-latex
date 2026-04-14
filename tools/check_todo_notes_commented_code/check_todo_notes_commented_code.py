@@ -32,9 +32,14 @@ TODO_MULTI_LINE_PATTERNS = [
     r'(\\todoattention{.*)'
 ]
 
+# Sentinel: mid-line % comments are handled by _strip_midline_percent_comments (see docstring).
+_INLINE_PERCENT_COMMENTS = object()
+
+PERCENT_LINESTART_PATTERN = r'^((?:\\\\)*%(?!\\subfileinclude).*)\n'  # line-start % (optional \\ pairs)
+
 COMMENTED_CODE_PATTERNS = [
-    r'^(%(?!\\subfileinclude).*)\n',  # % Commented code after %
-    r'(?<!^)((?<!\\)%.+)\n',  # % Commented code after %
+    PERCENT_LINESTART_PATTERN,
+    _INLINE_PERCENT_COMMENTS,
     r'(\\begin{comment}.*?\\end{comment})'  # Code between \begin{comment} and \end{comment}
 ]
 
@@ -80,6 +85,110 @@ def remove_todo_commands(text):
             break
 
     return result
+
+
+def _backslashes_before_percent(line, pct_index):
+    """Count consecutive backslashes immediately before line[pct_index] ('%')."""
+    n = 0
+    j = pct_index - 1
+    while j >= 0 and line[j] == '\\':
+        n += 1
+        j -= 1
+    return n
+
+
+def _percent_followed_only_by_whitespace_to_eol(line, pct_index, nl_index):
+    """True if '%' only hides the newline (no non-whitespace between '%' and the newline)."""
+    if nl_index <= pct_index:
+        return False
+    return not line[pct_index + 1:nl_index].strip()
+
+
+def _linestart_comment_percent_index(line):
+    """
+    If the line begins with zero or more ``\\\\`` pairs followed by ``%``, return the index of
+    that ``%``. Otherwise return -1.
+    """
+    j = 0
+    n = len(line)
+    while j + 1 < n and line[j] == '\\' and line[j + 1] == '\\':
+        j += 2
+    if j < n and line[j] == '%':
+        return j
+    return -1
+
+
+def _strip_linestart_percent_comment_line(line, ignore_patterns):
+    """
+    Remove only from the line-initial comment ``%`` through the following newline, keeping any
+    leading ``\\\\`` pairs (same effect as mid-line strip; avoids ``re.sub`` eating the prefix).
+    Returns (new_line, changed, segment_for_display).
+    """
+    pct = _linestart_comment_percent_index(line)
+    if pct < 0:
+        return line, False, None
+    if line.startswith('\\subfileinclude', pct + 1):
+        return line, False, None
+    nl = line.find('\n', pct)
+    if nl == -1:
+        return line, False, None
+    if _percent_followed_only_by_whitespace_to_eol(line, pct, nl):
+        return line, False, None
+    segment = line[pct:nl]
+    if segment.strip() in ignore_patterns:
+        return line, False, None
+    suffix = line[nl + 1 :]
+    new_line = line[:pct] + suffix
+    if line.endswith('\n') and not new_line.endswith('\n'):
+        new_line += '\n'
+    return new_line, True, segment
+
+
+def _strip_midline_percent_comments(line, check_only, ignore_patterns, line_number):
+    """
+    Strip each substring from a '%' that starts a LaTeX comment through the following newline.
+
+    '%' begins a comment when the run of backslashes before it has even length (0, 2, 4, …).
+    So '\\\\%' (line break + %) is a comment, while '\\%' is a literal percent.
+    Leading '%' on the line is handled by _strip_linestart_percent_comment_line.
+    Trailing '%' with only whitespace after it (end-of-line spacer) is ignored.
+    """
+    modified = False
+    start = 0
+    out = []
+    pos = 0
+    while pos < len(line):
+        pct = line.find('%', pos)
+        if pct == -1:
+            break
+        if pct == 0:
+            pos = 1
+            continue
+        if _backslashes_before_percent(line, pct) % 2 == 1:
+            pos = pct + 1
+            continue
+        nl = line.find('\n', pct)
+        if nl == -1:
+            pos = pct + 1
+            continue
+        if _percent_followed_only_by_whitespace_to_eol(line, pct, nl):
+            pos = pct + 1
+            continue
+        segment = line[pct:nl]
+        match_strip = segment.strip()
+        if match_strip in ignore_patterns:
+            pos = pct + 1
+            continue
+        if check_only:
+            print(f"\033[1;36mCommented code found at line {line_number}\033[0m: {segment.rstrip()}")
+        else:
+            print(f"\033[0;31mCommented code removed from line {line_number}\033[0m: {segment.rstrip()}")
+        out.append(line[start:pct])
+        start = nl + 1
+        pos = start
+        modified = True
+    out.append(line[start:])
+    return ''.join(out), modified
 
 
 def is_excluded_folder(folder):
@@ -143,6 +252,25 @@ def process_file(filepath, check_only=True, ignore_patterns=[]):
                 pass  # ignore this
             else:
                 for pattern in COMMENTED_CODE_PATTERNS:  # Check for commented code, respecting ignored patterns
+                    if pattern is _INLINE_PERCENT_COMMENTS:
+                        line, cm = _strip_midline_percent_comments(
+                            line, check_only, ignore_patterns, i + 1)
+                        if cm:
+                            modified = True
+                        continue
+                    if pattern == PERCENT_LINESTART_PATTERN:
+                        line, ch, seg = _strip_linestart_percent_comment_line(line, ignore_patterns)
+                        if ch:
+                            if check_only:
+                                print(
+                                    f"\033[1;36mCommented code found at line {i + 1}\033[0m: {seg.rstrip()}"
+                                )
+                            else:
+                                print(
+                                    f"\033[0;31mCommented code removed from line {i + 1}\033[0m: {seg.rstrip()}"
+                                )
+                            modified = True
+                        continue
                     matches = re.findall(pattern, line, re.DOTALL)
                     if matches:
                         for match in matches:

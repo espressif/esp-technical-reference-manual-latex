@@ -1,0 +1,589 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./65-LPI2S}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{lpi2s}{}
+\chapter{LP I2S Controller}
+\label{mod:lpi2s}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+\chipname{} has a built-in LP I2S interface, which provides a data reception communication interface for \hyperref[mod:vad]{Voice Activity Detection (VAD)} and some digital audio applications in low power mode.
+
+The I2S standard bus defines three signals, namely, a bit clock signal (BCK), a channel/word select signal (WS), and a serial data signal (SD). A basic I2S data bus has one master and one slave. The roles remain unchanged throughout the communication. 
+
+The LP I2S module on \chipname{} provides an independent RX unit, which supports receiving data when the chip is running with the lowest power consumption. Compared to HP I2S, i.e., I2S\regindex{0}, I2S\regindex{1}, and I2S\regindex{2}, LP I2S does not support DMA access. Instead, it uses a separate internal memory to store data.
+
+\begin{tiplisting}
+For I2S-related terminology, refer to the Section \ref{sec:i2s-term} \textit{\nameref{sec:i2s-term}} in Chapter \ref{mod:i2s} \textit{\nameref{mod:i2s}}.
+\end{tiplisting}
+\vspace{-1em}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:lpi2s-features}
+
+The LP I2S module has the following features:
+
+\begin{itemize}
+    \item RX master mode and slave mode
+    \item A variety of audio standards supported: 
+        \begin{itemize}
+            \item TDM Philips standard
+            \item TDM MSB alignment standard
+            \item TDM PCM standard
+            \item PDM standard
+        \end{itemize}
+    \item Various RX modes supported:
+        \begin{itemize}
+        \item TDM RX mode, up to 2 channels supported
+        \item PDM RX mode
+            \begin{itemize}
+                \item Raw PDM data reception
+                \item PDM-to-PCM data format conversion, up to 2 channels supported
+            \end{itemize}
+        \end{itemize}
+    \item Configurable sample clock with a variety of sampling frequencies supported
+    \item 16-bit data communication
+    \item Standard LP I2S interface interrupts 
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:lpi2s-arch-overview}
+
+Figure \ref{fig:lpi2s-sys-diagram} shows the structure of the \chipname{} LP I2S module, consisting of:
+    
+\begin{itemize}
+    \item Receive control unit (RX Unit)
+    \item Input and output timing unit (I/O Sync)
+    \item Clock divider (Clock Generator)
+    \item 64 x 32-bit RX FIFO
+    \item 256 x 32-bit LP I2S Memory
+    \item Communication interface for \hyperref[mod:vad]{Voice Activity Detection (VAD)}
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/lpi2s_arch_20240729__EN.pdf}}
+    \caption{\chipname{} LP I2S Architecture}
+    \label{fig:lpi2s-sys-diagram}
+\end{figure}
+
+The RX unit have a three-line interface that uses a bit clock line (BCK), a word select line (WS), and a serial data line (SD). The SD line of the RX unit is dedicated for data input. BCK and WS signal lines for the RX unit can be configured as master output mode or slave input mode.
+
+The signal bus of the LP I2S module is shown at the right part of Figure \ref{fig:lpi2s-sys-diagram}. The naming of these signals in RX units follows the pattern of LP\_I2S\textcolor{red}{A}\_\textcolor{red}{B}\_\textcolor{red}{C}, for example, LP\_I2S\textcolor{red}{I}\_\textcolor{red}{BCK}\_\textcolor{red}{in}.
+
+\begin{itemize}
+    \item ``A” is fixed to ``I”, indicating that signals are input to the RX unit
+    \item ``B” represents the signal function, which includes:
+    \begin{itemize}
+        \item BCK
+        \item WS
+        \item SD
+    \end{itemize}
+    \item ``C” represents the signal direction, which includes:
+    \begin{itemize}
+        \item “in”: Input signal into the LP I2S module
+        \item ``out”: Output signal from the LP I2S module
+    \end{itemize}
+\end{itemize}
+    
+Table \ref{tab:lpi2s-signal-descr} provides a detailed description of LP I2S signals.
+
+\begin{table}[H]
+    \centering
+    \caption{LP I2S Signal Description}
+    \label{tab:lpi2s-signal-descr}
+    \begin{threeparttable}
+    \begin{tabular}{|p{2.8cm}|p{1.8cm}|p{10.2cm}| }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Signal \tnote{*}} & \textbf{Direction} & \textbf{Function} \\
+    \hline
+    LP\_I2SI\_BCK\_in  & Input & In LP I2S slave mode, inputs BCK signal for RX unit \\
+    \hline
+    LP\_I2SI\_BCK\_out& Output & In LP I2S master mode, outputs BCK signal for RX unit \\
+    \hline
+    LP\_I2SI\_WS\_in & Input & In LP I2S slave mode, inputs WS signal for RX unit \\
+    \hline
+    LP\_I2SI\_WS\_out& Output & In LP I2S master mode, outputs WS signal for RX unit \\\hline
+    LP\_I2SI\_SD\_in& Input & Serial input data bus for LP I2S RX unit\\\hline
+    LP\_I2S\_MCLK\_out& Output & LP I2S master clock output \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[*] Any required signals of LP I2S must be mapped to the chip's pins via LP GPIO matrix. See Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\section{Supported Audio Standards} \label{sec:lpi2s-supported-audio-standards}
+
+\chipname{} I2S supports multiple audio standards, including TDM Philips standard, TDM MSB alignment standard, TDM PCM standard, and PDM standard.
+
+Select the needed standard by configuring the following bits:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LPI2SRXTDMEN]{LP\_I2S\_RX\_TDM\_EN}
+    \begin{itemize}
+        \item 0: Disable TDM mode
+        \item 1: Enable TDM mode
+    \end{itemize}
+    \item \hyperref[fielddesc:LPI2SRXPDMEN]{LP\_I2S\_RX\_PDM\_EN}
+    \begin{itemize}
+        \item 0: Disable PDM mode
+        \item 1: Enable PDM mode
+    \end{itemize}    
+    \item \hyperref[fielddesc:LPI2SRXMSBSHIFT]{LP\_I2S\_RX\_MSB\_SHIFT}
+    \begin{itemize}
+        \item 0: WS and SD signals change simultaneously, i.e., enable MSB alignment standard
+        \item 1: WS signal changes one BCK clock cycle earlier than SD signal, i.e., enable Philips standard or select PCM standard
+    \end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+\hyperref[fielddesc:LPI2SRXMSBSHIFT]{LP\_I2S\_RX\_TDM\_EN} and \hyperref[fielddesc:LPI2SRXMSBSHIFT]{LP\_I2S\_RX\_PDM\_EN} must not be configured to 1 or 0 at the same time, otherwise LP I2S will transmit data incorrectly in a mode that is neither TDM nor PDM.
+\end{tiplisting}
+
+\subsection{TDM Philips Standard}
+
+Philips standards require that WS signal changes one BCK clock cycle earlier than SD signal on BCK falling edge, which means that WS signal is valid from one clock cycle before transmitting the first bit of channel data and changes one clock before the end of channel data transfer. SD signal line transmits the most significant bit of audio data first. 
+
+Compared with the basic Philips standard, TDM Philips standard supports multiple channels. See Figure \ref{fig:lpi2s-tdm-philips-std-timing-diagram}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_phillips_mode.png}
+    \caption{TDM Philips Standard Timing Diagram}
+    \label{fig:lpi2s-tdm-philips-std-timing-diagram}
+\end{figure}
+
+\subsection{TDM MSB Alignment Standard}
+
+MSB alignment standards require that WS and SD signals change simultaneously on the falling edge of BCK. The WS signal is valid until the end of the channel data transfer. The SD signal line transmits the most significant bit of audio data first.
+
+Compared with the basic MSB alignment standard, TDM MSB alignment standard supports multiple channels. See Figure \ref{fig:lpi2s-tdm-msb-align-std-timing-diagram}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_msb_mode.png}
+    \caption{TDM MSB Alignment Standard Timing Diagram}
+    \label{fig:lpi2s-tdm-msb-align-std-timing-diagram}
+\end{figure}
+
+\subsection{TDM PCM Standard}
+
+Short frame synchronization under the PCM standards requires that the WS signal changes one BCK clock cycle earlier than the SD signal on the falling edge of BCK, which means that the WS signal becomes valid one clock cycle before transferring the first bit of channel data and remains unchanged in this BCK clock cycle. SD signal line first transmits the most significant bit of audio data. 
+
+Compared with the basic PCM standard, TDM PCM standard supports multiple channels. See Figure \ref{fig:lpi2s-tdm-pcm-std-timing-diagram}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_pcm_mode.png}
+    \caption{TDM PCM Standard Timing Diagram}
+    \label{fig:lpi2s-tdm-pcm-std-timing-diagram}
+\end{figure}
+
+\subsection{PDM Standard}
+
+Under PDM standard, WS signal changes continuously during data transmission. The low-level and high-level of this signal indicates the left channel and right channel respectively. WS and SD signals change simultaneously on the falling edge of BCK. See Figure \ref{fig:lpi2s-pdm-std-timing-diagram}. 
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/i2s_pdm_mode.pdf}
+    \caption{PDM Standard Timing Diagram}
+    \label{fig:lpi2s-pdm-std-timing-diagram}
+\end{figure}
+
+
+\section{RX Clock}\label{sec:lpi2s-rx-clk}
+
+LP\_I2S\_RX\_CLK is the master clock of LP I2S RX unit, divided from:
+
+\begin{itemize}
+    \item Up to 40 MHz LP\_FAST\_CLK with configurable clock source 
+    \item 20 MHz XTAL\_D2\_CLK
+    \item 8 MHz PLL\_LP\_CLK 
+\end{itemize}
+
+The serial clock (BCK) of the LP I2S RX unit is divided from LP\_I2S\_RX\_CLK, as shown in Figure \ref{fig:lpi2s-clk}. \hyperref[fielddesc:LPPERILPI2SRXCLKSEL]{LPPERI\_LP\_I2S\_RX\_CLK\_SEL} is used to select clock source for the LP I2S RX unit, and \hyperref[fielddesc:LPPERICKENLPI2SRX]{LPPERI\_CK\_EN\_LP\_I2S\_RX} to enable or disable the clock source.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/lpi2s_clk_20240620.pdf}}
+    \caption{LP I2S Clock Generator}
+    \label{fig:lpi2s-clk}
+\end{figure}
+
+The following formula shows the relation between LP\_I2S\_RX\_CLK frequency $f_{\textrm{LP\_I2S\_RX\_CLK}}$ and the divider clock source frequency $f_{\textrm{LP\_I2S\_CLK\_S}}$:
+$$f_{\textrm{LP\_I2S\_RX\_CLK}}=\frac{f_{\textrm{LP\_I2S\_CLK\_S}}}{\textrm{N} + \frac{\textrm{b}}{\textrm{a}}}$$
+
+N is an integer value between 2 and 256. The value of N is mapped to that of \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVNUM]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_N} as follows:
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVNUM]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_N} = 0, N = 256;
+    \item When \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVNUM]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_N} = 1, N = 2;
+    \item When \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVNUM]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_N} has any other value, N =  \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVNUM]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_NUM}.
+\end{itemize}
+
+The values of ``a" and ``b" in fractional divider depend only on x, y, z, and yn1. The corresponding formulas are as follows:
+
+\begin{itemize}
+    \item When $\textrm{b} <= \frac{\textrm{a}}{2}$, $\textrm{yn1} = 0$, $\textrm{x} = floor([\frac{\textrm{a}}{\textrm{b}}]) - 1$, $\textrm{y} = \textrm{a}\%\textrm{b}$, $\textrm{z} = \textrm{b}$; 
+    \item When $\textrm{b} > \frac{\textrm{a}}{2}$, $\textrm{yn1}=1$, $\textrm{x} = floor([\frac{\textrm{a}}{\textrm{a - b}}]) - 1$, $\textrm{y} = \textrm{a}\%\textrm{(a - b)}$, $\textrm{z}=\textrm{a - b}$.
+\end{itemize}
+
+The values of x, y, z, and yn1 are configured by  \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVX]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_X}, \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVY]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_Y}, \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVZ]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_Z} and \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVYN1]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_YN1}.
+
+To configure the integer divider, clear \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVX]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_X} and \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVZ]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_Z} , then set \hyperref[fielddesc:LPPERILPI2SRXCLKMDIVY]{LPPERI\_LP\_I2S\_RX\_CLKM\_DIV\_Y} to 1.
+
+\begin{tiplisting}
+Using fractional divider may introduce some clock jitter.
+\end{tiplisting}
+
+In master RX mode, the serial clock BCK for LP I2S RX unit is LP\_I2SI\_BCK\_out divided from LP\_I2S\_RX\_CLK, which is:
+
+$$f_{\textrm{LP\_I2SI\_BCK\_out}} = \frac{f_{\textrm{LP\_I2S\_RX\_CLK}}}{\textrm{MI}}$$
+
+``MI” is an integer value:
+$$ \textrm{MI} = \textrm{\hyperref[fielddesc:LPI2SRXBCKDIVNUM]{LP\_I2S\_RX\_BCK\_DIV\_NUM}} + 1 $$
+
+\vspace{-1em}
+\begin{tiplisting}
+\hyperref[fielddesc:LPI2SRXBCKDIVNUM]{LP\_I2S\_RX\_BCK\_DIV\_NUM} must not be configured as 1.
+\end{tiplisting}
+\vspace{-1em}
+
+In LP I2S slave mode, make sure $f_{\textrm{LP\_I2S\_RX\_CLK}}$ >= 8 x $f_{\textrm{BCK}}$ to ensure the sampling accuracy. The LP I2S module can output LP\_I2S\_MCLK\_out as the master clock for peripherals.
+
+Since in slave mode, the module clock frequency must be greater than or equal to 8 times the BCK clock frequency, the maximum sampling frequency of LP I2S is limited by the data bit width and the number of channels. For example, since the clock source frequency is up to 40 MHz, the module clock can be configured up to 20 MHz, and the BCK clock can be configured up to 5 MHz. Therefore, when transmitting dual-channel 16-bit width data, LP I2S supports sample frequencies up to 78.125 kHz, e.g., 8 kHz, 16 kHz, 32 kHz, 44.1 kHz, 48 kHz. For detailed information, please refer to Section \ref{sec:lpi2s-rx-clk} \textit{\nameref{sec:lpi2s-rx-clk}}.
+
+In addition to the clock frequency limitation, LP I2S uses LP I2S internal memory for data storage instead of DMA. Therefore, users need to read data from the LP I2S internal memory in a timely manner. The reading rate may limit the sample frequencies that LP I2S supports. For detailed information, please refer to Section \ref{sec:lpi2s-memory} \textit{\nameref{sec:lpi2s-memory}}.
+
+
+\section{Reset} \label{sec:lpi2s-reset}
+
+The units and FIFOs in the LP I2S module are reset by the following bits.
+
+\begin{itemize}
+    \item LP I2S RX units: Reset by the bit \hyperref[fielddesc:LPI2SRXRESET]{LP\_I2S\_RX\_RESET};
+    \item LP I2S RX FIFO: Reset by the bits \hyperref[fielddesc:LPI2SRXFIFORESET]{LP\_I2S\_RX\_FIFO\_RESET}.
+\end{itemize}
+
+\begin{tiplisting}
+The LP I2S module clock must be configured first before the units and FIFO are reset.
+\end{tiplisting} 
+
+\section{Master/Slave RX Mode}
+
+The LP I2S supports receiving data either as a master or as a slave in RX mode.
+
+\begin{itemize}
+    \item LP I2S works as a master receiver:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} to start receiving data. When this bit is set, the RX unit keeps outputting clock signal and sampling input data.
+        \item Configure \hyperref[fielddesc:LPI2SRXSTOPMODE]{LP\_I2S\_RX\_STOP\_MODE} to control the suspension of data reception:
+        \begin{itemize}
+            \item 0: The RX unit only suspends data reception when \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared.
+            \item 1: The RX unit suspends data reception when \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared or the number of received bytes is greater than the value configured in \hyperref[regdesc:LPI2SRXEOFNUMREG]{LP\_I2S\_RX\_EOF\_NUM\_REG}. After data reception is suspended, if \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is not cleared, data reception can be restarted by setting \hyperref[fielddesc:LPI2SRXRESET]{LP\_I2S\_RX\_RESET} to 1.
+        \end{itemize}
+        \item RX unit stops receiving data when the bit \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared.
+    \end{itemize}
+    \item LP I2S works as a slave receiver:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START}. Wait for the master BCK signal to start receiving data.
+        \item Configure \hyperref[fielddesc:LPI2SRXSTOPMODE]{LP\_I2S\_RX\_STOP\_MODE} to control data reception suspension:
+        \begin{itemize}
+            \item 0: The RX unit only suspends data reception when \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared.
+            \item 1: The RX unit suspends data reception when \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared or the number of received bytes is greater than the value configured in \hyperref[regdesc:LPI2SRXEOFNUMREG]{LP\_I2S\_RX\_EOF\_NUM\_REG}. After data reception is suspended, if \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is not cleared, data reception can be restarted by setting \hyperref[fielddesc:LPI2SRXRESET]{LP\_I2S\_RX\_RESET} to 1.
+        \end{itemize}
+        \item The RX unit stops receiving data when the bit \hyperref[fielddesc:LPI2SRXSTART]{LP\_I2S\_RX\_START} is cleared.
+    \end{itemize}
+\end{itemize}
+
+
+\section{Receiving Data}\label{sec:lpi2s-rx-data}
+
+In RX mode, LP I2S first reads data from the peripheral interface and then stores the data in the LP I2S memory according to the configured channel mode and data mode.
+
+\subsection{Channel Mode Control}
+
+\chipname{} LP I2S supports both TDM RX mode and PDM RX mode. Set \hyperref[fielddesc:LPI2SRXTDMEN]{LP\_I2S\_RX\_TDM\_EN} to enable TDM RX mode, or set \hyperref[fielddesc:LPI2SRXPDMEN]{LP\_I2S\_RX\_PDM\_EN} to enable PDM RX mode.
+
+\begin{tiplisting}
+\hyperref[fielddesc:LPI2SRXTDMEN]{LP\_I2S\_RX\_TDM\_EN} and \hyperref[fielddesc:LPI2SRXPDMEN]{LP\_I2S\_RX\_PDM\_EN} must not be cleared or set simultaneously.
+\end{tiplisting}
+\vspace{-1em}
+
+\subsubsection{TDM RX Mode}
+
+In TDM RX mode, LP I2S supports up to 2 channels to input data. The total number of RX channels in use is controlled by \hyperref[fielddesc:LPI2SRXTDMTOTCHANNUM]{LP\_I2S\_RX\_TDM\_TOT\_CHAN\_NUM}. For example, if \hyperref[fielddesc:LPI2SRXTDMTOTCHANNUM]{LP\_I2S\_RX\_TDM\_TOT\_CHAN\_NUM} is set to 1, channel 0 \verb+~+ 1 will be used to receive data.
+
+In these RX channels, if \hyperref[fielddesc:LPI2SRXTDMPDMCHAN0EN]{LP\_I2S\_RX\_TDM\_PDM\_CHAN{\textcolor{red}{n}}\_EN} is set to:
+\begin{itemize}
+    \item 0: The channel data is invalid and will not be stored into RX FIFO;
+    \item 1: The channel data is valid and will be stored into RX FIFO.
+\end{itemize}
+
+In TDM master mode, WS signal is controlled by \hyperref[fielddesc:LPI2SRXWSIDLEPOL]{LP\_I2S\_RX\_WS\_IDLE\_POL} and \hyperref[fielddesc:LPI2SRXTDMWSWIDTH]{LP\_I2S\_RX\_TDM\_WS\_WIDTH}.
+\begin{itemize}
+    \item \hyperref[fielddesc:LPI2SRXWSIDLEPOL]{LP\_I2S\_RX\_WS\_IDLE\_POL}: The default level of WS signal;
+    \item \hyperref[fielddesc:LPI2SRXTDMWSWIDTH]{LP\_I2S\_RX\_TDM\_WS\_WIDTH}: The cycles the WS default level lasts for when receiving all channel data.
+\end{itemize}
+
+\hyperref[fielddesc:LPI2SRXHALFSAMPLEBITS]{LP\_I2S\_RX\_HALF\_SAMPLE\_BITS} x 2 is equal to the BCK cycles in one WS period.
+
+\subsubsection{PDM RX Mode}
+
+In PDM RX mode, LP I2S converts the serial data from channels to the data to be entered into memory. LP I2S supports both PDM raw data reception and PDM-to-PCM data format conversion.
+
+In PDM RX master mode, the default level of the WS signal is controlled by \hyperref[fielddesc:LPI2SRXWSIDLEPOL]{LP\_I2S\_RX\_WS\_IDLE\_POL}. WS frequency is half of the BCK frequency. The configuration of the BCK signal is similar to that of WS signal as described in Section \ref{sec:lpi2s-rx-clk}. Note, in PDM RX mode, the value of \hyperref[fielddesc:LPI2SRXHALFSAMPLEBITS]{LP\_I2S\_RX\_HALF\_SAMPLE\_BITS} must be same as that of \hyperref[fielddesc:LPI2SRXBITSMOD]{LP\_I2S\_RX\_BITS\_MOD}.
+
+When the PDM-to-PCM converter is enabled for LP I2S, the received PDM data is converted to PCM data and controlled according to the data mode. Configure \hyperref[fielddesc:LPI2SRXPDM2PCMEN]{LP\_I2S\_RX\_PDM2PCM\_EN} to enable this converter. The register configuration for PDM-to-PCM converter is as follows:
+
+\begin{itemize}
+    \item Configure sampling frequency and downsampling rate.\\
+    When LP I2S PDM-to-PCM converter is enabled, PDM clock frequency is:
+    \begin{itemize}
+        \item in master mode: PDM clock frequency is equal to BCK frequency.
+        \item in slave mode: PDM clock is provided by external device.
+    \end{itemize}
+    The sampling frequency ($f_{\textrm{Sampling}}$) is related to PDM clock frequency as follows:
+    $$f_{\textrm{Sampling}} = \frac{f_{\textrm{PDM}}}{\textrm{DSR}}$$
+    Downsampling rate (DSR) is related to \hyperref[fielddesc:LPI2SRXPDMSINCDSR16EN]{LP\_I2S\_RX\_PDM\_SINC\_DSR\_16\_EN} as follows:
+    $${\textrm{DSR}} = {\textrm{\hyperref[fielddesc:LPI2SRXPDMSINCDSR16EN]{LP\_I2S\_RX\_PDM\_SINC\_DSR\_16\_EN}}} \times {\textrm{64}}$$
+    Configure the registers according to needed master/slave mode, sampling frequency, and downsampling rate.
+    \item Configure valid channels. \\
+    When the PDM-to-PCM converter is enabled, input signals from eight channels are supported at most. See Table \ref{table:PDM_RX_MODE} for the register configuration and related channels.
+
+\begin{table}[H]
+    \centering
+    \caption{PDM-to-PCM Data Input}
+    \label{table:PDM_RX_MODE}
+    \begin{tabular}{|p{4.0cm}|p{2.3cm}|p{5.8cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Input Data Signal}&\textbf{Channel} &\textbf{Enable Register} \\ \hline
+    \multirow{2}*{LP\_I2SI\_SD\_in}  & Left channel & \hyperref[fielddesc:LPI2SRXTDMPDMCHAN0EN]{LP\_I2S\_RX\_TDM\_PDM\_CHAN0\_EN} \\ \cline{2-3}
+                                          & Right channel & \hyperref[fielddesc:LPI2SRXTDMPDMCHAN0EN]{LP\_I2S\_RX\_TDM\_PDM\_CHAN1\_EN} \\ \hline
+    \end{tabular}
+\end{table} 
+\end{itemize}
+
+\subsection{Data Format Control}
+
+The data format of LP I2S is controlled in the following phases:
+
+\begin{itemize}
+    \item Phase I: Serial input data is converted into the data to be saved to RX FIFO;
+    \item Phase II: The data is read from RX FIFO and converted according to the input data mode.
+\end{itemize}
+
+\subsubsection{Bit Order Control of Channel Data}
+
+The channel data will be stored as the data to be input in order from high to low. The data bit order in each channel is controlled by \hyperref[fielddesc:LPI2SRXBITORDER]{LP\_I2S\_RX\_BIT\_ORDER}:
+\begin{itemize}
+\item 0: The bit order of the data to be input is not reversed;
+\item 1: The bit order of the data to be input is reversed.
+\end{itemize}
+At this point, the first phase of data format control is completed.
+
+\subsubsection{Bit Width Control of Channel RX Data} 
+
+The storage data width in each channel is controlled by \hyperref[fielddesc:LPI2SRXBITSMOD]{LP\_I2S\_RX\_BITS\_MOD}. For \chipname{} LP I2S, the value of \hyperref[fielddesc:LPI2SRXBITSMOD]{LP\_I2S\_RX\_BITS\_MOD} is fixed as 15. The corresponding channel storage data width is 16 bit.
+
+\subsubsection{Bit Width Control of Channel RX Data} 
+
+The RX data width in each channel is determined by \hyperref[fielddesc:LPI2SRXTDMCHANBITS]{LP\_I2S\_RX\_TDM\_CHAN\_BITS}.
+
+\begin{itemize}
+\item If the storage data width in each channel is smaller than the received (RX) data width, then only the bits within the storage data width is saved into memory. Configure \hyperref[fielddesc:LPI2SRXLEFTALIGN]{LP\_I2S\_RX\_LEFT\_ALIGN} to:
+\begin{itemize}
+\item 0: Only the lower bits of the received data within the storage data width is stored to memory;
+\item 1: Only the higher bits of the received data within the storage data width is stored to memory.
+\end{itemize}
+\item If the received data width is smaller than the storage data width in each channel, the higher bits of the received data will be filled with zeros and then the data is saved to memory.
+\end{itemize}
+
+\subsubsection{Endian Control of Channel Storage Data} 
+
+The received data is then converted into storage data (to be stored to memory) after some processing, such as discarding extra bits or filling zeros in missing bits. The endian of the storage data is controlled by \hyperref[fielddesc:LPI2SRXBIGENDIAN]{LP\_I2S\_RX\_BIG\_ENDIAN} (the data bit width is fixed as 16). See the table below.
+
+\begin{table}[H]
+    \centering
+    \caption{Channel Storage Data Endian}
+    \label{tab:lpi2s-chan-storage-data-endian}
+    \begin{tabular}{|L{2.6cm}|L{4.2cm}|R{4.1cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Original Data} & \textbf{Endian of Processed Data} & \textbf{\hyperref[fielddesc:LPI2SRXBIGENDIAN]{LP\_I2S\_RX\_BIG\_ENDIAN}} \\ \hline
+    \multirow{2}*{\{B1, B0\}} & \{B1, B0\} & 0 \\\cline{2-3}
+    & \{B0, B1\} & 1 \\\hline
+    \end{tabular}
+\end{table}
+
+At this point, the data format control is completed. Data then is stored into memory.
+
+\subsection{Internal Memory}
+\label{sec:lpi2s-memory}
+
+All data after format control is stored in the LP I2S internal memory, which is a 16-bit wide circular buffer that supports RX unit write operations and system read operations. The LP I2S internal memory includes a pair of hardware-maintained read and write pointers to manage write and read operations.
+
+\begin{enumerate}
+    \item When LP I2S writes data:
+    \begin{itemize}
+        \item If the memory is full: Overwrites the oldest data and increments the write and read pointers by 1 (the value of the read pointer is the value of the write pointer plus one at this point).
+        \item If the memory is not full: Writes the data and increments the write pointer by 1. The read pointer remains unchanged.
+    \end{itemize}
+    \item When the system reads from the LP I2S memory:
+    \begin{itemize}
+        \item If the memory is empty: The read and write pointers remain unchanged (the value of the read pointer equals to the value of the write pointer at this point).
+        \item If the memory is not empty: Increments the read pointer by 1. The write pointer remains unchanged.
+    \end{itemize}
+    \end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item The incremental operation for the read and write pointers is in a circular manner, i.e., when the value of the read or write pointer reaches the boundary of the memory, the incremental operation resets the value of the pointer to zero.
+    \item Within the LP I2S internal memory architecture, the system always reads the oldest data in the memory.
+\end{itemize}
+\end{tiplisting}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:lpi2s-intr}
+
+\chipname{}'s LP I2S can generate the LP\_I2S\_INTR interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}. There are several internal interrupt sources from LP I2S that can generate the above interrupt signals as follows:
+
+\begin{itemize}
+\item \label{int:LPI2SRXHUNGINT}LP\_I2S\_RX\_HUNG\_INT: Triggered when the data reception is timed out. For example, if the LP I2S module is configured as RX slave mode, but the master does not transmit data for a long time (specified in \hyperref[regdesc:LPI2SLCHUNGCONFREG]{LP\_I2S\_LC\_HUNG\_CONF\_REG}), this interrupt will be triggered.
+\item \label{int:LPI2SRXDONEINT}LP\_I2S\_RX\_DONE\_INT: Triggered when the data reception is completed.
+\item \label{int:LPI2SRXFIFOMEMUDFINT}LP\_I2S\_RX\_FIFOMEM\_UDF\_INT: Triggered when the LP I2S memory is read empty.
+\item \label{int:LPI2SRXMEMTHRESHOLDINT}LP\_I2S\_RX\_MEM\_THRESHOLD\_INT: Triggered when the data in LP I2S memory is larger than the value configured in \hyperref[fielddesc:LPI2SRXMEMTHRESHOLD]{LP\_I2S\_RX\_MEM\_THRESHOLD}.
+\end{itemize}
+
+\begin{tiplisting}
+    For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:lpi2s-reg-summ} \textit{\nameref{sec:lpi2s-reg-summ}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{lpi2s-reg-summ}{}
+\section{Register Summary}
+\label{sec:lpi2s-reg-summ}
+
+The addresses in this section are relative to LP I2S base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/65-LPI2S-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to LP I2S base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/65-LPI2S-reg__EN}
+
+\end{document}

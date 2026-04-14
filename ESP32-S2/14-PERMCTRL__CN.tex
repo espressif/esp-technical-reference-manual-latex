@@ -1,0 +1,712 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./14-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{permctrl}{}
+\chapter{权限控制 (PMS)}
+\label{mod:permctrl}
+
+
+\section{概述}
+ESP32-S2 中不同总线类型、模块对存储器发起的访问权限是不同的。权限控制模块的功能就是通过相应的权限控制寄存器对上述所有的访问权限进行集中管理。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 内部存储器权限管理
+    \begin{itemize}
+        \item SRAM 部分采用统一管理，部分采用分割管理
+        \item RTC FAST SRAM 采用分割管理
+        \item RTC SLOW SRAM 采用分割管理
+    \end{itemize}
+    \item 片外存储器由 MMU 及权限控制模块管理
+\end{itemize}
+
+\section{功能描述}
+
+\subsection{内部存储器权限管理}
+内部存储器资源包括：ROM，SRAM，RTC FAST，RTC SLOW。各存储器的组成结构如下：
+\begin{itemize}
+    \item ROM 总大小为 128 KB，由两个 64 KB 的块组成。
+    \item SRAM 总大小为 320 KB，分成 4 个 8 KB 和 18 个 16 KB 的块，编号 Block 0 \verb+~+ 21，各 Block 的偏移地址范围如表 \ref{table:SRAM_block_address} 所示，不同总线访问的基地址不同，具体请见章节 \ref{IBUSSRAM}、\ref{DUBS0PermissionControl}、\ref{DMAPermissionControl}。对于 4 个 8 KB 的块 Block 0 \verb+~+ 3，每一个块都配备有独立的权限控制寄存器；而 16 KB 的块 Block 4 \verb+~+ 21 被视作一个大的存储空间，对该存储空间采用\textbf{分割管理}（将存储空间分割成高、低两片区域分别实施权限管理），分割地址不可落在 Block 4 \verb+~+ 5 的地址范围内。
+    \item RTC FAST Memory 采用分割管理，高、低两片区域备有独立的权限管理寄存器。
+    \item RTC SLOW Memory 采用分割管理，高、低两片区域备有独立的权限管理寄存器。
+\end{itemize}
+
+下文分别叙述 ESP32-S2 中能够访问上述内部存储资源的总线类型和模块。
+
+\begin{longtable}[c]{|p{3cm}|r|r|}
+    \caption{SRAM Block 偏移地址范围}
+    \label{table:SRAM_block_address}
+    \\\hline
+    \rowcolor{lightgray}
+    SRAM Block & 偏移起始地址 & 偏移结尾地址 \\
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    SRAM Block & 偏移起始地址 & 偏移结尾地址 \\
+    \hline
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+    Block 0 & \hexprefix{}0000 & \hexprefix{}1FFF  \\\hline
+    Block 1 & \hexprefix{}2000 & \hexprefix{}3FFF  \\\hline
+    Block 2 & \hexprefix{}4000 & \hexprefix{}5FFF \\\hline
+    Block 3 & \hexprefix{}6000 & \hexprefix{}7FFF  \\\hline
+    Block 4 & \hexprefix{}8000 & \hexprefix{}BFFF  \\\hline
+    Block 5 & \hexprefix{}C000 & \hexprefix{}FFFF  \\\hline
+    Block 6 & \hexprefix{}10000 & \hexprefix{}13FFF  \\\hline
+    Block 7 & \hexprefix{}14000 & \hexprefix{}17FFF  \\\hline
+    Block 8 & \hexprefix{}18000 & \hexprefix{}1BFFF  \\\hline
+    Block 9 & \hexprefix{}1C000 & \hexprefix{}1FFFF  \\\hline
+    Block 10 & \hexprefix{}20000 & \hexprefix{}23FFF  \\\hline
+    Block 11 & \hexprefix{}24000 & \hexprefix{}27FFF  \\\hline
+    Block 12 & \hexprefix{}28000 & \hexprefix{}2BFFF  \\\hline
+    Block 13 & \hexprefix{}2C000 & \hexprefix{}2FFFF  \\\hline
+    Block 14 & \hexprefix{}30000 & \hexprefix{}33FFF  \\\hline
+    Block 15 & \hexprefix{}34000 & \hexprefix{}37FFF  \\\hline
+    Block 16 & \hexprefix{}38000 & \hexprefix{}3BFFF  \\\hline
+    Block 17 & \hexprefix{}3C000 & \hexprefix{}3FFFF  \\\hline
+    Block 18 & \hexprefix{}40000 & \hexprefix{}43FFF  \\\hline
+    Block 19 & \hexprefix{}44000 & \hexprefix{}47FFF  \\\hline
+    Block 20 & \hexprefix{}48000 & \hexprefix{}4BFFF  \\\hline
+    Block 21 & \hexprefix{}4C000 & \hexprefix{}4FFFF  \\\hline
+
+\end{longtable}
+
+\subsubsection{IBUS 指令总线的访问权限管理}\label{Permission Control for the Instruction Bus (IBUS)}
+具备权限管理的 IBUS 指令总线的地址范围为 \hexprefix{}4002\_0000 \verb+~+ \hexprefix{}4007\_1FFF，该地址段包含有 SRAM 存储单元、RTC FAST Memory。访问不同存储单元都有独立的权限控制寄存器，由软件配置完成。
+
+此外本章节中与 IBUS 总线相关的权限控制寄存器还被 \hyperref[fielddesc:PMSPROIRAM0LOCK]{PMS\_PRO\_IRAM0\_LOCK} 信号控制，当该信号配置为 1 时，权限寄存器中配置数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSPROIRAM0LOCK]{PMS\_PRO\_IRAM0\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSPROIRAM0LOCK]{PMS\_PRO\_IRAM0\_LOCK} 信号数值才被重新置 0。
+
+
+\subparagraph{ SRAM 存储单元 }\label{IBUSSRAM}
+CPU 通过 IBUS 总线对 SRAM 发起的访问类型有 R/W/X（读/写/取指），基地址是 \hexprefix{}4002\_0000。软件可以提前配置好 IBUS 总线对 SRAM 每一个 Block 发起的合法的访问类型。相应的配置寄存器信息如表 \ref{table:IBUS_Permission Control_for_SRAM} 所示。
+
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{ IBUS 总线访问 SRAM 的权限管理}
+    \label{table:IBUS_Permission Control_for_SRAM}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endhead
+
+    \hline
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{4}*{\hyperref[regdesc:PMSPROIRAM01REG]{PMS\_PRO\_IRAM0\_1\_REG}} & [11:9] & 配置 IBUS 总线对 SRAM Block 3 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & [8:6] & 配置 IBUS 总线对 SRAM Block 2 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & [5:3] & 配置 IBUS 总线对 SRAM Block 1 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & [2:0] & 配置 IBUS 总线对 SRAM Block 0 的访问权限（从高到低为 W/R/X）\\
+    \hline
+    \multirow{3}*{\raisebox{1.5ex}{\hyperref[regdesc:PMSPROIRAM02REG]{PMS\_PRO\_IRAM0\_2\_REG}}} & \raisebox{-1.5ex}{[22:20]} & 配置 IBUS 总线对 SRAM Block 4 \verb+~+ 21 高地址段 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \raisebox{-1.5ex}{[19:17]} & 配置 IBUS 总线对 SRAM Block 4 \verb+~+ 21 低地址段的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \raisebox{-1.5ex}{[16:0]\textcolor{red}{*}} & 配置 IBUS 总线在 SRAM Block 4 \verb+~+ 21 地址范围内的分割地址，基地址为 \hexprefix{}4000\_0000。有关如何配置分割地址，请见下文说明。 \\
+\end{longtable}
+
+
+\begin{tiplisting}
+\textcolor{red}{*} 分割地址为 32 位宽，其值为基地址+用户配置的域的值×4。比如，将 \hexprefix{}10000 写入 \hyperref[regdesc:PMSPROIRAM02REG]{PMS\_PRO\_IRAM0\_2\_REG} [16:0]，则 IBUS 总线在 SRAM Block 4 \verb+~+ 21 地址范围内的分割地址为 \hexprefix{}4004\_0000。注意 IBUS 和 DBUS0 的分割地址不能落在 SRAM Block 0 \verb+~+ 5 的有效地址范围内。
+\end{tiplisting}
+
+若 CPU 通过 IBUS 总线对 SRAM 发起的访问类型与配置允许的访问类型不一致，例如软件配置 IBUS 总线只允许对 SRAM Block5 进行读写访问，但 CPU 通过 IBUS 总线对该 Block 发起了取指访问，权限控制模块将直接拒绝此次访问。
+
+拒绝此次访问，但是 CPU 发起的访问不会被阻塞。具体表现如下：
+\begin{itemize}
+    \item 写操作，将不会生效，不会改变存储单元内的数据内容；
+    \item 读和取指令操作，得到的是无意义的数据。
+\end{itemize}
+
+如果 IBUS 总线的违法访问 SRAM 存储单元的中断被使能，权限控制模块还将记录当次访问地址和访问类型，同时给出中断信号。如果连续发生访问不通过情况，硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+
+\subparagraph{ RTC FAST Memory}
+CPU 通过 IBUS 总线可以对 RTC FAST Memory 进行 R/W/X 三种类型的访问。由于 RTC FAST 采用分割管理，软件需要分别为高、低地址段配置访问权限。相应的配置寄存器信息如表 \ref{table:IBUS_Permission Control_for_RTCFAST} 所示。
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{IBUS 总线访问 RTC FAST 权限管理}
+    \label{table:IBUS_Permission Control_for_RTCFAST}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{6}*{\hyperref[regdesc:PMSPROIRAM03REG]{PMS\_PRO\_IRAM0\_3\_REG}} & \multirow{2}*{[16:14]} & 配置 IBUS 总线对 RTC FAST 高地址段 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{2}*{[13:11]} & 配置 IBUS 总线对 RTC FAST 低地址段的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{2}*{[10:0]} & 配置 IBUS 总线在 RTC FAST 地址范围内的分割地址，基地址为 \hexprefix{}4007\_0000。关于如何配置分割地址，请见前文说明。\\
+
+\end{longtable}
+
+若 CPU 通过 IBUS 总线对 RTC FAST 发起的访问类型与配置允许的访问类型不一致，权限控制模块将直接拒绝此次访问。如果 IBUS 总线违法访问 RTC FAST SRAM 的中断被使能，权限控制模块还将记录当次访问地址和访问类型，同时给出中断信号。如果连续发生访问不通过情况，硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+
+\subsubsection{DBUS0 总线的访问权限管理}
+CPU 通过 DBUS0 数据总线可以访问的地址范围有两段：\hexprefix{}3FFB\_0000 \verb+~+ \hexprefix{}3FFF\_FFFF 和 \hexprefix{}3FF9\_E000 \verb+~+ \hexprefix{}3FF9\_FFFF，包含 SRAM 存储单元、RTC FAST Memory。访问不同存储单元都有独立的权限控制寄存器，由软件配置完成。
+
+此外本章节中与 DBUS0 总线相关的的权限控制寄存器还被 \hyperref[fielddesc:PMSPRODRAM0LOCK]{PMS\_PRO\_DRAM0\_LOCK} 信号控制，当该信号配置为 1 时，权限寄存器的配置数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSPRODRAM0LOCK]{PMS\_PRO\_DRAM0\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSPRODRAM0LOCK]{PMS\_PRO\_DRAM0\_LOCK} 信号数值才被重新置 0。
+
+\subparagraph{ SRAM 存储单元 }\label{DUBS0PermissionControl}
+CPU 通过 DBUS0 总线对 SRAM 发起的访问类型有 R/W 两种，基地址是 \hexprefix{}3FFB\_0000。相应地，软件可以提前配置好 DBUS0 总线对 SRAM 每一个 Block 发起的合法的访问类型。相应的配置寄存器信息如表 \ref{table:DBUS0_Permission Control_for_SRAM} 所示。
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{ DBUS0 访问 SRAM 权限管理}
+    \label{table:DBUS0_Permission Control_for_SRAM}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{10}*{\hyperref[regdesc:PMSPRODRAM01REG]{PMS\_PRO\_DRAM0\_1\_REG}} & \multirow{2}*{[28:27]} & 配置  DBUS0 总线对 SRAM Block 4 \verb+~+ 21 高地址段 的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{2}*{[26:25]} & 配置  DBUS0 总线对 SRAM Block 4 \verb+~+ 21 低地址段的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{3}*{[24:8]}& 配置 DBUS0 总线在 SRAM Block 4 \verb+~+ 21 地址范围内的分割地址，基地址为 \hexprefix{}3FFB\_0000。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。 \\
+    \cline{2-3}
+    & [7:6] & 配置 DBUS0 总线对 SRAM Block3 的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & [5:4] & 配置  DBUS0 总线对 SRAM Block2 的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & [3:2] & 配置  DBUS0 总线对 SRAM Block1 的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & [1:0] & 配置  DBUS0 总线对 SRAM Block0 的访问权限（从高到低为 W/R）\\
+    \hline
+
+\end{longtable}
+
+若 CPU 通过  DBUS0 总线对 SRAM 发起的访问类型与配置允许的访问类型不一致，权限控制模块将直接拒绝此次访问。如果 DBUS0 总线违法访问 SRAM 存储单元的中断被使能，权限控制模块还将记录当次访问地址、访问类型和访问大小（字节、半字、字访问），同时给出中断信号。如果连续发生访问不通过情况，硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+
+\subparagraph{ RTC FAST Memory}
+CPU 通过 DBUS0 总线可以对 RTC FAST Memory 进行 R/W 两种类型的访问。由于 RTC FAST 采用分割管理，软件需要分别为高、低地址段配置访问权限。相应的配置寄存器信息如表 \ref{table:DBUS0_Permission Control_for_RTC FAST} 所示。
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{ DBUS0 总线访问 RTC FAST 权限管理}
+    \label{table:DBUS0_Permission Control_for_RTC FAST}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{7}*{\hyperref[regdesc:PMSPRODRAM02REG]{PMS\_PRO\_DRAM0\_2\_REG}} & \multirow{2}*{[14:13]} & 配置 DBUS0 总线对 RTC FAST 高地址段 的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{2}*{[12:11]} & 配置 DBUS0 总线对 RTC FAST 低地址段的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{3}*{[10:0]} & 配置 DBUS0 总线在 RTC FAST 地址范围内的分割地址，基地址为\hexprefix{}3FF9\_E000。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。 \\
+
+\end{longtable}
+
+若 CPU 通过 DBUS0 总线对 RTC FAST 发起的访问类型与配置允许的访问类型不一致，权限控制模块将直接拒绝此次访问。
+如果 DBUS0 总线违法访问 RTC FAST SRAM 的中断被使能，权限控制模块还将记录当次访问地址、访问类型和访问大小（字节、半字、字访问）（字节、半字、字访问），同时给出中断信号。如果连续发生访问不通过情况，硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+\subsubsection{片上 DMA 访问权限控制}\label{DMAPermissionControl}
+ESP32-S2 上 DMA 对 SRAM 的访问分为 3 类，分别为 Internal DMA，Copy DMA RX（接收）通道，Copy DMA TX（发送）通道，基地址是 \hexprefix{}3FFB\_0000，地址范围为：\hexprefix{}3FFB\_0000 \verb+~+ \hexprefix{}3FFF\_FFFF。软件可以提前配置允许 DMA 资源对 SRAM 每一个 Block 发起访问的类型。相应的配置寄存器信息如表 \ref{table:DMA_apb_i_Permission Control_for_SRAM} 所示，其中 \textcolor{red}{XX} 可以是 APB，TX 和 RX，分别对应 Internal DMA, TX Copy DMA 和 RX Copy DMA 资源的配置寄存器。更多有关 DMA 的内容，请参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+此外本章节中与 DMA 相关的的权限控制寄存器还被 PMS\_DMA\_\textcolor{red}{XX}\_I\_LOCK 信号控制，当该信号配置为 1 时，权限寄存器的配置数值将被锁定，不允许再次更改。同时 PMS\_DMA\_\textcolor{red}{XX}\_I\_LOCK 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，PMS\_DMA\_\textcolor{red}{XX}\_I\_LOCK 信号数值才被重新置 0。
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{片上 DMA 资源访问 SRAM 权限管理}
+    \label{table:DMA_apb_i_Permission Control_for_SRAM}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位的位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{10}*{PMS\_DMA\_\textcolor{red}{XX}\_I\_1\_REG} &  \multirow{2}*{[28:27]} & 配置 DMA 资源对 SRAM Block 4 \verb+~+ 21 高地址段的访问权限（从高到低为 W/R）\\ \cline{2-3}
+    & \multirow{2}*{[26:25]} & 配置 DMA 对 SRAM Block 4 \verb+~+ 21 低地址段的访问权限（从高到低为 W/R）\\ \cline{2-3}
+    & \multirow{3}*{[24:8]} & 配置 DMA 在 SRAM Block 4 \verb+~+ 21 地址范围内的分割地址，基地址为 \hexprefix{}3FFB\_0000。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。 \\ \cline{2-3}
+    & [7:6] & 配置 DMA 对 SRAM Block3 的访问权限（从高到低为 W/R）\\ \cline{2-3}
+    & [5:4] & 配置 DMA 对 SRAM Block2 的访问权限（从高到低为 W/R）\\ \cline{2-3}
+    & [3:2] & 配置 DMA 对 SRAM Block1 的访问权限（从高到低为 W/R）\\ \cline{2-3}
+    & [1:0] & 配置 DMA 对 SRAM Block0 的访问权限（从高到低为 W/R）\\
+    \hline
+
+\end{longtable}
+
+片上 DMA 资源发起对 SRAM 的访问类型与配置允许的访问类型不一致时，权限控制模块将直接拒绝此次访问。如果 Internal DMA，TX Copy DMA 或 RX Copy DMA 违法访问 SRAM 的中断被使能，权限控制模块还将记录当次访问地址和访问类型，同时给出中断信号。如果连续发生访问不通过情况， 硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+
+\subsubsection{PeriBus1 总线的访问权限管理}
+CPU 通过 PeriBus1 总线访问地址范围为：\hexprefix{}3F40\_0000 \verb+~+ \hexprefix{}3F4F\_FFFF，包含 RTC SLOW SRAM。PeriBus1 总线可以对 RTC SLOW 进行读/写访问，不支持取指。上述读/写权限皆由软件配置。
+
+除此以外，软件还可以配置是否允许 PeriBus1 总线 访问地址段 \hexprefix{}3F40\_0000 \verb+~+ \hexprefix{}3F4B\_FFFF 下的外设。
+
+由于 CPU 会通过 PeriBus1 总线 发起预测性读操作，可能会产生外设的 FIFO 读取错误。为了防止 FIFO 读取错误，相应外设的 FIFO 地址已经固化在硬件中并且不可更改（如表 \ref{FIFO Address and Corresponding Peripherals} 所示）。另外预留了 4 个可由软件配置的地址寄存器 PMS\_PRO\_DPORT\_2\verb+~+5\_REG，用户可将读保护地址写入这些寄存器中。PeriBus1 总线 对上述地址发起的读访问将被拒绝。相应的配置寄存器信息如表 \ref{table:PeriBus1_Permission Control_for_RTCSlow} 所示。
+
+\begin{longtable}[c]{|m{5cm}|r|}
+\caption{外设和 FIFO 地址}\label{FIFO Address and Corresponding Peripherals}
+\\\hline
+\rowcolor{lightgray}
+外设 & FIFO 地址 \\\hline
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    外设 & FIFO 地址 \\\hline
+    \hline
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+ADDR\_RTCSLOW & \hexprefix{}6002\_1000\\\hline
+ADDR\_FIFO\_UART0 & \hexprefix{}6000\_0000\\\hline
+ADDR\_FIFO\_UART1 & \hexprefix{}6001\_0000\\\hline
+ADDR\_FIFO\_UART2 & \hexprefix{}6002\_E000\\\hline
+ADDR\_FIFO\_I2S0 & \hexprefix{}6000\_F004\\\hline
+ADDR\_FIFO\_RMT\_CH0 & \hexprefix{}6001\_6000\\\hline
+ADDR\_FIFO\_RMT\_CH1 & \hexprefix{}6001\_6004\\\hline
+ADDR\_FIFO\_RMT\_CH2 & \hexprefix{}6001\_6008\\\hline
+ADDR\_FIFO\_RMT\_CH3 & \hexprefix{}6001\_600C\\\hline
+ADDR\_FIFO\_I2C\_EXT0 & \hexprefix{}6001\_301C\\\hline
+ADDR\_FIFO\_I2C\_EXT1 & \hexprefix{}6002\_701C\\\hline
+ADDR\_FIFO\_USB\_0 & \hexprefix{}6008\_0020\\\hline
+ADDR\_FIFO\_USB\_1\_L & \hexprefix{}6008\_1000\\\hline
+ADDR\_FIFO\_USB\_1\_H & \hexprefix{}6009\_0FFF\\\hline
+
+\end{longtable}
+
+此外本章节中与 PeriBus1 总线相关的的权限控制寄存器还被 \hyperref[fielddesc:PMSPRODPORTLOCK]{PMS\_PRO\_DPORT\_LOCK} 信号控制，当该信号配置为 1 时，权限寄存器的配置数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSPRODPORTLOCK]{PMS\_PRO\_DPORT\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSPRODPORTLOCK]{PMS\_PRO\_DPORT\_LOCK} 信号数值才被重新置 0。
+
+\begin{longtable}[c]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{ PeriBus1 总线 的访问权限管理}
+    \label{table:PeriBus1_Permission Control_for_RTCSlow}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{9}*{\hyperref[regdesc:PMSPRODPORT1REG]{PMS\_PRO\_DPORT\_1\_REG}} & [19:16] & 每位的值决定了是否启用对应的预留的 FIFO 地址\\
+    \cline{2-3}
+    & \multirow{2}*{[15:14]} & 配置 PeriBus1 总线对 RTC SLOW 高地址段的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{2}*{[13:12]} & 配置 PeriBus1 总线对 RTC SLOW 低地址段的访问权限（从高到低为 W/R）\\
+    \cline{2-3}
+    & \multirow{3}*{[11:1]} & 配置 PeriBus1 总线在 RTC SLOW 地址范围内的分割地址，基地址为 \hexprefix{}3F42\_1000 \label{PeriBus1_RTCSlow}。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。 \\
+    \cline{2-3}
+    & \multirow{2}*{[0]} & 配置 PeriBus1 总线是否具有地址段 \hexprefix{}3F40\_0000 \verb+~+ \hexprefix{}3F4B\_FFFF 下外设的访问权限 \\
+    \hline
+    \multirow{2}*{\hyperref[regdesc:PMSPRODPORT2REG]{PMS\_PRO\_DPORT\_2\_REG}} & \multirow{2}*{[17:0]} & 第 0 个 PeriBus1 总线不可读地址，由 \hyperref[fielddesc:PMSPRODPORTRESERVEFIFOVALID]{PMS\_PRO\_DPORT\_RESERVE\_FIFO\_VALID} [16] 启用 \\
+    \hline
+    \multirow{2}*{\hyperref[regdesc:PMSPRODPORT3REG]{PMS\_PRO\_DPORT\_3\_REG}} & \multirow{2}*{[17:0]} & 第 1 个 PeriBus1 总线不可读地址，由 \hyperref[fielddesc:PMSPRODPORTRESERVEFIFOVALID]{PMS\_PRO\_DPORT\_RESERVE\_FIFO\_VALID} [17] 启用 \\
+    \hline
+    \multirow{2}*{\hyperref[regdesc:PMSPRODPORT4REG]{PMS\_PRO\_DPORT\_4\_REG}} & \multirow{2}*{[17:0]} & 第 2 个 PeriBus1 总线不可读地址，由 \hyperref[fielddesc:PMSPRODPORTRESERVEFIFOVALID]{PMS\_PRO\_DPORT\_RESERVE\_FIFO\_VALID} [18] 启用 \\
+    \hline
+    \multirow{2}*{\hyperref[regdesc:PMSPRODPORT5REG]{PMS\_PRO\_DPORT\_5\_REG}} & \multirow{2}*{[17:0]} & 第 3 个 PeriBus1 总线不可读地址，由 \hyperref[fielddesc:PMSPRODPORTRESERVEFIFOVALID]{PMS\_PRO\_DPORT\_RESERVE\_FIFO\_VALID} [19] 启用 \\
+\end{longtable}
+
+当 PeriBus1 总线上发起对不可读地址的读访问或者访问 RTC SLOW Memory 的类型与配置允许的访问类型不一致时，权限控制模块都将拒绝此次访问。如果 PeriBus1 总线违法访问 RTC SLOW Memory 的中断被使能，权限控制模块还将记录当次访问地址、访问类型和访问大小（字节、半字、字访问），同时给出中断信号。如果连续发生访问不通过情况， 硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+
+\subsubsection{PeriBus2 的访问权限管理}
+具备权限管理的 PeriBus2 总线地址范围有两段：\hexprefix{}5000\_0000 \verb+~+ \hexprefix{}5000\_1FFF 和 \hexprefix{}6000\_0000 \verb+~+ \hexprefix{}600B\_FFFF，包含 RTC SLOW 的两种访问地址、外设模块。
+
+PeriBus2 总线访问 RTC SLOW Memory 时支持 R/W/X 三种访问类型。PeriBus2 总线上有两片地址区域可以访问 RTC SLOW Memory，分别是 RTCSlow\_0、RTCSlow\_1。软件可以配置允许 CPU 通过上述两片地址区域的发起的访问类型。相应的配置寄存器信息如表 \ref{table:PeriBus2_Permission Control_for_RTCSlow} 所示。
+
+PeriBus2 总线不支持对外设的进行取指操作。若对外设发起取指操作，得到的是无意义的数据。
+
+此外本章节中与 PeriBus2 总线相关的的权限控制寄存器还被 \hyperref[fielddesc:PMSPROAHBLOCK]{PMS\_PRO\_AHB\_LOCK} 信号控制，当该信号配置为 1 时，权限寄存器的配置数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSPROAHBLOCK]{PMS\_PRO\_AHB\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSPROAHBLOCK]{PMS\_PRO\_AHB\_LOCK} 信号数值才被重新置 0。
+
+\begin{longtable}[h]{|p{4.5cm}|p{1.5cm}|p{10cm}|}
+    \caption{PeriBus2 访问 RTC SLOW 权限管理}
+    \label{table:PeriBus2_Permission Control_for_RTCSlow}
+    \\\hline
+    \rowcolor{lightgray}
+    寄存器名 & 位位置 & 含义 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    寄存器名 & 位位置 & 含义 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{6}*{\hyperref[regdesc:PMSPROAHB1REG]{PMS\_PRO\_AHB\_1\_REG}} & \multirow{2}*{[16:14]} & 配置 PeriBus2 对 RTCSlow\_0 高地址段 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{2}*{[13:11]} & 配置 PeriBus2 对 RTCSlow\_0 低地址段的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{3}*{[10:0]} & 配置 PeriBus2 对 RTCSlow\_0 地址范围内的分割地址，基地址为 \hexprefix{}5000\_0000。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。  \\
+    \hline
+    \multirow{6}*{\hyperref[regdesc:PMSPROAHB2REG]{PMS\_PRO\_AHB\_2\_REG}} & \multirow{2}*{[16:14]} & 配置 PeriBus2 对 RTCSlow\_1 高地址段 的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{2}*{[13:11]} & 配置 PeriBus2 对 RTCSlow\_1 低地址段的访问权限（从高到低为 W/R/X）\\
+    \cline{2-3}
+    & \multirow{3}*{[10:0]} & 配置 PeriBus2 对 RTCSlow\_1 地址范围内的分割地址，基地址为 \hexprefix{}6002\_1000。关于如何配置分割地址，请见章节 \ref{Permission Control for the Instruction Bus (IBUS)} 中的说明。 \label{PeriBus2_RTCSlow1} \\
+
+\end{longtable}
+
+若 CPU 通过 PeriBus2 总线对 RTCSlow\_0 或 RTCSlow\_1 发起的访问类型与配置允许的访问类型不一致，权限控制模块将直接拒绝此次访问。如果 PeriBus2 的违法访问中断被使能，权限控制模块还将记录当次访问地址和访问类型，同时给出中断信号。如果连续发生访问不通过情况，硬件只记录第一次出错的信息。访问错误中断为电平信号，需要软件清除。清除访问错误中断标志的同时，相关错误记录也会同时被清除。
+
+\subsubsection{Cache 的访问权限管理}
+用户只允许将 SRAM Block 0 \verb+~+ 3 配置给 Icache 和 Dcache 使用。由于 Icache 和 Dcache 对内部存储器的访问地址空间最大为 16 KB，意味着最多可以访问 2 个 Block。Icache 和 Dcache 的访问地址范围被分成高地址段和低地址段，各 8 KB，分别以后缀``\_H"和``\_L"表示。
+
+用户可以通过配置寄存器 \hyperref[regdesc:PMSPROCACHE1REG]{PMS\_PRO\_CACHE\_1\_REG} 将 SRAM Block 0 \verb+~+ 3 分配给 Icache\_H, Icache\_L, Dcache\_H 和 Dcache\_L 访问。配置数值与分配结果的关系如下表所示，表中 \textit{FIELD} 为 \hyperref[regdesc:PMSPROCACHE1REG]{PMS\_PRO\_CACHE\_1\_REG} 寄存器的域 \hyperref[fielddesc:PMSPROCACHECONNECT]{PMS\_PRO\_CACHE\_CONNECT}。
+
+\begin{small}
+\begin{longtable}[c]{|m{3cm}|c|c|c|c|}
+    \caption{\hyperref[regdesc:PMSPROCACHE1REG]{PMS\_PRO\_CACHE\_1\_REG} 寄存器配置}
+    \label{SRAMBlock0-3}
+    \\\hline
+    \rowcolor{lightgray}
+    SRAM Block 0-3 & Dcache\_H & Dcache\_L &Icache\_H &Icache\_L \\
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    SRAM Block 0-3 & Dcache\_H & Dcache\_L &Icache\_H &Icache\_L \\
+    \hline
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+
+    Block 0 & \textit{FIELD}[3] & \textit{FIELD}[2] & \textit{FIELD}[1] &\textit{FIELD}[0]\\\hline
+
+    Block 1 & \textit{FIELD}[7] & \textit{FIELD}[6] & \textit{FIELD}[5] &\textit{FIELD}[4]\\\hline
+
+    Block 2 & \textit{FIELD}[11] & \textit{FIELD}[10] & \textit{FIELD}[9] &\textit{FIELD}[8]\\\hline
+
+    Block 3 & \textit{FIELD}[15] & \textit{FIELD}[14] & \textit{FIELD}[13] &\textit{FIELD}[12]\\\hline
+
+\end{longtable}
+\end{small}
+
+{\bfseries 注意：}
+\begin{itemize}
+    \item 对于同一个 Block 而言，只能分配给 Dcache\_H、Dcache\_L、Icache\_H、Icache\_L 中的一个使用，意味着上表中同一行至多有一个为 1。
+    \item 对于 Dcache\_H、Dcache\_L、Icache\_H、Icache\_L 而言，至多占用一个 Block，意味着上表中同一个列向至多有一个为 1。
+    \item 被 cache 占用的部分不可以被 CPU 访问，未被 cache 占用的部分仍然可以被 CPU 访问。
+\end{itemize}
+
+
+\subsubsection{其它内部存储器权限管理}
+在 ESP32-S2 中，支持软件读取 Trace memory 来获取 CPU 运行状态、调试程序。软件可以通过寄存器\\ PMS\_PRO\_TRACE\_1 启用 Trace memory 功能。该寄存器同时受 \hyperref[fielddesc:PMSPROTRACELOCK]{PMS\_PRO\_TRACE\_LOCK} 信号控制，当该信号配置为 1 时，寄存器中配置的数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSPROTRACELOCK]{PMS\_PRO\_TRACE\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSPROTRACELOCK]{PMS\_PRO\_TRACE\_LOCK} 信号数值才被重新置 0。
+
+启用 Trace memory 功能后，还需要配置寄存器 PMS\_OCCUPY\_3 选择 SRAM Block 4 \verb+~+ 21 中的某一个 Block 作为 Trace memory 的存储单元（至多选择一个，且被选中的 Block 无法再被 CPU 访问。）上述寄存器受 \hyperref[fielddesc:PMSOCCUPYLOCK]{PMS\_OCCUPY\_LOCK} 信号控制。当该信号配置为 1 时，寄存器中配置的数值将被锁定，不允许再次更改。同时 \hyperref[fielddesc:PMSOCCUPYLOCK]{PMS\_OCCUPY\_LOCK} 信号数值也将保持在 1，不允许更改。当且仅当 CPU 被复位时，\hyperref[fielddesc:PMSOCCUPYLOCK]{PMS\_OCCUPY\_LOCK} 信号数值才被重新置 0。
+
+当某个 SRAM Block 为 Trace Memory 时，CPU 的 IBUS, DBUS 以及 DMA 都无法访问此 Block。
+
+\subsection{片外存储器权限管理}
+CPU 可以通过 SPI1、EDMA 及 cache 访问片外 flash 和 SRAM。SPI1 和 EDMA 是直接访问，cache 是间接访问。
+
+\subsubsection{Cache MMU}
+Cache MMU 用于控制 cache 和 EDMA 访问外部存储器，主要完成虚拟地址到实地址的转换。在开启 cache 和 EDMA 之前需要配置 MMU。当 cache 发生缺失或者将数据写回外部存储器时，cache 控制器会自动访问 MMU 并且生成访问外部存储器的实地址。当 EDMA 读写外部 SRAM 时，EDMA 控制器也会自动访问 MMU 并且生成访问外部 SRAM 的实地址。
+\newpage
+\begin{longtable}[c]{|m{3cm}|m{2cm}|m{10cm}|}
+    \caption{MMU 表项}
+    \label{table:MMU Entries}
+    \\\hline
+    \rowcolor{lightgray}
+    MMU 表项 & 位位置 & 含义 \\    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    MMU 表项 & 位位置 & 含义 \\
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+SRAM & [16] & 外部存储器属性, 用于指示 cache/EDMA 访问 flash 还是外部 SRAM。如果第 15 位为 1，则访问的是 flash，如果第 16 位为 1，则访问的是 SRAM。第 15、16 位不能同时为 1。\\\cline{1-2}
+Flash    & [15] & \\\hline
+Invalid    & [14] &	标记 MMU 表项是否有效；0 代表有效。\\\hline
+Page number  &[13:0] & 外部存储器分成多个块，称为“页”，页大小固定为 64 KB。实地址空间的页号用于指示 cache/EDMA 访问哪一个页。 \\\hline
+\end{longtable}
+
+当	cache 或者 EDMA 访问到无效的 MMU 页或者 MMU 中未指明外部存储器属性时均会触发 MMU 错误中断。
+
+\subsubsection{外部存储器权限控制}\label{External Memory Permission Controls}
+硬件将外部存储器 (flash + SRAM) 的实地址以 64 KB 为单位分为 8 (4+4) 个区域。每个区域可配置 W/R/X 访问。软件需要预先设定各区域的大小及其访问属性。
+
+8 个区域分别对应 8 组寄存器，flash 和 SRAM 各有 4 组。每组寄存器包含有 3 部分:
+\begin{enumerate}
+    \item 属性列表: SYSCON\_${X}$\_ACE\_${n}$\_ATTR\_REG 共 3 位， 从高到低分别为W/R/F；
+    \item 区域起始地址: SYSCON\_${X}$\_ACE\_${n}$\_ADDR\_REG， 表示实际地址；
+    \item 区域长度: SYSCON\_${X}$\_ACE\_${n}$\_SIZE\_REG， 以 64 KB 为单位。
+\end{enumerate}
+其中“${X}$”表示 flash 或 SRAM，“${n}$”表示 0 \verb+~+ 3。软件配置时需要注意的是 flash 对应的 4 个区域的 总大小必须为 1 GB 且 SRAM 对应的 4 个区域总大小也必须为 1 GB。
+
+CPU 直接访问外部存储器时，权限控制模块只监控 CPU 的写请求，不监控读请求。控制模块会根据访问的物理地址检查 CPU 的访问属性和预先设定的访问属性是否一致。如果事先设定该区域不可写，那么控制模块直接拒绝此次写访问，并记录当前访问的相关信息，并触发访问错误中断。
+
+Cache 缺失、cache 写回和 cache 预取等操作会触发 cache 对外部存储器发起 W/R/X 请求。此时权限控制模块会根据访问的物理地址查询其所在区域的访问属性，并比较 cache 请求和预先设定的访问属性是否一致。只有 cache 请求和设定的访问属性一致时，权限控制模块才会将请求传递到外部存储器。若 cache 发起的是 R/F 请求，控制模块还要将该区域对应的访问属性反馈给 cache， 同时 cache 会将访问属性存起来。当访问请求与当前访问属性不一致时，硬件会记录下当前访问的相关信息，并触发访问错误中断。
+
+CPU 访问 cache 时，权限控制模块均要检查 CPU 的访问属性，检查方法是比较 CPU 的访问属性和存储在本地的访问属性列表，只有两者一致时 CPU 的访问才会成功。当访问请求与当前访问属性不一致时， 硬件会记录下当前访问的相关信息，并触发访问错误中断。
+
+如果连续发生访问属性检查不通过情况，那么硬件只记录第一次出错的信息，后面错误信息将被直接丢弃。另外访问错误中断为电平信号，软件清除访问错误中断标志的同时，错误记录也会同时被清除。
+
+\subsection{非对齐访问权限管理}
+ESP32-S2 中加入了非字对齐访问的监控。PeriBus1 总线或者 PeriBus2 总线对外设发起非字地址对齐且非字访问时，可能会触发中断或者系统异常。下表列出了所有可能的访问情形以及产生的结果，其中 {\bfseries IN} 表示中断，{\bfseries EX} 表示异常，{\bfseries $\surd$} 表示正常。
+
+\begin{longtable}[h]{|p{7cm}|c|c|c|c|}
+    \caption{非对齐访问外设情况汇总}
+    \label{table:Non_aligned_access_peripheral}
+    \\\hline
+    \rowcolor{lightgray}
+    访问来源 & 访问地址 & 访问大小 & 读访问 & 写访问 \\
+    \hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    访问来源 & 访问地址 & 访问大小 & 读访问 & 写访问 \\
+    \hline
+    \endhead
+
+    \endfoot
+
+    \hline
+    \endlastfoot
+
+    \multirow{9}*{PeriBus2 总线} & \multirow{3}*{\hexprefix{}XXXX\_XXX0} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & IN & IN \\
+    \cline{3-5}
+    & & 字 & $\surd$ & $\surd$ \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX1} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & $\surd$ & IN \\
+    \cline{3-5}
+    & & 字 & $\surd$ & IN \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX2} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & IN & IN \\
+    \cline{3-5}
+    & & 字 & $\surd$ & IN \\
+
+    \hline
+    \multirow{9}{5cm}{PeriBus1 总线下地址段 \hexprefix{}3F40\_0000 - \hexprefix{}3F4B\_FFFF} & \multirow{3}*{\hexprefix{}XXXX\_XXX0} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & IN & IN \\
+    \cline{3-5}
+    & & 字 & $\surd$ & $\surd$ \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX1} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & EX & EX \\
+    \cline{3-5}
+    & & 字 & EX & EX \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX2} & 字节 & IN & IN \\
+    \cline{3-5}
+    & & 半字 & IN & IN \\
+    \cline{3-5}
+    & & 字 & EX & EX \\
+
+    \hline
+    \multirow{9}{5cm}{PeriBus1 总线下地址段 \hexprefix{}3F4C\_0000 - \hexprefix{}3F4F\_FFFF} & \multirow{3}*{\hexprefix{}XXXX\_XXX0} & 字节访问 & $\surd$ & $\surd$ \\
+    \cline{3-5}
+    & & 半字访问 & $\surd$ & $\surd$ \\
+    \cline{3-5}
+    & & 字访问 & $\surd$ & $\surd$ \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX1} & 字节访问 & IN & IN \\
+    \cline{3-5}
+    & & 半字访问 & EX & EX \\
+    \cline{3-5}
+    & & 字访问 & EX & EX \\
+    \cline{2-5}
+    & \multirow{3}*{\hexprefix{}XXXX\_XXX2} & 字节访问 & IN & IN \\
+    \cline{3-5}
+    & & 半字访问 & IN & IN \\
+    \cline{3-5}
+    & & 字访问 & EX & EX \\
+
+\end{longtable}
+
+\section{基地址}\label{subsection:permission-control-base-address}
+用户可以通过寄存器基地址访问权限管理，如表 \ref{table:permission-control-base-address} 所示。更多信息，请访问章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+    \caption{中断矩阵基地址}
+    \label{table:permission-control-base-address}\\\hline
+    \rowcolor{lightgray}
+    访问总线 & 基地址    \\
+    \hline
+    PeriBUS1 & \hexprefix{}3F4C1000    \\
+    \hline
+\end{longtable}
+
+\hypertarget{permctrl-reg-summ}{}
+\section{寄存器列表}
+
+请注意，这里的地址是相对于权限管理基地址的地址偏移量（相对地址）。请参阅章节 \ref{subsection:permission-control-base-address} 获取有关权限管理的基地址的信息。
+
+\subfile{\modulefiles/permission_reg_summary_cn}
+
+\section{寄存器}
+\subfile{\modulefiles/permission_reg_cn}
+
+
+
+\end{document}

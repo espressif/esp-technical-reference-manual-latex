@@ -1,0 +1,646 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./33-ADC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{adc}{}
+\chapter{ADC Controller}
+\label{mod:adc}
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+\chipname{} integrates one 12-bit successive approximation ADC (SAR ADC) for measuring analog signals from up to four channels.
+
+The SAR ADC is managed by the DIG ADC controller that drives ADC sampling. The SAR ADC supports one-shot sampling and multi-channel sampling.
+
+
+\section{Terminology}
+
+The following terms related to SAR ADC are defined in the context of the \textit{\chipname{} Technical Reference Manual} to help readers better understand this document:
+
+\begin{longtable}{ R{6cm} p{10cm} }
+\textbf{SAR ADC:} & Including analog ADC circuit and digital ADC controller. \\
+\textbf{One-shot sampling mode:} & In this mode, ADC samples one channel at a time. \\
+\textbf{Multi-channel sampling mode:} & In this mode, ADC sequentially samples a group of channels or continuously samples a single channel.  \\
+\textbf{Conversion result:} & The conversion result is the binary digital value obtained after the analog-to-digital conversion process. It is sometimes written as conversion data.\\
+\textbf{Filtered data:} & Filtered data is the result of processing conversion data through a filter.\\
+\textbf{Sampling:} & The term typically refers to the entire process of sampling analog inputs, converting the sampled data, and transferring the conversion results to memory. In certain contexts and stages of the process, sampling may also refer to the SAR ADC capturing data points from an analog signal.\\
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:sar-adc-features}
+
+The SAR ADC has the following features:
+
+\begin{itemize}
+\item 12-bit resolution
+\item Analog inputs sampling from up to four pins
+\item One-shot sampling mode and multi-channel sampling mode
+\item Multi-channel sampling mode supports:
+    \begin{itemize}
+        \item configurable channel sampling sequence
+        \item two filters whose filter coefficients are configurable 
+        \item two threshold monitors that can trigger an interrupt when the filtered value is below a low threshold or above a high threshold
+        \item continuous transfer of converted data to memory via GDMA interface
+    \end{itemize}
+\item Support for several Event Task Matrix (ETM) related events and tasks
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:sar-adc-arch-overview}
+
+The major components of SAR ADC and their interconnections are shown in Figure  \ref{fig:adc-sar-adc-function-overview}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\modulefiles/figures/adc_struct_en}
+    \caption{SAR ADC Architecture}
+    \label{fig:adc-sar-adc-function-overview}
+\end{figure}
+
+As Figure \ref{fig:adc-sar-adc-function-overview} shows, the SAR ADC module contains the following major functional blocks:
+
+\begin{itemize}
+    \item four channels, connected to four pins on the chip
+    \item SAR ADC: analog domain of the SAR ADC module
+    \item DIG ADC Controller: digital domain of the SAR ADC module, mainly including:
+       \begin{itemize}
+            \item Clock management module: selects clock source and division
+            \item DIG ADC FSM: generates the signals required throughout the ADC sampling process
+            \item Digital\_reader: reads data from SAR ADC, driven by DIG ADC FSM
+            \item Filter: filters ADC converted data in multi-channel sampling mode
+            \item Threshold monitor\regindex{x}: threshold monitor 1 and threshold monitor 2. The monitor\regindex{x} will trigger an interrupt when the converted value is below a low threshold or above a high threshold.
+        \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:sar-adc-func-descr}
+
+\subsection{ADC Power Up}
+\label{sec:sar-adc-power-up}
+
+The ADC can be powered up by setting \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} and \hyperref[fielddesc:PMUPERIFI2CRST]{PMU\_PERIF\_I2C\_RST}. ADC sampling can be performed right after power-up. Users do not need to worry about wait time, as it has been dealt with in hardware design.
+
+\subsection{ADC Channels}
+\label{sec:sar-adc-channels}
+
+The SAR ADC has four channels that are connected to four pins on the chip. In order to sample an analog signal, the SAR ADC must first select the analog pin to measure via an internal multiplexer.
+
+Table \ref{tab:adc-sar-adc-input-signals} shows the pins used as ADC channels and the corresponding GPIO numbers.
+
+\begin{longtable}{ |l|l|r| }
+    \caption{SAR ADC Channels}
+    \label{tab:adc-sar-adc-input-signals}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Pin Name} & \textbf{GPIO Number}  & \textbf{ADC Channel} \\ \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}  
+    \textbf{Pin Name} & \textbf{GPIO Number}  & \textbf{ADC Channel} \\ \hline
+    \endhead
+    \hline
+    \endfoot
+    XTAL\_32K\_N   & GPIO1 & 0  \\ \hline
+    MTMS    & GPIO3 & 1  \\ \hline
+    MTDI    & GPIO4 & 2  \\ \hline
+    MTCK    & GPIO5 & 3  \\ \hline
+\end{longtable}
+
+\subsection{ADC Clock}
+\label{sec:sar-adc-clock}
+
+Figure \ref{fig:adc_clk_struct} shows the clock structure of SAR ADC.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\modulefiles/figures/adc_clk_struct_en}
+    \caption{SAR ADC Clock Structure}
+    \label{fig:adc_clk_struct}
+\end{figure}
+
+The system clock for SAR ADC is ADC\_CTRL\_CLK, which is the operating clock for DIG ADC FSM and other control logic (except APB interface and Digital\_reader). 
+
+ADC\_CTRL\_CLK has three possible sources: XTAL\_CLK, RC\_FAST\_CLK, and PLL\_80M\_CLK, selected by \hyperref[fielddesc:PCRSARADCCLKMSEL]{PCR\_SARADC\_CLKM\_SEL}.
+
+SAR\_CLK is the operating clock for SAR ADC and Digital\_reader. It is divided from ADC\_CTRL\_CLK and must not exceed 5 MHz.
+
+For more information about clocks, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+\subsection{One-Shot Sampling Mode}
+\label{sec:sar-adc-oneshot-sampling-mode}
+
+In one-shot sampling mode, the ADC samples one channel once. This mode is started by software using \hyperref[fielddesc:APBSARADCONETIMESAMPLE]{APB\_SARADC\_ONETIME\_SAMPLE}. Once sampling is done, the conversion result is stored in \hyperref[fielddesc:APBSARADCDATA]{APB\_SARADC\_DATA}. To switch channels, configure \hyperref[fielddesc:APBSARADCONETIMESAMPLE]{APB\_SARADC\_ONETIME\_SAMPLE} once again.
+
+\subsection{Multi-Channel Sampling Mode}
+\label{sec:sar-adc-multi-channel-sampling-mode}
+
+Multi-channel sampling mode is triggered by a timer that is specifically designed for SAR ADC. In this mode the ADC samples a group of channels according to the sequence defined in the pattern table. The multi-channel sampling mode can also be used for continuous sampling on one channel.
+
+The timer is enabled by setting \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN}. A trigger target for the timer needs to be configured with \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET}. When the timer counts up to two times of \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET}, a sampling operation is triggered. The timer is clocked from ADC\_CTRL\_CLK.
+
+When sampling is complete, the timer resets to 0 and starts counting again. The conversion result is transferred to memory continuously via the GDMA interface.
+
+\begin{tiplisting}
+The SAR ADC can only work under one operating mode at one time, either one-shot sampling mode or multi-channel sampling mode.
+\end{tiplisting}
+
+\subsection{ADC Conversion and Attenuation}
+\label{sec:sar-adc-conversion-and attenuation}
+
+The SAR ADC can measure analog voltages from 0 mV to \(V_{ref}\). \(V_{ref}\) is the SAR ADC's internal reference voltage (1100 mV by design). The conversion result (\(data\)) is a 12-bit digital value, the raw data. To calculate the voltage \(V_{data}\) based on the raw data, please use the formula below:
+
+    \[
+    V_{data} = \frac{V_{ref}}{k}\times{\frac{data}{4095}}
+    \]
+
+\(k\) is the coefficient corresponding to the configured attenuation.
+
+To convert voltages larger than \(V_{ref}\), apply attenuation to the input signals using \hyperref[fielddesc:APBSARADCONETIMEATTEN]{APB\_SARADC\_ONETIME\_ATTEN}. The supported attenuation levels are:
+
+\begin{itemize}
+    \item 0 dB (k≈100\%)
+    \item 2.5 dB (k≈75\%)
+    \item 6 dB (k≈50\%)
+    \item 12 dB (k≈25\%)
+\end{itemize}
+
+\subsection{DIG ADC FSM}
+\label{sec:sar-adc-dig-adc-fsm}
+
+In multi-channel sampling mode DIG ADC FSM (hereinafter referred to as FSM) generates all types of signals used in the sampling process. Figure \ref{fig:adc-diagram-dig-adc-fsm} illustrates how DIG ADC FSM works.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/sensor_fsm_20241021}
+    \caption{DIG ADC FSM Block Diagram}
+    \label{fig:adc-diagram-dig-adc-fsm}
+\end{figure}
+
+Wherein:
+
+\begin{itemize}
+    \item Timer: a dedicated timer for the DIG ADC controller to generate \texttt{sample\_start} signal.
+    \item pr: a pointer to the pattern table that defines the conversion rules for ADC. FSM sends out corresponding signals based on the conversion rules.
+\end{itemize}
+
+Set \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} to enable the timer. The timeout event of this timer triggers a \texttt{sample\_start} signal. This signal drives the FSM module to start sampling. When the FSM module receives the \texttt{sample\_start} signal, it starts the following operations:
+
+\begin{itemize}
+    \item Powers up SAR ADC.
+    \item Determines the conversion rules (selected sample channels and attenuations) defined in the patterns that the current pr points to.
+    \item Outputs the \texttt{en\_pin} and \texttt{atten} signals corresponding to the conversion rules to the analog side.
+    \item Initiates the \texttt{sar\_start} signal and starts sampling.
+\end{itemize}
+
+When FSM receives the \texttt{reader\_done} signal from Digital\_reader, it starts the following operations:
+    \begin{itemize}
+        \item Stops sampling.
+        \item Transfers the conversion result to the filter. Then the threshold monitor transfers the filtered result to memory via GDMA (see Figure \ref{fig:adc-sar-adc-function-overview}).
+        \item Updates pr and waits for the next sampling. The pointer pr counts cyclically between 0 and \hyperref[fielddesc:APBSARADCSARPATTLEN]{APB\_SARADC\_SAR\_PATT\_LEN} (table\_length).
+    \end{itemize}
+
+\subsection{Pattern Table}\label{sec:adc_pattern}
+
+FSM contains a pattern table consisting of the \hyperref[regdesc:APBSARADCSARPATTTAB1REG]{APB\_SARADC\_SAR\_PATT\_TAB1\_REG} and \hyperref[regdesc:APBSARADCSARPATTTAB1REG]{APB\_SARADC\_SAR\_PATT\_TAB2\_REG} registers. Each register contains four patterns and each pattern is 6 bits wide, as Figure \ref{fig:adc-apb-saradc-sar-patt-tab1-reg-pattern-tab-entry0-entry3} and Figure \ref{fig:adc-apb-saradc-sar-patt-tab2-reg-pattern-tab-entry4-entry7} show.
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd0}{6}{18}{{0x0000}}%
+\regfield{cmd1}{6}{12}{{0x0000}}%
+\regfield{cmd2}{6}{6}{{0x0000}}%
+\regfield{cmd3}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{x}] represents patterns 0 \verb+~+ 3.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR\_PATT\_TAB1\_REG Contains Patterns 0 - 3}
+    \label{fig:adc-apb-saradc-sar-patt-tab1-reg-pattern-tab-entry0-entry3}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd4}{6}{18}{{0x0000}}%
+\regfield{cmd5}{6}{12}{{0x0000}}%
+\regfield{cmd6}{6}{6}{{0x0000}}%
+\regfield{cmd7}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{x}] represents patterns 4 \verb+~+ 7.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR\_PATT\_TAB2\_REG Contains Patterns 4 - 7}
+    \label{fig:adc-apb-saradc-sar-patt-tab2-reg-pattern-tab-entry4-entry7}
+\end{figure}
+
+Each pattern is 6 bits wide, consisting of three fields where conversion rules are stored. Figure  \ref{fig:adc-pattern-table-entry} shows the pattern format and is followed by the descriptions of each field.
+
+\begin{figure}[H]
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{xx}}%
+\regfield{atten}{2}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{Pattern Structure}
+    \label{fig:adc-pattern-table-entry}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [atten] Configures attenuation:\\
+0: 0 dB\\
+1: 2.5 dB\\
+2: 6 dB\\
+3: 12 dB
+\item [ch\_sel] Configures channel:\\
+0: Channel 0 \\
+1: Channel 1 \\
+2: Channel 2 \\
+3: Channel 3 \\
+\item [(reserved)] Reserved
+\end{reglist}\end{regdesc}
+
+\textbf{Pattern Configuration Example}
+
+Note: When using multi-channel continuous sampling, the attenuation for each channel must be set to be consistent.
+In this example, two channels are selected for multi-channel sampling:
+
+\begin{itemize}
+    \item Channel 0, with an attenuation of 2.5 dB
+    \item Channel 2, with an attenuation of 2.5 dB
+\end{itemize}
+
+The detailed configuration is as follows:
+
+\begin{itemize}
+    \item Configure the first pattern (cmd0):
+
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{0}}%
+\regfield{atten}{2}{0}{1}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{cmd0 configuration}
+\end{figure}
+\vspace{-2em}
+\item [atten] write 1 to this field, to set the attenuation to 2.5 dB.
+\item [ch\_sel] write 0 to this field, to select channel 0.
+\end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+    \item Configure the second pattern (cmd1):
+
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{2}}%
+\regfield{atten}{2}{0}{1}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{cmd1 Configuration}
+\end{figure}
+\vspace{-2em}
+\item [atten] write 1 to this field, to set the attenuation to 2.5 dB.
+\item [ch\_sel] write 2 to this field, to select channel 2.
+\end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+    \item Configure \hyperref[fielddesc:APBSARADCSARPATTLEN]{APB\_SARADC\_SAR\_PATT\_LEN} to 1. Then patterns cmd0 and cmd1 will be used. 
+    \item Enable the timer so that the DIG ADC controller starts sampling the two channels periodically.
+\end{itemize}
+
+\subsection{ADC Filters}\label{sec:adc_filter}
+
+The DIG ADC controller provides two filters for filtering ADC converted data in multi-channel sampling mode. Both filters can be configured to any ADC channel, but not to the same one. If the two filters are configured to the same channel, the first one takes effect.
+
+The filtered data is determined by the following equation:
+
+\[data_{cur} = \frac{(k-1)data_{prev}}{k}+\frac{data_{in}}{k}+0.5\]
+
+\begin{itemize}
+    \item \(data_{cur}\): the filtered data
+    \item \(data_{in}\): the ADC converted data
+    \item \(data_{prev}\): the last filtered data
+    \item \(k\): the filter coefficient
+\end{itemize}
+
+The filters are configured as follows:
+
+\begin{itemize}
+\item Configure \hyperref[fielddesc:APBSARADCFILTERCHANNEL1]{APB\_SARADC\_FILTER\_CHANNEL\regindex{x}} to select the ADC channel for filter \regindex{x} (\regindex{x}=0, 1).
+\item Configure \hyperref[fielddesc:APBSARADCFILTERFACTOR1]{APB\_SARADC\_FILTER\_FACTOR\regindex{x}} to set the coefficient \(k\) for filter \regindex{x}.
+\end{itemize}
+
+\subsection{Threshold Monitors}\label{sec:adc_threshold}
+
+Two threshold monitors are available in the DIG ADC controller to monitor the filtered data in multi-channel sampling mode. When the data is above the high threshold, a high threshold interrupt is triggered; when the data is below the low threshold, a low threshold interrupt is triggered. Both monitors can be configured to any ADC channel, but cannot be configured to the same channel.
+
+Threshold monitors are configured as follows:
+
+\begin{itemize}
+    \item Set \hyperref[fielddesc:APBSARADCTHRESALLEN]{APB\_SARADC\_THRES\regindex{x}\_EN} to enable threshold monitor \regindex{x} (\regindex{x}=0, 1).
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_LOW} to set a low threshold.
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_HIGH} to set a high threshold.
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_CHANNEL} to select the channel to monitor.
+    \item Set \hyperref[fielddesc:APBSARADCTHRESALLEN]{APB\_SARADC\_THRES\_ALL\_EN} to enable threshold monitoring functionality.
+\end{itemize}
+
+\subsection{GDMA Support}
+\label{sec:adc_gdma_support}
+
+As SAR ADC has only one data register \hyperref[fielddesc:APBSARADCDATA]{APB\_SARADC\_DATA} for storing converted result from one-shot sampling, it is necessary to enable GDMA when converting data on multiple channels so that the data can be transferred to memory continuously.
+
+GDMA support is triggered by the timer in the DIG ADC controller. Users can switch the DMA data path to the DIG ADC controller by configuring \hyperref[fielddesc:APBSARADCAPBADCTRANS]{APB\_SARADC\_APB\_ADC\_TRANS}. For specific DMA configuration, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+
+\textbf{GDMA Data Format}
+
+The ADC eventually passes 32-bit data to GDMA. The data format is shown in Figure \ref{fig:adc-dma-data-format}.
+
+\begin{figure}[H]
+\centering
+\regfield{(reserved)}{15}{17}{{xx}}%
+\regfield{(reserved)}{1}{16}{{x}}%
+\regfield{ch\_sel}{3}{13}{{xxx}}%
+\regfield{(reserved)}{1}{12}{{x}}%
+\regfield{data}{12}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{DMA Data Format}
+    \label{fig:adc-dma-data-format}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [data] 12-bit ADC conversion result
+\item [ch\_sel] 3-bit channel information
+\end{reglist}\end{regdesc}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Event Task Matrix Feature}
+\label{sec:adc-etm-func}
+
+The SAR ADC on \chipname{} supports the Event Task Matrix (ETM) function, which allows SAR ADC's ETM tasks to be triggered by any peripherals' ETM events, or SAR ADC's ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to SAR ADC and temperature sensor. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+
+The SAR ADC can receive the following ETM tasks:
+
+\begin{itemize}
+    \item ADC\_TASK\_SAMPLE0: ADC starts one-shot sampling when this task is triggered.
+    \item ADC\_TASK\_START0: ADC starts multi-channel sampling when this task is triggered.
+    \item ADC\_TASK\_STOP0: ADC stops sampling when this task is triggered.
+\end{itemize}
+
+The SAR ADC can generate the following ETM events:
+
+\begin{itemize}
+    \item ADC\_EVT\_CONV\_CMPLT0: Generated each time ADC completes a sampling in either one-shot sampling mode or multi-channel sampling mode.
+    \item ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{x}: Generated when the ADC filtered data is above the threshold. \regindex{x} = 0, 1, representing threshold monitor 0, 1.
+    \item ADC\_EVT\_EQ\_BELOW\_THRESH\regindex{x}: Generated when the ADC filtered data is below the threshold. \regindex{x} = 0, 1, representing threshold monitor 0, 1.
+    \item ADC\_EVT\_STARTED0: Generated when ADC begins sampling; one-shot sampling will not trigger this event.
+    \item ADC\_EVT\_STOPPED0: Generated when ADC stops sampling, one-shot sampling will not trigger this event.
+\end{itemize}
+
+In practical applications, SAR ADC's ETM events can trigger its own ETM tasks. For example, the ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{x} event can trigger the ADC\_TASK\_STOP0 task.
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%%%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:adc_interrupts}
+
+\chipname{}'s SAR ADC can generate the APB\_ADC\_INTR interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}. The following internal interrupt sources from SAR ADC can generate the interrupt signal APB\_ADC\_INTR:
+
+\begin{itemize}
+   \item \label{interreupt:SARADCDONEINT1} APB\_SARADC\_ADC\_DONE\_INT: Triggered when SAR ADC completes one conversion.
+   \item \label{interreupt:APBSARADCTHRESxHIGHINT} APB\_SARADC\_THRES\regindex{x}\_HIGH\_INT: Triggered when the filtered data is above the high threshold of monitor \regindex{x}.
+   \item \label{interreupt:APBSARADCTHRESxLOWINT} APB\_SARADC\_THRES\regindex{x}\_LOW\_INT: Triggered when the filtered data is below the low threshold of monitor \regindex{x}.
+\end{itemize}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:adc-reg-summ} \textit{\nameref{sec:adc-reg-summ}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedure}
+\label{sec:adc_programming_procedure}
+
+\subsection{Configuring One-shot Sampling Mode}
+
+The one-shot sampling mode can be configured with the following procedure:
+
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} and \hyperref[fielddesc:PMUPERIFI2CRST]{PMU\_PERIF\_I2C\_RST} to power up SAR ADC.
+    \item Configure \hyperref[fielddesc:PCRSARADCCLKMSEL]{PCR\_SARADC\_CLKM\_SEL} to select ADC clock source.
+    \item Configure \hyperref[fielddesc:PCRSARADCCLKMDIVNUM]{PCR\_SARADC\_CLKM\_DIV\_NUM} and \hyperref[fielddesc:PCRSAR1CLKDIVNUM]{PCR\_SAR1\_CLK\_DIV\_NUM} to set clock division.
+    \item Set \hyperref[fielddesc:PCRSARADCCLKMEN]{PCR\_SARADC\_CLKM\_EN} to enable ADC clock.
+    \item Set \hyperref[fielddesc:APBSARADCONETIMESAMPLE]{APB\_SARADC\_ONETIME\_SAMPLE} to enable the one-shot sampling mode.
+    \item Configure \hyperref[fielddesc:APBSARADCONETIMECHANNEL]{APB\_SARADC\_ONETIME\_CHANNEL} to select sampled channel.
+    \item Configure \hyperref[fielddesc:APBSARADCONETIMEATTEN]{APB\_SARADC\_ONETIME\_ATTEN} to set attenuation as needed.
+    \item Set \hyperref[fielddesc:APBSARADCONETIMESTART]{APB\_SARADC\_ONETIME\_START} to start one-shot sampling.
+\end{enumerate}
+
+Once sampling is complete, an \hyperref[fielddesc:APBSARADCDONEINTRAW]{APB\_SARADC\_ADC\_DONE\_INT\_RAW} interrupt is generated. Software can read conversion result from \hyperref[fielddesc:APBSARADCDATA]{APB\_SARADC\_ADC\_DATA}. To switch the sampled channel, program from step 6.
+
+\subsection{Configuring Multi-Channel Sampling Mode}
+
+The multi-channel sampling mode can be configured with the following procedure:
+
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:PMUXPDPERIFI2C]{PMU\_XPD\_PERIF\_I2C} and \hyperref[fielddesc:PMUPERIFI2CRST]{PMU\_PERIF\_I2C\_RST} to power up SAR ADC.
+    \item Configure \hyperref[fielddesc:PCRSARADCCLKMSEL]{PCR\_SARADC\_CLKM\_SEL} to select ADC clock source.
+    \item Configure \hyperref[fielddesc:PCRSARADCCLKMDIVNUM]{PCR\_SARADC\_CLKM\_DIV\_NUM} and \hyperref[fielddesc:PCRSAR1CLKDIVNUM]{PCR\_SAR1\_CLK\_DIV\_NUM} to set clock division.
+    \item Set \hyperref[fielddesc:PCRSARADCCLKMEN]{PCR\_SARADC\_CLKM\_EN} to enable ADC clock.
+    \item Configure the pattern table as described in Section \ref{sec:adc_pattern} \textit{\nameref{sec:adc_pattern}}.
+    \item Configure channels and filtering coefficients as described in Section \ref{sec:adc_filter} \textit{\nameref{sec:adc_filter}}.
+    \item Configure threshold monitoring as described in Section \ref{sec:adc_threshold} \textit{\nameref{sec:adc_threshold}}, as needed.
+    \item Set \hyperref[fielddesc:APBSARADCAPBADCTRANS]{APB\_SARADC\_APB\_ADC\_TRANS} to use GDMA.
+    \item Configure \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET} to set trigger target for DIG ADC timer.
+    \item Set \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} to enable the timer.
+\end{enumerate}
+
+The timer timeout will trigger DIG ADC FSM to start sampling according to the pattern table. The conversion result will be automatically stored in memory. When the sampling reaches the number of limit set in  \hyperref[fielddesc:APBSARADCAPBADCEOFNUM]{APB\_SARADC\_APB\_ADC\_EOF\_NUM}, it will terminate.
+
+Once sampling is complete, an \hyperref[fielddesc:APBSARADCDONEINTRAW]{APB\_SARADC\_ADC\_DONE\_INT\_RAW} interrupt will be generated.
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{sensor-reg-summ}{}
+\section{Register Summary}
+\label{sec:adc-reg-summ}
+
+The addresses in this section are relative to SAR ADC Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/33-ADC-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to SAR ADC Controller base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/33-ADC-reg__EN}
+
+
+\end{document}

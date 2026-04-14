@@ -1,0 +1,483 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./04-EFUSE}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{efuse}{}
+\chapter{eFuse Controller (EFUSE)}
+\label{mod:efuse}
+
+
+\section{Overview}
+
+ESP32-S2 has a 4096-bit eFuse that stores parameters in the SoC. Once an eFuse bit is programmed to 1, it can never be reverted to 0. Users can instruct the eFuse Controller to program individual bits for individual parameters as needed. From outside the chip, eFuse data can only be read via the eFuse Controller. If read-protection for some data is not enabled, that data is readable from outside the chip. If read-protection is enabled, that data can not be read from outside the chip. In all cases, however, some keys stored in eFuse can still be used internally by hardware cryptography modules such as RSA Digital Signature Peripheral (RSA\_DS), HMAC, etc., without exposing this data to the outside world.
+ \section{Features}
+
+\begin{itemize}
+    \item One-time programmable storage
+    \item Configurable write protection
+    \item Configurable read protection
+    \item Parameters use different hardware encoding schemes to protect against corruption
+\end{itemize}
+
+
+\section{Functional Description}
+
+\subsection{Structure}
+
+There are 11 eFuse blocks (BLOCK0 \verb+~+ BLOCK10).
+
+BLOCK0 holds most core system parameters. Among these parameters, 24 bits are readable but useless to users, 38 bits are reserved for future use.
+
+Table \ref{table:BLOCK0_Parameter} lists all the parameters accessible (readable and usable) to users in BLOCK0 and their offsets, bit widths, functional description, as well as information about whether their configuration is directly accessible by the hardware, and whether they are protected from programming.
+
+The {\bfseries \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}} parameter is used to restrict the programming of other parameters, while {\bfseries \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS}} is used to restrict users from reading BLOCK4 \verb+~+ BLOCK10. More information on these two parameters can be found in sections \ref{section:EFUSEWRDISABLE} and \ref{section:EFUSERDDISABLE}.
+
+\input{\modulefiles/tables/ESP32-S2-BLOCK0_Parameter_cn-newfortrans_eng-US.tex}
+
+Table \ref{table: key_purpose} lists all key purpose and their values. Setting the eFuse parameter \hyperref[fielddesc:EFUSEKEYPURPOSE3]{EFUSE\_KEY\_PURPOSE\_\textcolor{red}{\it{n}}} programs the purpose for eFuse block KEY\textcolor{red}{\it{n}} (\textcolor{red}{\it{n}}: 0 \verb+~+ 5).
+
+\begin{longtable}[c]{|c|p{10cm}|}
+\caption{Key Purpose Values}
+\label{table: key_purpose}
+    \\\hline
+    \rowcolor{lightgray}
+  Key Purpose Values &Purposes\\
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+   Key Purpose Values &Purposes\\
+    \endhead
+    \endfoot
+    \endlastfoot
+    \hline
+0 & User purposes\\\hline
+1&  Reserved \\\hline
+2& XTS\_AES\_256\_KEY\_1 (flash/PSRAM encryption)\\\hline
+3& XTS\_AES\_256\_KEY\_2 (flash/PSRAM encryption)\\ \hline
+4 & XTS\_AES\_128\_KEY (flash/PSRAM encryption)\\\hline
+5& HMAC Downstream mode\\\hline
+6& JTAG soft enable key (uses HMAC Downstream mode)\\\hline
+7 & RSA\_DS\_KEY (uses HMAC Downstream mode)\\\hline
+8 & HMAC Upstream mode\\\hline
+9& SECURE\_BOOT\_DIGEST0 (Secure Boot key digest)\\\hline
+10 & SECURE\_BOOT\_DIGEST1 (Secure Boot key digest)\\\hline
+11& SECURE\_BOOT\_DIGEST2 (Secure Boot key digest) \\\hline
+\end{longtable}
+
+Table  \ref{table:BLOCK1_10_Parameter} provides the details on the parameters in BLOCK1 \verb+~+ BLOCK10.
+
+\input{\modulefiles/tables/ESP32-S2-BLOCK1_10_Parameter_cn-newfortrans_eng-US.tex}
+
+Among these blocks, BLOCK4 \verb+~+ 9 stores KEY0 \verb+~+ 5, respectively. Up to six 256-bit keys can be programmed into eFuse. Whenever a key is programmed, its purpose value should also be programmed (see table \ref{table: key_purpose}). For example, a key for the JTAG function in HMAC Downstream mode is programmed to KEY\textcolor{red}{3} (i.e., BLOCK7), then, the key purpose value 6 should be programmed to \hyperref[fielddesc:EFUSEKEYPURPOSE3]{EFUSE\_KEY\_PURPOSE\_\textcolor{red}{3}}.
+
+BLOCK1 \verb+~+ BLOCK10 use the RS coding scheme, so there are some restrictions on writing to these parameters (refer to Section \ref{datastorage}: \textit{Data Storage} and Section \ref{Software Programming of Parameters}: \textit{User Programming of Parameters}).
+
+
+\subsubsection{EFUSE\_WR\_DIS}\label{section:EFUSEWRDISABLE}
+
+Parameter \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} determines whether individual eFuse parameters are write-protected. After burning \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}, execute an eFuse read operation so the new values will take effect (refer to \textit{Updating eFuse read registers} in Section \ref{updatingRDregister}).
+
+The columns ``Programming-Protected by \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}" in Table  \ref{table:BLOCK0_Parameter} and Table \ref{table:BLOCK1_10_Parameter} list the specific bits of \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} that determine the write protected status of each parameter.
+
+When the corresponding bit is 0, the parameter is not write protected and can be programmed if the parameter has not been programmed.
+
+When the corresponding bit is 1, the parameter is write protected and none of its bits can be modified. The non-programmed bits always remain 0, while programmed bits always remain 1.
+
+\subsubsection{EFUSE\_RD\_DIS}\label{section:EFUSERDDISABLE}
+
+Only the eFuse blocks BLOCK4 \verb+~+ BLOCK10 can be individually read protected to prevent any access from outside the chip. The corresponding bit in \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} is shown in Table  \ref{table:BLOCK1_10_Parameter}. After burning \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS}, execute an eFuse read operation so the new values take effect (refer to \textit{Updating eFuse read registers} in Section \ref{updatingRDregister}).
+
+If the corresponding \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} bit is 0, then the eFuse block can be read by users. If the corresponding \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} bit is 1, then the parameter controlled by this bit is user read protected.
+
+Other parameters that are not in BLOCK4 \verb+~+ BLOCK10 can always be read by users.
+
+When BLOCK4 \verb+~+ BLOCK10 are set to read-protected, the data in these blocks are not readable by users, but they can still be used internally by hardware cryptography modules, if the \hyperref[fielddesc:EFUSEKEYPURPOSE3]{EFUSE\_KEY\_PURPOSE\_\textcolor{red}{\it{n}}} bit is set accordingly.
+
+
+\subsubsection{Data Storage}\label{datastorage}
+
+Internal to the SoC, eFuses use hardware encoding schemes to protect against data corruption.
+
+All BLOCK0 parameters except for \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} are stored with four backups, meaning each bit is stored four times. This backup scheme is hardwired to the chip.
+
+BLOCK1 \verb+~+ BLOCK10 use RS (44, 32) coding scheme that supports up to 6 bytes of automatic error correction. The primitive polynomial of RS (44, 32) is \(p(x)=x^8+x^4+x^3+x^2+1\).
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/lfsr_circuit_20190809_1}}
+    \caption{Shift Register Circuit (first 32 output)}
+    \label{Figure:lfsr_circuit_1}
+\end{figure}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/lfsr_circuit_20190809_2}}
+    \caption{Shift Register Circuit (last 12 output)}
+    \label{Figure:lfsr_circuit_2}
+\end{figure}
+
+The shift register circuit shown in Figure \ref{Figure:lfsr_circuit_1} and \ref{Figure:lfsr_circuit_2} processes 32 data bytes using RS (44, 32). This coding scheme encodes 32 bytes of  data into 44 bytes:
+
+\begin{itemize}
+    \item Bytes [0:31] are the data bytes itself
+    \item Bytes [32:43] are the encoded parity bytes stored in 8-bit flip-flops DFF1, DFF2, ..., DFF12 (gf\_mul\_n, where n is an integer, is the result of multiplying a byte of data ...)
+\end{itemize}
+
+After that, the hardware burns into eFuse the 44-byte codeword consisting of the data bytes followed by the parity bytes.
+
+When the eFuse block is read back, the eFuse controller automatically decodes the codeword  and applies error correction if needed.
+
+Because the RS check codes are generated across the entire 256-bit eFuse block, each block can only be written to one time.
+
+\subsection{Programming of Parameters}\label{Software Programming of Parameters}
+
+The eFuse controller can only write to eFuse parameters in one block at a time. BLOCK0 \verb+~+ BLOCK10 share the same registers to store the parameters to be programmed. Configure parameter \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} to indicate which block is to be programmed.
+
+{\bfseries Programming BLOCK0}
+
+When \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} = 0, BLOCK0 is programmed. The \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} register stores \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}. \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA1\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA5\_REG} store the information of new BLOCK0 parameters to be programmed. Note that 24 BLOCK0 bits are readable but useless to users and must always be set to 0 in the programming registers. The specific bits are:
+
+\begin{itemize}
+    \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA1\_REG}[29:31]
+    \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA1\_REG}[20:23]
+    \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA2\_REG}[7:15]
+    \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA2\_REG}[0:3]
+    \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA3\_REG}[16:19]
+\end{itemize}
+
+Values written to \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA6\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} and \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} are ignored when programming BLOCK0.
+
+{\bfseries Programming BLOCK1}
+
+When \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} = 1, \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA5\_REG} store the parameters to be programmed. \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA2\_REG} store the corresponding RS check codes. Values written to \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA6\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} are ignored when programming BLOCK1, the RS check codes should be calculated as if these bits were all 0.
+
+{\bfseries Programming BLOCK2 \verb+~+ 10}
+
+When \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} = 2 \verb+~+ 10, \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} store the parameters to be programmed to this block. \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} store the corresponding RS check codes.
+
+{\bfseries Programming process}
+
+The process of programming parameters is as follows:
+
+\begin{enumerate}
+\item Set \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} parameter as described above.
+
+\item Write the parameters to be programmed into registers \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} and \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG}.
+
+\item Ensure the eFuse clock registers are set correctly as described in Section \ref{eFuse-Programming Timing}: \textit{eFuse-Programming Timing}.
+
+\item Ensure the eFuse programming voltage VDDQ is set correctly as described in Section \ref{eFuse VDDQ Timing}: \textit{eFuse VDDQ Setting}.
+
+\item Set \hyperref[fielddesc:EFUSEOPCODE]{EFUSE\_OP\_CODE} field in register \hyperref[regdesc:EFUSECONFREG]{EFUSE\_CONF\_REG} to \hexprefix{}5A5A.
+
+\item Set \hyperref[fielddesc:EFUSEPGMCMD]{EFUSE\_PGM\_CMD} field in register \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} to 1.
+
+\item Poll register \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} until it is \hexprefix{}0, or wait for a pgm\_done interrupt. Information on how to identify a pgm/read\_done interrupt is provided at the end of Section \ref{softwarereadparameters}.
+
+\item Clear the parameters written into the register.
+
+\item Trigger an eFuse read operation (see Section \ref{softwarereadparameters}: \textit{User Read of Parameters}) to update eFuse registers with the new values.
+\end{enumerate}
+
+{\bfseries Limitations}
+
+For BLOCK0, the programming of different parameters and even the programming of different bits of the same parameter does not need to be done at once. It is, however, recommended that users minimize programming cycles
+and program all the bits of a parameter in one programming action. In addition, after all parameters controlled by a certain bit of \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} are programmed, that bit should be immediately programmed. The programming of parameters controlled by a certain bit of \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS},
+and the programming of the bit itself can even be completed at the same time. Repeated programming of already programmed bits is strictly forbidden, otherwise, programming errors will occur.
+
+BLOCK1 cannot be programmed by users as it has been programmed at manufacturing.
+
+BLOCK2 \verb+~+ 10 can only be programmed once. Repeated programming is not allowed.
+
+
+
+
+\subsection{User Read of Parameters}\label{softwarereadparameters}
+
+Users cannot read eFuse bits directly. The eFuse Controller hardware reads all eFuse bits and stores the results to their corresponding registers in the memory space. Then, users can read eFuse bits by reading the registers that start with EFUSE\_RD\_. Details are provided in Table \ref{fig:efuse-read-register}.
+
+\begin{longtable}[c]{|c|l|l|}
+    \caption{Registers for User Read Parameters} \label{fig:efuse-read-register}
+    \\\hline
+    \rowcolor{lightgray}
+  BLOCK & Read Registers & When Programming This Block\\
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+  BLOCK & Read Registers & When Programming This Block\\
+    \endhead
+    \endfoot
+    \endlastfoot
+    \hline
+0  & \hyperref[regdesc:EFUSERDWRDISREG]{EFUSE\_RD\_WR\_DIS\_REG} & \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \\\hline
+0  & EFUSE\_RD\_REPEAT\_DATA0 \verb+~+ 4\_REG & EFUSE\_PGM\_DATA1 \verb+~+ 5\_REG \\\hline
+1  & EFUSE\_RD\_MAC\_SPI\_SYS\_0 \verb+~+ 5\_REG & EFUSE\_PGM\_DATA0 \verb+~+ 5\_REG \\\hline
+2  & EFUSE\_RD\_SYS\_DATA\_PART1\_0 \verb+~+ 7\_REG & EFUSE\_PGM\_DATA0 \verb+~+ 7\_REG \\\hline
+3  & EFUSE\_RD\_USR\_DATA0 \verb+~+ 7\_REG & EFUSE\_PGM\_DATA0 \verb+~+ 7\_REG \\ \hline
+4-9 & EFUSE\_RD\_KEY\textcolor{red}{\it{n}}\_DATA0 \verb+~+ 7\_REG (\textcolor{red}{\it{n}}: 0 \verb+~+ 5) & EFUSE\_PGM\_DATA0 \verb+~+ 7\_REG \\\hline
+10 & EFUSE\_RD\_SYS\_DATA\_PART2\_0 \verb+~+ 7\_REG & EFUSE\_PGM\_DATA0 \verb+~+ 7\_REG \\\hline
+\end{longtable}
+
+{\bfseries Updating eFuse read registers}\label{updatingRDregister}
+
+The eFuse Controller hardware populates the read registers from the internal eFuse storage. This read operation takes place on system reset and can also be triggered manually by users as needed, for example if new eFuse values have been programmed.
+
+The process of triggering an eFuse controller read by users is as follows:
+
+\begin{enumerate}
+    \item Configure the eFuse read timing registers as described in Section \ref{eFuse-Read Timing}: \textit{eFuse-Read Timing}.
+    \item Set the \hyperref[fielddesc:EFUSEOPCODE]{EFUSE\_OP\_CODE} field in register \hyperref[regdesc:EFUSECONFREG]{EFUSE\_CONF\_REG} to \hexprefix{}5AA5.
+    \item Set the \hyperref[fielddesc:EFUSEREADCMD]{EFUSE\_READ\_CMD} field in register \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} to 1.
+    \item Poll the \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} register until it is \hexprefix{}0, or wait for a read\_done interrupt. Information on how to identify a pgm/read\_done interrupt is provided below.
+    \item Read the values of each parameter from memory.
+\end{enumerate}
+The eFuse read registers will now hold updated values for all eFuse parameters.
+
+{\bfseries Error detection}
+
+Error registers allow users to detect an inconsistency in the stored eFuses.
+
+EFUSE\_RD\_REPEAT\_ERR0 \verb+~+ 3\_REG indicate inconsistencies in the stored backup copies of the parameters in BLOCK0 (except for \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}) . Value 1 indicates an error was detected, and the bit became invalid. Value 0 indicates no error.
+
+Registers EFUSE\_RD\_RS\_ERR0 \verb+~+ 1\_REG store the number of corrected bytes as well as the result of RS decoding during eFuse reading BLOCK1 \verb+~+ BLOCK10.
+
+Users can read the values of above registers only after the eFuse read registers have been updated.
+
+{\bfseries Identifying program/read operation completion}\label{tip:program and read done interrupt}
+
+    The two methods to identify the completion of program/read operation are described below. Please note that bit 1 corresponds to program operation, and bit 0 corresponds to read operation.
+    \begin{itemize}
+    \item Method one:
+        \begin{enumerate}
+            \item Poll bit 1/0 in register \hyperref[regdesc:EFUSEINTRAWREG]{EFUSE\_INT\_RAW\_REG} until it is 1, which represents the completion of a program/read operation.
+        \end{enumerate}
+    \item Method two:
+        \begin{enumerate}
+            \item Set bit 1/0 in register \hyperref[regdesc:EFUSEINTENAREG]{EFUSE\_INT\_ENA\_REG} to 1 to enable eFuse Controller to post a pgm/read\_done interrupt.
+            \item Configure Interrupt Matrix to enable the CPU to respond to eFuse interrupt signal.
+            \item Wait for the pgm/read\_done interrupt.
+            \item Set the bit 1/0 in register \hyperref[regdesc:EFUSEINTCLRREG]{EFUSE\_INT\_CLR\_REG} to 1 to clear the pgm/read\_done interrupt.
+    \end{enumerate}
+\end{itemize}
+
+\subsection{Timing}
+\subsubsection{eFuse-Programming Timing}\label{eFuse-Programming Timing}
+Figure \ref{Figure:efuse_pgm} shows the timing for programming eFuse. Four registers \hyperref[fielddesc:EFUSETSUPA]{EFUSE\_TSUP\_A}, \hyperref[fielddesc:EFUSETPGM]{EFUSE\_TPGM}, \hyperref[fielddesc:EFUSETHPA]{EFUSE\_THP\_A}, and \hyperref[fielddesc:EFUSETPGMINACTIVE]{EFUSE\_TPGM\_INACTIVE} are used to configure the timing. Terms used in the timing diagrams in this section are described as follows:
+
+\begin{itemize}
+\item CSB: Chip select, active low
+\item VDDQ: eFuse programming voltage
+\item PGENB: eFuse programming enable signal, active low
+\end{itemize}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/efuse_pgm_20191025}}
+    \caption{eFuse-Programming Timing Diagram}
+    \label{Figure:efuse_pgm}
+\end{figure}
+
+
+The eFuse block uses the CLK\_APB clock, which is configurable. Therefore, the timing parameters should be configured according to the specific clock frequency. After reset, the initial parameters are based on 20 MHz clock frequency.
+
+\begin{longtable}[c]{ |c|c|c|c|c|}
+    \caption{Configuration of eFuse-Programming Timing Parameters}
+    \label{table:Burn_Timing_Configuration}
+    \\\hline
+    \rowcolor{lightgray}
+    \thead{APB Frequency} & \thead{\hyperref[fielddesc:EFUSETSUPA]{EFUSE\_TSUP\_A} \\ (> 6.669 ns)} & \thead{\hyperref[fielddesc:EFUSETPGM]{EFUSE\_TPGM} \\ (9-11 $\mu$s, usually 10 $\mu$s)} & \thead{\hyperref[fielddesc:EFUSETHPA]{EFUSE\_THP\_A} \\ (> 6.166 ns)} & \thead{\hyperref[fielddesc:EFUSETPGMINACTIVE]{EFUSE\_TPGM\_INACTIVE} \\ (> 35.96 ns)} \\
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \thead{APB Frequency} & \thead{\hyperref[fielddesc:EFUSETSUPA]{EFUSE\_TSUP\_A} \\ (> 6.669 ns)} & \thead{\hyperref[fielddesc:EFUSETPGM]{EFUSE\_TPGM} \\ (9-11 $\mu$s, usually 10 $\mu$s)} & \thead{\hyperref[fielddesc:EFUSETHPA]{EFUSE\_THP\_A} \\ (> 6.166 ns)} & \thead{\hyperref[fielddesc:EFUSETPGMINACTIVE]{EFUSE\_TPGM\_INACTIVE} \\ (> 35.96 ns)} \\
+    \endhead
+    \endfoot
+    \endlastfoot
+    \hline
+    80 MHz & \hexprefix{}2 & \hexprefix{}320 & \hexprefix{}2 & \hexprefix{}4 \\
+    \hline
+    40 MHz & \hexprefix{}1 & \hexprefix{}190 & \hexprefix{}1 & \hexprefix{}2 \\
+    \hline
+    20 MHz & \hexprefix{}1 & \hexprefix{}C8 & \hexprefix{}1 & \hexprefix{}1 \\
+    \hline
+\end{longtable}
+
+In Figure \ref{Figure:efuse_pgm}, Address A0 is programmed, then the corresponding eFuse bit is 1; Address A1 is not programmed, then the corresponding eFuse bit is 0.
+
+\subsubsection{eFuse VDDQ Timing Setting}\label{eFuse VDDQ Timing}
+VDDQ is the eFuse programming voltage, and its timing parameters should be configured according to the APB clock frequency:
+
+    \begin{longtable}[c]{|c|c|c|c|}
+
+    \caption{Configuration of VDDQ Timing Parameters}
+    \label{table:VDDQtiming}
+
+    \\\hline
+    \rowcolor{lightgray}
+    \thead{APB Frequency} & \thead{\hyperref[fielddesc:EFUSEDACCLKDIV]{EFUSE\_DAC\_CLK\_DIV} \\ (> 1 $\mu$s)} & \thead{\hyperref[fielddesc:EFUSEPWRONNUM]{EFUSE\_PWR\_ON\_NUM} \\ (> EFUSE\_DAC\_CLK\_DIV*255)} & \thead{\hyperref[fielddesc:EFUSEPWROFFNUM]{EFUSE\_PWR\_OFF\_NUM}  \\ (> 3 $\mu$s)} \\
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \thead{APB Frequency} & \thead{\hyperref[fielddesc:EFUSEDACCLKDIV]{EFUSE\_DAC\_CLK\_DIV} \\ (> 1 $\mu$s)} & \thead{\hyperref[fielddesc:EFUSEPWRONNUM]{EFUSE\_PWR\_ON\_NUM} \\ (> EFUSE\_DAC\_CLK\_DIV*255)} & \thead{\hyperref[fielddesc:EFUSEPWROFFNUM]{EFUSE\_PWR\_OFF\_NUM}  \\ (> 3 $\mu$s)} \\
+    \endhead
+    \endfoot
+    \endlastfoot
+    \hline
+    80 MHz & \hexprefix{}A0 & \hexprefix{}A200 & \hexprefix{}100 \\
+    \hline
+    40 MHz & \hexprefix{}50 & \hexprefix{}5100 & \hexprefix{}80 \\
+    \hline
+    20 MHz & \hexprefix{}28 & \hexprefix{}2880 & \hexprefix{}40 \\
+    \hline
+\end{longtable}
+
+
+\subsubsection{eFuse-Read Timing}\label{eFuse-Read Timing}
+
+Figure \ref{Figure:efuse_read} shows the timing for reading eFuse. Three registers \hyperref[fielddesc:EFUSETSURA]{EFUSE\_TSUR\_A}, \hyperref[fielddesc:EFUSETRD]{EFUSE\_TRD}, and \hyperref[fielddesc:EFUSETHRA]{EFUSE\_THR\_A} are used to configure the timing.
+
+The parameters should be configured according to the specific APB clock frequency. Details can be found in the table below.
+
+\begin{longtable}[c]{ |c|c|c|c|}
+    \caption{Configuration of eFuse-Reading Parameters}
+    \label{table:Read_Timing_Configuration}
+    \\\hline
+    \rowcolor{lightgray}
+    APB Frequency & \makecell[c]{\hyperref[fielddesc:EFUSETSURA]{EFUSE\_TSUR\_A} \\ (> 6.669 ns)} & \makecell[c]{\hyperref[fielddesc:EFUSETRD]{EFUSE\_TRD} \\ (> 35.96 ns)} & \makecell[c]{\hyperref[fielddesc:EFUSETHRA]{EFUSE\_THR\_A} \\ (> 6.166 ns)} \\
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    APB Frequency & \makecell[c]{\hyperref[fielddesc:EFUSETSURA]{EFUSE\_TSUR\_A} \\ (> 6.669 ns)} & \makecell[c]{\hyperref[fielddesc:EFUSETRD]{EFUSE\_TRD} \\ (> 35.96 ns)} & \makecell[c]{\hyperref[fielddesc:EFUSETHRA]{EFUSE\_THR\_A} \\ (> 6.166 ns)} \\
+    \endhead
+    \endfoot
+    \hline
+    \endlastfoot
+    \hline
+    80 MHz & \hexprefix{}2 & \hexprefix{}4 & \hexprefix{}2 \\
+    \hline
+    40 MHz & \hexprefix{}1 & \hexprefix{}2 & \hexprefix{}1 \\
+    \hline
+    20 MHz & \hexprefix{}1 & \hexprefix{}1 & \hexprefix{}1 \\
+\end{longtable}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/efuse_read_20191025}}
+    \caption{Timing Diagram for Reading eFuse}
+    \label{Figure:efuse_read}
+\end{figure}
+
+\subsection{The Use of Parameters by Hardware Modules}
+
+Hardware modules are directly hardwired to the ESP32-S2 in order to use the parameters listed in Table \ref{table:BLOCK0_Parameter} and \ref{table:BLOCK1_10_Parameter}, specifically those marked with ``Y" in columns ``Accessible by Hardware". Users cannot change this behavior.
+
+\subsection{Interrupts}
+\begin{itemize}
+\item pgm\_done interrupt: Triggered when eFuse programming has finished. To enable this interrupt, set \hyperref[fielddesc:EFUSEPGMDONEINTENA]{EFUSE\_PGM\_DONE\_INT\_ENA} to 1.
+\item read\_done interrupt: Triggered when eFuse reading has finished. To enable this interrupt, set \hyperref[fielddesc:EFUSEREADDONEINTENA]{EFUSE\_READ\_DONE\_INT\_ENA} to 1.
+\end{itemize}
+
+\section{Base Address}\label{efuse base address}
+Users can access the eFuse Controller with two base addresses, which can be seen in the following table. For more information about accessing peripherals from different buses please see Chapter \ref{mod:sysmem}: \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+    \caption{eFuse Controller Base Address}
+    \label{table:efusebaseaddress}
+    \\\hline
+    \rowcolor{lightgray}
+    Bus to Access Peripheral  & Base Address \\\hline
+    PeriBUS1 & \hexprefix{}3F41A000\\\hline
+    PeriBUS2  &  \hexprefix{}6001A000\\\hline
+\end{longtable}
+
+\hypertarget{efuse-reg-summ}{}
+\section{Register Summary}
+
+The addresses in the following table are relative to the eFuse base addresses provided in Section \ref{efuse base address}.
+
+
+\subfile{\modulefiles/efuse_summary_en}
+
+
+\section{Registers}
+\subfile{\modulefiles/efuse_reg_en}
+
+\end{document}

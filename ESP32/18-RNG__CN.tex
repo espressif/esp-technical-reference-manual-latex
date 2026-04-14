@@ -1,0 +1,158 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./18-RNG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{rng}{}
+\chapter{随机数发生器 (RNG)}
+\label{mod:rng}
+
+
+\section{概述}
+
+ESP32 内置一个真随机数发生器，其生成的 32 位随机数可作为加密等操作的基础。
+
+\section{主要特性}
+
+ESP32 的随机数发生器可通过物理过程而非算法生成真随机数，所有生成的随机数在特定范围内出现的概率完全一致。
+
+\section{功能描述}\label{sec:rng-func-descr}
+
+系统可以从随机数发生器的寄存器 \hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} 中读取随机数，每个读到的 32 位随机数都是真随机数，噪声源为系统中的热噪声和异步时钟。
+
+具体来说，这些热噪声可以来自 SAR ADC 或高速 ADC 或两者兼有。当芯片的 SAR ADC 或高速 ADC 工作时，就会产生比特流，并通过异或 (XOR) 逻辑运算作为随机数种子进入随机数生成器。
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./18-RNG/figures/RNG-noice-source.pdf}
+    \caption{噪声源}
+    \label{figure:RNG_Noice_Source}
+\end{figure}
+
+当 SAR ADC 打开时，每个 RC\_FAST\_CLK （8 MHz）时钟周期内（来自内部 RC 振荡器，详见 \ref{mod:resclk} \textit{\nameref{mod:resclk}} 章节），随机数发生器将获得 2 位的熵。因此，为了获得最大的熵值，建议读取 \hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} 寄存器时的速率不超过 500 kHz。
+
+当高速 ADC 打开时，每个 APB 时钟周期（通常为 80 MHz）内，随机数发生器将获得 2 位的熵。因此，为了获得最大的熵值，建议读取 \hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} 寄存器时的速率不超过 5 MHz。
+
+我们在仅打开高速 ADC 的状态下，以 5 MHz 的速率从 \hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} 读取了 2 GB 的数据样本，并使用 Dieharder 随机数测试套件（版本 3.31.1）对样本进行了测试。最终，样本通过了所有测试。
+
+
+\section{编程指南}\label{sec:rng-programming}
+
+在使用 ESP32 的随机数生成器时，应该至少打开 SAR ADC 或高速 ADC，否则可能会导致产生伪随机数，应注意避免。其中，
+\begin{itemize}
+    \item SAR ADC 可通过 DIG ADC 控制器打开，详见 \ref{mod:sensor} \textit{\nameref{mod:sensor}} 章节。
+    \item 高速 ADC 在 Wi-Fi 或蓝牙开启时自动打开。
+\end{itemize}
+
+\begin{tiplisting}
+注意，在 Wi-Fi 开启时，极端情况下高速 ADC 有读值饱和的可能，这会降低熵值。因此，建议在 Wi-Fi 开启时，同时通过 DIG ADC1 控制器打开 SAR ADC 产生随机数。
+\end{tiplisting}
+
+在使用随机数生成器时，请多次读取 \hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} 寄存器的值，直至获得足够多的随机数。在读取寄存器时，注意控制速率不要超过上方第 \ref{sec:rng-func-descr} 小节的介绍。
+
+\hypertarget{rng-reg-summ}{}
+\section{寄存器列表}
+\label{sec:rng-reg-summ}
+\begin{longtable}{ | p{5cm} | p{6cm} | p{3cm} | p{1cm} | }
+\hline\rowcolor{lightgray}
+名称 & 描述 & 地址 & 访问 \\ \hline
+\hyperref[regdesc:RNGDATAREG]{RNG\_DATA\_REG} & 随机数数据 & 0x3FF75144 & 只读 \\ \hline
+\end{longtable}
+
+\section{寄存器}
+
+\begin{register}{H}{RNG\_DATA\_REG}{0x3FF75144}\label{regdesc:RNGDATAREG}
+\regfield{}{32}{0}{{0x000000000}}%
+\reglabel{Reset}\regnewline%
+\begin{regdesc}\begin{reglist}
+\item [RNG\_DATA\_REG]随机数来源。（只读）
+\end{reglist}\end{regdesc}
+\end{register}
+
+\end{document}

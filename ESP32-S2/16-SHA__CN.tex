@@ -1,0 +1,597 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./16-SHA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sha}{}
+\chapter{SHA 加速器 (SHA)}
+\label{mod:sha}
+
+\section{概述}
+
+ESP32-S2 内置 SHA（安全哈希算法）硬件加速器可完成 SHA 运算，具有 \hyperref[subsection:typicalsha]{Typical SHA} 和 \hyperref[subsection:dma-sha]{DMA-SHA} 两种工作模式。整体而言，相比基于纯软件的 SHA 运算，SHA 硬件加速器能够极大地提高运算速度。
+
+\section{主要特性}
+
+ESP32-S2 的 SHA 硬件加速器：
+
+\begin{itemize}
+    \item 支持 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范}的全部运算标准
+    \begin{itemize}
+        \item SHA-1 运算
+        \item SHA-224 运算
+        \item SHA-256 运算
+        \item SHA-384 运算
+        \item SHA-512 运算
+        \item SHA-512/224 运算
+        \item SHA-512/256 运算
+        \item SHA-512/{\it{t}} 运算
+    \end{itemize}
+    \item 提供两种工作模式
+    \begin{itemize}
+        \item Typical SHA 工作模式
+        \item DMA-SHA 工作模式
+    \end{itemize}
+    \item 允许插入 (interleave) 功能（仅限 Typical SHA 工作模式）
+    \item 允许中断功能（仅限 DMA-SHA 工作模式）
+\end{itemize}
+
+\section{工作模式简介}
+ESP32-S2 内置的 SHA 加速器支持 \hyperref[subsection:typicalsha]{Typical SHA} 和 \hyperref[subsection:dma-sha]{DMA-SHA} 两种工作模式。
+
+\begin{itemize}
+    \item \hyperref[subsection:typicalsha]{Typical SHA 工作模式}：所有数据读写统一通过 CPU 访问完成。
+    \item \hyperref[subsection:dma-sha]{DMA-SHA 工作模式}：所有读数据通过硬件上的 crypto DMA 完成。具体来说，用户可配置 DMA 控制器，由 DMA 控制器提供 SHA 运算过程中所需的数据信息。因此，可以释放 CPU 执行其他任务。
+\end{itemize}
+
+用户可通过配置 \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 或 \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG} 选择 SHA 加速器的工作模式，先配置的工作模式生效，具体请见表 \ref{table:SHA_DMA_ENABLE}。
+
+\begin{longtable}[c]{ |l|l| }
+\caption{工作模式选择}
+\label{table:SHA_DMA_ENABLE}
+\\\hline
+\rowcolor{lightgray}
+工作模式      & 选择方式\\
+    \hline
+    \hyperref[subsection:typicalsha]{Typical SHA}      &  \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 置 1   \\
+    \hline
+    \hyperref[subsection:dma-sha]{DMA-SHA}           &  \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG} 置 1   \\
+    \hline
+\end{longtable}
+
+用户可通过配置 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器选择 SHA 加速器的运算标准，具体请见表 \ref{table:mode summary}。
+
+\begin{longtable}[c]{|l|c|}
+\caption{运算标准选择}
+\label{table:mode summary}
+\\\hline
+\rowcolor{lightgray}
+哈希运算标准 & \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 的配置\\
+    \hline
+    SHA-1 & 0\\
+    \hline
+    SHA-224 & 1\\
+    \hline
+    SHA-256 & 2\\
+    \hline
+    SHA-384 & 3\\
+    \hline
+    SHA-512 & 4\\
+    \hline
+    SHA-512/224 & 5\\
+    \hline
+    SHA-512/256 & 6\\
+    \hline
+    SHA-512/{\it{t}} & 7\\
+    \hline
+\end{longtable}
+
+\begin{importantlisting}
+\vspace{-0.5em}
+
+    ESP32-S2 的 \nameref{mod:digsig} 和 \nameref{mod:hmac} 模块也会调用 SHA 加速器。此时，用户无法正常访问 SHA 加速器。
+\end{importantlisting}
+
+\section{功能描述}
+
+SHA 加速器可以提取信息摘要 (message digest)，其主要工作流程分为两步：\hyperref[preprocessing]{信息预处理}和\hyperref[hashoperation]{哈希运算}。
+
+\subsection{信息预处理}\label{preprocessing}
+
+信息预处理分为三个主要步骤：\hyperref[textpadding]{附加填充比特}、\hyperref[parsingmessage]{信息解析}和\hyperref[initialhash]{设置初始哈希值}。
+
+\subsection{附加填充比特}\label{textpadding}
+
+SHA 加速器仅能处理长度为 512 位及其倍数或 1024 位及其倍数的信息。因此，在将信息送至 SHA 加
+速器进行运算前，应先通过软件操作将信息填充为符合要求的长度。
+
+假设待处理信息 \begin{math} M \end{math} 的长度为 \begin{math} m \end{math} 位，则针对不同运算标准的填充步骤见下：
+
+\begin{itemize}
+    \item \textbf{SHA-1}、\textbf{SHA-224} 和 \textbf{SHA-256}
+        \begin{enumerate}
+        \item 首先，在待处理信息后填充 1 个 ``1"；
+        \item 随后，再填充 {\it{k}} 个 ``0"。其中，{\it{k}} 为满足 \begin{math}m + 1 + k \ {\equiv} \ 448 \ mod \end{math} 512 的最小非负数解；
+        \item 最后，在末尾填充一个 64 位的信息块。该信息块的内容为用二进制表示的待处理信息的长度，即 {\it{m}} 的值。
+        \end{enumerate}
+    \item \textbf{SHA-384}、\textbf{SHA-512}、\textbf{SHA-512/224}、\textbf{SHA-512/256} 和 \textbf{SHA-512/{\it{t}}}
+        \begin{enumerate}
+        \item 首先，在待处理信息后填充 1 个 ``1"；
+        \item 随后，再填充 {\it{k}} 个 ``0"。其中，{\it{k}} 为满足 \begin{math}m + 1 + k \ {\equiv} \ 896 \ mod \end{math} 1024 的最小非负数解；
+        \item 最后，在末尾填充一个 128 位的信息块。该信息块的内容为用二进制表示的待处理信息的长度，即 {\it{m}} 的值。
+        \end{enumerate}
+\end{itemize}
+
+更多详情，请参考 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范} 中的 “5.1 Padding the Message” 章节。
+
+\subsection{信息解析}\label{parsingmessage}
+
+在完成信息填充后，我们还需将待处理信息（及其填充）解析为 \begin{math}N\end{math} 个 512 位或 1024 位的信息块。
+
+\begin{itemize}
+    \item 对于 \textbf{SHA-1}、\textbf{SHA-224} 和 \textbf{SHA-256}：待处理信息（及其填充）应解析为 \begin{math}N\end{math} 个 512 位的信息块，即 \begin{math}M^{(1)}\end{math}、\begin{math}M^{(2)}\end{math}、 \dots、\begin{math}M^{(N)}\end{math}。一个 512 位信息块包括 16 个 32 位的字 (word)，则第 \begin{math}i\end{math} 个信息块的第一个 32 位字表示为 M$^{(i)}_{0}$，第二个 32 位字表示为 M$^{(i)}_{1}$，\dots，第 16 个 32 位字表示为 M$^{(i)}_{15}$。
+    \item 对于 \textbf{SHA-384}、\textbf{SHA-512}、\textbf{SHA-512/224}、\textbf{SHA-512/256} 和 \textbf{SHA-512/\it{t}}：待处理信息（及其填充）应解析为 \begin{math}N\end{math} 个 1024 位的信息块，即 \begin{math}M^{(1)}\end{math}、\begin{math}M^{(2)}\end{math}、 \dots、\begin{math}M^{(N)}\end{math}。一个 1024 位信息块包括 16 个 64 位的字 (word)，则第 \begin{math}i\end{math} 个信息块的第一个 64 位字表示为 M$^{(i)}_{0}$，第二个 64 位字表示为 M$^{(i)}_{1}$，\dots，第 16 个 64 位字表示为 M$^{(i)}_{15}$。
+\end{itemize}
+
+在 Typical SHA 工作模式下，每次处理的信息块数据均将按照如下规则写入相应的寄存器中：
+\begin{itemize}
+    \item \textbf{SHA-1、SHA-224、SHA-256} 将 M$^{(i)}_{0}$ 存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_0\_REG} 中，M$^{(i)}_1$ 存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_1\_REG}，\dots，M$^{(i)}_{15}$ 存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_15\_REG} 中。
+    \item \textbf{SHA-384、SHA-512、SHA-512/224、SHA-512/256} 将 M$^{(i)}_0 $ 的高 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_0\_REG} 中，低 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_1\_REG}，M$^{(i)}_1 $ 的高 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_2\_REG} 中，低 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_3\_REG}，...，M$^{(i)}_{15}$ 的高 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_30\_REG} 中，低 32 位存放在 \hyperref[regdesc:SHAMNREG]{SHA\_M\_31\_REG}。
+
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-0.5em}
+有关“信息块”及相关概念的描述，请参考 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范} 中 “2.1 Glossary of Terms and Acronyms” 章节。
+\end{tiplisting}
+
+在 DMA-SHA 工作模式下，需要预先完成如下配置：
+\begin{enumerate}
+    \item 创建外发链表；
+    \item 根据章节 \ref{mod:dma} \textit{\nameref{mod:dma}} 完成链表配置，包括但不限于将字节数组（完成填充后的信息）的首地址配置给发送链表的 buffer 地址指针；
+    \item 配置寄存器 \hyperref[fielddesc:CRYPTODMAOUTLINKADDR]{CRYPTO\_DMA\_OUTLINK\_ADDR} 指向第一个发送链表；
+    \item 将数值 1 写入寄存器 \hyperref[fielddesc:CRYPTODMAOUTLINKSTART]{CRYPTO\_DMA\_OUTLINK\_START}，启动 DMA 模块开始搬运数据；
+    \item 将数值 1 写入寄存器 \hyperref[regdesc:CRYPTODMAAESSHASELECTREG]{CRYPTO\_DMA\_AES\_SHA\_SELECT\_REG}，将 AES 和 SHA 共用的 DMA 资源分配给 SHA 加速器使用。
+\end{enumerate}
+
+
+\subsection{哈希初始值 (Initial Hash Value)}\label{initialhash}
+在进行哈希运算前，首先必须设置哈希初始值 H$^{(0)}$。不同运算标准的哈希初始值设置要求不同，其中 SHA-1、SHA-224、SHA-256、SHA-384、SHA-512、SHA-512/224、SHA-512/256 等运算的哈希初始值为常量 C，且已经固定在硬件中，无需专门计算。
+
+然而，SHA-512/{\it{t}} 对于不同的 \begin{math}t\end{math} 均需要一个不同的哈希初始值。简单来说，SHA-512/{\it{t}} 是一种基于 SHA-512 的 \begin{math}t\end{math} 位运算标准，其运算结果将截断至 \begin{math}t\end{math} 位。其中，运算标准对 \begin{math}t\end{math} 值的要求为“大于 0 小于 512 且不等于 384 的正整数”。对于不同 {\it{t}} 值的 SHA-512/{\it{t}} 运算，其哈希初始值可通过对 ``SHA-512/t” 字符串的十六进制表示进行 SHA-512 运算获得。不难看出，对于 {\it{t}} 取值不同的 SHA-512/{\it{t}} 运算标准，其不同之处仅在于 {\it{t}} 值不同。
+
+因此，为了简化 SHA-512/{\it{t}} 的哈希初始值计算，我们特别提出了以下方法：
+
+\begin{enumerate}\label{sha-512/t}
+    \item \textbf{计算 t\_string 和 t\_length}：其中，t\_string 为 {\it{t}} 的字符串信息，长度为 32-bit。t\_length 指明字符串长度信息，长度为 7-bit。根据 t 的取值范围不同，t\_string 和 t\_length 的计算过程如下：
+
+    \begin{itemize}
+        \item 如果 $1<=t<=9$，则 $t\_length=7'h48$，$t\_string$ 需要按照如下格式封装:\\
+        \begin{longtable}[c]{|p{2cm}|p{1cm}|p{3cm}|}
+        \hline
+        $8'h3t_0$ & $1'b1$ & $23'b0$\\
+        \hline
+        \end{longtable}
+        其中，$t_0=t$。
+
+        举例，如果 {\it{t}} = 8，则 $t_0$ = 8，$t\_string$ = $32'h38800000$。
+
+        \item 如果 $10<=t<=99$，则 $t\_length=7'h50$，$t\_string$ 需要按照如下格式封装:\\
+
+        \begin{longtable}[c]{|p{1.5cm}|p{1.5cm}|p{1cm}|p{2.5cm}|}
+        \hline
+        $8'h3t_1$ & $8'h3t_0$ & $1'b1$ & $15'b0$\\
+        \hline
+        \end{longtable}
+        其中，$t_0=t\%10$，$t_1=t/10$。
+
+        举例，如果 {\it{t}} = 56，则 $t_0$ = 6，$t_1$ = 5，$t\_string$ = $32'h35368000$。
+
+        \item 如果 $100<=t<512$，则 $t\_length=7'h58$，$t\_string$ 需要按照如下格式封装:\\
+
+        \begin{longtable}[c]{|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1cm}|p{1.5cm}|}
+        \hline
+        $8'h3t_2$ & $8'h3t_1$ & $8'h3t_0$ & $1'b1$ & $7'b0$\\
+        \hline
+        \end{longtable}
+        其中，$t_0=t\%10$，$t_1=(t/10)\%10$，$t_2=t/100$。
+
+        举例，如果 {\it{t}} = 231，则 $t_0$ = 1，$t_1$ = 3，$t_2$ = 2，$t\_string$ = $32'h32333180$。
+
+    \end{itemize}
+    \item \textbf{配置计算哈希初始值所需的寄存器}：用 t\_string 和 t\_length 初始化文本寄存器 \hyperref[regdesc:SHATSTRINGREG]{SHA\_T\_STRING\_REG} 和 \hyperref[regdesc:SHATLENGTHREG]{SHA\_T\_LENGTH\_REG}。
+
+    \item \textbf{计算得到哈希初始值}：对 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器置 7 选择 SHA-512/{\it{t}} 运算，并对 \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 寄存器置 1，启动 SHA 加速器的运算即可。最后，轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 结果为 0，则哈希初始值已计算完毕。
+\end{enumerate}
+
+
+此外，您也可以按照 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 Spec} 中 ``5.3.6 SHA-512/{\it{t}}" 章节的描述计算 SHA-512/{\it{t}} 的哈希初始值，也就是对 “SHA-512/{\it{t}}” 字符串的十六进制表示进行一次“特殊”的 SHA-512 运算，其运算得到的信息摘要即为所需的哈希初始值。这里的“特殊”指本次 SHA-512 运算的哈希初始值为 “SHA-512 运算标准的初始值常量 C 与 \hexprefix{}a5 每 8 位进行一次异或位运算后得到的结果”。
+
+
+
+
+
+
+
+
+
+
+
+\subsection{哈希运算流程}\label{hashoperation}
+
+在完成信息预处理后，ESP32-S2 SHA 加速器将正式开始哈希运算，并最终根据不同运算标准得到不同长度的信息摘要。
+正如上文所述，ESP32-S2 SHA 加速器支持 \hyperref[subsection:typicalsha]{Typical SHA} 和 \hyperref[subsection:dma-sha]{DMA-SHA} 两种工作模式，下面将对这两种工作模式的具体流程进行介绍。
+
+\subsection{Typical SHA 模式下的运算流程}\label{subsection:typicalsha}
+
+ESP32-S2 SHA 加速器在 Typical SHA 工作模式下支持两种运算方法：
+
+\begin{itemize}
+    \item \textbf{“alone” 运算方法}：在计算完所有信息块并得到全部信息摘要前，用户不会插入其他运算任务。
+    \item \textbf{“interleave” 运算方法}：在计算完每一个信息块后，用户都可以将存储在 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 寄存器中的信息摘要暂存起来， 然后插入优先级更高的运算任务，包括 Typical SHA 运算和 DMA-SHA 运算。当临时任务结束后，再将之前暂存的信息摘要重新写入 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 中，并继续完成之前中断的计算。
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subparagraph{Typical SHA 的具体运算流程（SHA-512/{\it{t}} 除外）}
+\begin{enumerate}
+    \item 选择运算标准。\label{1typical1}
+        \begin{itemize}
+            \item 配置 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器，设置运算标准。具体配置，请参考表 \ref{table:mode summary}。
+        \end{itemize}
+    \item 处理当前信息块。\label{1typical2}
+        \begin{enumerate}
+            \item 将当前信息块写入 \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG} 寄存器堆；
+            \item 启动 SHA 加速器 \hyperref[note1]{$^1$}：
+            \begin{itemize}
+                \item 如果为首次运算，则对 \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 寄存器置 1，启动 SHA 加速器的运算。此时，SHA 加速器按照步骤 \ref{1typical1} 中选定的运算标准，使用硬件中固定的哈希初始值进行运算；
+                \item 如果非首次运算，则对 \hyperref[regdesc:SHACONTINUEREG]{SHA\_CONTINUE\_REG} 寄存器置 1，启动 SHA 加速器的运算。此时，SHA 加速器使用 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 寄存器中的值作为哈希初始值进行运算。
+            \end{itemize}
+            \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 一直到读回的值为 0，代表 SHA 硬件加速器已完成对当前信息块的计算，进入“空闲”状态。然后执行步骤 \ref{1typical3}。
+        \end{enumerate}
+    \item \label{1typical3} 选择是否要插入其他运算。
+        \begin{itemize}
+            \item 如需插入，则准备移交 SHA 加速器使用权：
+            \begin{enumerate}
+            \item 读取并保存寄存器 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 中的运算标准类型；
+            \item 读取并保存寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 中的信息摘要；
+            \item 最后，跳转至相应流程进行插入运算。具体按照插入运行类型的不同，请见 \hyperref[subsection:typicalsha]{Typical SHA} 或 \hyperref[subsection:dma-sha]{DMA-SHA} 章节。
+            \end{enumerate}
+            \item 如无需插入，则继续执行步骤 \ref{1typical4}。
+        \end{itemize}
+
+    \item \label{1typical4}
+    选择是否有后续的待处理信息块：
+        \begin{itemize}
+            \item 如果存在后续待处理信息块，则跳回执行步骤 \ref{1typical2}。
+            \item 否则，进入步骤 \ref{1typical5}。
+        \end{itemize}
+
+    \item \label{1typical5} 判断是否需要交还 SHA 加速器使用权（即判断本次运算是否为插入运算）：
+        \begin{itemize}
+            \item 如果是插入运算，则应交还 SHA 加速器的使用权：
+            \begin{enumerate}
+                \item 将获得使用权前保存的运算标准类型重新写入寄存器 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG};
+                \item 将获得使用权前保存的信息摘要写入寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}；
+                \item 然后执行步骤 \ref{1typical2}。
+            \end{enumerate}
+            \item 如果不是插入运算，则无需交还 SHA 加速器的使用权。此时，请执行步骤 \ref{1typical6}。
+        \end{itemize}
+
+    \item \label{1typical6}获取信息摘要：
+    \begin{itemize}
+        \item 从寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 取出信息摘要。
+    \end{itemize}
+\end{enumerate}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subparagraph{Typical SHA 的具体运算流程（SHA-512/{\it{t}}）}
+\begin{enumerate}
+    \item 选择运算标准。\label{2typical1}
+        \begin{itemize}
+            \item 配置 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器为 7 选择 SHA-512/{\it{t}} 运算标准。
+        \end{itemize}
+    \item 计算哈希初始值。
+        \begin{enumerate}
+        \item 配置 t\_string 和 t\_length，并将其写入 \hyperref[regdesc:SHATSTRINGREG]{SHA\_T\_STRING\_REG} 和 \hyperref[regdesc:SHATLENGTHREG]{SHA\_T\_LENGTH\_REG} 寄存器。具体请见 \ref{initialhash} 章节。
+        \item 对 \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 寄存器置 1，启动 SHA 加速器的运算。
+        \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 一直到读回的值为 0，代表 SHA 硬件加速器已完成哈希初始值的计算。
+    \end{enumerate}
+    \item 处理当前信息块\label{2typical2}。
+        \begin{enumerate}
+            \item 将当前信息块写入 \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG} 寄存器堆；
+            \item 启动 SHA 加速器 \hyperref[note1]{$^1$}：
+            \begin{itemize}
+            \item 对 \hyperref[regdesc:SHACONTINUEREG]{SHA\_CONTINUE\_REG} 寄存器置 1，启动 SHA 加速器的运算。此时，SHA 加速器使用 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 寄存器中的值作为哈希初始值进行运算。
+            \end{itemize}
+            \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 一直到读回的值为 0，代表 SHA 硬件加速器已完成对当前信息块的计算，进入“空闲”状态。然后执行步骤 \ref{2typical3}。
+        \end{enumerate}
+    \item \label{2typical3} 选择是否要插入其他运算。
+        \begin{itemize}
+            \item 如需插入，则准备移交 SHA 加速器使用权：
+            \begin{enumerate}
+            \item 读取并保存寄存器 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 中的运算标准类型；
+            \item 读取并保存寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 中的信息摘要；
+            \item 最后，跳转至相应流程进行插入运算。具体按照插入运行类型的不同，请见 \hyperref[subsection:typicalsha]{Typical SHA} 或 \hyperref[subsection:dma-sha]{DMA-SHA} 章节。
+            \end{enumerate}
+            \item 如无需插入，则继续执行步骤 \ref{2typical4}。
+        \end{itemize}
+
+    \item \label{2typical4}
+    选择是否有后续的待处理信息块：
+        \begin{itemize}
+            \item 如果存在后续待处理信息块，则跳回执行步骤 \ref{2typical2}。
+            \item 否则，进入步骤 \ref{2typical5}。
+        \end{itemize}
+
+    \item \label{2typical5} 判断是否需要交还 SHA 加速器使用权（即判断本次运算是否为插入运算）：
+        \begin{itemize}
+            \item 如果是插入运算，则应交还 SHA 加速器的使用权：
+            \begin{enumerate}
+                \item 将获得使用权前保存的运算标准类型重新写入寄存器 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG};
+                \item 将获得使用权前保存的信息摘要写入寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}；
+                \item 然后执行步骤 \ref{2typical2}。
+            \end{enumerate}
+            \item 如果不是插入运算，则无需交还 SHA 加速器的使用权。此时，请执行步骤 \ref{2typical6}。
+        \end{itemize}
+
+    \item \label{2typical6}获取信息摘要：
+    \begin{itemize}
+        \item 从寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 取出信息摘要。
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}\label{note1}
+\vspace{-2.5em}
+\begin{enumerate}
+\item 在第 2b 步时，在 SHA 进行硬件运算时，如果存在后续待处理信息块，软件还可以同时将后续信息块写入 \\ \hyperref[regdesc:SHAMNREG]{SHA\_M\_\textcolor{red}{\it{n}}\_REG} 寄存器堆，以节省时间。
+\end{enumerate}
+\end{tiplisting}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\subsection{DMA-SHA 模式下的运算流程}\label{subsection:dma-sha}
+
+ESP32-S2 SHA 加速器在 DMA-SHA 工作模式下不支持 “interleave” 运算方法，即在每次运算全部完成前，不允许插入其他运算任务。这种情况下，用户如有插入运算需求，可将较大信息块进行拆分，并进行多次 DMA-SHA 运算。每次 DMA-SHA 运算之间允许插入其他运算标准的计算任务。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+与 Typical SHA 不同，SHA 在 DMA-SHA 工作模式下，运算过程中的数据搬运过程均由硬件完成。用户先按照 \ref{parsingmessage} 章节配置 DMA 控制器。更多信息，也可参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+\textbf{DMA-SHA 的具体工作流程（SHA-512/{\it{t}} 除外）}
+
+\begin{enumerate}
+    \item 选择运算标准。
+    \begin{itemize}
+        \item 配置 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器，设置运算标准。具体配置，请参考表 \ref{table:mode summary}。
+    \end{itemize}
+    \item 选择是否启用中断。请将 \hyperref[regdesc:SHAINTENAREG]{SHA\_INT\_ENA\_REG} 寄存器配置为 1 以启动中断。
+    \item 配置块个数。
+    \begin{itemize}
+        \item  将待加密数据的总块数 {\it{M}} 写入  \hyperref[regdesc:SHADMABLOCKNUMREG]{SHA\_DMA\_BLOCK\_NUM\_REG} 寄存器。
+    \end{itemize}
+    \item 开始 DMA-SHA 运算。
+        \begin{itemize}
+            \item 如果当前 DMA-SHA 运算为接着另一次 DMA-SHA 的运算，需要提前将另一次计算得到的信息摘要写入寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 中，随后将 1 写入寄存器 \hyperref[regdesc:SHADMACONTINUEREG]{SHA\_DMA\_CONTINUE\_REG}；
+            \item 否则，只需要将 1 写入寄存器 \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG}。
+        \end{itemize}
+    \item 等待 DMA-SHA 运算结束。判断 DMA-SHA 运算结束有以下两种方法：
+        \begin{itemize}
+            \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 结果为 0。
+            \item 等待中断信号产生。此时，应及时通过软件将 \hyperref[regdesc:SHAINTCLEARREG]{SHA\_INT\_CLEAR\_REG} 寄存器置为 1 以清除中断。
+        \end{itemize}
+
+    \item 获取信息摘要
+    \begin{itemize}
+        \item 从寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 取出信息摘要。
+    \end{itemize}
+
+\end{enumerate}
+
+\textbf{DMA-SHA 的具体工作流程（SHA-512/{\it{t}}）}
+
+\begin{enumerate}
+    \item 选择运算标准。
+        \begin{itemize}
+            \item 配置 \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} 寄存器为 7 选择 SHA-512/{\it{t}} 运算标准。
+        \end{itemize}
+    \item 选择是否启用中断。请将 \hyperref[regdesc:SHAINTENAREG]{SHA\_INT\_ENA\_REG} 寄存器配置为 1 以启动中断。
+    \item 计算哈希初始值。
+        \begin{enumerate}
+            \item 配置 t\_string 和 t\_length，并将其写入 \hyperref[regdesc:SHATSTRINGREG]{SHA\_T\_STRING\_REG} 和 \hyperref[regdesc:SHATLENGTHREG]{SHA\_T\_LENGTH\_REG} 寄存器。具体请见 \ref{initialhash} 章节。
+            \item 对 \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} 寄存器置 1，启动 SHA 加速器的运算。
+            \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 一直到读回的值为 0，代表 SHA 硬件加速器已完成哈希初始值的计算。
+        \end{enumerate}
+    \item 配置块个数。
+        \begin{itemize}
+            \item 将待加密数据的总块数 M 写入  \hyperref[regdesc:SHADMABLOCKNUMREG]{SHA\_DMA\_BLOCK\_NUM\_REG} 寄存器。
+        \end{itemize}
+    \item 开始 DMA-SHA 运算。
+        \begin{itemize}
+            \item 对 \hyperref[regdesc:SHADMACONTINUEREG]{SHA\_DMA\_CONTINUE\_REG} 置 1 启动 SHA 加速器。
+        \end{itemize}
+    \item 等待 DMA-SHA 运算结束。判断 DMA-SHA 运算结束有以下两种方法：
+        \begin{itemize}
+            \item 轮询寄存器 \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} 结果为 0。
+            \item 等待中断信号产生。此时，应及时通过软件将 \hyperref[regdesc:SHAINTCLEARREG]{SHA\_INT\_CLEAR\_REG} 寄存器置为 1 以清除中断。
+        \end{itemize}
+    \item 获取信息摘要
+        \begin{itemize}
+            \item 从寄存器堆 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} 取出信息摘要。
+        \end{itemize}
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\subsection{信息摘要存储}
+
+哈希运算完成之后，计算得到的信息摘要被 SHA 加速器更新至对应的 \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} (\regindex{n}: 0\verb+~+15) 寄存器中。不同运算标准得到的信息摘要长度也不同，详情见表 \ref{table:message_digest}：
+
+\begin{longtable}[c]{|l|c|l|}
+\caption{不同运算标准信息摘要的寄存器占用情况}
+\label{table:message_digest}
+\\\hline
+\rowcolor{lightgray}
+哈希运算标准 & 信息摘要长度（位） & 寄存器占用情况 \hyperref[note2]{$^1$}\\
+    \hline
+    SHA-1 & 160 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_4\_REG\\
+    \hline
+    SHA-224 & 224 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_6\_REG\\
+    \hline
+    SHA-256 & 256 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_7\_REG\\
+    \hline
+    SHA-384 & 384 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_11\_REG\\
+    \hline
+    SHA-512 & 512 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_15\_REG\\
+    \hline
+    SHA-512/224 & 224 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_6\_REG\\
+    \hline
+    SHA-512/256 & 256 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_7\_REG\\
+    \hline
+    SHA-512/\regindex{t} \hyperref[note2]{$^2$} & \regindex{t} & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_\regindex{x}\_REG\\
+    \hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2.5em}
+\begin{enumerate}\label{note2}
+\item 信息摘要从左至右存放，第一个 word 存放在寄存器 \hyperref[regdesc:SHAHNREG]{SHA\_H\_0\_REG} 中，第二个 word 存放在寄存器 \hyperref[regdesc:SHAHNREG]{SHA\_H\_1\_REG} 中，以此类推。
+\item SHA-512/{\it{t}} 运算标准使用的寄存器与 {\it{t}} 的取值有关。{\it{x}}+1 代表用于存储 {\it{t}} 位信息摘要的 32 位寄存器个数，因此 {\it{x}} = \begin{math}roundup(t/32)\end{math}-1。举例：
+\begin{itemize}
+    \item 当 {\it{t}} = 8 时，则 {\it{x}} = 0，代表最终的信息摘要长度为 8 位，存放在寄存器 \hyperref[regdesc:SHAHNREG]{SHA\_H\_0\_REG} 的高 8 位中；
+    \item 当 {\it{t}} = 32 时，则 {\it{x}} = 0，代表最终的信息摘要长度为 32 位，存放在寄存器 \hyperref[regdesc:SHAHNREG]{SHA\_H\_0\_REG} 中；
+    \item 当 {\it{t}} = 132 时，则 {\it{x}} = 4，代表最终的信息摘要长度为 132 位，存放在寄存器 \hyperref[regdesc:SHAHNREG]{SHA\_H\_0\_REG}、\hyperref[regdesc:SHAHNREG]{SHA\_H\_1\_REG}、\hyperref[regdesc:SHAHNREG]{SHA\_H\_2\_REG}、\hyperref[regdesc:SHAHNREG]{SHA\_H\_3\_REG}，及 \hyperref[regdesc:SHAHNREG]{SHA\_H\_4\_REG} 中。
+\end{itemize}
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{中断}\label{Interrupt}
+
+SHA 加速器在 DMA-SHA 工作模式下允许中断发生。
+ 用户可通过将 \hyperref[regdesc:SHAINTENAREG]{SHA\_INT\_ENA\_REG} 寄存器配置为 1 开启中断。如开启中断功能，SHA 加速器在完成运算时，中断发生。注意，该中断必须由软件将 \hyperref[regdesc:SHAINTCLEARREG]{SHA\_INT\_CLEAR\_REG} 寄存器置为 1 进行清除。由于 SHA 加速器在 Typical SHA 工作模式下的时间开销较小，因此不支持中断功能。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{基地址} \label{Label SHA MODULE ENTRY}
+
+用户可以通过两个不同的寄存器基地址访问 SHA，如表 \ref{table:SHAENTRY} 所示。
+更多信息，请前往章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{SHA 基地址}\label{table:SHAENTRY}
+\\\hline
+\rowcolor{lightgray}
+访问总线 & 基地址 \\
+    \hline
+    PeriBUS1      & \hexprefix{}3F43B000      \\
+    \hline
+    PeriBUS2      & \hexprefix{}6003B000      \\
+    \hline
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sha-reg-summ}{}
+\section{寄存器列表} \label{SHA reg_summary}
+
+\subfile{\modulefiles/SHA_Accelerator_Reg_Summary_cn.tex}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{寄存器}
+\subfile{\modulefiles/SHA_Accelerator_Reg_cn.tex}
+
+\end{document}

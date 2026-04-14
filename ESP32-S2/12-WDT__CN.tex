@@ -1,0 +1,206 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./12-WDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{wdt}{}
+\chapter{看门狗定时器 (WDT)}
+\label{mod:wdt}
+
+
+\section{概述}
+
+看门狗定时器是一种硬件定时器，用于检测和修复故障。软件必须定期喂狗（复位），以防超时。系统/软件若出现不可预知的问题（比如软件卡在某个循环中或事件逾期）将无法按时喂狗，造成看门狗超时。因此，看门狗定时器有助于检测、处理系统/软件的错误行为。
+
+ESP32-S2 中有三个看门狗定时器：两个定时器组中各一个（称作主系统看门狗定时器，缩写为 MWDT），RTC 模块中一个（称作 RTC 看门狗定时器，缩写为 RWDT）。看门狗在运行期间会经历四个阶段（除非看门狗被按时喂狗或者处于关闭状态），每个阶段均可配置单独的超时时间和超时动作，其中除了 RWDT 支持四种超时动作外，其它两个看门狗仅支持三种。超时动作包括：中断、CPU 复位、内核复位和系统复位。其中，只有 RWDT 能够触发系统复位，即复位芯片内部所有的数字电路，包括 RTC 和主系统。每个阶段的超时时间都可单独设置。
+
+在 flash 引导模式下，RWDT 和第一个 MWDT 会默认使能，以检测引导过程中发生的错误，并恢复运行。
+
+请注意，本章节仅包含看门狗定时器的功能描述，其寄存器部分详见第 \ref{mod:timg} 章：\textit{\nameref{mod:timg}}。
+
+\section{特性}
+看门狗定时器具有如下特性：
+\begin{itemize}
+    \item 四个阶段，每个阶段都可配置超时时间。每阶段都可单独配置、使能和关闭
+    \item 如在某个阶段发生超时，则会采取三或四种（分别针对 MWDT 和 RWDT）动作中的一种（中断、CPU 复位、内核复位和系统复位）
+    \item 32 位超时计数器
+    \item 写保护，防止 RWDT 和 MWDT 配置无意间改动
+    \item Flash 启动保护\\
+    如果在预定时间内 SPI flash 的引导过程没有完成，看门狗会重启整个主系统
+\end{itemize}
+
+\section{功能描述}
+\subsection{时钟源与 32 位计数器}
+
+每个看门狗定时器的核心是一个 32 位计数器。APB 时钟经过可配置的 16 位预分频器后会得到 MWDT 的时钟源。而RWDT 的时钟源则直接取自于 RTC 慢速时钟（没有预分频器），频率通常为 32 kHz。MWDT 的 16 位预分频器可通过 \hyperref[regdesc:TIMGWDTCONFIG1REG]{TIMG\_WDTCONFIG1\_REG} 寄存器的 \hyperref[fielddesc:TIMGWDTCLKPRESCALER]{TIMG\_WDT\_CLK\_PRESCALER} 字段配置。
+
+MWDT 和 RWDT 看门狗可分别通过设置 \hyperref[fielddesc:TIMGWDTEN]{TIMG\_WDT\_EN} 和 \hyperref[fielddesc:RTCCNTLWDTEN]{RTC\_CNTL\_WDT\_EN} 字段使能。看门狗使能后，其内部 32 位计数器的值会在每个时钟源周期内累加 1，直到达到该阶段的超时时间（即在该阶段发生超时）。如发生超时，计数器的值会重置为 0，同时看门狗进入下一阶段。如果软件在规定的时间内成功喂狗，看门狗定时器会回到阶段 0，并将计数器的值重置为 0。软件向 \hyperref[regdesc:TIMGWDTFEEDREG]{TIMG\_WDTFEED\_REG} 和 \hyperref[fielddesc:RTCCNTLRTCWDTFEED]{RTC\_CNTL\_RTC\_WDT\_FEED} 寄存器内写入任意值，便可分别为 MDWT 和 RWDT 喂狗。
+
+
+\subsection{阶段与超时动作}
+定时器在各阶段可以配置不同的超时时间和对应的超时动作。某一阶段超时会触发对应的超时动作，同时计数器的值被重置为 0，看门狗进入下一阶段。MWDT 和 RWDT 有四个阶段（称为阶段 0 至阶段 3）。看门狗定时器会循环工作（即从阶段 0 至阶段 3，再回到阶段 0）。
+MWDT 每个阶段的超时时间可在 TIMG\_WDTCONFIG\textcolor{red}{\it{i}}\_REG （i 的范围是 2 到 5）寄存器中配置，RWDT 的超时时间可用 RTC\_CNTL\_WDT\_STG\textcolor{red}{\it{j}}\_HOLD（j 的范围是 0 到 3）字段配置。
+值得注意的是，RWDT 在阶段 0 的超时时间 (T\textsubscript{hold0}) 受 eFuse 寄存器 \hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} 字段和 \hyperref[fielddesc:RTCCNTLWDTSTG0HOLD]{RTC\_CNTL\_WDT\_STG0\_HOLD} 字段共同影响，关系如下：
+
+T\textsubscript{hold0} = \hyperref[fielddesc:RTCCNTLWDTSTG0HOLD]{RTC\_CNTL\_WDT\_STG0\_HOLD}   << （\hyperref[fielddesc:EFUSEWDTDELAYSEL]{EFUSE\_WDT\_DELAY\_SEL} + 1）
+
+
+如某个阶段超时，下列超时动作之一将会执行：
+\begin{itemize}
+    \item 触发中断\\
+    如阶段超时，中断被触发。
+    \item CPU 复位\\
+    如阶段超时，复位 CPU 核心。
+    \item 内核复位\\
+    如阶段超时，包括 MWDT 在内的主系统都会复位。RTC 不会复位。
+    \item 系统复位\\
+    如阶段超时，主系统和 RTC 同时复位。此动作仅可在 RWDT 中实现。
+    \item 关闭\\
+    该阶段对系统不产生影响。
+\end{itemize}
+
+MWDT 所有阶段的超时动作均在 \hyperref[regdesc:TIMGWDTCONFIG0REG]{TIMG\_WDTCONFIG0\_REG} 寄存器中配置。与之类似，RWDT 的超时动作可在 \hyperref[regdesc:RTCCNTLWDTCONFIG0REG]{RTC\_CNTL\_WDTCONFIG0\_REG} 寄存器配置。
+
+\subsection{写保护}
+看门狗定时器对于检测和处理系统/软件错误而言至关重要，不应轻易关闭（例如，因写寄存器位置错误而误将看门狗关闭）。因此，MWDT 和 RWDT 引入写保护机制，防止看门狗因偶然的错误访问而被关闭或篡改。
+
+每个看门狗定时器都有一个写密钥寄存器，运行写保护机制（MWDT 看门狗使用 \hyperref[fielddesc:TIMGWDTWKEY]{TIMG\_WDT\_WKEY}，RWDT 看门狗使用 \hyperref[fielddesc:RTCCNTLWDTWKEY]{RTC\_CNTL\_WDT\_WKEY}）。必须向看门狗定时器的写密钥保护寄存器写入 \hexprefix{}50D83AA1，才能修改其它看门狗寄存器。如果写密钥保护寄存器的值不是 \hexprefix{}50D83AA1，任何试图在看门狗定时器寄存器（除了密钥保护寄存器本身）上写值的操作都会被忽略。推荐按以下步骤访问看门狗定时器：
+\begin{enumerate}
+\item 将 \hexprefix{}50D83AA1 写入看门狗定时器的写密钥保护寄存器，关闭写保护。
+\item 根据需要修改看门狗，如喂狗或改变配置。
+\item 向看门狗定时器的写密钥保护寄存器上写入除 \hexprefix{}50D83AA1 以外的任意值，重新使能写保护。
+\end{enumerate}
+
+\subsection{Flash 引导保护}
+在 flash 引导模式下，定时器组 0（\hyperref[TIMG0]{TIMG0}）中的 MWDT 和 RWDT 会默认使能。MWDT 使能后，阶段 0 的默认超时动作为内核复位（复位主系统）。RWDT 的阶段 0 超时动作为为系统复位（复位主系统和 RTC）。引导后，应将 \hyperref[fielddesc:TIMGWDTFLASHBOOTMODEN]{TIMG\_WDT\_FLASHBOOT\_MOD\_EN} 和 \hyperref[fielddesc:RTCCNTLWDTFLASHBOOTMODEN]{RTC\_CNTL\_WDT\_FLASHBOOT\_MOD\_EN} 位清零，分别关闭 MWDT 和 RWDT的 flash 引导保护。然后，软件可以配置 MWDT 和 RWDT。
+
+\section{超级看门狗}\label{mod:swd}
+超级看门狗 (SWD) 是超低功耗电路，防止系统在数字电路异常状态下运行，并在必要时复位系统。SWD 包含一个约每秒需要喂狗一次的看门狗电路，在看门狗超时时间约 100 ms 之前发送 WD\_INTR 信号提醒系统喂狗。
+
+如果系统不回应 SWD 的喂狗请求，看门狗超时，SWD 会产生系统电平信号 SWD\_RSTB，复位芯片上的整个数字电路。
+
+\subsection{特性}
+SWD 具有如下特性：
+\begin{itemize}
+    \item 低功耗，面积小
+    \item 用中断提醒系统喂 SWD
+    \item 软件有多种专用的方法喂 SWD，让 SWD 监控整个操作系统的工作状态
+\end{itemize}
+
+\subsection{SWD 控制器}
+\subsubsection{结构}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/swd}
+    \caption{超级看门狗结构}
+    \label{Figure:swd}
+\end{figure}
+
+\subsubsection{工作流程}
+正常状态下：
+\begin{itemize}
+    \item SWD 控制器收到 SWD 的喂狗请求。
+    \item SWD 控制器可以向主 CPU 或 ULP-RISC-V 发送中断。
+    \item 主 CPU 可以决定是通过置位 \hyperref[fielddesc:RTCCNTLSWDFEED]{RTC\_CNTL\_SWD\_FEED} 直接喂狗，还是发送中断让 ULP-RISC-V 置位该寄存器喂狗。
+    \item CPU 或协处理器喂狗时，需要先向 \hyperref[fielddesc:RTCCNTLSWDWKEY]{RTC\_CNTL\_SWD\_WKEY} 写 \hexprefix{}8F1D312A  关闭 SWD 控制器的写保护。这样做可以防止系统在数字电路异常状态下运行时误喂 SWD。
+    \item 如将 \hyperref[fielddesc:RTCCNTLSWDAUTOFEEDEN]{RTC\_CNTL\_SWD\_AUTO\_FEED\_EN} 置 1，SWD 控制器也可配置为在不需要 CPU 或 ULP-RISC-V 干预的情况下喂 SWD。
+\end{itemize}
+
+复位后：
+\begin{itemize}
+    \item 可查看 \hyperref[fielddesc:RTCCNTLRESETCAUSEPROCPU]{RTC\_CNTL\_RESET\_CAUSE\_PROCPU}[5:0] 获知 CPU 复位原因。\\
+	如 \hyperref[fielddesc:RTCCNTLRESETCAUSEPROCPU]{RTC\_CNTL\_RESET\_CAUSE\_PROCPU}[5:0] == \hexprefix{}12，则表示上一次复位的原因是 SWD 复位。
+	\item 置位 \hyperref[fielddesc:RTCCNTLSWDRSTFLAGCLR]{RTC\_CNTL\_SWD\_RST\_FLAG\_CLR} 清除 SWD 复位标志。
+\end{itemize}
+
+\hypertarget{wdt-reg-summ}{}
+\section{寄存器}
+
+MWDT 寄存器是定时器模块的一部分，在第 \ref{mod:timg} 章：\textit{\nameref{mod:timg}} 的 \hyperref[timer_registers]{定时器寄存器}中有详细描述。RWDT 和 SWD 寄存器是 RTC 模块的一部分，在第 \ref{mod:lowpowm} 章： \textit{\nameref{mod:lowpowm}} 的 \hyperref[RTC_Register]{RTC 寄存器}中有详细描述。
+\end{document}

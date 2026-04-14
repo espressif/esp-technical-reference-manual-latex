@@ -1,0 +1,397 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./09-LOWPOWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\graphicspath{ {images/Low-Power-Management_image/} }
+\hypertarget{lowpowm}{}
+\chapter{低功耗管理 (RTC\_CNTL)}
+\label{mod:lowpowm}
+\section{概述}
+
+
+ESP32 采用了高效、灵活的功耗管理技术，可以在功耗控制、唤醒延迟和不同唤醒源之间实现最佳平衡。芯片的主处理器支持 5 种功耗模式，可以满足用户的不同场景需求。此外，ESP32 还支持超低功耗协处理器 (ULP Co-processor) 控制，允许主处理器进入 Deep-sleep 模式，从而最大程度降低功耗，支持用户的低功耗应用。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 支持 5 种预设功耗模式，适用于多种应用场景
+    \item 支持高达 16 KB 保留内存 (Retention Memory)
+    \item 8 x 32-bit 保留寄存器 (Retention Register)
+    \item 所有低功耗模式均支持 ULP 协处理器控制
+    \item 支持 RTC boot 功能，可缩短唤醒延迟
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/power_ctrl.eps}
+    \caption{ESP32 功耗控制示意图}
+    \label{figure:ESP32 power control}
+\end{figure}
+
+
+\section{功能描述}
+
+\subsection{简介}
+
+ESP32 的低功耗管理单元包括调压器、功耗控制器、电源开关单元、电源域隔离单元 (Isolation Cell) 等部分，具体结构示意图可见上方图 \ref{figure:ESP32 power control}。
+
+
+\subsection{数字内核调压器}
+
+ESP32 的内置数字内核调压器可以将外部电源电压（通常为 3.3 V）转换为 1.1 V，支持数字内核的正常工作。该调压器可以接受的外部输入电压范围为 1.8 V 到 3.6 V，输出电压范围为 0.90 V 到 1.25 V。具体结构示意图可见下方图 \ref{figure:Digital regulator}。
+
+\begin{enumerate}
+    \item 数字内核调压器可由软件控制，控制寄存器位为 \hyperref[regdesc:RTCCNTLVREGREG]{RTC\_CNTL\_VREG\_FORCE\_PU} 和 \hyperref[regdesc:RTCCNTLVREGREG]{RTC\_CNTL\_VREG\_FORCE\_PD}。
+    \item \hyperref[regdesc:RTCCNTLVREGREG]{RTC\_CNTL\_DIG\_VREG\_DBIAS\_WAK} 以及 \hyperref[regdesc:RTCCNTLVREGREG]{RTC\_CNTL\_DIG\_VREG\_DBIAS\_SLP} 可用于调节数字内核的供电电压：\\
+    $$\mathrm{VDD\_DIG = 0.90 + DBIAS \cdot 0.05 V}$$
+    \item 流入数字内核的电流来自管脚 VDD3P3\_CPU 和 VDD3P3\_RTC。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/REG_DIGITAL.eps}
+    \caption{数字内核调压器}
+    \label{figure:Digital regulator}
+\end{figure}
+
+
+\subsection{低功耗调压器}
+
+ESP32 的内置低功耗调压器可以将外部电源电压（通常为 3.3 V）转换为 1.1 V，支持内部 RTC 数字内核的正常工作。为了降低功耗，该调压器可以接受的外部输入电压范围为 1.8 V 到 3.6 V，输出电压范围可调：正常工作模式下的电压输出范围为 0.90 V 到 1.25 V；Deep-sleep 和睡眠模式下的电压输出固定为 0.75 V；休眠模式下的电压输出更低。具体结构示意图可见下方图 \ref{figure:Low power regulator}。
+
+
+\begin{enumerate}
+
+    \item 当管脚 CHIP\_PU 为高电平时，低功耗调压器无法关闭，仅能在正常和 Deep-sleep 模式之间进行切换。
+
+    \item 在正常模式下，\hyperref[fielddesc:RTCCNTLDBIASWAK]{RTC\_CNTL\_DBIAS\_WAK} 可以调节输出电压：\\
+    $$\mathrm{VDD\_RTC = 0.90 + DBIAS \cdot 0.05 V}$$
+
+    \item 在 Deep-sleep 模式下，调压器的输出电压固定为 0.75 V。
+
+    \item 流向 RTC 数字内核的电流来自管脚 VDD3P3\_RTC。
+
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/REG_RTC.eps}
+    \caption{低功耗调压器}
+    \label{figure:Low power regulator}
+\end{figure}
+
+
+\subsection{Flash 调压器}
+
+ESP32 的内置 flash 调压器可以向系统中的其他设备输出 3.3 V 或 1.8 V 电压，比如 flash。该调压器的最大电流输出为 40 mA。具体结构示意图可见下方图 \ref{figure:Flash regulator}。
+
+\begin{enumerate}
+    \item 当 \hyperref[regdesc:RTCCNTLSDIOCONFREG]{XPD\_SDIO\_VREG} == 1 时，调压器的输出电压为 3.3 V 或 1.8 V；当 \hyperref[regdesc:RTCCNTLSDIOCONFREG]{XPD\_SDIO\_VREG} == 0 时，调压器的输出电压为高阻抗，电压由外部电源供应。
+
+    \item 当 \hyperref[regdesc:RTCCNTLSDIOCONFREG]{SDIO\_TIEH} == 1 时，调压器将管脚 VDD\_SDIO 和管脚 VDD3P3\_RTC 短路，电压输出为 3.3 V，即管脚 VDD3P3\_RTC 的电压；当 \hyperref[regdesc:RTCCNTLSDIOCONFREG]{SDIO\_TIEH} == 0 时，调压器的电压输出为参考电压 VREF，通常为 1.8 V。
+
+    \item 更改 \hyperref[fielddesc:RTCCNTLDREFHSDIO]{DREFH\_SDIO}、\hyperref[fielddesc:RTCCNTLDREFMSDIO]{DREFM\_SDIO}、\hyperref[fielddesc:RTCCNTLDREFLSDIO]{DREFL\_SDIO} 可以小幅调节参考电压 VREF，但这种操作可能会影响系统内环的稳定性，因此不推荐进行更改。
+
+    \item 当调压器输出为 3.3 V 或 1.8 V 时，输出电流来自管脚 VDD3P3\_RTC。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/REG1P8.eps}
+    \caption{Flash 调压器}
+    \label{figure:Flash regulator}
+\end{figure}
+
+
+\subsection{欠压检测器}
+
+ESP32 的欠压检测器可以检查管脚 VDD3P3\_RTC 的电压。当电压快速下落至一定水平，欠压检测器将发出触发信号，关闭部分耗电模块（比如 LNA 和 PA 等），从而为数字模块争取更多时间，用以保存、转移重要数据。欠压检测器的功耗非常低，将在芯片开启时永远保持开启，具体的信号触发阈值可以调节，通常为 2.5 V。具体结构示意图可见下方图 \ref{figure:Brown out detector}。
+
+\begin{enumerate}
+    \item \hyperref[regdesc:RTCCNTLBROWNOUTREG]{RTC\_CNTL\_BROWN\_OUT\_DET} 为欠压检测器的输出电平，将在管脚 VDD3P3\_RTC 电压低于阈值时跳至高电平。
+    \item \hyperref[regdesc:RTCCNTLBROWNOUTREG]{RTC\_CNTL\_DBROWN\_OUT\_THRES[2:0]} 可用于调节欠压检测器的信号触发阈值，通常为 2.5 V。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/BROWN_OUT_DET.eps}
+    \caption{欠压检测器}
+    \label{figure:Brown out detector}
+\end{figure}
+
+
+\subsection{RTC 模块}
+
+ESP32 的 RTC 模块经过专门设计，可用于管理低功耗模式的进入和退出，控制时钟源、PLL、电源开关和隔离单元以产生电源门控、时钟门控和复位信号。RTC 模块的结构图可见图 \ref{figure:RTC structure}，主要部分包括：
+
+\begin{itemize}
+    \item RTC 主状态机 –– 记录电源状态。
+    \item 数字\&模拟电源控制器 –– 可用于为 RTC 的数字模块和模拟模块生成电源门控／时钟门控信号。
+    \item 睡眠\&唤醒控制器 –– 可处理低功耗模式的进入和退出。
+    \item 计时器 –– 包括 RTC 主计时器、ULP 协处理器计时器和触摸计时器。
+    \item 低功耗处理器和传感器控制器 –– ULP 协处理器、触摸控制器、SAR ADC 控制器等。
+    \item 保留内存
+    \begin{itemize}
+        \item RTC 慢速内存 –– 支持 8 KB SRAM，绝大部分用作保留内存或存储 ULP 协处理器的指令\&数据内存。CPU 可通过 APB 总线访问慢速内存，起始地址为 0x50000000。
+        \item RTC 快速内存 –– 支持 8 KB SRAM，绝大部分用作保留内存。CPU 可通过 IRAM0/DRAM0 访问快速内存。RTC 快速内存的速度约为 RTC 慢速内存的 10 倍。
+    \end{itemize}
+    \item 保留寄存器 –– 8 x 32 位。该寄存器永远开启，可用于数据存储。
+    \item RTC IO 管脚 –– 18 个“always-on”管脚，通常作为唤醒源。
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/rtc_structure.eps}}
+    \caption{RTC 结构图}
+    \label{figure:RTC structure}
+\end{figure}
+
+
+\subsection{低功耗时钟}
+
+在低功耗模式下，ESP32 的 40 MHz 晶振和 PLL 通常将断电以降低功耗，但时钟仍将开启，以确保芯片在低功耗模式下的正常工作。
+
+RTC 内核可以使用 5 个时钟源：
+
+\begin{itemize}
+    \item 外部低速晶振时钟 XTL32K\_CLK (32.768 kHz)
+    \item 外部高速晶振时钟 XTAL\_DIV\_CLK (2 MHz \verb+~+ 40 MHz)
+    \item 内部 RC 振荡器 RC\_SLOW\_CLK（频率可调，通常为 150 kHz）
+    \item 内部 8 MHz 振荡器 RC\_FAST\_CLK
+    \item 内部 31.25 kHz 时钟 RC\_FAST\_DIV\_CLK（来自内部 8 MHz 振荡器，256 分频）
+\end{itemize}
+
+这些时钟可以产生 RTC\_FAST\_CLK 和 RTC\_SLOW\_CLK。配置 \hyperref[fielddesc:RTCCNTLFASTCLKSEL]{RTC\_CNTL\_RTC\_FAST\_CLK\_SEL} 选择 RTC\_FAST\_CLK 时钟源，配置 \hyperref[fielddesc:RTCCNTLANACLKRTCSEL]{RTC\_CNTL\_ANA\_CLK\_RTC\_SEL} 选择 RTC\_SLOW\_CLK 时钟源。一般情况下，RTC\_FAST\_CLK 选择 RC\_FAST\_CLK，RTC\_SLOW\_CLK 选择 RC\_SLOW\_CLK，具体可见图 \ref{figure:RTC low-power clocks}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/rtc_clock.pdf}
+    \caption{RTC 低功耗时钟}
+    \label{figure:RTC low-power clocks}
+\end{figure}
+
+对于数字内核，LOW\_POWER\_CLK 可在 4 个时钟源（XTL32K\_CLK、RTC\_SLOW\_CLK、RC\_FAST\_CLK 和 XTL\_CLK）之间切换，相关配置寄存器为 \hyperref[regdesc:BTLPCKDIVFRACREG]{DPORT\_BT\_LPCK\_DIV\_FRAC\_REG}。
+
+
+\subsection{电源门控的实现}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.50\textwidth]{\modulefiles/figures/rtc_states.eps}
+    \caption{RTC 状态}
+    \label{figure:RTC states}
+\end{figure}
+
+电源门控转化图具体可见图 \ref{figure:RTC states}。实际电源控制信号可通过软件设置为强制开启 (FPU) 或强制关闭 (FPD)，相关寄存器为 \hyperref[regdesc:RTCCNTLPWCREG]{RTC\_CNTL\_PWC\_REG} 和 \hyperref[regdesc:RTCCNTLDIGPWCREG]{RTC\_CNTL\_DIG\_PWC\_REG}。电源域支持独立电源门控，可针对多种不同应用场景进行具体组合。表 \ref{table:RTC power domains} 展示了 ESP32 电源域的控制方式。
+
+\input{\modulefiles/tables/Low-Power-Management_rtc_power_domains_cn.tex}
+
+\subsection{预设功耗模式}
+
+ESP32 支持 5 种预设功耗模式，可以覆盖绝大多数应用场景。因此，用户在自行调整各个电源控制信号前，应首先尝试这 5 种功耗模式能否满足要求，具体包括：
+
+\begin{itemize}
+    \item Active 模式
+    \begin{itemize}
+        \item CPU 的工作时钟为 XTAL\_DIV\_N (40 MHz/26 MHz) 或 PLL (80 MHz/160 MHz/240 MHz)。
+        \item 芯片可以接收、发射或监听信号。
+    \end{itemize}
+
+    \item Modem-sleep 模式
+    \begin{itemize}
+        \item CPU 可以工作，时钟可以配置。
+        \item Wi-Fi／蓝牙基带受时钟门限控制或关闭，射频模块关闭。
+        \item PLL 为 80 MHz 时，电流消耗： $\sim$30 mA。
+        \item XTAL 为 2 MHz 时，电流消耗： $\sim$3 mA。
+        \item 即刻唤醒。
+    \end{itemize}
+
+    \item Light-sleep 模式
+    \begin{itemize}
+        \item 内部 8 MHz 振荡器、40 MHz 高速晶振、PLL 及射频模块均禁用。
+        \item 数字内核时钟受门限限制，CPU 暂停工作。
+        \item ULP 协处理器和触摸控制器可以周期性触发，对传感器进行监测。
+        \item 电流消耗：$\sim$ 800 $\mu$A。
+        \item 唤醒延迟：低于 1 ms。
+    \end{itemize}
+
+    \item Deep-sleep 模式
+    \begin{itemize}
+        \item 内部 8 MHz 振荡器、40 MHz 高速晶振、PLL 及射频模块均禁用。
+        \item 数字内核断电，CPU 内容丢失。
+        \item RTC 内核的供电电压降至 0.7V。
+        \item 8 x 32 位数据保存在通用保留寄存器中。
+        \item RTC 内存和快速 RTC 内存可以保持。
+        \item 电流消耗：$\sim$ 6.5 $\mu$A。
+        \item 唤醒延迟：低于 1 ms。
+        \item 推荐用于一些非频繁连接 Wi-Fi／蓝牙的超低功耗应用场景。
+    \end{itemize}
+
+    \item 休眠模式
+    \begin{itemize}
+        \item 内部 8 MHz 振荡器、40 MHz 高速晶振、PLL 及射频模块均禁用。
+        \item 数字内核断电，CPU 内容丢失。
+        \item RTC 外设域断电。
+        \item RTC 内核的供电电压降至 0.7V。
+        \item 8 x 32 位数据保存在通用保留寄存器中。
+        \item RTC 内存和快速 RTC 内存断电。
+        \item 电流消耗：$\sim$ 4.5 $\mu$A。
+        \item 唤醒源：仅支持 RTC 计时器。
+        \item 唤醒延迟：低于 1 ms。
+        \item 推荐用于一些非频繁连接 Wi-Fi／蓝牙的超低功耗应用场景。
+    \end{itemize}
+\end{itemize}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/power_modes.eps}
+    \caption{功耗模式}
+    \label{figure:Power modes}
+\end{figure}
+
+默认情况下，ESP32 系统复位后将进入 Modem-sleep 模式，当有收发包任务时，可配置为 Active 模式。当 CPU 停止工作一段时间后，可以进入多种低功耗模式。用户可根据具体功耗、唤醒延迟和可用唤醒源需求，在各种功耗模式中进行选择。详见图 \ref{figure:Power modes}。\\
+值得一提的是，ESP32 的预设功耗模式可支持进一步优化，以适应不同的应用场景。
+
+
+\subsection{唤醒源}\label{WakeupSource}
+ESP32 可支持多种唤醒源，可将 CPU 从不同睡眠模式中唤醒。唤醒源的选择由 \hyperref[regdesc:RTCCNTLWAKEUPSTATEREG]{RTC\_CNTL\_WAKEUP\_ENA} 决定，见表 \ref{tab:lpm-wakeup-source}。
+
+\input{\modulefiles/tables/Low-Power-Management_rtc_wakeup_source_cn.tex}
+
+\subsection{拒绝睡眠}\label{sec:lpm-reject-source}
+
+ESP32 提供了硬件拒绝睡眠的机制，防止系统在某些外设仍在工作但是未被 CPU 检测到时进入睡眠，最终导致该外设不能正常工作。
+
+表 \ref{tab:lpm-wakeup-source} 中 GPIO 和 SDIO 可以配置为拒绝睡眠源。
+
+用户可以配置以下寄存器使能或禁用拒绝睡眠功能。
+\begin{itemize}
+    \item 配置 \hyperref[regdesc:RTCCNTLSTATE0REG]{RTC\_CNTL\_SLP\_REJECT} 整体使能或关闭拒绝休眠功能：
+        \begin{itemize}
+            \item 进一步配置 \hyperref[regdesc:RTCCNTLSLPREJECTCONFREG]{RTC\_CNTL\_LIGHT\_SLP\_REJECT\_EN}，具体使能拒绝进入 Light\_sleep；
+            \item 进一步配置 \hyperref[regdesc:RTCCNTLSLPREJECTCONFREG]{RTC\_CNTL\_DEEP\_SLP\_REJECT\_EN}，具体使能拒绝进入 Deep\_sleep；
+        \end{itemize}
+    \item 读取 \hyperref[regdesc:RTCCNTLSLPREJECTCONFREG]{RTC\_CNTL\_REJECT\_CAUSE} 了解拒绝睡眠的原因。
+\end{itemize}
+
+\subsection{RTC 计时器}
+RTC 计时器为一个可读 48-bit 计数器，时钟为 RTC\_SLOW\_CLK。除上电复位外其余任何复位／睡眠均不会使 RTC 计时器停止或复位。
+
+RTC 计时器可以在指定时间唤醒 CPU，并周期性唤醒触摸控制器和 ULP 协处理器。
+
+\subsection{RTC Boot}
+
+由于 CPU 的 ROM 和 RAM 内存均将在 Deep-sleep 和休眠模式下断电，而 ROM 解包与 SPI 启动（从 flash 中复制数据）均需要时间，因此这两种模式下的唤醒过程均比 Light-sleep 和 Modem-sleep 模式长的多。RTC 域中有 2 种 SRAM 内存，分别为 RTC 慢速内存和 RTC 快速内存。这 2 种 SRAM 内存均将在 Deep-sleep 模式下保持开启。一些代码规模不大的应用（小于 8 KB）可通过两种方法，避免 ROM 解包或 SPI 启动，从而加速芯片唤醒过程。
+
+第一种方法：使用 RTC 慢速内存
+
+\begin{enumerate}
+    \item  设置 PRO\_CPU 寄存器 \hyperref[regdesc:RTCCNTLRESETSTATEREG]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL}（或设置 APP\_CPU \\寄存器 \hyperref[regdesc:RTCCNTLRESETSTATEREG]{RTC\_CNTL\_APPCPU\_STAT\_VECTOR\_SEL}）为 0。
+    \item 芯片进入睡眠模式。
+    \item 当 CPU 开启时，复位向量将从地址 0x50000000，而非 0x40000400 开始复位，整个过程并不需要进行 ROM 解包和 SPI boot。RTC 内存中的代码仅需在 C 语言环境中进行部分初始化操作即可。
+\end{enumerate}
+
+第二种方法：使用 RTC 快速内存
+
+\begin{enumerate}
+    \item 设置 PRO\_CPU 寄存器 \hyperref[regdesc:RTCCNTLRESETSTATEREG]{RTC\_CNTL\_PROCPU\_STAT\_VECTOR\_SEL}（或设置 APP\_CPU \\寄存器 \hyperref[regdesc:RTCCNTLRESETSTATEREG]{RTC\_CNTL\_APPCPU\_STAT\_VECTOR\_SEL}）为 1。
+    \item 计算 RTC 快速内存的 CRC 码，并将结果保存在寄存器 \hyperref[regdesc:RTCCNTLSTORE1nREG]{RTC\_CNTL\_RTC\_STORE6\_REG[31:0]} 中。
+    \item 将 RTC 快速内存的入口地址输入寄存器 \hyperref[regdesc:RTCCNTLSTORE1nREG]{RTC\_CNTL\_RTC\_STORE7\_REG[31:0]}。
+    \item 芯片进入睡眠模式。
+    \item CPU 开启，在完成 ROM 解包及部分初始化工作后，再次计算 CRC 码。如果计算结果与寄存器\\ \hyperref[regdesc:RTCCNTLSTORE1nREG]{RTC\_CNTL\_RTC\_STORE6\_REG[31:0]} 一致，则 CPU 将跳转至入口地址。
+\end{enumerate}
+
+ESP32 的启动流程图为图 \ref{figure:RTC boot}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.42\textwidth]{\modulefiles/figures/rtc_boot.eps}
+    \caption{ESP32 启动流程图}
+    \label{figure:RTC boot}
+\end{figure}
+
+\clearpage
+\hypertarget{lowpowm-reg-summ}{}
+\section{寄存器列表}
+\label{register summary-30}
+
+说明：
+\begin{itemize}
+    \item 以下寄存器已按照具体功能进行分组，但列表中的顺序并不反映寄存器在内存中的真实顺序。
+    \item 如果从 AHB 总线进行访问，则寄存器的基址为 0x60008000；如果从 DPORT 总线进行访问，则寄存器的基址为 0x3FF48000。
+\end{itemize}
+
+\subfile{\modulefiles/Low-Power-Management_rtc_cntl_reg-summary_cn}
+
+
+\section{寄存器}\label{registers-30}
+
+\subfile{\modulefiles/Low-Power-Management_rtc_cntl_reg_cn}
+
+\end{document}

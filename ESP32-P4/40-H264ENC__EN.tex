@@ -1,0 +1,885 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles{./40-H264ENC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned, comment out for full justification
+\raggedright
+
+
+\begin{document}
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{h264enc}{}
+\chapter{H264 Encoder}\label{mod:h264enc}
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+The H264 encoder is based on the H264 standard. It is used for real-time compression of video sequences, which can significantly reduce the total amount of data with minimal loss of video quality.
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+\section{Terminology}
+
+\begin{longtable}[c]{ R{4cm} p{12cm} }
+\textbf{bitstream} & A sequence of bits that forms the representation of one or more coded video sequences. \\
+\textbf{profile} & A subset of the entire bitstream syntax that is specified by the H264 standard. \\
+\textbf{level} & Specified within each profile. A specified set of constrains imposed on values of the syntax elements in the bitstream. \\
+\textbf{MB} & The full name is macroblock. It is a 16 x 16 block of luma samples and two corresponding blocks of chroma samples of a picture that has three sample arrays. \\
+\textbf{slice} & An integer number of MBs. \\
+\textbf{I frame} & Intra frame. \\
+\textbf{P frame} & Inter frame. \\
+\textbf{I slice} & Slice in I frame. \\
+\textbf{P slice} & Slice in P frame. \\
+\textbf{P-skip MBs} & MBs in P frame that skip the encoding. \\
+\textbf{CAVLC} & Context-based adaptive variable length coding. \\
+\textbf{MV} & Motion vector. \\
+\textbf{GOP} & Group of pictures. In a GOP, the first frame is an I frame, and subsequent frames are P frames. \\
+\textbf{QP} & Quantization parameter. \\
+\textbf{ROI} & Region of interest. \\
+\textbf{AXI} & Advanced extensible interface. \\
+\textbf{TX} & Transmit. \\
+\textbf{RX} & Receive. \\
+\textbf{DB} & Deblocking filter.\\
+\textbf{NUM\_H\_MB} &  Number of horizontal MBs in a picture.\\
+\end{longtable}
+
+%%%%%%%%%%%%%%%%
+%%% Features %%%
+%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:h264enc-features}
+
+The H264 encoder supports the following features:
+\begin{itemize}
+    \item Baseline profile and level 4.1.
+    \item 8-bit YUV 4:2:0 progressive video with a maximum resolution of 1920 × 1088 @ 30fps.
+    \item I and P frames.
+    \item Two working modes: GOP mode and dual stream mode. In dual stream mode, the total bandwidth of the two video sequences to be encoded should not exceed 1920 x 1088 @ 30fps.
+    \item 4 x 4 and 16 x 16 intra frame luma MB segmentation.
+    \item All 9 prediction modes for intra 4 x 4 luma MBs, and all 4 prediction modes for intra 16 x 16 luma MBs.
+    \item All 4 prediction modes for intra chroma MBs.
+    \item All partition size for inter luma MBs: 4 x 4, 4 x 8, 8 x 4, 8 x 8, 8 x 16, 16 x 8, 16 x 16.
+    \item 1/2 and 1/4 pixel precision motion estimation.
+    \item Horizontal motion search range [-29.75, +16.75] and vertical motion search range [-13.75, +13.75].
+    \item Deblocking filter.
+    \item CAVLC.
+    \item P-skip MBs.
+    \item I MB in P slices.
+    \item Decimation operation of luma and chroma component quantization results.
+    \item Fixed QP and MB level rate control.
+    \item MV merge function. If the MV of MB is greater than 0, it can be output to memory.
+    \item ROI function, with up to 8 rectangular ROI configurable at any position (allowing overlap, fixed priority). Each ROI can be configured with a constant QP or QP offset, and non-ROI can be configured with a QP offset.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Architecture %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Architecture}
+\label{sec:h264enc-arch-overview}
+
+The architecture of H264 is shown in Figure \ref{fig:h264-architecture}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/h264-arc}
+    \caption{H264 Video Encoder Architecture}
+    \label{fig:h264-architecture}
+\end{figure}
+
+
+The H264 encoder can be divided into two parts, H264 dedicated DMA (H264\_DMA) and encoder algorithm core (ENC\_CORE). H264\_DMA is used for data transfer, and is connected to the internal/external memory through two sets of AXI buses. Meanwhile, it is connected to the ENC\_CORE through multiple DMA sending/receiving channels (H264\_DMA has 5 sending channels (TX channel \regindex{n}) and 6 receiving channels (RX channel \regindex{n})). TX channel 3, TX channel 4, and RX channel 5 are the internal channels of H264\_DMA, which are not connected to the ENC\_CORE. The ENC\_CORE is used to compress video sequences.
+
+The function of each H264\_DMA sending and receiving channel is as follows:
+\begin{itemize}
+\item \textbf{TX channel 0} sends the original picture to ENC\_CORE.
+\item \textbf{TX channel 1} sends the reference picture to ENC\_CORE.
+\item \textbf{TX channel 2} sends the deblocking filter intermediate data to ENC\_CORE.
+\item Sending channel \textbf{TX channel 3} and \textbf{TX channel 4} send the reference picture (i.e., the previous deblocking filtered picture) to receiving channel \textbf{RX channel 5}.
+\item \textbf{RX channel 0} and \textbf{RX channel 1} send the result of the deblocking filter (i.e., reference picture) to external memory.
+\item \textbf{RX channel 2} sends the deblocking filter intermediate data to internal memory.
+\item \textbf{RX channel 3} sends the MV merge result to internal memory.
+\item \textbf{RX channel 4} sends the encoded bitstream to external memory.
+\item \textbf{RX channel 5} sends the reference picture (i.e., the previous deblocking filtered picture) to internal memory.
+\end{itemize}
+
+From the provided description, the H264\_DMA channels can be divided into two types:
+\begin{itemize}
+    \item Reading or writing internal memory (through AXI\_M1 bus): TX channel 1/2, RX channel 2/3/5
+    \item Reading or writing external memory (through AXI\_M2 bus): TX channel 0/3/4, RX channel 0/1/4
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:h264enc-func-descr}
+
+\subsection{Encoder Algorithm Core (ENC\_CORE)}\label{sec:h264-core}
+The function of the ENC\_CORE is to compress and encode the video sequences according to the software configuration.
+
+
+\subsubsection{Architecture}
+The architecture of the encoder algorithm core is shown in Figure \ref{fig:h264-enc-core} \textit{\nameref{fig:h264-enc-core}}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/h264-enc-core.pdf}
+    \caption{ENC\_CORE Architecture}
+    \label{fig:h264-enc-core}
+\end{figure}
+
+The functions of each module are as follows:
+\begin{itemize}
+    \item register: Implements register configuration and selection.
+    \item top\_ctrl: Realizes the control and scheduling of each module of the encoder algorithm core.
+    \item cur\_mb: Reads the original picture MB from the TX channel 0 (tx\_pop\_ori) of H264\_DMA, and distributes it to the intra, ime, fme, and mc modules.
+    \item intra: Uses the reconstruction result calculated by the trans\_quant\_decimate module to perform intra-frame prediction of the MB, sends the intra-frame prediction and residual results to the trans\_quant\_decimate module, and sends the intra-frame prediction cost to the rdo module.
+    \item fetch: Reads reference picture MBs within the search range from the TX channel 1 channel (tx\_pop\_ref) of H264\_DMA, and distributes them to the ime, fme, and mc modules.
+    \item ime: Receives the original picture MB from the cur\_mb module, receives the reference picture MB from the fetch module, performs integer motion estimation within the search range, and sends the integer motion estimation result to the fme module.
+    \item fme: Receives the original picture MB from the cur\_mb module, receives the reference picture MB from the fetch module, receives the integer motion estimation result from the ime module, and performs fractional motion estimation on the basis of the integer motion estimation. The fractional motion estimation result is sent to the mc module, and the inter prediction cost is sent to the rdo module.
+    \item mc: Receives the original picture MB from the cur\_mb module, receives the reference picture MB from the fetch module, receives the fractional motion estimation result from the fme module, performs motion compensation according to the fractional motion estimation result. The inter-frame prediction and the sum of the residual results are sent to the trans\_quant\_decimate module, and the motion vector is sent to the mv\_merge module.
+    \item rdo: Receives the intra-frame prediction cost from the intra module, receives the inter-frame prediction cost from the fme module, selects the final type of the current MB, implements the P slice to support the I MB function, and sends the final MB type to trans\_quant\_decimate module.
+
+    \item trans\_quant\_decimate: Receives the final MB type from the rdo module, receives the intra prediction and residual results from the intra module, receives the inter prediction and residual results from the mc module. Then, it performs DCT, quantization, inverse quantization, and inverse DCT, and quantization result decimation, sends the residual information to the rate\_ctrl module, sends the reduced quantization result to the cavlc module, and sends the reconstruction result to the deblock module.
+    \item cavlc: Receives the quantization result from the trans\_quant\_decimate module and the prediction information of the current MB, performs context adaptive variable length coding (CAVLC), and writes the coded stream to the RX channel 4 of H264\_DMA.
+    \item deblock: Receives reconstruction result from the trans\_quant\_decimate module and the prediction information of the current MB, performs deblocking filtering, and writes the deblocking filter result (i.e., the reference picture) to the RX channel 0 (rx\_push\_db\_12line) and RX channel 1 (rx\_push\_db\_4line). This module reads and writes the deblocking filter intermediate data through the TX channel 2 channel (tx\_pop\_db\_tmp) and RX channel 2 channel (rx\_push\_db\_tmp) of H264\_DMA.
+    \item mv\_merge: Receives the motion vector from the mc module, performs MV merging, and writes the merging result (MB motion information) to the RX channel 3 channel (rx\_push\_mv\_merge) of H264\_DMA.
+    \item rate\_ctrl: Receives the residual information from the trans\_quant\_decimate module, receives the encoding information from the cavlc module, receives the frame-level information configured by the register module, performs MB level rate control, and converts the calculated quantization parameter (QP) to the roi module.
+    \item roi: Receives QPs from the rate\_ctrl module, receives the ROI information configured by the register module, adjusts the QPs, and uses the adjusted QPs to process the current MB.
+\end{itemize}
+
+
+\subsubsection{Quantization Result Decimation}\label{sec:h264-decimate}
+The ENC\_CORE calculates the score of each MB based on the magnitude of its final quantization result, and then compares the score with the configurable threshold register. If it is below the threshold, the quantization result will be set to 0. Otherwise, the quantization result will remain unchanged, so as to further improve the compression ratio. For each MB, its luma and chroma component carry out the above process independently. Different types of MBs have different comparison methods, as follows:
+
+\begin{itemize}
+    \item luma component I MB with 16 x 16 partition:
+
+    \begin{center}
+    $\textrm{l\_score\_mb\_cmp} + \textrm{\hyperref[fielddesc:H264AI16X16DECISCOREOFFSET]{H264\_\regindex{x}\_I16X16\_DECI\_SCORE\_OFFSET}} < \textrm{\hyperref[fielddesc:H264ALDECISCORE]{H264\_\regindex{x}\_L\_DECI\_SCORE}}$
+    \end{center}
+
+
+    Among them, l\_score\_mb\_cmp is the score of the luma component of the current MB calculated by ENC\_CORE. \hyperref[fielddesc:H264AI16X16DECISCOREOFFSET]{H264\_\regindex{x}\_I16X16\_DECI\_SCORE\_OFFSET} is the configurable offset register. \hyperref[fielddesc:H264ALDECISCORE]{H264\_\regindex{x}\_L\_DECI\_SCORE} is the configurable threshold register. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. When the above requirement is met, the quantization result of the current luma component MB will be decimated to 0.
+    \item luma component I MB with 4 x 4 partition: Current luma component MB quantization result will not be decimated to 0.
+    \item chroma component I MB:
+
+    \begin{center}
+    $\textrm{c\_score\_mb\_cmp} + \textrm{\hyperref[fielddesc:H264AICHROMADECISCOREOFFSET]{H264\_\regindex{x}\_I\_chroma\_DECI\_SCORE\_OFFSET}} < \textrm{\hyperref[fielddesc:H264ACDECISCORE]{H264\_\regindex{x}\_C\_DECI\_SCORE}}$
+    \end{center}
+
+    Among them, c\_score\_mb\_cmp is the score of current chroma component MB calculated by ENC\_CORE. \hyperref[fielddesc:H264AICHROMADECISCOREOFFSET]{H264\_\regindex{x}\_I\_chroma\_DECI\_SCORE\_OFFSET} is the configurable offset register. \hyperref[fielddesc:H264ACDECISCORE]{H264\_\regindex{x}\_C\_DECI\_SCORE} is the configurable threshold register. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. When the above requirement is met, the quantization result of the current chroma component MB will be decimated to 0.
+    \item luma component P MB:
+
+    \begin{center}
+    $\textrm{l\_score\_mb\_cmp} + \textrm{\hyperref[fielddesc:H264AP16X16DECISCOREOFFSET]{H264\_\regindex{x}\_P16X16\_DECI\_SCORE\_OFFSET}} < \textrm{\hyperref[fielddesc:H264ALDECISCORE]{H264\_\regindex{x}\_L\_DECI\_SCORE}}$
+    \end{center}
+
+    Among them, l\_score\_mb\_cmp is the score of current luma component MB calculated by ENC\_CORE. \hyperref[fielddesc:H264AP16X16DECISCOREOFFSET]{H264\_\regindex{x}\_P16X16\_DECI\_SCORE\_OFFSET} is the configurable offset register. \hyperref[fielddesc:H264ALDECISCORE]{H264\_\regindex{x}\_L\_DECI\_SCORE} is the configurable threshold register. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. When the above requirement is met, the quantization result of the current luma component MB will be decimated to 0.
+    \item chroma component P MB:
+
+    \begin{center}
+    $\textrm{c\_score\_mb\_cmp} + \textrm{\hyperref[fielddesc:H264APCHROMADECISCOREOFFSET]{H264\_\regindex{x}\_P\_chroma\_DECI\_SCORE\_OFFSET}} < \textrm{\hyperref[fielddesc:H264ACDECISCORE]{H264\_\regindex{x}\_C\_DECI\_SCORE}}$
+    \end{center}
+
+    Among them, c\_score\_mb\_cmp is the score of current chroma component MB calculated by ENC\_CORE. \hyperref[fielddesc:H264APCHROMADECISCOREOFFSET]{H264\_\regindex{x}\_P\_chroma\_DECI\_SCORE\_OFFSET} is the configurable offset register. \hyperref[fielddesc:H264ACDECISCORE]{H264\_\regindex{x}\_C\_DECI\_SCORE} is the configurable threshold register. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. When the above requirement is met, the quantization result of the current chroma component MB will be decimated to 0.
+\end{itemize}
+
+
+\subsubsection{Motion Vector (MV) Merging}\label{sec:h264-mv-merge}
+The ENC\_CORE merges the MVs of the luma MB according to the configuration of the registers related to MV merging, and writes it out to the RX channel 3 channel (rx\_push\_mv\_merge) of H264\_DMA, and finally stores it in the internal memory for the upper layer application use, such as motion detection.
+
+The registers related to MV merging are as follows:
+\begin{itemize}
+    \item \hyperref[fielddesc:H264AMVMERGEEN]{H264\_\regindex{x}\_MV\_MERGE\_EN}: This register controls the enablement of MV merging. Setting this register to 1 means enabling the MV merging function of the corresponding video sequence. Setting this register to 0 means turning off the MV merging function of the corresponding video sequence. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. Even if the MV merging function is enabled, the I MB will not output any data to the memory because the I MB has no MV.
+    \item \hyperref[fielddesc:H264MVMERGETYPE]{H264\_MV\_MERGE\_TYPE}: This register controls the type of MV merging. Configuring this register to 0 means only retaining the MV of the MB whose final type is P MB and the partition of luma component is 16 x 16. Configuring this register to 1 means only retaining the MV with the minimum modulus of the MB whose final type is P MB. Configuring this register to 2 means only retaining the MV with the maximum modulus of the MB whose final type is P MB. 3 is an invalid value. When the register \hyperref[fielddesc:H264AMVMERGEEN]{H264\_\regindex{x}\_MV\_MERGE\_EN} is set to 1, the configuration of this register will take effect.
+    \item \hyperref[fielddesc:H264INTMVOUTEN]{H264\_INT\_MV\_OUT\_EN}: This register controls the type of merged MV ultimately stored in memory. Setting this register to 0 means that if the reserved merged MV is not 0, it will be stored in memory. Otherwise, it will be discarded. Setting this register to 1 means that if the integer part of the reserved merged MV is not 0, it will be stored in memory, otherwise discarded. When the register \hyperref[fielddesc:H264AMVMERGEEN]{H264\_\regindex{x}\_MV\_MERGE\_EN} is set to 1, the configuration of this register will take effect.
+    \item \hyperref[fielddesc:H264MBVALIDNUM]{H264\_MB\_VALID\_NUM}: This register represents the number of MV merging results stored in the memory in the current picture. One MB corresponds to one MV merging result. When the register \hyperref[fielddesc:H264AMVMERGEEN]{H264\_\regindex{x}\_MV\_MERGE\_EN} is set to 1, the value of this register is meaningful, otherwise the value of this register is meaningless and remains 0.
+\end{itemize}
+
+
+\subsubsection{MB Level Rate Control}\label{sec:h264-rate-ctrl}
+The ENC\_CORE calculates the QP adjustment amount of each MB based on the configuration of the rate control related registers, the number of encoding bits of the current MB, and the mean absolute value of the residual (MAD). Then it uses the frame-level QP configured in the register and the QP adjustment amount to calculate the QP of each MB, thereby adjusting the number of coded bits.
+
+
+The MB level rate control related registers are as follows:
+\begin{itemize}
+    \item \hyperref[fielddesc:H264AMBRATECTRLEN]{H264\_\regindex{x}\_MB\_RATE\_CTRL\_EN}: This register controls the enablement of MB level rate control. Setting this register to 1 means enabling the MB level rate control function of the corresponding video sequence. Setting this register to 0 means turning off the MB level rate control function of the corresponding video sequence. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. Since the I frame uses a constant QP encoding method, the QP of each macro block of the I frame will not change even if the MB level rate control function is enabled.
+    \item \hyperref[fielddesc:H264ARATECTRLU]{H264\_\regindex{x}\_RATE\_CTRL\_U}: The value of this register is configured by the parameters calculated by the frame-level rate control in the software. ENC\_CORE needs this value to calculate the QP adjustment amount of each macro block. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. The calculation method of the configuration value of this register belongs to the category of the frame-level rate control algorithm in the software, which is beyond the scope of this chapter and will not be described.
+    \item \hyperref[fielddesc:H264AMADFRAMEPRED]{H264\_\regindex{x}\_MAD\_FRAME\_PRED}: This register is the predicted value of frame-level MAD, which is configured by the frame-level rate control in the software. ENC\_CORE needs this value to calculate the QP adjustment amount of each MB, \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. The calculation method of the configuration value of this register belongs to the category of the frame-level rate control algorithm in the software, which is beyond the scope of this chapter and will not be described.
+    \item \hyperref[fielddesc:H264AQP]{H264\_\regindex{x}\_QP}: This register is the frame-level QP value, and the value range is 10 to 51. It is configured by the frame-level rate control in the software. ENC\_CORE will adjust the QP value of each MB based on it, so as to realize the MB level rate control, \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. The calculation method of the configuration value of this register belongs to the category of the frame-level rate control algorithm in the software, which is beyond the scope of this chapter and will not be described.
+    \item \hyperref[fielddesc:H264AQPMAX]{H264\_\regindex{x}\_QP\_MAX}: This register is used to limit the maximum value of the QP finally calculated by the MB level rate control, and the value range is from 10 to 51. If the QP value finally calculated by the MB level rate control is greater than the configuration value of this register, it will be limited to the configured value of this register, otherwise the original value is retained. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B.
+    \item \hyperref[fielddesc:H264AQPMIN]{H264\_\regindex{x}\_QP\_MIN}: This register is used to limit the minimum value of the QP finally calculated by the MB level rate control, and the value range is from 10 to 51. If the QP value finally calculated by the MB level rate control is smaller than the configuration value of this register, it will be  limited to the configured value of this register, otherwise it remains the original value, \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B.
+    \item \hyperref[fielddesc:H264FRAMEMADSUM]{H264\_FRAME\_MAD\_SUM}: This register represents the cumulative sum of the MADs of all MBs in the current frame. The software needs to read the value of this register after the encoding of a frame of video is completed for calculation of frame-level rate control. The frame-level rate control algorithm in the software is beyond the scope of this chapter and will not be described.
+    \item \hyperref[fielddesc:H264FRAMEENCBITS]{H264\_FRAME\_ENC\_BITS}: This register represents the sum of the number of encoding bits of all MBs in the current frame. The software needs to read the value of this register after completely encoding a frame of video to perform frame-level rate control. The frame-level rate control algorithm in the software is beyond the scope of this chapter and will not be described.
+    \item \hyperref[fielddesc:H264FRAMEQPSUM]{H264\_FRAME\_QP\_SUM}: This register represents the sum of QP of all MBs in the current frame. The software needs to read the value of this register after completely encoding of a frame of video to perform frame-level rate control. The frame-level rate control algorithm in the software is beyond the scope of this chapter and will not be described.
+\end{itemize}
+
+
+\subsubsection{Region of Interest (ROI)}\label{sec:h264-roi}
+ENC\_CORE can have up to 8 overlapping fixed-priority rectangular ROI in a frame of video according to the configuration of the relevant registers. The QP (calculated by MB level rate control) is adjusted, so that each ROI has different encoded picture quality.
+
+The registers related to the ROI are as follows:
+\begin{itemize}
+    \item \hyperref[fielddesc:H264AROIEN]{H264\_\regindex{x}\_ROI\_EN}: This register is used to control the switch of the ROI function. Set it to 1 to enable the ROI function, and set it to 0 to disable the ROI function. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B.
+    \item \hyperref[fielddesc:H264AROIMODE]{H264\_\regindex{x}\_ROI\_MODE}: This register is used to specify the working mode of ROI. If it is configured as 0, ROI will work in fixed QP mode. If it is configured as 1, ROI will work in QP offset mode. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B.
+    \item \hyperref[regdesc:H264AROIREGION0REG]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_REG}: This register is used to configure the enable and position information of each rectangular ROI. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. \regindex{n} can be 0 to 7, indicating 8 ROI. From ROI 0 to ROI 7, the priority decreases in order. When there are overlapping areas, the configuration of the ROI with the highest priority takes effect. This register contains the following fields:
+        \begin{itemize}
+            \item \hyperref[fielddesc:H264AROIREGION0EN]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_EN}: Set to 1 to enable ROI \regindex{n}, set it to 0 to close the ROI \regindex{n}. When the register \hyperref[fielddesc:H264AROIEN]{H264\_\regindex{x}\_ROI\_EN} set to 1, this register can control the ROI \regindex{n} switch, otherwise, this register has no effect.
+            \item \hyperref[fielddesc:H264AROIREGION0X]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_X}: Configure the horizontal starting MB coordinates of the ROI \regindex{n} in a frame of video.
+            \item \hyperref[fielddesc:H264AROIREGION0Y]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_Y}: Configure the vertical starting MB coordinates of the ROI \regindex{n} in a frame of video.
+            \item \hyperref[fielddesc:H264AROIREGION0XLEN]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_X\_LEN}: Configure the number of horizontal MBs in the ROI \regindex{n} in a frame of video.
+            \item \hyperref[fielddesc:H264AROIREGION0YLEN]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_Y\_LEN}: Configure the number of vertical MBs in the ROI \regindex{n} in a frame of video.
+        \end{itemize}
+    \item \hyperref[fielddesc:H264AROIREGION0QP]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_QP}: This register is used to configure the QP adjustment amount of the MBs in each rectangular ROI. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. \regindex{n} can be 0 to 7, representing 8 ROI. The configuration method of this register is related to the configuration value of the \hyperref[fielddesc:H264AROIMODE]{H264\_\regindex{x}\_ROI\_MODE} register:
+        \begin{itemize}
+            \item When \hyperref[fielddesc:H264AROIMODE]{H264\_\regindex{x}\_ROI\_MODE} is set to 0: It means that the ROI mode is fixed QP mode. At this time, the value of \hyperref[fielddesc:H264AROIREGION0QP]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_QP} register is directly As the QP value of the MB in the corresponding ROI, the value range is 10 to 51.
+            \item When \hyperref[fielddesc:H264AROIMODE]{H264\_\regindex{x}\_ROI\_MODE} is set to 1: It indicates that the ROI mode is QP offset mode. At this time, bit 0 to bit 5 of the \hyperref[fielddesc:H264AROIREGION0QP]{H264\_\regindex{x}\_ROI\_REGION\regindex{n}\_QP} register indicates the QP offset, and the value range is 0 to 51. Bit 6 indicates the sign of the offset, where 0 indicates a positive offset, and 1 indicates a negative offset.
+        \end{itemize}
+    \item \hyperref[fielddesc:H264ANOROIREGIONQP]{H264\_\regindex{x}\_NO\_ROI\_REGION\_QP}: This register is used to configure the QP offset of the MB in the non-ROI. Bit 0 to bit 5 represent the QP offset, and the value range is 0 to 51. Bit 6 represents the sign of the offset, where 0 represents a positive offset, and is 1 indicates a negative offset. \regindex{x} can be A or B, indicating the register corresponding to video sequence A or B. When the ROI function is disabled, that is, when the \hyperref[fielddesc:H264AROIEN]{H264\_\regindex{x}\_ROI\_EN} register is set to 0, this register will not take effect, and the QP of the MB in the non-ROI will not be changed.
+\end{itemize}
+
+Please note that the adjusted QP value of any ROI should not be less than 10.
+
+Regardless of whether the MB is in the ROI or non-ROI, its final adjusted QP value will be limited to 0 to 51 to ensure that it does not exceed the value range in the H264 standard.
+
+
+\subsection{H264 Dedicated DMA}\label{sec:h264-dma}
+The H264 dedicated DMA controls the data transfers between encoder algorithm core and memory based on the software configuration.
+
+\subsubsection{Architecture}\label{sec:h264-dma-arc}
+%%%%
+H264\_DMA architecture is shown in the figure \ref{fig:h264_dma_architecture}:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/h264_dma_architecture.png}
+    \caption{H264\_DMA Architecture}
+    \label{fig:h264_dma_architecture}
+\end{figure}
+
+The functions of each module are:
+\begin{itemize}
+    \item register: This module implements register configuration and selection.
+    \item in\_dscr: This module initiates an AXI read request to internal memory, obtains the RX channel's linked list descriptor, and sends the descriptor to the in\_link module of the corresponding RX channel.
+    \item in\_link: This module receives the descriptor of the corresponding channel in\_dscr module and splits it into multiple AXI write data requests to guide the corresponding in\_fifo module to write data to internal memory or external memory. RX channel 0/1/4 is designed for writing data to external memory, while RX channel 2/3/5 is for writing data to internal memory.
+    \item in\_fifo: Stores data transmitted by the h264 module or TX Channels 3/4, and waits for the AXI host to read the data from the corresponding channel. Specifically, the in\_fifo of RX Channels 0/1/2/3/4 stores the data sent by the h264 module, while the in\_fifo of RX Channel 5 stores the data transmitted by TX Channels 3/4.
+    \item out\_dscr: This module initiates an AXI read internal memory request, obtains the TX channel linked list descriptor, and sends the descriptor to the out\_link module of corresponding TX channel.
+    \item out\_link: This module receives the descriptor of the corresponding channel out\_dscr module and divides it into multiple AXI read data requests to obtain data from internal memory or external memory. TX channel 0/3/4 reads data from external memory and TX channel 1/2 reads data from internal memory.
+    \item out\_fifo: This module receives the data returned by the AXI read request and waits for h264 to read, or RX channel 5 to read. TX channel 0/1/2 is for h264 to read, and TX channel 3/4 is for RX channel 5 to read.
+    \item arb: This module receives read/write requests for external or internal memory, and arbitrates the read/write requests. The requests are sent to the rdcmd\_fifo and wrcmd\_fifo modules of external memory, and the rdcmd\_fifo and wrcmd\_fifo modules of internal memory respectively.
+    \item wrcmd\_fifo: This module caches the AXI write request arbitrated by the arb module, and cuts the write request and data into multiple 8-byte data chunks before sending them to the async\_in\_fifo module.
+    \item rdcmd\_fifo: This module caches the AXI read request arbitrated by the arb module and sends the read request to the async\_in\_fifo module.
+    \item bak\_fifo: This module caches the read/write request information arbitrated by the arb module, including channel id, AXI\_id, read/write request data length, read/write request source and read request starting address. The module finds the information corresponding to the request based on the AXI\_id returned by the async\_out\_fifo module, and sends the completion information of the request and the read data in the async\_out\_fifo module to the corresponding channel.
+    \item async\_in\_fifo: This module is used to receive AXI requests from the wrcmd\_fifo module and rdcmd\_fifo module, and synchronize the request from H264\_DMA core clock domain to the AXI clock domain, waiting for the AXI master to read.
+    \item async\_out\_fifo: This module is used to receive the read data returned by the AXI\_master\_inter/AXI\_master\_exter module and the completion of the read/write request, and synchronize it from the AXI clock domain to the H264\_DMA core clock domain.
+    \item AXI\_master\_inter/AXI\_master\_exter: This module reads the read/write request in the async\_in\_fifo module and converts it into an AXI bus protocol format output. The module receives the read data and read/write completion returned by the AXI slave and converts it into an internal private interface. The resulting format is written to the async\_out\_fifo module. The AXI\_master\_inter module is used to access the internal memory space, and the AXI\_master\_exter module is used to access the external memory space.
+
+\end{itemize}
+
+
+\subsubsection{Linked List Descriptor}\label{sec:h264-dma-link}
+%%%%
+H264\_DMA linked list descriptor is shown in the figure \ref{fig:h264_dma_descriptor}:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/h264_dma_descriptor_p4.png}
+    \caption{H264\_DMA linked list descriptor}
+    \label{fig:h264_dma_descriptor}
+\end{figure}
+
+\begin{itemize}
+\item owner: Indicates the operators allowed by the buffer corresponding to the current descriptor.
+    \begin{itemize}
+    \item 0: Allow the operator to be CPU.
+    \item 1: The operator is allowed to be H264\_DMA. H264\_DMA will clear this bit after using the descriptor.
+    \item For transmit descriptors, since a descriptor will not be written back by default, the default owner will not be cleared. The user needs to configure H264\_DMA\_OUT\_AUTO\_WRBACK to enable writeback.
+    \end{itemize}
+
+\item eof: End flag.
+    \begin{itemize}
+    \item 0: The current descriptor is not the last descriptor.
+    \item 1: The current descriptor is the last descriptor.
+    \end{itemize}
+\item mod: Data block read mode.
+    \begin{itemize}
+    \item 0: H264\_DMA read/write a picture block with a horizontal width of hb and a vertical height of vb only once.
+    \item 1: H264\_DMA read/write multiple times the picture block with a horizontal width of hb and a vertical height of vb until the picture data with a horizontal width of HA and a vertical height of VA is read/written. Note: The unit of hb/vb/HA/VA is pixel.
+    \item In 1D mode, this field must be 0.
+    \end{itemize}
+
+\item err\_eof: Receives end error flag.
+    \begin{itemize}
+    \item For the receive descriptor, the hardware will set this bit to 1 after receiving a packet and detecting a received data error.
+    \item For transmit descriptors, this bit is fixed to 0.
+    \end{itemize}
+
+\item 2DEN: 2D function enable signal.
+    \begin{itemize}
+    \item 0: The function of H264\_DMA is the same as the general DMA function. At this time, it can be used to transfer continuous data segments.
+    \item 1: The H264\_DMA function is enabled and data is transferred according to the configured picture blocks.
+    \end{itemize}
+
+\item length[13:0]/HB:
+    \begin{itemize}
+    \item When 2DEN = 0, this field represents the length of the data being transferred (least significant 14 bits). For data reception, this field is filled in after the hardware receives a frame of data. For data transmission, this field indicates the length of the data to be sent. The unit is byte.
+    \item When 2DEN = 1, this field represents the horizontal width of the picture block (HB). The unit is pixel.
+    \end{itemize}
+
+\item size[13:0]/VB:
+    \begin{itemize}
+    \item When 2DEN = 0, this field represents the size of the memory space allocated for transferring data (least significant 14 bits). The unit is byte.
+    \item When 2DEN = 1, this field represents the vertical height of the picture block (VB). The unit is pixel.
+    \end{itemize}
+\item length[28:14]/HA:
+    \begin{itemize}
+    \item WHen 2DEN = 0, this field represents the length of the transferred data (most significant 14 bits, only bit14–bit27 is used). For data reception, this field is filled after the hardware receives a frame of data. For data transmission, this field indicates the length of the data to be sent. The unit is byte.
+    \item When 2DEN = 1, this field represents the horizontal width of the picture corresponding to the descriptor (HA). The unit is pixel.
+    \end{itemize}
+\item size[27:14]/VA:
+    \begin{itemize}
+    \item When 2DEN = 0, this field represents the size of the memory space for transferring data (most significant 14 bits). The unit is byte.
+    \item When 2DEN = 1, this field represents the vertical height of the picture corresponding to the descriptor (VA). The unit is pixel.
+    \end{itemize}
+\item Buffer address pointer:
+    \begin{itemize}
+    \item When 2DEN = 0, it is the buffer address pointer.
+    \item When 2DEN = 1, it is the address pointer of the origin coordinates of the HA × VA picture block in the buffer.
+    \end{itemize}
+\item Next descriptor address: Next descriptor address pointer.
+\end{itemize}
+
+
+\subsubsection{Transfer Initialization}\label{sec:h264-dma-start}
+%%%%
+H264\_DMA will read the linked list from the internal memory to the local according to the configuration of the registers related to each channel linked list descriptor, so that it can be used by the corresponding channel to transfer data, thereby start the corresponding channel.
+
+The registers associated with each linked list descriptor are as follows:
+\begin{itemize}
+    \item H264\_DMA\_OUTLINK/INLINK\_START\_CH\regindex{x}: This register controls whether the corresponding channel of H264\_DMA starts to obtain descriptors. Setting this register to 1 means that the corresponding channel starts to obtain the descriptor. After obtaining the descriptor, the hardware automatically sets this register to 0, and then automatically obtain subsequent descriptors. \regindex{x} can be 0, 1, 2, 3, and 4, indicating the registers corresponding to channels 0, 1, 2, 3, and 4.
+    \item H264\_DMA\_OUTLINK/INLINK\_ADDR\_CH\regindex{x}: This register represents the memory address where the first descriptor is stored, and the address requires 8-byte alignment.
+\end{itemize}
+
+
+\subsubsection{Transfer Reset}\label{sec:h264-dma-reset}
+%%%%
+In order to ensure the safe reset of H264\_DMA and prevent channel from being stuck, the reset of H264\_DMA channel must be carried out according to the following procedure:
+\begin{enumerate}
+    \item Write 1 to register H264\_DMA\_OUT/IN\_CMD\_DISABLE\_CH\regindex{x} of the corresponding channel.
+    \item Wait for H264\_DMA\_OUT/IN\_RESET\_AVAIL\_CH\regindex{x} of the corresponding channel to be set.
+    \item Write 1 to register H264\_DMA\_OUT/IN\_RST\_CH\regindex{x} of the corresponding channel.
+    \item Write 0 to register H264\_DMA\_OUT/IN\_RST\_CH\regindex{x} of the corresponding channel.
+\end{enumerate}
+
+The registers related to channel reset are as follows:
+\begin{itemize}
+    \item H264\_DMA\_OUT/IN\_CMD\_DISABLE\_CH\regindex{x}: This register controls whether the corresponding channel of H264\_DMA stops initiating read/write requests to AXI. Setting this register to 1 means that the corresponding channel stops initiating read/write requests to AXI. Setting this register to 0 means that the corresponding channel can initiate read/write requests to AXI. \regindex{x} can be 0, 1, and 2 in TX channel, indicating the registers corresponding to channels 0, 1, and 2. In RX channel, they can be 0, 1, 2, 3, 4, and 5, indicating the registers corresponding to channels 0, 1, 2, 3, 4, and 5.
+    \item H264\_DMA\_OUT/IN\_RESET\_AVAIL\_CH\regindex{x}: This register indicates whether the channel corresponding to H264\_DMA can be safely reset. If this register is 1, it means that the corresponding channel can be safely reset. If this register is 0, it means that the corresponding channel cannot be safely reset.
+    \item H264\_DMA\_OUT/IN\_RST\_CH\regindex{x}: This register controls whether the corresponding channel of H264\_DMA performs soft reset. Setting this register to 1 means that the corresponding channel performs a soft reset. Setting this register to 0 means that the corresponding channel does not perform a soft reset.
+\end{itemize}
+
+Notes:
+\begin{itemize}
+    \item Since TX channel 3, TX channel 4, and RX channel 5 are bound, these three channels only have one set of H264\_DMA\_OUT/IN\_CMD\_DISABLE\_CH5, H264\_DMA\_OUT/IN\_RESET\_AVAIL\_CH5, and H264\_DMA\_OUT/IN\_RST\_CH5 registers. When resetting these three channels, you only need to operate this group of registers to realize the safe reset of the three H264\_DMA channels.
+    \item In order to ensure the completion of data transmission, before resetting RX channel 0, RX channel 1, RX channel 3, and RX channel 4, you need to check whether the corresponding channel linked list descriptor is written back successfully. Only after the linked list descriptor of the channel is written back successfully, which means all data transmission of the channel is completed, can the channel be reset. If the MV merging function is not enabled or the number of video frames in a GOP is 1, which means the register H264\_GOP\_NUM is configured as 1, there is no need to check whether the linked list descriptor of RX channel 3  is written back successfully.
+\end{itemize}
+
+\subsubsection{Channel Configuration}\label{sec:h264-dma-ch-cfg}
+%%%%
+Before the software starts H264\_DMA, it needs to configure H264\_DMA first. The configuration consists of register configuration and linked list descriptor configuration.
+
+Linked list descriptor configuration: The channels that need to be configured with  descriptors are TX channel 0 \verb+~+ TX channel 4 and RX channel 0 \verb+~+ RX channel 4. The linked list descriptors are all circular linked lists.
+\begin{enumerate}
+    \item Configure the channel of reading the original picture (TX channel 0):
+    \begin{itemize}
+        \item mode: 2D, mode1.
+        \item length/size: HA is the number of horizontal pixels of the picture. VA is the number of vertical pixels of the picture, HB is 16 x 4, and VB is 16.
+    \end{itemize}
+    \item Configure the channel of reading reference picture (TX channel 1):
+    \begin{itemize}
+        \item mode: 2D, mode1.
+        \item length/size: HA is NUM\_H\_MB x 16 x 16, VA is 3, HB is 16 x 16, and VB is 3.
+    \end{itemize}
+    \item Configure the channel of reading DB intermediate data (TX channel 2):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The read space size is NUM\_H\_MB x (16 x 4 + 8 x 4 x 2).
+    \end{itemize}
+    \item Configure the channel of reading first 12 lines of DB data (TX channel 3):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The read space size is (NUM\_H\_MB x (number of vertical macro block lines in the picture - 1) x (16 x 12 + 8 x 4 x 2)) + (NUM\_H\_MB x 16 x 16 x 1.5).
+    \end{itemize}
+    \item Configure the channel of reading last 4 lines DB data (TX channel 4):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The read space size is (NUM\_H\_MB x (number of vertical MB lines in the picture - 1) x (16 x 4 + 8 x 4 x 2)).
+    \end{itemize}
+    \item Configure the channel of writing first 12 lines of DB data (RX channel 0):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The size of the writing space is the same as the size of TX channel 3.
+    \end{itemize}
+    \item Configure the channel of writing last 4 lines of DB data (RX channel 1):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The size of the writing space is the same as the size of TX channel 4.
+    \end{itemize}
+    \item Configure the channel of writing DB intermediate data (RX channel 2):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The size of the writing space is the same as the size of TX channel 2.
+    \end{itemize}
+    \item Configure the channel of writing MV merge data (RX channel 3):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The writing space size is NUM\_H\_MB x the number of vertical MB lines x 4.
+    \end{itemize}
+    \item Configure the channel of writing bit stream data (RX channel 4):
+    \begin{itemize}
+        \item mode: 1D.
+        \item length/size: The size of the writing space is the number of horizontal pixels of the picture x the number of vertical pixel lines x 1.5.
+    \end{itemize}
+\end{enumerate}
+
+Register configuration:
+\begin{itemize}
+    \item H264\_DMA\_OUT/IN\_MEM\_BURST\_LENGTH\_CH\regindex{x}: This register controls the AXI burst length of the corresponding channel.
+    \begin{itemize}
+        \item 0: 8 bytes. 1: 16 bytes. 2: 32 bytes. 3: 64 bytes. 4: 128 bytes.
+        \item In TX channel, \regindex{x} can be 0 \verb+~+ 4. In RX channel, \regindex{x} can be 0 \verb+~+ 5.
+        \item The burst length of TX channel 2 and RX channel 2 must be configured the same.
+    \end{itemize}
+    \item \hyperref[fielddesc:H264DMAOUTREORDERENCH0]{H264\_DMA\_OUT\_REORDER\_EN\_CH0}: This register controls the TX channel 0 reorder enable. When the linked list descriptor configuration HB is not 16 in TX channel 0, this register must be configured as 1.
+    \item \hyperref[fielddesc:H264DMABLOCKSTARTADDRCH5]{H264\_DMA\_BLOCK\_START\_ADDR\_CH5}: This register controls the data starting address of the RX channel 5. The register configuration must be consistent with the data buffer address in the linked list descriptor of the TX channel 1.
+    \item \hyperref[fielddesc:H264DMABLOCKROWLENGTH4LINECH5]{H264\_DMA\_BLOCK\_ROW\_LENGTH\_4LINE\_CH5}: This register specifies the number of bytes contained in a row block of 4 lines. The data size is (NUM\_H\_MB x (16 x 4 + 8 x 4 x 2)).
+    \item \hyperref[fielddesc:H264DMABLOCKROWLENGTH12LINECH5]{H264\_DMA\_BLOCK\_ROW\_LENGTH\_12LINE\_CH5}: This register specifies the number of bytes contained in a row block of 12 lines. The data size is (NUM\_H\_MB x (16 x 12 + 8 x 4 x 2)).
+    \item \hyperref[fielddesc:H264DMABLOCKLENGTH4LINECH5]{H264\_DMA\_BLOCK\_LENGTH\_4LINE\_CH5}: This register specifies the number of bytes contained in a block of 4 lines. The data size is (16 x 4 + 8 x 4 x 2).
+    \item \hyperref[fielddesc:H264DMABLOCKLENGTH12LINECH5]{H264\_DMA\_BLOCK\_LENGTH\_12LINE\_CH5}: This register specifies the number of bytes contained in a block of 12 lines. The data size is (16 x 12 + 8 x 4 x 2).
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%        Interrupt       %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:h264enc-interrupt}
+\chipname{}'s H264 Encoder can generate the following interrupt signals, which are then sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+    \begin{itemize}
+        \item H264\_REG\_INT
+        \item H264\_DMA\_IN\_CH0\_INT
+        \item H264\_DMA\_IN\_CH1\_INT
+        \item H264\_DMA\_IN\_CH2\_INT
+        \item H264\_DMA\_IN\_CH3\_INT
+        \item H264\_DMA\_IN\_CH4\_INT
+        \item H264\_DMA\_IN\_CH5\_INT
+        \item H264\_DMA\_OUT\_CH0\_INT
+        \item H264\_DMA\_OUT\_CH1\_INT
+        \item H264\_DMA\_OUT\_CH2\_INT
+        \item H264\_DMA\_OUT\_CH3\_INT
+        \item H264\_DMA\_OUT\_CH4\_INT
+    \end{itemize}
+
+There are several internal interrupt sources from H264 Encoder that can generate the above interrupt signals.
+
+Interrupt signal H264\_REG\_INT can be generated by the following internal interrupt sources:
+\begin{itemize}
+\item H264\_DMA\_MOVE\_2MB\_LINE\_DONE\_INT: When H264\_DMA completes moving the reference pictures of two MB rows from external memory to internal memory, the interrupt is triggered.
+\item H264\_FRAME\_DONE\_INT: When ENC\_CORE finishes compressing and encoding a frame of video, the interrupt is triggered.
+\item H264\_REC\_READY\_INT: When ENC\_CORE writes the deblocking filter result (i.e., the reference picture) of \hyperref[fielddesc:H264ARECREADYTRIGGERMBLINES]{H264\_\regindex{x}\_REC\_READY\_TRIGGER\_MB\_LINES} lines of MBs to the external memory, the interrupt is triggered. \regindex{x} can be A or B, indicating the register corresponds to video sequence A or B.
+\item H264\_DB\_TMP\_READY\_INT: When ENC\_CORE writes the deblocking filter intermediate data of \hyperref[fielddesc:H264ADBTMPREADYTRIGGERMBNUM]{H264\_\regindex{x}\_DB\_TMP\_READY\_TRIGGER\_MB\_NUM} MBs to the internal memory, the interrupt is triggered. \regindex{x} can be A or B indicates the register corresponds to video sequence A or B.
+\end{itemize}
+
+The above interrupt sources can only be triggered when the interrupt enable register \hyperref[fielddesc:H264DMAMOVE2MBLINEDONEINTENA]{\regindex{XXX}\_ENA} is set to 1. Write 1 to \hyperref[fielddesc:H264DMAMOVE2MBLINEDONEINTCLR]{\regindex{XXX}\_CLR} will clear the interrupt (\regindex{XXX} is the interrupt source name).
+
+The H264\_DMA\_IN\_CH\regindex{x}\_INT (\regindex{x} is 0 \verb+~+ 5) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+\item H264\_DMA\_IN\_DONE\_CH\regindex{x}\_INT: Triggered when all data corresponding to a receive descriptor has been received via RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 5).
+\item H264\_DMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT: Triggered when the suc\_eof bit in a receive descriptor is 1 and the data corresponding to this receive descriptor has been received (i.e. when the data frame or packet corresponding to an inlink has been received) via RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 5).
+\item H264\_DMA\_IN\_ERR\_EOF\_CH\regindex{x}\_INT: Triggered when an error is detected in the data frame or packet received via RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4).
+\item H264\_DMA\_IN\_DSCR\_EMPTY\_CH\regindex{x}\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received via RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4).
+\item H264\_DMA\_IN\_DSCR\_ERR\_CH\regindex{x}\_INT: Triggered when a receive descriptor on RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4) fails any of the two descriptor checks.
+\item H264\_DMA\_INFIFO\_OVF\_L1\_CH\regindex{x}\_INT: Triggered when the L1 RX FIFO of RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 5) overflows.
+\item H264\_DMA\_INFIFO\_OVF\_L2\_CH\regindex{x}\_INT: Triggered when the L2 RX FIFO of RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4) overflows.
+\item H264\_DMA\_INFIFO\_UDF\_L1\_CH\regindex{x}\_INT: Triggered when the L1 RX FIFO of RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 5) underflows.
+\item H264\_DMA\_INFIFO\_UDF\_L2\_CH\regindex{x}\_INT: Triggered when the L2 RX FIFO of RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4) underflows.
+\item H264\_DMA\_IN\_DSCR\_TASK\_OVF\_CH\regindex{x}\_INT: Triggered when descriptor ready task FIFO of RX channel \regindex{x} (\regindex{x} is 0 \verb+~+ 4) overflows.
+\item H264\_DMA\_FETCH\_MB\_COL\_CNT\_OVF\_CH\regindex{x}\_INT: Triggered when fetch MB columns cnt of RX channel \regindex{x} (\regindex{x} is 5) overflows.
+\end{itemize}
+
+The H264\_DMA\_OUT\_CH\regindex{x}\_INT (\regindex{x} is 0 \verb+~+ 4) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+\item H264\_DMA\_OUT\_DONE\_CH\regindex{x}\_INT: Triggered when all data corresponding to a transmit descriptor has been sent via TX channel \regindex{x}.
+\item H264\_DMA\_OUT\_EOF\_CH\regindex{x}\_INT: Triggered when the suc\_eof bit in a transmit descriptor is 1 and data corresponding to this descriptor has been sent via TX channel \regindex{x}. If H264\_DMA\_OUT\_EOF\_MODE\_CH\regindex{x} is 0, this interrupt will be triggered when the last byte of data corresponding to this descriptor enters H264\_DMA's TX channel; if H264\_DMA\_OUT\_EOF\_MODE\_CH\regindex{x} is 1, this interrupt is triggered when the last byte of data is taken from H264\_DMA's TX channel.
+\item H264\_DMA\_OUT\_DSCR\_ERR\_CH\regindex{x}\_INT: Triggered when a transmit descriptor on TX channel \regindex{x} fails any of the two descriptor checks.
+\item H264\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{x}\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) has been sent via TX channel \regindex{x}.
+\item H264\_DMA\_OUTFIFO\_OVF\_L1\_CH\regindex{x}\_INT: Triggered when the L1 TX FIFO of H264\_DMA overflows.
+\item H264\_DMA\_OUTFIFO\_OVF\_L2\_CH\regindex{x}\_INT: Triggered when the L2 TX FIFO of H264\_DMA overflows.
+\item H264\_DMA\_OUTFIFO\_UDF\_L1\_CH\regindex{x}\_INT: Triggered when the L1 TX FIFO of H264\_DMA underflows.
+\item H264\_DMA\_OUTFIFO\_UDF\_L2\_CH\regindex{x}\_INT: Triggered when the L2 TX FIFO of H264\_DMA underflows.
+\item H264\_DMA\_OUT\_DSCR\_TASK\_OVF\_CH\regindex{x}\_INT: Triggered when descriptor ready task FIFO of TX channel \regindex{x} overflows.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:h264enc-prog-procedures}
+
+The H264 encoder can work in two modes. In GOP mode, it periodically inserts an I frame into a specified number (configurable) of P frame intervals. In dual stream mode, it takes turns to process two video sequences, and the hardware automatically switches the ENC\_CORE configurations.
+
+\subsection{GOP Mode}\label{sec:h264-gop-cfg}
+In GOP mode, a single video sequence A is encoded. Take a GOP containing 3 pictures as an example, the encoding sequence of pictures is shown in Figure \ref{fig:h264-gop-frame-flow}:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\modulefiles/figures/h264-gop-frame-flow}
+    \caption{Coding order of pictures in GOP mode}
+    \label{fig:h264-gop-frame-flow}
+\end{figure}
+
+In GOP mode, the register with the prefix H264\_A\_ is valid, and the register with the prefix H264\_B\_ is invalid.
+
+The GOP mode configuration process is as follows:
+\begin{enumerate}
+    \item Refer to the description in chapter \ref{sec:h264-dma-ch-cfg}  to configure each H264\_DMA channel:
+    \begin{enumerate}
+        \item Configure H264\_DMA TX channel 0.
+        \item Configure H264\_DMA TX channel 1.
+        \item Configure H264\_DMA TX channel 2.
+        \item Configure H264\_DMA TX channel 3 and TX channel 4.
+        \item Configure H264\_DMA RX channel 0 and RX channel 1.
+        \item Configure H264\_DMA RX channel 2.
+        \item Configure H264\_DMA RX channel 3.
+        \item Configure H264\_DMA RX channel 4.
+        \item Configure H264\_DMA RX channel 5.
+    \end{enumerate}
+    \item\label{item:h264-gop-cfg} Configure ENC\_CORE according to the required functions:
+    \begin{enumerate}
+        \item Configure GOP mode: Set register \hyperref[fielddesc:H264FRAMEMODE]{H264\_FRAME\_MODE} to 0 and register \hyperref[fielddesc:H264DUALSTREAMMODE]{H264\_DUAL\_STREAM\_MODE} to 0.
+        \item Configure the number of pictures in a GOP: Configure the register \hyperref[fielddesc:H264GOPNUM]{H264\_GOP\_NUM} as n, indicating that a GOP contains n pictures. When the register is configured as 0, the first frame of a GOP is an I frame, and the subsequent frames of a GOP are always P frame until the encoder is reset.
+        \item Configure the MB resolution of a picture: configure the register \hyperref[fielddesc:H264ASYSTOTALMBX]{H264\_A\_SYS\_TOTAL\_MB\_X} as the number of MBs in the horizontal direction of the picture, and configure the register \hyperref[fielddesc:H264ASYSTOTALMBY]{H264\_A\_SYS\_TOTAL\_MB\_Y} as the number of MBs in the vertical direction of the picture. The number of MBs in the horizontal direction is equal to the width of the video divided by 16 and rounded up. And the number of MBs in the vertical direction is equal to the height of the video divided by 16 and rounded up.
+        \item Configure the initial QP value of a picture: configure the register \hyperref[fielddesc:H264AQP]{H264\_A\_QP} as the initial QP value, ranging from 10 to 51.
+        \item Configure deblocking filter: Set register \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER} to 0 to enable the deblocking filter, set register \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER} to 1 to disable the deblocking filter.
+        \item Configure slice header information: According to the information required to be included in the slice header in the H264 standard, configure the relevant registers \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}, \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_REMAIN\_BITLENGTH}, \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}, \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE \_BYTE\_LSB}, and \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}. For example, if the slice header is a variable with 41 bits and the highest significant bit is the slice header first bit, these registers should be set in the following ways.
+            \begin{itemize}
+                \item \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}: From bit 41 to bit 10 of the slice header
+                \item \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE\_BYTE\_LSB}: From bit 9 to bit 2 of the slice header
+                \item \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}: Bit 1 of the slice header
+                \item \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}: 5
+                \item \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_BYTE\_REMAIN\_BITLENGTH}: 1
+            \end{itemize}
+        \item To use the quantization result decimation function, configure its related registers referring to the description in section \ref{sec:h264-decimate}.
+        \item To use the MB level rate control function, configure its related registers referring to the description in section \ref{sec:h264-rate-ctrl}.
+        \item To use the ROI function, configure its related registers referring to the description in chapter \ref{sec:h264-roi}.
+        \item To use the MV merge function, configure its related registers referring to the description in section \ref{sec:h264-mv-merge}.
+    \end{enumerate}
+    \item\label{item:h264-gop-frame} Perform the corresponding operations based on the type of video frame to be encoded (In a GOP, the first frame is an I frame, and subsequent frames are P frames):
+    \begin{itemize}
+        \item The video frame to be encoded is an I frame:
+        \begin{enumerate}
+            \item Start H264\_DMA TX channel 0: Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 0 and RX channel 1: Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 2: Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item To use the MV merge function, start H264\_DMA RX channel 3. Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 4: Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Clear H264 interrupts and enable interrupts.
+            \item Start the encoding of a picture: Write 1 to register \hyperref[fielddesc:H264FRAMESTART]{H264\_FRAME\_START}.
+            \item Wait for the H264\_DB\_TMP\_READY\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 2. Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Wait for the H264\_REC\_READY\_INT interrupt. When the interrupt is triggered, start H264\_DMA RX channel 5, H264\_DMA TX channel 3, and TX channel 4. Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA to move the reference picture from external memory to internal memory: Write 1 to register \hyperref[fielddesc:H264DMAMOVESTART]{H264\_DMA\_MOVE\_START}.
+            \item Wait for the H264\_DMA\_MOVE\_2MB\_LINE\_DONE\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 1. Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Wait for the H264\_FRAME\_DONE\_INT interrupt. When the interrupt is triggered, it indicates that the picture encoding is completed.
+            \item Reset H264\_DMA TX channel 2 and RX channel 2: Refer to chapter \ref{sec:h264-dma-reset} for the configuration.
+            \item Reset the read and write time counter of the deblocking filter intermediate data in H264\_DMA: Set register \hyperref[fielddesc:H264DMARXCH2INTERCOUNTERRST]{H264\_DMA\_RX\_CH2\_INTER\_COUNTER\_RST} to 1, then set to 0.
+        \end{enumerate}
+        \item The video frame to be encoded is P frame:
+        \begin{enumerate}
+            \item Clear H264 interrupts and enable interrupts.
+            \item Start H264\_DMA RX channel 2: Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Start encoding a picture: Write 1 to register \hyperref[fielddesc:H264FRAMESTART]{H264\_FRAME\_START}.
+            \item Wait for the H264\_DB\_TMP\_READY\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 2. Refer to chapter \ref{sec:h264-dma-start} for the configuration.
+            \item Wait for the H264\_FRAME\_DONE\_INT interrupt. When the interrupt is triggered, it indicates that the picture encoding is completed.
+            \item Reset H264\_DMA TX channel 2 and RX channel 2: Refer to chapter \ref{sec:h264-dma-reset} for the configuration.
+            \item Reset the read and write time counter of deblocking filter intermediate data in H264\_DMA: Set register \hyperref[fielddesc:H264DMARXCH2INTERCOUNTERRST]{H264\_DMA\_RX\_CH2\_INTER\_COUNTER\_RST} to 1, then set to 0.
+        \end{enumerate}
+        \item After any frame ends, the following registers can be reconfigured:
+        \begin{itemize}
+            \item Registers related to the quantization result decimate function. Refer to chapter \ref{sec:h264-decimate} for details.
+            \item Registers related to the MB level rate control function. Refer to chapter \ref{sec:h264-rate-ctrl} for details.
+            \item Deblocking filter enable register: \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER}.
+            \item ROI function related registers. Refer to chapter \ref{sec:h264-roi} for details.
+            \item Registers related to slice header information: \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}, \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_REMAIN\_BITLENGTH}, \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}, \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE\_BYTE\_LSB}, \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}.
+            \item Registers related to the MV merge function. Refer to chapter \ref{sec:h264-mv-merge} for details.
+        \end{itemize}
+    \end{itemize}
+    \item Repeat step \ref{item:h264-gop-frame} until all video frames in a GOP are encoded.
+    \item Make sure the data is written completely. Refer to chapter \ref{sec:h264-dma-reset} for the method.
+    \item Reset each sending and receiving channel of H264\_DMA referring to chapter \ref{sec:h264-dma-reset}.
+    \item Reset the read and write times counter of deblocking filter result data, and the read and write times counter of reference picture data in H264\_DMA. To be specific, set register \hyperref[fielddesc:H264DMARXCH0EXTERCOUNTERRST]{H264\_DMA\_RX\_CH0\_EXTER\_COUNTER\_RST} to 1, then set it to 0; Set register \hyperref[fielddesc:H264DMARXCH1EXTERCOUNTERRST]{H264\_DMA\_RX\_CH1\_EXTER\_COUNTER\_RST} to 1, then set it to 0; Set register \hyperref[fielddesc:H264DMARXCH5INTERCOUNTERRST]{H264\_DMA\_RX\_CH5\_INTER\_COUNTER\_RST} to 1, then set it to 0.
+    \item Reconfigure from step \ref{item:h264-gop-cfg} and start encoding the next GOP.
+\end{enumerate}
+
+
+\subsection{Dual Stream Mode}\label{sec:h264-dual-cfg}
+In the dual stream mode, two video sequences A and B are encoded. The encoding sequence of pictures is shown in Figure \ref{fig:h264-dual-frame-flow} (a GOP contains 3 pictures).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/h264-dual-frame-flow}
+    \caption{Coding order of pictures in dual stream mode}
+    \label{fig:h264-dual-frame-flow}
+\end{figure}
+
+In dual stream mode, the frame order of H264 processing is fixed as A1, B1, A2, B2, A3, B3, etc. When processing frames in video sequence A, registers with the prefix H264\_A\_ will be automatically applied. When processing frames in video sequence B, registers with the prefix H264\_B\_ will be automatically applied. The registers with other prefixes are valid for both video sequence frames.
+
+The configuration process of dual stream mode is as follows:
+\begin{enumerate}
+    \item\label{item:h264-dual-cfg} Configure ENC\_CORE according to the required function:
+    \begin{enumerate}
+        \item Configure dual stream mode: Set register \hyperref[fielddesc:H264FRAMEMODE]{H264\_FRAME\_MODE} to 1, and set register \hyperref[fielddesc:H264DUALSTREAMMODE]{H264\_DUAL\_STREAM\_MODE} to 1.
+        \item Configure GOP (the GOP configuration of video sequence A and B must be the same): Configure the register H264\_GOP\_NUM as n, indicating that a GOP contains n pictures. When the register is configured as 0, the first frame of a GOP is an I frame, and the subsequent frames of a GOP are always P frames until the encoder is reset.
+        \item Configure the MB resolution of a picture: Configure the register \hyperref[fielddesc:H264ASYSTOTALMBX]{H264\_A\_SYS\_TOTAL\_MB\_X} as the number of MBs in the horizontal direction of the video sequence A, and configure the register \hyperref[fielddesc:H264ASYSTOTALMBY]{H264\_A\_SYS\_TOTAL\_MB\_Y} as the number of MBs in the vertical direction of the video sequence A. Configure the register \hyperref[fielddesc:H264BSYSTOTALMBX]{H264\_B\_SYS\_TOTAL\_MB\_X} as the number of MBs in the horizontal direction of the video sequence B, and configure the register \hyperref[fielddesc:H264BSYSTOTALMBY]{H264\_B\_SYS\_TOTAL\_MB\_Y} as the number of MBs in the vertical direction of the video sequence B. The number of MBs in the horizontal direction is equal to the width of the video divided by 16 and rounded up. And the number of MBs in the vertical direction is equal to the height of the video divided by 16 and rounded up.
+        \item Configure the initial QP of a picture: Configure the register \hyperref[fielddesc:H264AQP]{H264\_A\_QP} as the initial QP of video sequence A, ranging from 10 to 51. Configure the register \hyperref[fielddesc:H264BQP]{H264\_B\_QP} as the initial QP of video sequence B, ranging from 10 to 51.
+        \item Configure the deblocking filter: Set the register \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER} to 0 to enable the deblocking filter of video sequence A. Set the register \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER} to 1 to disable the deblocking filter of video sequence A. Set the register \hyperref[fielddesc:H264BBYPASSDBFILTER]{H264\_B\_BYPASS\_DB\_FILTER} to 0 to enable the deblocking filter of video sequence B. Set the register \hyperref[fielddesc:H264BBYPASSDBFILTER]{H264\_B\_BYPASS\_DB\_FILTER} to 1 to disable the deblocking filter of video sequence B.
+        \item Configure slice header information: According to the information required to be included in the slice header in the H264 standard, configure the relevant registers \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}, \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_REMAIN\_BITLENGTH}, \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}, \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE \_BYTE\_LSB}, and \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}. For example, if the slice header is a variable with 41 bits and the highest significant bit is the slice header first bit, these registers should be set in the following ways.
+            \begin{itemize}
+                \item \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}: From bit 41 to bit 10 of the slice header
+                \item \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE\_BYTE\_LSB}: From bit 9 to bit 2 of the slice header
+                \item \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}: Bit 1 of the slice header
+                \item \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}: 5
+                \item \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_BYTE\_REMAIN\_BITLENGTH}: 1
+            \end{itemize}
+        \item To use the quantization result decimate function, configure its related registers referring to section \ref{sec:h264-decimate}.
+        \item To use the MB level rate control function, configure its related registers referring to chapter \ref{sec:h264-rate-ctrl}.
+        \item To use the ROI function, configure its related registers referring to chapter \ref{sec:h264-roi}.
+        \item To use the MV merge function, configure its related registers referring to chapter \ref{sec:h264-mv-merge}.
+    \end{enumerate}
+    \item\label{item:h264-dual-dma} According to whether the frame to be encoded belongs to video sequence A or B, use the information corresponding to the video sequence and configure each H264\_DMA channel referring to section \ref{sec:h264-dma-ch-cfg}:
+    \begin{enumerate}
+        \item Configure H264\_DMA TX channel 0.
+        \item Configure H264\_DMA TX channel 1.
+        \item Configure H264\_DMA TX channel 2.
+        \item Configure H264\_DMA TX channel 3 and TX channel 4.
+        \item Configure H264\_DMA RX channel 0 and RX channel 1.
+        \item Configure H264\_DMA RX channel 2.
+        \item Configure H264\_DMA RX channel 3.
+        \item Configure H264\_DMA RX channel 4.
+        \item Configure H264\_DMA RX channel 5.
+    \end{enumerate}
+    \item\label{item:h264-dual-frame} Perform the corresponding operations based on the type of video frame to be encoded. Video sequence A and B are encoded alternately, i.e., first a picture in video sequence A is encoded, and then a picture in video sequence B, etc. In a GOP, the first frame is an I frame, and the subsequent frames are P frames for any video sequence.
+    \begin{itemize}
+        \item The video frame to be encoded is an I frame:
+        \begin{enumerate}
+            \item Start H264\_DMA TX channel 0: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 0 and RX channel 1: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 2: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 4: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Clear H264 interrupts and enable interrupts.
+            \item Start encoding a picture: Write 1 to register \hyperref[fielddesc:H264FRAMESTART]{H264\_FRAME\_START}.
+            \item Wait for the H264\_DB\_TMP\_READY\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 2. Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Wait for the H264\_FRAME\_DONE\_INT interrupt. When the interrupt is triggered, it means that the picture encoding is completed.
+            \item Make sure the data is written completely. Refer to section \ref{sec:h264-dma-reset} for the method.
+            \item Reset each sending and receiving channel of H264\_DMA referring to section \ref{sec:h264-dma-reset}.
+            \item Reset the read and write counter of the deblocking filter intermediate data, and the read and write counter of the reference picture data in H264\_DMA. To be specific, set register \hyperref[fielddesc:H264DMARXCH2INTERCOUNTERRST]{H264\_DMA\_RX\_CH2\_INTER\_COUNTER\_RST} to 1, and then set it to 0. Set the register \hyperref[fielddesc:H264DMARXCH5INTERCOUNTERRST]{H264\_DMA\_RX\_CH5\_INTER\_COUNTER\_RST} is set to 1 and then set it to 0.
+        \end{enumerate}
+        \item The video frame to be encoded is P frame:
+        \begin{enumerate}
+            \item Clear H264 interrupts and enable interrupts.
+            \item Start H264\_DMA TX channel 0: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 0 and RX channel 1: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 2: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 4: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA RX channel 5: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA TX channel 3 and TX channel 4: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item To use the MV merge function, start H264\_DMA RX channel 3: Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start H264\_DMA to move the reference picture from external memory to internal memory: Write 1 to register \hyperref[fielddesc:H264DMAMOVESTART]{H264\_DMA\_MOVE\_START}.
+            \item Wait for H264\_DMA\_MOVE\_2MB\_LINE\_DONE\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 1. Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Start encoding of a picture: Write 1 to register \hyperref[fielddesc:H264FRAMESTART]{H264\_FRAME\_START}.
+            \item Wait for the H264\_DB\_TMP\_READY\_INT interrupt. When the interrupt is triggered, start H264\_DMA TX channel 2. Refer to section \ref{sec:h264-dma-start} for the configuration.
+            \item Wait for the H264\_FRAME\_DONE\_INT interrupt. When the interrupt is triggered, it indicates that the picture encoding is completed.
+            \item Make sure the data is written completely referring to section \ref{sec:h264-dma-reset}.
+            \item Reset each sending and receiving channel of H264\_DMA referring to section \ref{sec:h264-dma-reset}.
+            \item Reset the read and write counter of the deblocking filter intermediate data and the read and write counter of the reference picture data in H264\_DMA. To be specific, set the register \hyperref[fielddesc:H264DMARXCH2INTERCOUNTERRST]{H264\_DMA\_RX\_CH2\_INTER\_COUNTER\_RST} to 1, and then set it to 0; Set the register \hyperref[fielddesc:H264DMARXCH5INTERCOUNTERRST]{H264\_DMA\_RX\_CH5\_INTER\_COUNTER\_RST} to 1 and then set it to 0.
+        \end{enumerate}
+        \item After any frame ends, the following registers corresponding to the currently encoded video sequence can be reconfigured:
+        \begin{itemize}
+            \item Registers related to the quantization result decimate function, refer to the description in chapter \ref{sec:h264-decimate}.
+            \item Registers related to the MB level rate control function, refer to the description in chapter \ref{sec:h264-rate-ctrl}.
+            \item Deblocking filter enable register: \hyperref[fielddesc:H264ABYPASSDBFILTER]{H264\_A\_BYPASS\_DB\_FILTER}.
+            \item ROI function related registers, refer to the description in chapter \ref{sec:h264-roi}.
+            \item Registers related to the slice header information: \hyperref[fielddesc:H264SLICERMEAINBIT]{H264\_SLICE\_RMEAIN\_BIT}, \hyperref[fielddesc:H264SLICEREMAINBITLENGTH]{H264\_SLICE\_REMAIN\_BITLENGTH}, \hyperref[fielddesc:H264SLICEBYTELENGTH]{H264\_SLICE\_BYTE\_LENGTH}, \hyperref[fielddesc:H264SLICEBYTELSB]{H264\_SLICE\_BYTE\_LSB}, and \hyperref[fielddesc:H264SLICEBYTEMSB]{H264\_SLICE\_BYTE\_MSB}.
+            \item Registers related to the MV merge function, refer to the description in chapter \ref{sec:h264-mv-merge}.
+        \end{itemize}
+    \end{itemize}
+    \item Repeat steps \ref{item:h264-dual-dma} and \ref{item:h264-dual-frame} until one GOP of each of the 2 video sequences is encoded.
+    \item Reset the read and write times counter of the deblocking filter result data in H264\_DMA. To be specific, set the register \hyperref[fielddesc:H264DMARXCH0EXTERCOUNTERRST]{H264\_DMA\_RX\_CH0\_EXTER\_COUNTER\_RST} to 1, then set to 0. Set the register \hyperref[fielddesc:H264DMARXCH1EXTERCOUNTERRST]{H264\_DMA\_RX\_CH1\_EXTER\_COUNTER\_RST} to 1, then set to 0.
+    \item Reconfigure from step \ref{item:h264-dual-cfg} to start the encoding of the next GOP.
+\end{enumerate}
+
+
+\subsection{Soft Reset}\label{sec:h264-soft-rst}
+No matter what working mode H264 is in, reset it according to the following process can stop encoding at any time.
+\begin{enumerate}
+    \item Reset ENC\_CORE: Write 1 to register \hyperref[fielddesc:H264SYSRSTPULSE]{H264\_SYS\_RST\_PULSE}.
+    \item Reset each sending and receiving channel of H264\_DMA referring to section \ref{sec:h264-dma-reset}.
+    \item Reset each read and write time counter in H264\_DMA. To be specific, set register \hyperref[fielddesc:H264DMARXCH0EXTERCOUNTERRST]{H264\_DMA\_RX\_CH0\_EXTER\_COUNTER\_RST} to 1, then set it to 0; Set register \hyperref[fielddesc:H264DMARXCH1EXTERCOUNTERRST]{H264\_DMA\_RX\_CH1\_EXTER\_COUNTER\_RST} to 1, then set it to 0; Set the register \hyperref[fielddesc:H264DMARXCH2INTERCOUNTERRST]{H264\_DMA\_RX\_CH2\_INTER\_COUNTER\_RST} to 1, and then set it to 0; Set the register \hyperref[fielddesc:H264DMARXCH5INTERCOUNTERRST]{H264\_DMA\_RX\_CH5\_INTER\_COUNTER\_RST} to 1, and then set it to 0.
+    \item H264 returns to the initial state and can be reconfigured as needed.
+\end{enumerate}
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Memory Blocks %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\section{Register Summary}
+
+The addresses in this section are relative to \textbf{H264 Encoder} base address and \textbf{H264 DMA} base address. These base addresses are provided in Table \ref{tab:sysmem-base-address}  \textit{\nameref{tab:sysmem-base-address}} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\hypertarget{h264enc-reg-summ}{}
+\subsection{H264 Encoder Register Summary}
+\label{sec:h264enc-reg-summ}
+
+
+\subfile{\modulefiles/40-H264ENC-reg-summ__EN}
+
+
+\hypertarget{h264enc-dma-reg-summ}{}
+\subsection{H264 DMA Register Summary}
+\label{sec:h264enc-dma-reg-summ}
+
+
+\subfile{\modulefiles/40-H264ENC-DMA-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to \textbf{H264 Encoder} base address and \textbf{H264 DMA} base address. These base addresses are provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+
+\subsection{H264 Encoder Registers}
+
+\subfile{\modulefiles/40-H264ENC-reg__EN}
+
+
+\clearpage
+\subsection{H264 DMA Registers}
+
+\subfile{\modulefiles/40-H264ENC-DMA-reg__EN}
+
+
+\end{document}

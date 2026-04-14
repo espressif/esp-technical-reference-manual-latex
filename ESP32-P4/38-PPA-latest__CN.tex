@@ -1,0 +1,824 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./38-PPA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    \usepackage{diagbox}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ppa}{}
+\chapter{像素处理加速器 (PPA)}
+\label{mod:ppa}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+
+\section{概述}
+
+\chipseries{} 包括一个像素处理加速器 (PPA)。该模块为 2D 图像显示设计，用于对一些图像算法进行硬件加速，实现图像的旋转、缩放、镜像、叠加功能。
+
+PPA 主要包括两大功能模块：旋转－缩放－镜像 (SRM) 和图层叠加 (BLEND)。SRM 模块实现图像旋转、缩放、XY 方向镜像功能，BLEND 模块实现根据 Alpha 通道（即透明度）对两个相同尺寸的图层进行叠加的功能。
+
+PPA 按照像素块进行图像处理。像素块需要通过 2D-DMA 从内存里获取，PPA 与 2D-DMA 的连接关系如图 \ref{figure:ppa-2ddma-connection} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-2ddma-connection.pdf}
+    \caption{PPA 2D-DMA 连接关系}
+    \label{figure:ppa-2ddma-connection}
+\end{figure}
+
+\section{术语}
+为更好描述 PPA 功能，本章定义了以下术语：
+
+\begin{longtable}[c]{ r l }
+     \textbf{图像} & 系统内存中存储的一幅完整图像 \\
+     \textbf{图像块} & 特指按一定尺寸从图像中截取的一块，最大尺寸等同于图像。即 2D-DMA 2D-MOD0 下的 hb、vb 大小 \\
+     \textbf{像素块} & 特指从图像块中截取的一块，SRM 以像素块为单位读写数据 \\
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+
+\begin{itemize}
+    \item SRM 支持图像块旋转、缩放、镜像：
+        \begin{itemize}
+            \item 输入格式支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY
+            \item 输出格式支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY
+            \item 逆时针旋转角度支持 0°、90°、180°、270°
+            \item 水平、垂直方向独立缩放支持 8 位整数及 4 位小数
+            \item 水平、垂直方向镜像
+        \end{itemize}
+    \item BLEND 支持两个相同尺寸的图层叠加以及输出特定像素的填充图像：
+        \begin{itemize}
+            \item 前景输入格式支持 ARGB8888、RGB888、RGB565、L4、L8、A4、A8
+            \item 背景输入格式支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY、L4、L8
+            \item 输出格式支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY
+            \item 基于 Alpha 通道的图层叠加，若图层没有 Alpha 通道，可通过寄存器配置提供
+            \item 前景和背景支持通过设置 color-key 范围实现特殊颜色抠图
+        \end{itemize}
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:ppa-arch-overview}
+
+PPA 结构如图 \ref{figure:ppa-arch} 所示，包括两个独立的功能模块：SRM 和 BLEND。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/38-PPA-arch.pdf}
+    \caption{PPA 系统架构}
+    \label{figure:ppa-arch}
+\end{figure}
+对于 SRM，SRM Coordinate Calculation 对输出像素块坐标进行扫描，计算每个输出像素块所对应的输入像素块坐标。Addr Gen 再通过输入像素块坐标计算地址，发送给 2D-DMA。之后，PPA 从 2D-DMA 接受像素块数据，根据寄存器配置转成 ARGB8888 格式，并存入 RX FIFO（由两块 SRAM 组成的乒乓 FIFO，每一块都能完整存下整个像素块）。当一个完整像素块缓存完成后，Bilinear Interpolation 从 RX FIFO 中读取输入像素，经过插值运算得到输出像素并输出到 TX FIFO。Reorder CTRL 再根据寄存器配置，计算输出像素块坐标以及地址发送给 2D-DMA，同时按照输出像素块坐标从 TX FIFO 取出对应像素发送给 2D-DMA，由 2D-DMA 存到对应地址。
+
+对于 BLEND，PPA 也会从 2D-DMA 接受数据，并根据输入数据的类型再转换为 ARGB8888 格式。转换后的像素会直接进入算法模块 BLEND Core，完成后再进入 TX FIFO 缓存并通过 2D-DMA 输出到系统内存。与 SRM 不同的是，BLEND 不需要自己计算地址，完全由 2D-DMA 通过链表控制。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:ppa-func-descr}
+
+\subsection{PPA 颜色空间}
+
+PPA 支持真彩色与伪彩色。真彩色是指在组成一幅彩色图像的每个像素中，存在 R、G、B 三个基色分量，每个分量直接决定显示设备的基色强度。PPA 支持的真彩色格式包括 ARGB8888、RGB888、RGB565。
+
+伪彩色是指一幅彩色图像中每个像素的颜色不是由基色分量数值直接决定，而是把像素值当作彩色查找表 (Color Look-Up Table, CLUT) 的入口，去查找一个像素对应的 A、R、G、B 值。PPA 支持入口地址 8 位或 4 位位宽的 CLUT。
+
+除此之外，PPA 的 SRM 操作还支持 YUV422、YUV420、GRAY 数据格式。表 \ref{tab:color-space-endian} 所示为支持颜色格式在内存中的存储顺序。其中，输入的 YUV422 存储格式可通过 SRM 或 BLEND 的 YUV422\_BYTE\_ORDER 寄存器配置，输出固定按照 YUV422\_BYTE\_ORDER = 1 存储。
+
+\begin{longtable}[c]{ |p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}| }
+    \caption{像素存储顺序}
+    \label{tab:color-space-endian}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{颜色格式} & \textbf{起始地址 + 3} & \textbf{起始地址 + 2} & \textbf{起始地址 + 1} & \textbf{起始地址 + 0} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{5}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{颜色格式} & \textbf{起始地址 + 3} & \textbf{起始地址 + 2} & \textbf{起始地址 + 1} & \textbf{起始地址 + 0} \\\hline
+    \endhead
+
+    \multicolumn{5}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \textbf{ARGB8888} & \textbf{A0}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\hline
+        \multirow{3}{*}{\textbf{RGB888}} & \textbf{B1}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\cline{2-5}
+        & \textbf{G2}[7:0] & \textbf{B2}[7:0] & \textbf{R1}[7:0] & \textbf{G1}[7:0] \\\cline{2-5}
+        & \textbf{R3}[7:0] & \textbf{G3}[7:0] & \textbf{B3}[7:0] & \textbf{R2}[7:0] \\\hline
+        \textbf{RGB565} & \textbf{R1}[4:0]\textbf{G1}[5:3] & \textbf{G1}[2:0]\textbf{B1}[4:0] & \textbf{R0}[4:0]\textbf{G0}[5:3] & \textbf{G0}[2:0]\textbf{B0}[4:0] \\\hline
+        \textbf{L8} & \textbf{L3}[7:0] & \textbf{L2}[7:0] & \textbf{L1}[7:0] & \textbf{L0}[7:0] \\\hline
+        \textbf{L4} & \textbf{L7}[3:0]\textbf{L6}[3:0] & \textbf{L5}[3:0]\textbf{L4}[3:0] & \textbf{L3}[3:0]\textbf{L2}[3:0] & \textbf{L1}[3:0]\textbf{L0}[3:0] \\\hline
+        \textbf{A8} & \textbf{A3}[7:0] & \textbf{A2}[7:0] & \textbf{A1}[7:0] & \textbf{A0}[7:0] \\\hline
+        \textbf{A4} & \textbf{A7}[3:0]\textbf{A6}[3:0] & \textbf{A5}[3:0]\textbf{A4}[3:0] & \textbf{A3}[3:0]\textbf{A2}[3:0] & \textbf{A1}[3:0]\textbf{A0}[3:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=0} & \textbf{Y1}[7:0] & \textbf{V1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=1} & \textbf{Y1}[7:0] & \textbf{U1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=2} & \textbf{v1}[7:0] & \textbf{y1}[7:0] & \textbf{U0}[7:0] & \textbf{Y0}[7:0] \\\hline
+        \makecell[l]{\textbf{YUV422}\\YUV422\_BYTE\\\_ORDER=3} & \textbf{U1}[7:0] & \textbf{Y1}[7:0] & \textbf{V0}[7:0] & \textbf{Y0}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\（1、3、5...等\\奇数行）}} & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\cline{2-5}
+        & \textbf{Y4}[7:0] & \textbf{U4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] \\\cline{2-5}
+        & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{U6}[7:0] & \textbf{Y5}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\（2、4、6...等\\偶数行）}} & \textbf{V2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\cline{2-5}
+        & \textbf{Y4}[7:0] & \textbf{V4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] \\\cline{2-5}
+        & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{V6}[7:0] & \textbf{Y5}[7:0] \\\hline
+        \textbf{GRAY} & \textbf{P3}[7:0] & \textbf{P2}[7:0] & \textbf{P1}[7:0] & \textbf{P0}[7:0] \\\hline
+
+\end{longtable}
+
+\subsubsection{SRM 颜色空间}
+
+SRM 的输入输出均支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY 格式，输入格式由 \hyperref[fielddesc:PPASRMRXCM]{PPA\_SRM\_RX\_CM} 配置，输出格式由 \hyperref[fielddesc:PPASRMTXCM]{PPA\_SRM\_TX\_CM} 配置。其中 SRM 输入还有一系列像素处理流程，如图 \ref{figure:ppa-srm-rx-color-pro} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-srm-rx-color-pro.pdf}
+    \caption{PPA SRM 输入像素处理}
+    \label{figure:ppa-srm-rx-color-pro}
+\end{figure}
+
+输入类型为 ARGB8888、RGB888、RGB565 时，支持进行 RGB 以及字节顺序翻转。具体配置分别如下：
+
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:PPASRMRXRGBSWAPEN]{PPA\_SRM\_RX\_RGB\_SWAP\_EN} 写 1 将 RGB 翻转为 BGR，将 ARGB 翻转为 BGRA。
+    \item 向 \hyperref[fielddesc:PPASRMRXBYTESWAPEN]{PPA\_SRM\_RX\_BYTE\_SWAP\_EN} 写 1 分别将 0、1 字节和 2、3 字节翻转（即 \{0，1，2，3\} 翻转为 \{1，0，3，2\}）。由于 RGB888 一个像素只有 3 字节，因此不会受字节翻转寄存器配置影响。
+\end{itemize}
+
+SRM 内部均使用 ARGB8888 进行处理。当输入不带 Alpha 通道时，图像的 Alpha 通道值默认为 255。Alpha 通道还可以通过寄存器 \hyperref[regdesc:PPASRMFIXALPHAREG]{PPA\_SRM\_FIX\_ALPHA\_REG} 进一步配置，如图 \ref{figure:ppa-srm-rx-alpha-pro} 所示。具体的配置效果可参考表 \ref{tab:ppa-srm-rx-alpha-config}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-srm-rx-alpha-pro.pdf}
+    \caption{PPA SRM Alpha 配置逻辑}
+    \label{figure:ppa-srm-rx-alpha-pro}
+\end{figure}
+
+\begin{longtable}[c]{ |p{4cm}|p{4.4cm}|p{8cm}| }
+    \caption{PPA SRM Alpha 配置效果}
+    \label{tab:ppa-srm-rx-alpha-config}\\\hline
+
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:PPASRMRXALPHAINV]{PPA\_SRM\_RX\_ALPHA\_INV} & \hyperref[fielddesc:PPASRMRXALPHAMOD]{PPA\_SRM\_RX\_ALPHA\_MOD} & \textbf{输出结果} \\\hline
+    \endfirsthead
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:PPASRMRXALPHAINV]{PPA\_SRM\_RX\_ALPHA\_INV} & \hyperref[fielddesc:PPASRMRXALPHAMOD]{PPA\_SRM\_RX\_ALPHA\_MOD} & \textbf{输出结果} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+    & 00/11 & \makecell[l]{输出原始 Alpha 值} \\\cline{2-3}
+    \multirow{0}{*}{0} & 01 & \makecell[l]{输出 \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA} 配置的值} \\\cline{2-3}
+    & 10 & \makecell[l]{输出原始 Alpha 值与 \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA} 相\\乘后的高 8 位} \\\hline
+    & 00/11 & \makecell[l]{输出 255 减去原始 Alpha 值后得到的值} \\\cline{2-3}
+    \multirow{0}{*}{1} & 01 & \makecell[l]{输出 \hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA} 配置值} \\\cline{2-3}
+    & 10 & \makecell[l]{输出 255 减去原始 Alpha 值后再与 \\\hyperref[fielddesc:PPASRMRXFIXALPHA]{PPA\_SRM\_RX\_FIX\_ALPHA} 相乘后的高 8 位} \\\hline
+
+\end{longtable}
+
+
+需注意，当输入或输出类型为 YUV 时，还需进一步通过寄存器配置 YUV、RGB 颜色转换。
+
+当输入格式为 YUV420 时，需通过寄存器域 \hyperref[fielddesc:PPAYUVRXRANGE]{PPA\_YUV\_RX\_RANGE} 将输入 YUV 数据范围配置为 full-range 或 limit-range，并通过寄存器域 \hyperref[fielddesc:PPAYUV2RGBPROTOCAL]{PPA\_YUV2RGB\_PROTOCAL} 将 YUV 转为 RGB 使用的协议配置为 BT601 或 BT709。转换公式如下：
+
+
+\begin{itemize}
+    \item $YUV_{full}$ 转为 $YUV_{limit}$
+        \begin{itemize}
+            \item $Y_{limit} = \frac{220}{256} Y_{full} + 16$
+            \item $U_{limit} = \frac{225}{256} U_{full} + 16$
+            \item $V_{limit} = \frac{225}{256} V_{full} + 16$
+        \end{itemize}
+    \item $YUV_{limit}$ 按照 BT601 转为 RGB
+        \begin{itemize}
+            \item $R = \frac{298}{256}Y_{limit} + \frac{409}{256}V_{limit} - \frac{56906}{256}$
+            \item $G = \frac{298}{256}Y_{limit} - \frac{100}{256}U_{limit} - \frac{208}{256}V_{limit} + \frac{34707}{256}$
+            \item $B = \frac{298}{256}Y_{limit} + \frac{516}{256}U_{limit} -  \frac{70836}{256}$
+        \end{itemize}
+    \item $YUV_{limit}$ 按照 BT709 转为 RGB
+        \begin{itemize}
+            \item $R = \frac{298}{256}Y_{limit} + \frac{459}{256}V_{limit} - \frac{63367}{256}$
+            \item $G = \frac{298}{256}Y_{limit} - \frac{55}{256}U_{limit} - \frac{136}{256}V_{limit} + \frac{19681}{256}$
+            \item $B = \frac{298}{256}Y_{limit} + \frac{541}{256}U_{limit} -  \frac{73918}{256}$
+        \end{itemize}
+\end{itemize}
+
+当输出格式选为 YUV420 时，需通过寄存器域 \hyperref[fielddesc:PPAYUVTXRANGE]{PPA\_YUV\_TX\_RANGE} 将输出 YUV 数据范围配置为 full-range 或 limit-range，通过寄存器域 \hyperref[fielddesc:PPARGB2YUVPROTOCAL]{PPA\_RGB2YUV\_PROTOCAL} 将 RGB 转为 YUV 使用的协议配置为 BT601 或 BT709。转换公式如下：
+
+\begin{itemize}
+    \item $YUV_{limit}$ 转为 $YUV_{full}$
+        \begin{itemize}
+            \item $Y_{full} = \frac{298}{256} Y_{limit} + \frac{4768}{256}$
+            \item $U_{full} = \frac{291}{256} U_{limit} + \frac{4550}{256}$
+            \item $V_{full} = \frac{291}{256} V_{limit} + \frac{4550}{256}$
+        \end{itemize}
+    \item RGB 按照 BT601 转为 $YUV_{limit}$
+        \begin{itemize}
+            \item $Y_{limit} = \frac{4096}{256} + \frac{66}{256}R + \frac{129}{256}G + \frac{25}{256}B$
+            \item $U_{limit} = \frac{32768}{256} - \frac{38}{256}R - \frac{74}{256}G + \frac{112}{256}B$
+            \item $V_{limit} = \frac{32768}{256} + \frac{112}{256}R - \frac{94}{256}G - \frac{18}{256}B$
+        \end{itemize}
+    \item RGB 按照 BT709 转为 $YUV_{limit}$
+        \begin{itemize}
+            \item $Y_{limit} = \frac{4096}{256} + \frac{47}{256}R + \frac{157}{256}G + \frac{16}{256}B$
+            \item $U_{limit} = \frac{32768}{256} - \frac{26}{256}R - \frac{86}{256}G + \frac{112}{256}B$
+            \item $V_{limit} = \frac{32768}{256} + \frac{112}{256}R - \frac{102}{256}G - \frac{10}{256}B$
+        \end{itemize}
+\end{itemize}
+
+\subsubsection{BLEND 颜色空间}
+\label{sec:blend-color-space}
+BLEND 前景输入支持 ARGB8888、RGB888、RGB565、L4、L8、A4、A8，背景输入支持 ARGB8888、RGB888、RGB565、YUV422、YUV420、GRAY、L4、L8，可通过寄存器域 \hyperref[fielddesc:PPABLEND0RXCM]{PPA\_BLEND\textcolor{red}{0/1}\_RX\_CM} 分别配置前景、背景图层的输入颜色格式。其中，A4、A8 只支持前景图层，且当输入类型为 L4、A4 时，图像块的尺寸 hb 以及在图像中的偏移 x 必须为偶数。BLEND 输出支持 ARGB8888、RGB888、RGB565，可通过寄存器域 \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM} 进行配置。
+
+BLEND 的 RGB 翻转、字节翻转、Alpha 通道配置和 SRM 输入一致。另外，当前景图层数据类型为 A4、A8 时，输入数据为 Alpha 通道数值。此时若 \hyperref[fielddesc:PPABLENDBYPASS]{PPA\_BLEND\_BYPASS} 配置为 1，则前景图层输入的 Alpha 值会替换掉背景图层的 Alpha 通道并输出；配置为 0，则为正常的 BLEND 操作，前景图层的 RGB 值由 \hyperref[regdesc:PPABLENDRGBREG]{PPA\_BLEND\_RGB\_REG} 指定。
+
+当输入数据类型为 L4、L8 时，需要先对 CLUT 进行初始化。BLEND 有两个深度为 256、宽度为 32 的 CLUT，初始化有两种方式，分别为 FIFO 模式、MEM 模式。
+
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} 写 0 进入 FIFO 模式。\\
+    FIFO 模式下，通过读写 \hyperref[fielddesc:PPARDWRWORDBLEND0CLUT]{PPA\_RDWR\_WORD\_BLEND\textcolor{red}{x}\_CLUT} 实现访问 CLUT。其中 0 对应背景通道 CLUT，1 对应前景通道 CLUT。\\
+    每次读/写该寄存器，会自动将对应的读/写地址加 1，可通过向 \hyperref[fielddesc:PPABLEND0CLUTMEMRST]{PPA\_BLEND\textcolor{red}{x}\_CLUT\_MEM\_RST} 写 1 再写 0 复位读写地址，可通过向\hyperref[fielddesc:PPABLEND0CLUTMEMRDADDRRST]{PPA\_BLEND\textcolor{red}{x}\_CLUT\_MEM\_RDADDR\_RST} 写 1 再写 0 复位读地址。
+    \item 向 \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} 写 1 进入 MEM 模式。\\
+    MEM 模式下，可直接通过地址访问 CLUT。在 PPA 的总线地址范围内，CLUT 地址如表 \ref{tab:blend-clut-addr} 所示。
+\end{itemize}
+
+\begin{longtable}[c]{ |p{5cm}|p{5cm}|p{2.5cm}| }
+    \caption{BLEND CLUT 地址}
+    \label{tab:blend-clut-addr}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{addr[11:10]} & \textbf{addr[9:2]} & \textbf{addr[1:0]} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Start Addr + 2} & \textbf{Start Addr + 1} & \textbf{Start Addr + 0} \\\hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \makecell[l]{01：选择 BLEND0 CLUT\\10：选择 BLEND1 CLUT} & CLUT 实际地址，0 \verb+~+ 255 & 00 \\\hline
+
+\end{longtable}
+
+\subsection{PPA 2D-DMA 链表配置}
+
+PPA 通过 2D-DMA 与系统内存进行数据交互。对于 SRM 或 BLEND，都需要一次性配置好所需操作图像块的 2D-DMA 链表信息。2D-DMA 链表如图 \ref{figure:ppa-2ddma-link-list}，详细可参考 \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}：
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/38-PPA-2ddma-link-list.pdf}
+    \caption{2D-DMA 链表}
+    \label{figure:ppa-2ddma-link-list}
+\end{figure}
+
+对于 PPA，对应的链表参数如表 \ref{tab:ppa_link_list_config} 所示。
+
+\begin{longtable}[c]{ |p{2.5cm}|p{8cm}| }
+    \caption{PPA 链表配置}
+    \label{tab:ppa_link_list_config}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{域} & \textbf{配置} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{域} & \textbf{配置} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        owner & 1 \\\hline
+        eof & 1 \\\hline
+        2DEN & 1 \\\hline
+        err\_eof & 0 \\\hline
+        hb & \makecell[l]{图像块水平方向尺寸\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        vb & \makecell[l]{图像块垂直方向尺寸\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        pbyte & \makecell[l]{ARGB8888：5（4 字节/像素）\\RGB888：4（3 字节/像素）\\RGB565：3（2 字节/像素）\\YUV420：2（1.5 字节/像素）\\A8/L8：1（1 字节/像素）\\A4/L4：0（0.5 字节/像素）} \\\hline
+        HA & \makecell[l]{整幅图像水平方向尺寸\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        VA & \makecell[l]{整幅图像垂直方向尺寸\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        mod & 0 \\\hline
+        X & \makecell[l]{图像块在图像中的水平方向偏移（偏移数从 0 开始）\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        Y & \makecell[l]{图像块在图像中的垂直方向偏移（偏移数从 0 开始）\\若输入或输出数据为 YUV420，则必须为偶数} \\\hline
+        Buffer address pointer & 图像起始地址 \\\hline
+        Next descriptor address & N/A \\\hline
+
+\end{longtable}
+
+\subsubsection{SRM 特殊配置}
+当配置好输入输出图像块的 2D-DMA 链表后，SRM 需要以像素块为单位，从输入图像块存储空间中选择出所需像素块，处理完成后再将其存储到输出图像块对应存储空间。这个过程中，每一个像素块的起始地址均需要受 SRM 的控制。为实现该功能，需要向 2D-DMA 对应通道的 \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_\textcolor{red}{IN/OUT}\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}} 寄存器域写 1 以使能描述符接口（DSCR-PORT 模式），从而允许 PPA 实时控制下一个像素块的起始地址。
+
+在数据输入方向，SRM 必须每次均能接收到一个完整的像素块。当像素块选择到达图像块边界时，需要 2D-DMA 将像素块超出边界部分自动补齐，可通过向 2D-DMA 对应通道的寄存器域 \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_\textcolor{red}{V/H}\_CH\textcolor{red}{x}} 配置为像素块大小实现。配置值根据图像格式而不同，具体如下表 \ref{tab:ppa_blk_config}。
+
+
+\begin{longtable}[c]{ |p{4cm}|p{4cm}|p{4cm}|p{4cm}| }
+    \caption{自动补全块大小配置}
+    \label{tab:ppa_blk_config}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL}} & \textbf{像素格式} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_H\_CH\textcolor{red}{x}}}} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_V\_CH\textcolor{red}{x}}}} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL}} & \textbf{像素格式} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_H\_CH\textcolor{red}{x}}}} & \textbf{\hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{\makecell[l]{DMA2D\_OUT\_DSCR\_\\PORT\_BLK\_V\_CH\textcolor{red}{x}}}} \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        0 & \makecell[l]{ARGB8888\\RGB888\\RGB565\\GRAY} & 34 & 34 \\\hline
+        0 & YUV422 & 36 & 34 \\\hline
+        0 & YUV420 & 36 & 36 \\\hline
+        1 & \makecell[l]{ARGB8888\\RGB888\\RGB565\\GRAY} & 18 & 18 \\\hline
+        1 & YUV422 & 20 & 18 \\\hline
+        1 & YUV420 & 20 & 20 \\\hline
+
+\end{longtable}
+
+\begin{tiplisting}
+    为了最优化存储访问性能，推荐使用默认配置 \hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL} = 0。
+\end{tiplisting}
+
+\subsection{旋转－缩放－镜像 (SRM)}
+\subsubsection{基本功能}
+
+SRM 实现缩放、旋转、镜像三个功能，先将图像基于坐标原点进行缩放，再基于中心点（$X_{middle}$，$Y_{middle}$）进行旋转，最后基于中心点（$X_{target}$，$Y_{target}$）进行水平、垂直方向镜像，如图 \ref{figure:ppa_srm} 所示。缩放、旋转、镜像参数均通过寄存器进行配置：
+\begin{itemize}
+    \item \hyperref[fielddesc:PPASRMSCALXINT]{PPA\_SRM\_SCAL\_X\_INT} 水平方向缩放系数，整数部分
+    \item \hyperref[fielddesc:PPASRMSCALXFRAG]{PPA\_SRM\_SCAL\_X\_FRAG} 水平方向缩放系数，小数部分
+    \item \hyperref[fielddesc:PPASRMSCALYINT]{PPA\_SRM\_SCAL\_Y\_INT} 垂直方向缩放系数，整数部分
+    \item \hyperref[fielddesc:PPASRMSCALYFRAG]{PPA\_SRM\_SCAL\_Y\_FRAG} 垂直方向缩放系数，小数部分
+    \item \hyperref[fielddesc:PPASRMROTATEANGLE]{PPA\_SRM\_ROTATE\_ANGLE} 逆时针旋转角度
+    \item \hyperref[fielddesc:PPASRMMIRRORX]{PPA\_SRM\_MIRROR\_X} 水平方向镜像使能
+    \item \hyperref[fielddesc:PPASRMMIRRORY]{PPA\_SRM\_MIRROR\_Y} 垂直方向镜像使能
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/38-PPA-srm.pdf}
+    \caption{SRM 步骤示例}
+    \label{figure:ppa_srm}
+\end{figure}
+
+\subsubsection{像素块重排}
+当输出像素块较小时，如果每一个像素块都发起一次 2D-DMA 传输，会导致总线带宽利用率较低。为了提高总线带宽利用率，SRM 能对输出像素块进行缓存拼接，拼接为一个更大的像素块后再一次性输出。该功能默认打开，可以通过将 \hyperref[fielddesc:PPASRMMACROBKROBYPASS]{PPA\_SRM\_MACRO\_BK\_RO\_BYPASS} 置 1 关闭。
+
+像素块重排功能开启后，当输出像素块尺寸满足一定条件，会自动进行重排拼接，数量如表 \ref{tab:srm_blk_ro_num} 所示。
+\begin{itemize}
+    \item 当输出像素块为 ARGB8888/RGB888 格式时，若输出像素块垂直高度小于等于 32，且水平宽度小于等于 16 时，像素块重排功能会自动开启。
+    \item 当输出像素块为 RGB565 格式时，若输出像素块垂直高度小于等于 32，且水平宽度小于等于 32 时，像素块重排功能会自动开启。
+    \item 当输出像素块为 YUV420 格式时，若输出像素块垂直高度小于等于 32，且水平宽度小于等于 32 时，像素块重排功能会自动开启。
+\end{itemize}
+
+\begin{longtable}[c]{ |p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}| }
+    \caption{SRM 输出像素块重排数量}
+    \label{tab:srm_blk_ro_num}\\\hline
+
+    \rowcolor{lightgray}
+    \multicolumn{2}{|c|}{\textbf{ARGB8888/RGB888}} & \multicolumn{2}{c|}{\textbf{RGB565}} & \multicolumn{2}{c|}{\textbf{YUV420}} \\\hline
+    \rowcolor{lightgray}
+    \textbf{水平尺寸} & \textbf{重排个数} & \textbf{水平尺寸} & \textbf{重排个数} & \textbf{水平尺寸（偶数）} & \textbf{重排个数} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{5}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \multicolumn{2}{|c|}{\textbf{ARGB8888/RGB888}} & \multicolumn{2}{c|}{\textbf{RGB565}} & \multicolumn{2}{c|}{\textbf{YUV420}} \\\hline
+    \rowcolor{lightgray}
+    \textbf{水平尺寸} & \textbf{重排个数} & \textbf{水平尺寸} & \textbf{重排个数} & \textbf{水平尺寸（偶数）} & \textbf{重排个数} \\\hline
+    \endhead
+
+    \multicolumn{5}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        1  & 32 & 1  & 64 & 2  & 32 \\\hline
+        2  & 16 & 2  & 32 & 4  & 16 \\\hline
+        3  & 10 & 3  & 20 & 6  & 10 \\\hline
+        4  & 8  & 4  & 16 & 8  & 8  \\\hline
+        5  & 6  & 5  & 12 & 10 & 6  \\\hline
+        6  & 5  & 6  & 10 & 12 & 5  \\\hline
+        7  & 4  & 7  & 9  & 14 & 4  \\\hline
+        8  & 4  & 8  & 8  & 16 & 4  \\\hline
+        9  & 3  & 9  & 7  & 18 & 3  \\\hline
+        10 & 3  & 10 & 6  & 20-32 & 2 \\\hline
+        11 & 2  & 11 & 5  &  &  \\\hline
+        12 & 2  & 12 & 5  &  &  \\\hline
+        13 & 2  & 13 & 4  &  &  \\\hline
+        14 & 2  & 14 & 4  &  &  \\\hline
+        15 & 2  & 15 & 4  &  &  \\\hline
+        16 & 2  & 16 & 4  &  &  \\\hline
+           &    & 17 & 3  &  &  \\\hline
+           &    & 18 & 3  &  &  \\\hline
+           &    & 19-32 & 2 &  &  \\\hline
+
+\end{longtable}
+
+\subsection{图层叠加 (BLEND)}
+
+\subsubsection{基本功能}
+BLEND 把两幅同尺寸图像块通过 Alpha 通道进行叠加，再输出。叠加公式如下，其中 Ab 为背景图层 Alpha 通道，Af 为前景图层 Alpha 通道，Cb 对应背景图层 R、G、B 分量，Cf 对应前景图层 R、G、B 分量：
+\begin{itemize}
+    \item $Aout = Ab + Af - Ab*Af$
+    \item $Cout = (Cb*Ab*(1-Af) + Cf*Af) / (Ab + Af - Ab*Af)$
+\end{itemize}
+
+同时，BLEND 支持基于像素颜色的 color-key 抠图，通过 \hyperref[regdesc:PPACKBGLOWREG]{PPA\_CK\_\textcolor{red}{FG/BG}\_\textcolor{red}{HIGH/LOW}\_REG} 配置颜色范围，可将图像在逻辑上分为 4 个不同选区，并对每个选区执行不同的操作：
+\begin{itemize}
+    \item 当前景像素在 color-key 范围内，背景像素在 color-key 范围外，此时输出背景像素。
+    \item 当背景像素在 color-key 范围内，前景像素在 color-key 范围外，此时若 \hyperref[fielddesc:PPACOLORKEYFGBGREVERSE]{PPA\_COLORKEY\_FG\_BG\_REVERSE} 为 0，则输出背景像素；为 1，则输出前景像素。
+    \item 当背景、前景像素均在 color-key 范围内，此时输出 \hyperref[fielddesc:PPACOLORKEYDEFAULTB]{PPA\_COLORKEY\_DEFAULT\_\textcolor{red}{R/G/B}} 设置的颜色。
+    \item 当背景、前景像素均不在 color-key 范围内，此时按照正常 Alpha Blending 流程输出。
+\end{itemize}
+
+当 \hyperref[fielddesc:PPABLENDBYPASS]{PPA\_BLEND\_BYPASS} 置为 1 后，BLEND 会直接输出背景图层的数据；若此时前景输入数据类型为 A4/A8，则前景输入数据会替换背景输入数据的 Alpha 通道再输出。
+
+\subsubsection{填充图像输出}
+BLEND 还支持填充图像输出。该功能开启后，BLEND 只有输出端会工作，连续不断输出填充图像。填充图像的尺寸以及数据可分别通过 \hyperref[regdesc:PPABLENDTXSIZEREG]{PPA\_BLEND\_TX\_SIZE\_REG} 和 \hyperref[fielddesc:PPABLENDTXFIXPIXEL]{PPA\_BLEND\_TX\_FIX\_PIXEL} 设置。
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+
+\chipname{} PPA 包含一个中断信号，该中断会输出到 \ref{mod:intmtrx}\textit{\nameref{mod:intmtrx}}。
+
+    \begin{itemize}
+        \item PPA\_INTR
+    \end{itemize}
+
+PPA\_INTR 中断由内部多个中断源产生，包括：
+\begin{itemize}
+    \item \label{int:PPASRMPARAMCFGERR}PPA\_SRM\_PARAM\_CFG\_ERR\_INT：当 SRM 配置了错误参数触发。用户可通过 \hyperref[regdesc:PPASRMPARAMERRSTREG]{PPA\_SRM\_PARAM\_ERR\_ST\_REG} 获取具体错误类型，如表 \ref{tab:srm_param_err} 所示。
+    \item \label{int:PPABLENDPARAMCFGERR}PPA\_BLEND\_PARAM\_CFG\_ERR\_INT：当 BLEND 配置了错误参数触发。用户可通过 \hyperref[regdesc:PPABLENDSTREG]{PPA\_BLEND\_ST\_REG} 获取具体错误类型，如表 \ref{tab:blend_param_err} 所示。
+    \item \label{int:PPASRMEOF}PPA\_SRM\_EOF\_INT：当 SRM 完成一次图像块处理触发。
+    \item \label{int:PPABLENDEOF}PPA\_BLEND\_EOF\_INT：当 BLEND 完成一次图像块处理触发。
+\end{itemize}
+
+\begin{longtable}[c]{ |p{6cm}|p{10cm}| }
+    \caption{SRM 参数错误类型}
+    \label{tab:srm_param_err}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{错误类型} & \textbf{详情} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{错误类型} & \textbf{详情}  \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \hyperref[fielddesc:PPATXDSCRVBERRST]{PPA\_TX\_DSCR\_VB\_ERR\_ST} & SRM 输出图像块垂直尺寸加上输出链表配置的垂直偏移 Y 超出输出链表配置的整幅图像垂直尺寸 VA \\\hline
+        \hyperref[fielddesc:PPATXDSCRHBERRST]{PPA\_TX\_DSCR\_HB\_ERR\_ST} & SRM 输出图像块水平尺寸加上输出链表配置的水平偏移 X 超出输出链表配置的整幅图像水平尺寸 HA \\\hline
+        \hyperref[fielddesc:PPAYRXSCALEQUAL0ERRST]{PPA\_Y\_RX\_SCAL\_EQUAL\_0\_ERR\_ST} & SRM 输入图像块垂直方向缩放系数为 0 \\\hline
+        \hyperref[fielddesc:PPARXDSCRVBERRST]{PPA\_RX\_DSCR\_VB\_ERR\_ST} & SRM 输入链表配置的垂直方向图像块尺寸 VB 加上垂直方向偏移 Y 大于整幅图像垂直尺寸 VA \\\hline
+        \hyperref[fielddesc:PPAYDSTLENTOOSAMLLERRST]{PPA\_YDST\_LEN\_TOO\_SAMLL\_ERR\_ST} & SRM 缩放后的图像块垂直方向尺寸为 0。例如，图像块垂直尺寸为 14，垂直缩放系数为 1/16，不进行旋转，此时缩放后的图像块垂直尺寸为 0 \\\hline
+        \hyperref[fielddesc:PPAYDSTLENTOOLARGEERRST]{PPA\_YDST\_LEN\_TOO\_LARGE\_ERR\_ST} & SRM 缩放后的图像块垂直方向尺寸大于 8191 \\\hline
+        \hyperref[fielddesc:PPAXRXSCALEQUAL0ERRST]{PPA\_X\_RX\_SCAL\_EQUAL\_0\_ERR\_ST} & SRM 输入图像块水平方向缩放系数为 0 \\\hline
+        \hyperref[fielddesc:PPARXDSCRHBERRST]{PPA\_RX\_DSCR\_HB\_ERR\_ST} & SRM 输入链表配置的水平方向图像块尺寸 HB 加上水平方向偏移 X 大于整幅图像水平尺寸 HA \\\hline
+        \hyperref[fielddesc:PPAXDSTLENTOOSAMLLERRST]{PPA\_XDST\_LEN\_TOO\_SAMLL\_ERR\_ST} & SRM 缩放后的图像块水平方向尺寸为 0 \\\hline
+        \hyperref[fielddesc:PPAXDSTLENTOOLARGEERRST]{PPA\_XDST\_LEN\_TOO\_LARGE\_ERR\_ST} & SRM 缩放后的图像块水平方向尺寸大于 8191 \\\hline
+        \hyperref[fielddesc:PPAXYUV420RXSCALEERRST]{PPA\_X\_YUV420\_RX\_SCALE\_ERR\_ST} & 当 SRM 输入为 YUV420 时，输入链表的 HA/hb/X 参数为奇数 \\\hline
+        \hyperref[fielddesc:PPAYYUV420RXSCALEERRST]{PPA\_Y\_YUV420\_RX\_SCALE\_ERR\_ST} & 当 SRM 输入为 YUV420 时，输入链表的 VA/vb/Y 参数为奇数 \\\hline
+        \hyperref[fielddesc:PPAXYUV420TXSCALEERRST]{PPA\_X\_YUV420\_TX\_SCALE\_ERR\_ST} & 当 SRM 输出为 YUV420 时，输出链表的 HA/hb/X 参数为奇数 \\\hline
+        \hyperref[fielddesc:PPAYYUV420TXSCALEERRST]{PPA\_Y\_YUV420\_TX\_SCALE\_ERR\_ST} & 当 SRM 输出为 YUV420 时，输出链表的 VA/vb/Y 参数为奇数 \\\hline
+
+\end{longtable}
+
+\begin{longtable}[c]{ |p{6cm}|p{10cm}| }
+    \caption{BLEND 参数错误类型}
+    \label{tab:blend_param_err}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{错误类型} & \textbf{详情} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{错误类型} & \textbf{详情}  \\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+        \hyperref[fielddesc:PPABLENDSIZEDIFFST]{PPA\_BLEND\_SIZE\_DIFF\_ST} & BLEND 前景和背景尺寸不一致 \\\hline
+        \hyperref[fielddesc:PPABLENDYUVXSCALEERRST]{PPA\_BLEND\_YUV\_X\_SCALE\_ERR\_ST} & BLEND 背景图像格式为 YUV422 或 YUV420 时，水平尺寸为奇数 \\\hline
+        \hyperref[fielddesc:PPABLENDYUVYSCALEERRST]{PPA\_BLEND\_YUV\_Y\_SCALE\_ERR\_ST} & BLEND 背景图像格式为 YUV420 时，垂直尺寸为奇数 \\\hline
+
+\end{longtable}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:ppa-prog-procedures}
+
+\subsection{PPA 时钟复位配置流程}
+\label{sec:ppa_clk_rst}
+1. 打开 PPA、2D-DMA 模块的时钟：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:HPSYSCLKRSTPPASYSCLKEN]{HP\_SYS\_CLKRST\_PPA\_SYS\_CLK\_EN} 写 1 打开 PPA 时钟
+    \item 向 \hyperref[fielddesc:HPSYSCLKRSTDMA2DSYSCLKEN]{HP\_SYS\_CLKRST\_DMA2D\_SYS\_CLK\_EN} 写 1 打开 2D-DMA 时钟
+\end{itemize}
+2. 复位 PPA、2D-DMA 模块：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:HPSYSCLKRSTRSTENPPA]{HP\_SYS\_CLKRST\_RST\_EN\_PPA} 写 1 再写 0 复位 PPA
+    \item 向 \hyperref[fielddesc:HPSYSCLKRSTRSTENDMA2D]{HP\_SYS\_CLKRST\_RST\_EN\_DMA2D} 写 1 再写 0 复位 2D-DMA
+\end{itemize}
+
+\subsection{SRM 配置流程}
+1. 参考 \ref{sec:ppa_clk_rst} 打开 PPA、2D-DMA 时钟，复位 PPA、2D-DMA。
+
+2. 配置 2D-DMA 输入输出链表，具体参数可参考表 \ref{tab:ppa_link_list_config}。
+
+3. 选择 2D-DMA 输入输出通道：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x1，将一条 2D-DMA 输出通道分配给 PPA SRM 输入。
+    \item 向 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x1，将一条 2D-DMA 输入通道分配给 PPA SRM 输出。
+\end{itemize}
+
+4. 对 PPA 使用的 2D-DMA 通道使能描述符接口：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}} 写 1 使能描述符接口。
+    \item 向 \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_IN\_DSCR\_PORT\_EN\_CH\textcolor{red}{x}} 写 1 使能描述符接口。
+\end{itemize}
+
+5. 配置 2D-DMA 描述符接口补全参数：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_H\_CH\textcolor{red}{x}} 水平补全参数，详见表 \ref{tab:ppa_blk_config}。
+    \item 配置 \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_V\_CH\textcolor{red}{x}} 垂直补全参数，详见表 \ref{tab:ppa_blk_config}。
+\end{itemize}
+
+6. 开启 2D-DMA 输入输出通道：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\textcolor{red}{x}} 写 1 开启 2D-DMA 输出通道。
+    \item 向 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} 写 1 开启 2D-DMA 输入通道。
+\end{itemize}
+
+7. 配置 SRM 参数：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:PPASRMBKSIZESEL]{PPA\_SRM\_BK\_SIZE\_SEL} 设置处理图像块尺寸。
+    \item 配置 \hyperref[fielddesc:PPASRMRXCM]{PPA\_SRM\_RX\_CM} 设置 SRM 输入数据类型。
+    \item 配置 \hyperref[fielddesc:PPASRMTXCM]{PPA\_SRM\_TX\_CM} 设置 SRM 输出数据类型。
+    \item 配置 \hyperref[fielddesc:PPASRMSCALXINT]{PPA\_SRM\_SCAL\_X\_INT} 设置水平方向缩放系数的整数部分。
+    \item 配置 \hyperref[fielddesc:PPASRMSCALXFRAG]{PPA\_SRM\_SCAL\_X\_FRAG} 设置水平方向缩放系数的小数部分。
+    \item 配置 \hyperref[fielddesc:PPASRMSCALYINT]{PPA\_SRM\_SCAL\_Y\_INT} 设置垂直方向缩放系数，整数部分。
+    \item 配置 \hyperref[fielddesc:PPASRMSCALYFRAG]{PPA\_SRM\_SCAL\_Y\_FRAG} 设置垂直方向缩放系数，小数部分。
+    \item 配置 \hyperref[fielddesc:PPASRMROTATEANGLE]{PPA\_SRM\_ROTATE\_ANGLE} 设置逆时针旋转角度。
+    \item 配置 \hyperref[fielddesc:PPASRMMIRRORX]{PPA\_SRM\_MIRROR\_X} 设置水平方向镜像使能。
+    \item 配置 \hyperref[fielddesc:PPASRMMIRRORY]{PPA\_SRM\_MIRROR\_Y} 设置垂直方向镜像使能。
+\end{itemize}
+
+8. 向 \hyperref[fielddesc:PPASCALROTATESTART]{PPA\_SCAL\_ROTATE\_START} 写 1 开启 SRM 工作。
+
+\subsection{BLEND CLUT 配置流程}
+\label{sec: ppa_blend_clut_config}
+1. FIFO 模式：
+
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} 写 0 进入 FIFO 模式
+    \item 写 \hyperref[fielddesc:PPARDWRWORDBLEND0CLUT]{PPA\_RDWR\_WORD\_BLEND0\_CLUT} 初始化背景图层 CLUT
+    \item 写 \hyperref[fielddesc:PPARDWRWORDBLEND1CLUT]{PPA\_RDWR\_WORD\_BLEND1\_CLUT} 初始化前景图层 CLUT
+\end{itemize}
+2. MEM 模式：
+
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:PPAAPBFIFOMASK]{PPA\_APB\_FIFO\_MASK} 写 1 进入 MEM 模式。
+    \item 直接向对应地址写数据初始化 CLUT，可参考表 \ref{tab:blend-clut-addr}。
+\end{itemize}
+
+\subsection{BLEND 配置流程}
+1. 参考 \ref{sec:ppa_clk_rst} 打开 PPA、2D-DMA 时钟，复位 PPA、2D-DMA。
+
+2. 配置 2D-DMA 输入输出链表，具体参数可参考表 \ref{tab:ppa_link_list_config}。
+
+3. 选择 2D-DMA 输入输出通道：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x2，将一条 2D-DMA 输出通道分配给 PPA BLEND 背景层输入。
+    \item 向 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x3，将一条 2D-DMA 输出通道分配给 PPA BLEND 前景层输入。
+    \item 向 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x2，将一条 2D-DMA 输入通道分配给 PPA BLEND 输出。
+\end{itemize}
+
+4. 开启 2D-DMA 输入输出通道。其中，x 为分配给 BLEND 前景、背景的两条通道：
+\begin{itemize}
+    \item 向 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\textcolor{red}{x}} 写 1 开启 2D-DMA 输出通道
+    \item 向 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} 写 1 开启 2D-DMA 输入通道
+\end{itemize}
+
+5. 配置 BLEND 参数：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:PPABLEND0RXCM]{PPA\_BLEND0\_RX\_CM} 设置 BLEND 背景图层输入数据类型。若为 L4/L8，需要先按照 \ref{sec: ppa_blend_clut_config} 初始化 CLUT
+    \item 配置 \hyperref[fielddesc:PPABLEND1RXCM]{PPA\_BLEND1\_RX\_CM} 设置 BLEND 前景图层输入数据类型。若为 L4/L8，需要先按照 \ref{sec: ppa_blend_clut_config} 初始化 CLUT
+    \item 配置 \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM} 设置 BLEND 输出数据类型
+    \item 配置 \hyperref[regdesc:PPACKBGHIGHREG]{PPA\_CK\_BG\_HIGH\_REG}、\hyperref[regdesc:PPACKBGLOWREG]{PPA\_CK\_BG\_LOW\_REG} 分别配置背景图层 color-key 上下限
+    \item 配置 \hyperref[regdesc:PPACKFGHIGHREG]{PPA\_CK\_FG\_HIGH\_REG}、\hyperref[regdesc:PPACKFGLOWREG]{PPA\_CK\_FG\_LOW\_REG} 分别配置前景图层 color-key 上下限
+    \item 配置 \hyperref[regdesc:PPACKDEFAULTREG]{PPA\_CK\_DEFAULT\_REG} 分别配置 color-key 默认值以及行为
+    \item 向 \hyperref[fielddesc:PPABLENDEN]{PPA\_BLEND\_EN} 写 1 使能 BLEND
+\end{itemize}
+
+6. 向 \hyperref[fielddesc:PPABLENDTRANSMODEUPDATE]{PPA\_BLEND\_TRANS\_MODE\_UPDATE} 写 1 开启 BLEND 工作。
+
+\subsection{BLEND 图像填充配置流程}
+1. 参考 \ref{sec:ppa_clk_rst} 打开 PPA、2D-DMA 时钟，复位 PPA、2D-DMA。
+
+2. 配置 2D-DMA 输入（PPA BLEND 输出）链表，具体参数可参考表 \ref{tab:ppa_link_list_config}。
+
+3. 向 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\textcolor{red}{x}} 写 0x2，将一条 2D-DMA 输入通道分配给 PPA BLEND 输出。
+
+4. 向 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\textcolor{red}{x}} 写 1 开启 2D-DMA 输入通道。
+
+5. 配置 BLEND 参数：
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:PPABLENDTXCM]{PPA\_BLEND\_TX\_CM} 设置 BLEND 输出数据类型
+    \item 向 \hyperref[fielddesc:PPABLENDFIXPIXELFILLEN]{PPA\_BLEND\_FIX\_PIXEL\_FILL\_EN} 写 1 使能图像填充功能
+    \item 配置 \hyperref[fielddesc:PPABLENDTXFIXPIXEL]{PPA\_BLEND\_TX\_FIX\_PIXEL} 设置填充图像像素值
+    \item 配置 \hyperref[fielddesc:PPABLENDHB]{PPA\_BLEND\_HB}、\hyperref[fielddesc:PPABLENDVB]{PPA\_BLEND\_VB} 设置填充图像尺寸
+\end{itemize}
+
+6. 向 \hyperref[fielddesc:PPABLENDTRANSMODEUPDATE]{PPA\_BLEND\_TRANS\_MODE\_UPDATE} 写 1 开启 BLEND 工作。
+
+\subsection{错误处理流程}
+\begin{itemize}
+    \item 参考 \ref{sec:ppa_clk_rst} 复位整个 PPA，再重新配置
+    \item 或者向 \hyperref[fielddesc:PPASCALROTATERST]{PPA\_SCAL\_ROTATE\_RST}、\hyperref[fielddesc:PPABLENDRST]{PPA\_BLEND\_RST} 写 1 再写 0 分别复位 SRM、BLEND，再重新配置
+\end{itemize}
+
+\begin{tiplisting}
+\begin{itemize}
+    \vspace{-1.5em}
+    \item 本章节中所有 2D-DMA 配置只涉及一些关键步骤，详细流程可参考 \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}。
+    \item 本章节中，DMA2D\_OUT 方向对应 PPA 输入方向，DMA2D\_IN 方向对应 PPA 输出方向。
+\end{itemize}
+\end{tiplisting}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{ppa-reg-summ}{}
+\section{寄存器列表}
+\label{sec:ppa-reg-summ}
+
+本小节的所有地址均为相对于像素处理加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/38-PPA-reg-summ-latest__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于像素处理加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+
+\subfile{\modulefiles/38-PPA-reg-latest__CN}
+
+
+\end{document}

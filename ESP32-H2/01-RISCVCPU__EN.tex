@@ -1,0 +1,891 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./01-RISCVCPU}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu}{}
+\chapter{ESP-RISC-V CPU}
+\label{mod:riscvcpu}
+
+\section{Overview}
+
+ESP-RISC-V CPU is a 32-bit core based upon RISC-V instruction set architecture (ISA) comprising base integer (I), multiplication/division (M), atomic (A) and compressed (C) standard extensions. The core has 4-stage, in-order, scalar pipeline optimized for area, power and performance. CPU core complex has a debug module (DM), interrupt-controller (INTC), core local interrupts (CLINT) and system bus (SYS BUS) interfaces for memory and peripheral access.
+\begin{figure}[h]
+\centering
+\includegraphics[scale=1,width=0.8\textwidth]{\modulefiles/figures/CPU_BLK_DIAG_v0.1.pdf}
+\caption{CPU Block Diagram}
+\end{figure}
+
+\section{Features}
+\label{sec:riscvcpu-features}
+
+\begin{itemize}
+    \item RISC-V RV32IMAC ISA with four-stage pipeline that supports an operating clock frequency up to 96 MHz
+    \item Compatible with RISC-V ISA Manual Volume I: Unprivileged ISA Version 2.2 and RISC\-/V ISA Manual, Volume II: Privileged Architecture, Version 1.10
+    \item Zero wait cycle access to on-chip SRAM and Cache for program and data access over IRAM/DRAM interface
+    \item Branch target buffer (BTB) with static branch prediction
+    \item User (U) mode support along with interrupt delegation
+    \item Interrupt controller with up to 28 external vectored interrupts for both M and U modes with 16 programmable priority and threshold levels
+    \item Core local interrupts (CLINT) dedicated for each privilege mode
+    \item Debug module (DM) compliant with the specification RISC-V External Debug Support Version 0.13 with external debugger support over an industry-standard JTAG/USB port
+    \item Support for instruction trace
+    \item Debugger with a direct system bus access (SBA) to memory and peripherals
+    \item Hardware trigger compliant to the specification RISC-V External Debug Support Version 0.13 with up to 4 breakpoints/watchpoints
+    \item Physical memory protection (PMP) and attributes (PMA) for up to 16 configurable regions
+    \item 32-bit AHB system bus for peripheral access
+    \item Configurable events for core performance metrics
+\end{itemize}
+
+\section{Terminology}
+
+\begin{longtable}[c]{ R{2cm} p{12cm} }
+\textbf{branch} & an instruction which conditionally changes the execution flow \\
+\textbf{delta} & a change in the program counter (PC) that is other than the difference between two instructions placed consecutively in memory \\
+\textbf{hart} &  a RISC-V hardware thread \\
+\textbf{retire} & the final stage of executing an instruction, when the machine state is updated \\
+\textbf{trap} & the transfer of control to a trap handler caused by either an exception or an interrupt \\
+\end{longtable}
+
+\section{Address Map}
+
+Below table shows address map of various regions accessible by CPU for instruction, data, system bus peripheral and debug.
+
+\begin{longtable}{| l| l |c | c | c  |}
+\caption{CPU Address Map} \label{tab:riscvcpu-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+Name & Description    &  Starting Address  &  Ending Address  & Access   \\ \hline
+IRAM/DRAM\label{TBD1} & Instruction/Data region  &   0x4000\_0000  &  0x4FFF\_FFFF  &  R/W  \\ \hline
+CPU \label{TBD4} & CPU Sub-system region  &      0x2000\_0000  &  0x2FFF\_FFFF  &  R/W  \\ \hline
+AHB\label{TBD3} & AHB Peripheral region &      *default  &  *default  &  R/W  \\ \hline
+\end{longtable}
+
+*default: Address not matching any of the specified ranges (IRAM, DRAM, CPU) are accessed using AHB bus.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% CS Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Configuration and Status Registers (CSRs)}
+\hypertarget{riscvcpu-cpu-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-cpu-reg-summ}
+
+
+Below is a list of CSRs available to the CPU. Except for the custom performance counter CSRs, all the implemented CSRs follow the standard mapping of bit fields as described in the RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10. It must be noted that even among the standard CSRs, not all bit fields have been implemented, limited by the subset of features implemented in the CPU. Refer to the next section for a detailed description of the subset of fields implemented under each of these CSRs.
+
+\subfile{\modulefiles/01-RISCVCPU-reg-summ__EN}
+
+Note that if write/set/clear operation is attempted on any of the CSRs which are read-only (RO), as indicated in the above table, the CPU will generate illegal instruction exception.
+
+\subsection{Register Description}
+
+\subfile{\modulefiles/01-RISCVCPU-reg__EN}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupt Controller %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\clearpage
+\section{Interrupt Controller}
+\label{sec:riscvcpu-int-ctrl}
+
+\subsection{Features}
+\label{sec:riscvcpu-int-features}
+
+The interrupt controller allows capturing, masking and dynamic prioritization of interrupt sources routed from peripherals to the RISC-V CPU. It supports:
+
+\begin{itemize}
+    \item Up to 28 external asynchronous interrupts and 4 core local interrupt sources (CLINT) with unique IDs (0-31)
+    \item Configurable via read/write to memory mapped registers
+    \item Delegable to user mode
+    \item 15 levels of priority, programmable for each interrupt
+    \item Support for both level and edge type interrupt sources
+    \item Programmable global threshold for masking interrupts with lower priority
+    \item Interrupts IDs mapped to trap-vector address offsets
+\end{itemize}
+
+For the complete list of interrupt registers and detailed configuration information, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intpri-reg-summ}.
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-int-func-descr}
+
+Each interrupt ID has 6 properties associated with it. These properties can be configured for the 28 external interrupts (1-2, 5-6, 8-31), but are static (except mode) for the 4 local CLINT interrupts (0, 3, 4, 7). These properties are as follows:
+
+\begin{enumerate}
+    \item Mode (M/U):
+    \begin{itemize}
+        \item Determines the mode in which an interrupt is to be serviced.
+        \item Programmed by setting or clearing the corresponding bit in \hyperref[regdesc:MIDELEG]{mideleg} CSR.
+        \item If the bit is cleared for an interrupt in \hyperref[regdesc:MIDELEG]{mideleg} CSR, then that interrupt will be captured in M mode.
+        \item If the bit is set for an interrupt in \hyperref[regdesc:MIDELEG]{mideleg} CSR, then it will be delegated to U mode.
+    \end{itemize}
+    \item Enable State (0-1):
+    \begin{itemize}
+        \item Determines if an interrupt is enabled to be captured and serviced by the CPU.
+        \item Programmed by writing the corresponding bit in \hyperref[regdesc:INTPRICORE0CPUINTENABLEREG]{INTPRI\_CORE0\_CPU\_INT\_ENABLE\_REG}.
+        \item Local CLINT interrupts have the corresponding bits reserved in the memory mapped registers thus they are always enabled at the INTC level.
+        \item An M mode interrupt (external or local) further needs to be unmasked at core level by setting the corresponding bit in \hyperref[regdesc:MIE]{mie} CSR.
+        \item A U mode interrupt (external or local) further needs to be unmasked at core level by setting the corresponding bits in \hyperref[regdesc:UIE]{uie} CSR.
+    \end{itemize}
+    \item Type (0-1):
+    \begin{itemize}
+        \item Enables latching the state of an interrupt signal on its rising edge.
+        \item Programmed by writing the corresponding bit in \hyperref[regdesc:INTPRICORE0CPUINTTYPEREG]{INTPRI\_CORE0\_CPU\_INT\_TYPE\_REG}.
+        \item An interrupt for which type is kept 0 is referred to as a 'level' type interrupt.
+        \item An interrupt for which type is set to 1 is referred to as an 'edge' type interrupt.
+        \item Local CLINT interrupts are always 'level' type and thus have the corresponding bits reserved in the above register.
+    \end{itemize}
+    \item Priority (0-15):
+    \begin{itemize}
+        \item Determines which interrupt, among multiple pending interrupts, the CPU will service first.
+        \item Programmed by writing to the \hyperref[regdesc:INTPRICORE0CPUINTPRINREG]{INTPRI\_CORE0\_CPU\_INT\_PRI\_\regindex{n}\_REG} for an external interrupt with particular interrupt ID \regindex{n}.
+        \item Enabled external interrupts with priorities less than the threshold value in \hyperref[regdesc:INTPRICORE0CPUINTTHRESHREG]{INTPRI\_CORE0\_CPU\_INT\_THRESH\_REG} are masked.
+        \item Priority levels increase from 0 (lowest) to 15 (highest).
+        \item Interrupts with the same priority are statically prioritized by their IDs, lowest ID having the highest priority.
+        \item Local CLINT interrupts have static priorities associated with them, and thus have the corresponding priority registers to be reserved.
+        \item Local CLINT interrupts cannot be masked using the threshold values for either mode.
+    \end{itemize}
+    \item Pending State (0-1):
+    \begin{itemize}
+        \item Reflects the captured state of an enabled and unmasked external interrupt signal.
+        \item For each external interrupt ID the corresponding bit in read-only \hyperref[regdesc:INTPRICORE0CPUINTEIPSTATUSREG]{INTPRI\_CORE0\_CPU\_INT\_EIP\_STATUS\_REG} gives its pending state.
+        \item For each interrupt ID (local or external), the corresponding bit in the \hyperref[regdesc:MIP]{mip} CSR for M mode interrupts or \hyperref[regdesc:UIP]{uip} CSR for U mode interrupts, also gives its pending state.
+        \item A pending interrupt will cause CPU to enter trap if no other pending interrupt has higher priority.
+        \item A pending interrupt is said to be 'claimed' if it preempts the CPU and causes it to jump to the corresponding trap vector address.
+        \item All pending interrupts which are yet to be serviced are termed as 'unclaimed'.
+    \end{itemize}
+    \item Clear State (0-1):
+    \begin{itemize}
+        \item Toggling this will clear the pending state of claimed edge-type interrupts only.
+        \item Toggled by first setting and then clearing the corresponding bit in \hyperref[regdesc:INTPRICORE0CPUINTCLEARREG]{INTPRI\_CORE0\_CPU\_INT\_CLEAR\_REG}.
+        \item Pending state of a level type interrupt is unaffected by this and must be cleared from source.
+        \item Pending state of an unclaimed edge type interrupt can be flushed, if required, by first clearing the corresponding bit in \hyperref[regdesc:INTPRICORE0CPUINTENABLEREG]{INTPRI\_CORE0\_CPU\_INT\_ENABLE\_REG} and then toggling same bit in \hyperref[regdesc:INTPRICORE0CPUINTCLEARREG]{INTPRI\_CORE0\_CPU\_INT\_CLEAR\_REG}.
+    \end{itemize}
+\end{enumerate}
+
+For a detailed description of the core local interrupt sources, please refer to Section \ref{sec:riscvcpu-clint}.
+
+When CPU services a pending M/U mode interrupt, it:
+\begin{itemize}
+    \item saves the address of the current un-executed instruction in \hyperref[regdesc:MEPC]{mepc}/\hyperref[regdesc:UEPC]{uepc} for resuming execution later.
+    \item updates the value of \hyperref[regdesc:MCAUSE]{mcause}/\hyperref[regdesc:UCAUSE]{ucause} with the ID of the interrupt being serviced.
+    \item copies the state of \hyperref[fielddesc:MSTATUSMIE]{MIE}/\hyperref[fielddesc:USTATUSUIE]{UIE} into \hyperref[fielddesc:MSTATUSMPIE]{MPIE}/\hyperref[fielddesc:USTATUSUPIE]{UPIE}, and subsequently clears \hyperref[fielddesc:MSTATUSMIE]{MIE}/\hyperref[fielddesc:USTATUSUIE]{UIE}, thereby disabling interrupts globally.
+    \item enters trap by jumping to a word-aligned offset of the address stored in \hyperref[regdesc:MTVEC]{mtvec}/\hyperref[regdesc:UTVEC]{utvec}.
+\end{itemize}
+
+The word aligned trap address for an M mode interrupt with a certain $ID=i$ can be calculated as $(\hyperref[fielddesc:MTVECBASE]{mtvec} + 4i)$. Similarly, the word aligned trap address for a U mode interrupt can be calculated as $(\hyperref[fielddesc:UTVECBASE]{utvec} + 4i)$.
+
+After jumping to the trap vector for the corresponding mode, the execution flow is dependent on software implementation, although it can be presumed that the interrupt will get handled (and cleared) in some interrupt service routine (ISR) and later the normal execution will resume once the CPU encounters MRET/URET instruction for that mode.
+
+Upon execution of MRET/URET instruction, the CPU:
+\begin{itemize}
+    \item copies the state of \hyperref[fielddesc:MSTATUSMPIE]{MPIE}/\hyperref[fielddesc:MSTATUSUPIE]{UPIE} back into \hyperref[fielddesc:MSTATUSMIE]{MIE}/\hyperref[fielddesc:USTATUSUIE]{UIE}, and subsequently clears \hyperref[fielddesc:MSTATUSMPIE]{MPIE}/\hyperref[fielddesc:USTATUSUPIE]{UPIE}. This means that if previously \hyperref[fielddesc:MSTATUSMPIE]{MPIE}/\hyperref[fielddesc:USTATUSUPIE]{UPIE} was set, then, after MRET/URET, \hyperref[fielddesc:MSTATUSMIE]{MIE}/\hyperref[fielddesc:USTATUSUIE]{UIE} will be set, thereby enabling interrupts globally.
+    \item jumps to the address stored in \hyperref[regdesc:MEPC]{mepc}/\hyperref[regdesc:UEPC]{uepc} and resumes execution.
+    \end{itemize}
+
+It is possible to perform software assisted nesting of interrupts inside an ISR as explained in Section \ref{sec:riscvcpu-int-suggest-op}.
+
+The below listed points outline the functional behavior of the controller:
+
+\begin{itemize}
+    \item Only if an interrupt has priority higher or equal to the value in the threshold register, will it be reflected in \hyperref[regdesc:INTPRICORE0CPUINTEIPSTATUSREG]{INTPRI\_CORE0\_CPU\_INT\_EIP\_STATUS\_REG}.
+    \item If an interrupt is visible in \hyperref[regdesc:INTPRICORE0CPUINTEIPSTATUSREG]{INTPRI\_CORE0\_CPU\_INT\_EIP\_STATUS\_REG} and has yet to be serviced, then it's possible to mask it (and thereby prevent the CPU from servicing it) by either lowering the value of its priority or increasing the global threshold.
+    \item If an interrupt, visible in \hyperref[regdesc:INTPRICORE0CPUINTEIPSTATUSREG]{INTPRI\_CORE0\_CPU\_INT\_EIP\_STATUS\_REG}, is to be flushed (and prevented from being serviced at all), then it must be disabled (and cleared if it is of edge type).
+\end{itemize}
+
+\subsection{Suggested Operation}
+\label{sec:riscvcpu-int-suggest-op}
+
+\subsubsection{Latency Aspects}
+\label{sec:riscvcpu-int-latency}
+
+There is latency involved while configuring the Interrupt Controller.
+
+In steady state operation, the Interrupt Controller has a fixed latency of 4 cycles. Steady state means that no changes have been made to the Interrupt Controller registers recently. This implies that any interrupt that is asserted to the controller will take exactly 4 cycles before the CPU starts processing the interrupt. This further implies that CPU may execute up to 5 instructions before the preemption happens.
+
+Whenever any of its registers are modified, the Interrupt Controller enters into transient state, which may take up to 4 cycles for it to settle down into steady state again. During this transient state, the ordering of interrupts may not be predictable, and therefore, a few safety measures need to be taken in software to avoid any synchronization issues.
+
+Also, it must be noted that the Interrupt Controller configuration registers lie in the APB address range, hence any R/W access to these registers may take multiple cycles to complete.
+
+In consideration of above mentioned characteristics, users are advised to follow the sequence described below, whenever modifying any of the Interrupt Controller registers:
+\begin{enumerate}
+    \item save the state of \hyperref[fielddesc:MSTATUSMIE]{MIE} and clear \hyperref[fielddesc:MSTATUSMIE]{MIE} to 0
+    \item read-modify-write one or more Interrupt Controller registers
+    \item execute FENCE instruction to wait for any pending write operations to complete
+    \item finally, restore the state of \hyperref[fielddesc:MSTATUSMIE]{MIE}
+\end{enumerate}
+
+Due to its critical nature, it is recommended to disable interrupts globally (\hyperref[fielddesc:MSTATUSMIE]{MIE}=0) beforehand, whenever configuring interrupt controller registers, and then restore \hyperref[fielddesc:MSTATUSMIE]{MIE} right after, as shown in the sequence above.
+
+After execution of the sequence above, the Interrupt Controller will resume operation in steady state.
+
+\subsubsection{Configuration Procedure}
+\label{sec:riscvcpu-int-config}
+
+By default, interrupts are disabled globally, since the reset value of \hyperref[fielddesc:MSTATUSMIE]{MIE} bit in \hyperref[regdesc:MSTATUS]{mstatus} is 0. Software must set \hyperref[fielddesc:MSTATUSMIE]{MIE}=1 after initialization of the interrupt stack (including setting \hyperref[regdesc:MTVEC]{mtvec} to the interrupt vector address) is done.
+
+The threshold value for external interrupts in \hyperref[regdesc:INTPRICORE0CPUINTTHRESHREG]{INTPRI\_CORE0\_CPU\_INT\_THRESH\_REG} is 0 by default. For priority based masking of interrupts this could be initialized to 1 after CPU comes out of reset. That way all interrupt sources which have default 0 priority are masked.
+
+During normal execution, if an external interrupt \regindex{n} is to be enabled, the below sequence may be followed:
+\begin{enumerate}
+    \item save the state of \hyperref[fielddesc:MSTATUSMIE]{MIE} and clear \hyperref[fielddesc:MSTATUSMIE]{MIE} to 0
+    \item depending upon the type of the interrupt (edge/level), set/unset the \regindex{n}th bit of \hyperref[regdesc:INTPRICORE0CPUINTTYPEREG]{INTPRI\_CORE0\_CPU\_INT\_TYPE\_REG}
+    \item set the priority by writing a value to \hyperref[regdesc:INTPRICORE0CPUINTPRINREG]{INTPRI\_CORE0\_CPU\_INT\_PRI\_\regindex{n}\_REG} in range 1 (lowest) to 15 (highest)
+    \item set the \regindex{n}th bit of \hyperref[regdesc:INTPRICORE0CPUINTENABLEREG]{INTPRI\_CORE0\_CPU\_INT\_ENABLE\_REG}
+    \item execute FENCE instruction
+    \item restore the state of \hyperref[fielddesc:MSTATUSMIE]{MIE}
+\end{enumerate}
+
+When one or more interrupts become pending, the CPU acknowledges (claims) the interrupt with the highest priority and jumps to the trap vector address corresponding to the interrupt's ID. Software implementation may read \hyperref[regdesc:MCAUSE]{mcause} to infer the type of trap (\hyperref[fielddesc:MCAUSEINT]{mcause (31)} is 1 for interrupts and 0 for exceptions) and then the ID of the interrupt (\hyperref[fielddesc:MCAUSECODE]{mcause (4-0)} gives ID of interrupt or exception). This inference may not be necessary if each entry in the trap vector is a jump instruction to different trap handlers. Ultimately, the trap handler(s) will redirect execution to the appropriate ISR for this interrupt.
+
+Upon entering into an ISR, software must toggle the \regindex{n}th bit of \hyperref[regdesc:INTPRICORE0CPUINTCLEARREG]{INTPRI\_CORE0\_CPU\_INT\_CLEAR\_REG} if the interrupt is of edge type, or clear the source of the interrupt if it is of level type.
+
+Software may also update the value of \hyperref[regdesc:INTPRICORE0CPUINTTHRESHREG]{INTPRI\_CORE0\_CPU\_INT\_THRESH\_REG} and program \hyperref[fielddesc:MSTATUSMIE]{MIE}=1 for allowing higher priority interrupts to preempt the current ISR (nesting), however, before doing so, all the state CSRs must be saved (\hyperref[regdesc:MEPC]{mepc}, \hyperref[regdesc:MSTATUS]{mstatus}, \hyperref[regdesc:MCAUSE]{mcause}, etc.) since they will get overwritten due to occurrence of such an interrupt. Later, when exiting the ISR, the values of these CSRs must be restored.
+
+Finally, after the execution returns from the ISR back to the trap handler, MRET instruction is used to resume normal execution.
+
+Later, if the \regindex{n} interrupt is no longer needed and needs to be disabled, the following sequence may be followed:
+\begin{enumerate}
+    \item save the state of \hyperref[fielddesc:MSTATUSMIE]{MIE} and clear \hyperref[fielddesc:MSTATUSMIE]{MIE} to 0
+    \item check if the interrupt is pending in \hyperref[regdesc:INTPRICORE0CPUINTEIPSTATUSREG]{INTPRI\_CORE0\_CPU\_INT\_EIP\_STATUS\_REG}
+    \item set/unset the \regindex{n}th bit of \hyperref[regdesc:INTPRICORE0CPUINTENABLEREG]{INTPRI\_CORE0\_CPU\_INT\_ENABLE\_REG}
+    \item if the interrupt is of edge type and was found to be pending in step 2 above, \regindex{n}th bit of \hyperref[regdesc:INTPRICORE0CPUINTCLEARREG]{INTPRI\_CORE0\_CPU\_INT\_CLEAR\_REG} must be toggled, so that its pending status gets flushed
+    \item execute FENCE instruction
+    \item restore the state of \hyperref[fielddesc:MSTATUSMIE]{MIE}
+\end{enumerate}
+
+Above is only a suggested scheme of operation. Actual software implementation may vary.
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-int-reg-summ}{}
+\subsection{Registers}
+\label{sec:riscvcpu-int-reg-summ}
+
+For the complete list of interrupt registers and configuration information, please refer to Section \ref{sec:intpri-reg-summ} and Section \ref{sec:intpri-reg} respectively.
+
+
+%%%%%%%%%%%%%
+%%% CLINT %%%
+%%%%%%%%%%%%%
+
+\clearpage
+\section{Core Local Interrupts (CLINT)}
+\label{sec:riscvcpu-clint}
+
+\subsection{Overview}
+\label{sec:riscvcpu-clint-overview}
+
+The CPU supports 4 local level-type interrupt sources with static priorities as shown below.
+
+\begin{longtable}{ | c | c | r | }
+\caption{Core Local Interrupt (CLINT) Sources} \label{tab:riscvcpu-clint-table}
+\\ \hline
+\rowcolor{lightgray}
+ID & Description & Priority \\ \hline
+0 & U mode software interrupt & 1 \\ \hline
+3 & M mode software interrupt & 3 \\ \hline
+4 & U mode timer interrupt & 0 \\ \hline
+7 & M mode timer interrupt & 2 \\ \hline
+\end{longtable}
+
+These interrupt sources have reserved IDs and fixed priorities which cannot be masked via the interrupt controller threshold registers for either mode.
+
+Two of these interrupts (0 and 4) are by-default delegated to U mode as per the reset values of corresponding bits in \hyperref[regdesc:MIDELEG]{mideleg} CSR.
+
+It must be noted that regardless of the fixed priority of CLINT interrupts, pending external interrupt sources always have higher priority over CLINT sources.
+
+\subsection{Features}
+\begin{itemize}
+    \item 4 local level-type interrupt sources with static priorities and IDs
+    \item Memory mapped configuration and status registers
+    \item Support for interrupts in both M and U modes
+    \item 64-bit timer with interrupt with overflow flag
+    \item Software interrupts
+\end{itemize}
+
+\subsection{Software Interrupt}
+\label{sec:riscvcpu-clint-software}
+
+M and U mode software interrupt sources are controlled by setting or clearing the memory mapped registers \hyperref[regdesc:CLINTMSIPREG]{MSIP} and \hyperref[regdesc:CLINTUSIPREG]{USIP}, respectively.
+
+The \hyperref[fielddesc:MIEMSIE]{MSIE}/\hyperref[fielddesc:UIEUSIE]{USIE} bit must be set in \hyperref[regdesc:MIE]{mie}/\hyperref[regdesc:UIE]{uie} CSR for enabling the interrupt at core level for a particular mode.
+
+Pending state of this interrupt can be checked for either mode by reading the corresponding bit \hyperref[fielddesc:MIPMSIP]{MSIP}/\hyperref[fielddesc:UIPUSIP]{USIP} in \hyperref[regdesc:MIP]{mip}/\hyperref[regdesc:UIP]{uip} CSR.
+
+Note that by default U mode software interrupt with ID 0 has the corresponding bit set in \hyperref[regdesc:MIDELEG]{mideleg} CSR. This bit can be toggled for using the interrupt in M mode instead. Similarly the bit corresponding to M mode software interrupt can be set for using it in U mode.
+
+\subsection{Timer Counter and Interrupt}
+\label{sec:riscvcpu-clint-timer}
+
+The CPU provides a local memory-mapped 64-bit wide M mode timer counter register \hyperref[regdesc:CLINTMTIMEREG]{MTIME} which has both read/write access. The timer counter can be enabled by setting the \hyperref[fielddesc:CLINTMTIMECTLMTCE]{MTCE} bit in  \hyperref[regdesc:CLINTMTIMECTLREG]{MTIMECTL}.
+
+A read-only memory mapped \hyperref[regdesc:CLINTUTIMEREG]{UTIME} is also provided for reading the timer counter from U mode, although it always reflects the same value as in the corresponding M mode counter \hyperref[regdesc:CLINTMTIMEREG]{MTIME} register.
+
+Timer interrupt for M/U mode is enabled by setting the \hyperref[fielddesc:CLINTMTIMECTLMTIE]{MTIE}/\hyperref[fielddesc:CLINTUTIMECTLUTIE]{UTIE} bit in \hyperref[regdesc:CLINTMTIMECTLREG]{MTIMECTL}/\hyperref[regdesc:CLINTUTIMECTLREG]{UTIMECTL}. Also, the \hyperref[fielddesc:MIEMTIE]{MTIE}/\hyperref[fielddesc:UIEUTIE]{UTIE} bit must be set in \hyperref[regdesc:MIE]{mie} CSR for enabling the interrupt at core level for a particular mode.
+
+Interrupt for M/U mode is asserted when the 64-bit timer value exceeds the 64-bit timer-compare value programmed in \hyperref[regdesc:CLINTMTIMECMPREG]{MTIMECMP}/\hyperref[regdesc:CLINTUTIMECMPREG]{UTIMECMP}.
+
+Pending state of M/U mode timer interrupt is reflected as the read-only \hyperref[fielddesc:CLINTMTIMECTLMTIP]{MTIP}/\hyperref[fielddesc:CLINTUTIMECTLUTIP]{UTIP} bit in \hyperref[regdesc:CLINTMTIMECTLREG]{MTIMECTL}/\hyperref[regdesc:CLINTUTIMECTLREG]{UTIMECTL}.
+
+For de-asserting the pending timer interrupt in M/U mode, either the \hyperref[fielddesc:CLINTMTIMECTLMTIE]{MTIE}/\hyperref[fielddesc:CLINTUTIMECTLUTIE]{UTIE} bit has to be cleared or the value of the \hyperref[regdesc:CLINTMTIMECMPREG]{MTIMECMP}/\hyperref[regdesc:CLINTUTIMECMPREG]{UTIMECMP} register needs to be updated.
+
+Pending state of this interrupt can be checked at core level for either mode by reading the corresponding bit \hyperref[fielddesc:MIPMTIP]{MTIP}/\hyperref[fielddesc:UIPUTIP]{UTIP} in \hyperref[regdesc:MIP]{mip}/\hyperref[regdesc:UIP]{uip}.
+
+Upon overflow of the 64-bit timer counter, the \hyperref[fielddesc:CLINTMTIMECTLMTOF]{MTOF}/\hyperref[fielddesc:CLINTUTIMECTLUTOF]{UTOF} bit in \hyperref[regdesc:CLINTMTIMECTLREG]{MTIMECTL}/\hyperref[regdesc:CLINTUTIMECTLREG]{UTIMECTL} gets set. It can be cleared after appropriate handling of the overflow situation.
+
+Note that by default U mode timer interrupt with ID 4 has the corresponding bit set in \hyperref[regdesc:MIDELEG]{mideleg} CSR. This bit can be toggled for using the interrupt in M mode instead. Similarly the bit corresponding to M mode timer interrupt can be set for using it in U mode.
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-clint-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-clint-reg-summ}
+
+
+The addresses in this section are relative to CPU sub-system base address provided in Figure \ref{fig:sysmem-address-mapping-structure} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/01-RISCV-CLINT-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsection{Register Description}
+
+The addresses in this section are relative to CPU subsystem base address provided in Figure \ref{fig:sysmem-address-mapping-structure} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/01-RISCV-CLINT-reg__EN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Physical Memory Protection}
+\label{sec:riscvcpu-pmp}
+
+\subsection{Overview}
+\label{sec:riscvcpu-pmp-overview}
+The CPU core includes a Physical Memory Protection (PMP) unit fully compliant to \textbf{RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10}, which can be used by software to set memory access privileges (read, write and execute permissions) for required memory regions. In addition to standard PMP checks, CPU core also implements custom Physical Memory Attributes (PMA) checkers to provide additional permission checks based on pre-defined attributes.
+
+\subsection{Features}
+\label{sec:riscvcpu-pmp-features}
+The PMP unit can be used to restrict access to physical memory. It supports 16 regions and a minimum granularity of 4 bytes. The maximum supported NAPOT range is 4 GB.
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-pmp-func-descr}
+
+Software can program the PMP unit's configuration and address registers in order to contain faults and support secure execution. PMP CSRs can only be programmed in machine mode. Once the PMP unit is enabled by configuring PMP CSRs, write, read and execute permission checks are applied to all the accesses in user mode as per programmed values of enabled 16 pmpcfgX and pmpaddrX registers (refer to the \hyperref[sec:riscvcpu-pmp-reg-summ]{Register Summary}).
+
+By default, PMP grants permission to all accesses in machine mode and revokes permission of all access in user mode. This implies that it is mandatory to program the address range and valid permissions in pmpcfg and pmpaddr registers (refer to the \hyperref[sec:riscvcpu-pmp-reg-summ]{Register Summary}) for any valid access to pass through in user mode. However, it is not required for machine mode as PMP permits all accesses to go through by default. In cases where PMP checks are also required in machine mode, the software can set the lock bit of the required PMP entry to enable permission checks on it. Once the lock bit is set, it can only be cleared through CPU reset.
+
+When any instruction is being fetched from a memory region without execute permissions, an exception is generated at the processor level and the exception cause is set as instruction access fault in \hyperref[regdesc:MCAUSE]{mcause} CSR. Similarly, any load/store access without valid read/write permissions, will result in an exception generation with \hyperref[regdesc:MCAUSE]{mcause} updated as load access and store access fault respectively. In case of load/store access faults, violating address is captured in \hyperref[regdesc:MTVAL]{mtval} CSR.
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\hypertarget{riscvcpu-pmp-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-pmp-reg-summ}
+
+
+Below is a list of PMP CSRs supported by the CPU. These are only accessible from machine mode.
+
+\subfile{\modulefiles/01-RISCV-PMP-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsection{Register Description}
+\label{sec:riscvcpu-pmp-reg-desc}
+
+PMP unit implements all pmpcfg0-3 and pmpaddr0-15 CSRs as defined in \textbf{RISC-V Instruction Set Manual Volume II: Privileged Architecture, Version 1.10}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Physical Memory Attribute Checker (PMAC)}
+\label{sec:riscvcpu-pma}
+
+\subsection{Overview}
+\label{sec:riscvcpu-pma-overview}
+CPU core also implements a custom Physical Memory Attributes Checker (PMAC) to provide additional permission checks based on pre-defined memory type configured through custom CSRs.
+
+
+\subsection{Features}
+\label{sec:riscvcpu-pma-features}
+ PMAC supports below features:
+ \begin{itemize}
+    \item Configurable memory type for defined memory regions
+    \item Configurable attribute for defined memory regions
+\end{itemize}
+\subsection{Functional Description}
+\label{sec:riscvcpu-pma-func-descr}
+
+Software can program the PMAC unit's configuration and address registers in order to avoid faults due to access to invalid memory regions. PMAC CSRs can only be programmed in machine mode. Once enabled, write, read and execute permission checks are applied to all the accesses irrespective of privilege mode as per programmed values of enabled 16 pma\_cfgX and pma\_addrX registers (refer to the \hyperref[sec:riscvcpu-pma-reg-summ]{Register Summary}). Access to entries marked as invalid memory types will result in fetch fault or load/store fault exception, as the case may be.
+
+Exception generation and handling for PMAC related faults will be handled in a similar way to PMP checks. When any instruction is being fetched from a memory region configured as null or invalid memory region, an exception is generated at the processor level and the exception cause is set as instruction access fault in \hyperref[regdesc:MCAUSE]{mcause} CSR. Similarly, any load/store access to null or invalid memory region, will result in an exception generation with \hyperref[regdesc:MCAUSE]{mcause} updated as load access and store access fault respectively. In case of load/store access faults, violating address is captured in \hyperref[regdesc:MTVAL]{mtval} CSR. For the PMAC entries configured as valid memory, the handling is same as for PMP checks.
+
+A lock bit per entry is also provided in case the software wants to disable programming of PMAC registers. Once the lock bit in any pma\_cfgX register is set, respective pma\_cfgX and pma\_addrX registers can not be programmed further, unless a CPU reset cycle is applied.
+
+A 4-bit field in PMAC CSRs is also provided to define attributes for memory regions. These bits are not used internally by CPU core for any purpose. Based on address match, these attributes are provided on load/store interface as side-band signals and are used by cache controller block for its internal operation.
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\hypertarget{riscvcpu-pma-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-pma-reg-summ}
+
+
+Below is a list of PMA CSRs supported by the CPU. These are only accessible from machine mode:
+
+\subfile{\modulefiles/01-RISCV-PMA-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsection{Register Description}
+\label{sec:riscvcpu-pma-reg-desc}
+
+\subfile{\modulefiles/01-RISCV-PMA-reg__EN}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Debug %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Debug}
+\label{sec:riscvcpu-dbg}
+
+
+
+\subsection{Overview}
+\label{sec:riscvcpu-dbg-overview}
+This section describes how to debug and test software running on ESP-RISC-V core. Debug support is provided through standard JTAG pins and complies to RISC-V External Debug Support Specification version 0.13.
+
+Figure \ref{fig:riscvcpu-dbg-sys-overview} below shows the main components of External Debug Support.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth/2,keepaspectratio]{\modulefiles/figures/debug_H2.png}
+\caption{Debug System Overview}\label{fig:riscvcpu-dbg-sys-overview}
+\end{figure}
+
+The user interacts with the Debug Host (e.g., laptop), which is running a debugger (e.g., gdb). The debugger communicates with a Debug Translator (e.g., OpenOCD, which may include a hardware
+driver) to communicate with Debug Transport Hardware (e.g., ESP-Prog adapter). The Debug Transport Hardware connects the Debug Host to the ESP-RISC-V Core's Debug Transport Module (DTM) through a standard JTAG interface. The DTM provides access to the Debug Module (DM) using the Debug Module Interface (DMI).
+
+The DM allows the debugger to halt selected cores. Abstract commands provide access to GPRs (general purpose registers). The Program Buffer allows the debugger to execute arbitrary code on the core, which allows access to additional CPU core state. Alternatively, additional abstract commands can provide access to additional CPU core state.
+ESP-RISC-V core contains Trigger Module supporting 4 triggers. When trigger conditions are met, core will halt spontaneously and inform the debug module that they have halted.
+
+System bus access block allows memory and peripheral register access without using the core.
+
+
+\subsection{Features}
+\label{sec:riscvcpu-dbg-features}
+Basic debug functionality supports below features:
+
+\begin{itemize}
+    \item {Provides necessary information about the implementation to the debugger.}
+    \item {Allows the CPU core to be halted and resumed.}
+    \item {CPU core registers (including CSRs) can be read/written by debugger.}
+    \item {CPU can be debugged from the first instruction executed after reset.}
+    \item {CPU core can be reset through debugger.}
+    \item {CPU can be halted on software breakpoint instructions.}
+    \item {Hardware single-stepping.}
+    \item {Execute arbitrary instructions in the halted CPU by means of the program buffer. 16-word program buffer is supported.}
+    \item {System bus access is supported through word aligned address access.}
+    \item {Supports four Hardware Triggers (can be used as breakpoints/watchpoints) as described in Section \ref{sec:riscvcpu-hwt}.}
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-dbg-func-descr}
+
+As mentioned earlier, Debug Scheme conforms to RISC-V External Debug Support Specification version 0.13. Please refer to the specification for functional operation details.
+
+\subsection{JTAG Control}
+\label{sec:riscvcpu-dbg-jtag-cntl}
+
+Standard JTAG interface is the only way for DTM to access DM. The hardware provides two JTAG methods: PAD\_to\_JTAG and USB\_to\_JTAG.
+
+\begin{itemize}
+    \item {PAD\_to\_JTAG: The JTAG's signal source comes from IO.}
+    \item {USB\_to\_JTAG: The JTAG's signal source comes from USB\_Serial\_JTAG controller.}
+\end{itemize}
+
+Which JTAG method to use depends on many factors. The following table shows the configuration method.
+
+\subfile{\modulefiles/tables/JTAG_CNTL__EN}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-dbg-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-dbg-reg-summ}
+
+
+Below is the list of Debug CSRs supported by ESP-RISC-V CPU core:
+\subfile{\modulefiles/01-RISCV-DBG-reg-summ__EN}
+
+All the debug module registers are implemented in conformance to the specification RISC-V External Debug Support Version 0.13. Please refer to it for more details.
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+
+\subsection{Register Description}
+Below are the details of Debug CSRs supported by ESP-RISC-V core:
+
+\subfile{\modulefiles/01-RISCV-DBG-reg__EN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Hardware Trigger %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Hardware Trigger}
+\label{sec:riscvcpu-hwt}
+
+
+\subsection{Features}
+\label{sec:riscvcpu-hwt-features}
+
+Hardware Trigger module provides breakpoint and watchpoint capability for debugging. It includes the following features:
+
+\begin{itemize}
+    \item 4 independent trigger units
+    \item each unit can be configured for matching the address of the program counter or load-store accesses
+    \item can preempt execution by causing breakpoint exception
+    \item can halt execution and transfer control to debugger
+    \item support NAPOT (naturally aligned power-of-two regions) address encoding
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-hwt-func-descr}
+
+The Hardware Trigger module provides four CSRs, which are listed under Section \hyperref[sec:riscvcpu-hwt-reg-summ]{register summary}. Among these, \hyperref[regdesc:TDATA1]{tdata1} and \hyperref[regdesc:TDATA2]{tdata2} are abstract CSRs, which means they are shadow registers for accessing internal registers for each of the four trigger units, one at a time.
+
+To choose a particular trigger unit write the index (0-3) of that unit into \hyperref[regdesc:TSELECT]{tselect} CSR. When tselect is written with a valid index, the abstract CSRs \hyperref[regdesc:TDATA1]{tdata1} and \hyperref[regdesc:TDATA2]{tdata2} are automatically mapped to reflect internal registers of that trigger unit. Each trigger unit has two internal registers, namely \hyperref[regdesc:MCONTROL]{mcontrol} and \hyperref[regdesc:MADDRESS]{maddress}, which are mapped to tdata1 and tdata2, respectively.
+
+Writing larger than allowed indexes to tselect will clip the written value to the largest valid index, which can be read back. This property may be used for enumerating the number of available triggers during initialization or when using a debugger.
+
+Since software or debugger may need to know the type of the selected trigger to correctly interpret tdata1 and tdata2, the 4 bits (31-28) of tdata1 encodes the type of the selected trigger. This type field is read-only and always provides a value of 0x2 for every trigger, which stands for match type trigger, hence, it is inferred that tdata1 and tdata2 are to be interpreted as mcontrol and maddress. The information regarding other possible values can be found in the specification RISC-V External Debug Support Version 0.13, but this trigger module only supports type 0x2.
+
+Once a trigger unit has been chosen by writing its index to tselect, it will become possible to configure it by setting the appropriate bits in mcontrol CSR (tdata1) and writing the target address to maddress CSR (tdata2).
+
+Each trigger unit can be configured to either cause breakpoint exception or enter debug mode, by writing to the action field of mcontrol. This bit can only be written from debugger, thus by default a trigger, if enabled, will cause breakpoint exception.
+
+mcontrol for each trigger unit has a \hyperref[fielddesc:MCONTROLHIT]{hit} bit which may be read, after CPU halts or enters exception, to find out if this was the trigger unit that fired. This bit is set as soon as the corresponding trigger fires, but it has to be manually cleared before resuming operation. Although, failing to clear it does not affect normal execution in any way.
+
+Each trigger unit only supports match on address, although this address could either be that of a load/store access or the virtual address of an instruction. The address and size of a region are specified by writing to maddress (tdata2) CSR for the selected trigger unit. Larger than 1 byte region sizes are specified through NAPOT (naturally aligned power-of-two) encoding (see Table \ref{tab:riscvcpu-hwt-table}) and enabled by setting match bit in mcontrol. Note that for NAPOT encoded addresses, by definition, the start address is constrained to be aligned to (i.e., an integer multiple of) the region size.
+
+\begin{longtable}{ | c | c | r | }
+\caption{NAPOT encoding for maddress} \label{tab:riscvcpu-hwt-table}
+\\ \hline
+\rowcolor{lightgray}
+maddress(31-0) & Start Address & Size (bytes) \\ \hline
+aaa...aaaaaaaaa0 & aaa...aaaaaaaaa0 & $2$ \\ \hline
+aaa...aaaaaaaa01 & aaa...aaaaaaaa00 & $4$ \\ \hline
+aaa...aaaaaaa011 & aaa...aaaaaaa000 & $8$ \\ \hline
+aaa...aaaaaa0111 & aaa...aaaaaa0000 & $16$ \\ \hline
+\multicolumn{3}{c}{....} \\ \hline
+a01...1111111111 & a00...0000000000 & $2^{31}$ \\ \hline
+\end{longtable}
+
+\hyperref[regdesc:TCONTROL]{tcontrol} CSR is common to all trigger units. It is used for preventing triggers from causing repeated exceptions in machine mode while execution is happening inside a trap handler. This also disables breakpoint exceptions inside ISRs by default, although, it is possible to manually enable this right before entering an ISR, for debugging purposes. This CSR is not relevant if a trigger is configured to enter debug mode.
+
+\subsection{Trigger Execution Flow}
+\label{sec:riscvcpu-hwt-suggest-op}
+
+When hart is halted and enters debug mode due to the firing of a trigger (\hyperref[fielddesc:MCONTROLACTION]{action} = 1):
+\begin{itemize}
+    \item \hyperref[regdesc:DPC]{dpc} is set to current PC (in decode stage)
+    \item cause field in \hyperref[regdesc:DCSR]{dcsr} is set to 2, which means halt due to trigger
+    \item \hyperref[fielddesc:MCONTROLHIT]{hit} bit is set to 1, corresponding to the trigger(s) which fired
+\end{itemize}
+
+When hart goes into trap due to the firing of a trigger (\hyperref[fielddesc:MCONTROLACTION]{action} = 0) :
+\begin{itemize}
+    \item \hyperref[regdesc:MEPC]{mepc} is set to current PC (in decode stage)
+    \item \hyperref[regdesc:MCAUSE]{mcause} is set to 3, which means breakpoint exception
+    \item \hyperref[fielddesc:TCONTROLMPTE]{mpte} is set to the value in \hyperref[fielddesc:TCONTROLMTE]{mte} right before trap
+    \item \hyperref[fielddesc:TCONTROLMTE]{mte} is set to 0
+    \item \hyperref[fielddesc:MCONTROLHIT]{hit} bit is set to 1, corresponding to the trigger(s) which fired
+\end{itemize}
+
+\textit{Note: If two different triggers fire at the same time, one with action = 0 and another with action = 1, then hart is halted and enters debug mode.}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvcpu-hwt-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-hwt-reg-summ}
+
+
+Below is a list of Trigger Module CSRs supported by the CPU. These are only accessible from machine mode.
+
+\subfile{\modulefiles/01-RISCV-HWT-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsection{Register Description}
+
+\subfile{\modulefiles/01-RISCV-HWT-reg__EN}
+
+
+%%%%%%%%%%%%
+%%%%%%%%%%%%
+
+\clearpage
+\section{Trace}
+\label{sec:riscvcpu-trace}
+
+\subsection{Overview}
+\label{sec:riscvcpu-trace-overview}
+In order to support non-intrusive software debug, the CPU core provides an instruction trace interface which provides relevant information for offline debug purpose. This interface provides relevant information to Trace Encoder block, which compresses the information and stores in memory allocated for it. Software decoders can read this information from trace memory without interrupting the CPU core and re-generate the actual program execution by the CPU core.
+
+
+\subsection{Features}
+\label{sec:riscvcpu-trace-features}
+
+The CPU core supports instruction trace feature and provides below information to Trace Encoder as mandated in RISC-V Processor Trace Version 1.0:
+
+\begin{itemize}
+    \item Number of instructions being retired.
+    \item Occurrence of exception and interrupt along with cause and trap values.
+    \item Current privilege level of hart.
+    \item Instruction type of retired instructions for jumps, branches and return.
+    \item Instruction address for instructions retired before and after program counter changes.
+\end{itemize}
+
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-trace-func-descr}
+
+ESP-RISC-V CPU core implements mandatory instruction delta tracing, also known as branch tracing. It works by tracking execution from a known start address by sending information about deltas taken by a program. Deltas are typically introduced by jump, call, return, branch type instructions and also by interrupts and exceptions. All such deltas along with additional details about the cause and actual instructions/addresses are communicated over high bandwidth instruction trace interface output from the core. Trace Encoder operates on the information on this trace interface and compresses the information for storage in memory for offline debug by a decoder. More information about the encoding is available in Chapter \ref{mod:riscvtracenc} \textit{\nameref{mod:riscvtracenc}}.
+
+The core does not have any internal registers to provide control over instruction trace interface. All register controls are available in \ref{mod:riscvtracenc} \textit{\nameref{mod:riscvtracenc}} block.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Dedicated IO}
+\label{sec:riscvcpu-fastio}
+
+\subsection{Overview}
+\label{sec:riscvcpu-fastio-overview}
+
+Normally, GPIOs are an APB peripheral, which means that changes to outputs and reads from inputs can get stuck in write buffers or behind other transfers, and in general are slower because generally the APB bus runs at a lower speed than the CPU.
+As an alternative, the CPU core implements I/O processors specific CPU registers (CSRs) which are directly connected to the GPIO matrix or IO pads. As these registers can get accessed in one instruction, speed is fast.
+
+\subsection{Features}
+\label{sec:riscvcpu-fastio-features}
+ \begin{itemize}
+    \item 8 dedicated IOs directly mapped on GPIOs
+    \item No latency for driving output ports
+    \item Two CPU cycle latency for sensing input values
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-fastio-func-descr}
+
+The CPU core has a set of 8 inputs and outputs (pin value + pin output enable). These input and output ports are directly connected to the GPIO matrix, through which they can be mapped on top-level pads. Please refer to Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} for more details.
+
+The CPU implements three custom CSRs:
+\begin{itemize}
+    \item GPIO\_IN is read-only and reflects the input value.
+    \item GPIO\_OUT is R/W and reflects the output value for the GPIOs.
+    \item GPIO\_OEN is R/W and reflects the output enable state for the GPIOs. It controls the pad direction. Programming high would mean the pad should be configured in output mode. Programming low means it should be configured in input mode.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\hypertarget{riscvcpu-fastio-reg-summ}{}
+\subsection{Register Summary}
+\label{sec:riscvcpu-fastio-reg-summ}
+
+
+Below is a list of custom dedicated IO CSRs implemented inside the core.
+
+\subfile{\modulefiles/01-RISCV-FASTIO-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\subsection{Register Description}
+\label{sec:riscvcpu-fastio-reg-desc}
+\subfile{\modulefiles/01-RISCV-FASTIO-reg__EN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{Atomic (A) Extension}
+\label{sec:riscvcpu-atomic}
+
+\subsection{Overview}
+\label{sec:riscvcpu-atomic-overview}
+
+Support for atomic (A) extension is available in compliance with the RISC-V ISA Manual Volume I: Unprivileged ISA Version 2.2, with an emphasis to guarantee forward progress, i.e., any situation that may cause data memory lock for an indefinite amount of time is prevented by their very functionality.
+
+The atomic instructions currently ignore the aq (acquire) and rl (release) bits as they are irrelevant to the current architecture in which memory ordering is always guaranteed.
+
+\subsection{Functional Description}
+\label{sec:riscvcpu-atomic-func-descr}
+
+\subsubsection{Load Reserve (LR.W) Instruction}
+\label{sec:riscvcpu-atomic-lr}
+
+The LR.W instruction simply locks a 32-bit aligned memory address to which the load access is being performed. Once a 4-byte memory region is locked, it will remain locked, i.e., other harts won't be able to access this same memory location, until any of the following scenarios is encountered during execution:
+
+\begin{itemize}
+    \item any load operation
+    \item any store operation
+    \item any interrupts/exceptions
+    \item backward jump/taken backward branch
+    \item JALR
+    \item ECALL/EBREAK/MRET/URET
+    \item FENCE/FENCE.I
+    \item debug mode
+    \item critical section exceeding 64 bytes
+    \item data address in SC.W instruction not matching that in LR.W instruction
+\end{itemize}
+
+If any of the above happens, except SC.W, the memory lock will be released immediately. If an SC.W instruction is encountered instead, the lock will be released eventually (not immediately) in the manner described in Section \ref{sec:riscvcpu-atomic-sc}.
+
+If a misaligned address is encountered, it will cause an exception with \hyperref[regdesc:MCAUSE]{mcause} = 6.
+
+\subsubsection{Store Conditional (SC.W) Instruction}
+\label{sec:riscvcpu-atomic-sc}
+
+The SC.W instruction first checks if the memory lock is still valid, and the address is the same as specified during the last LR.W instruction. If so, only then will it perform the store to memory, and later release the lock as soon as it gets an acknowledgment of operation completion from the memory.
+
+On the other hand, if the lock is found to have been invalidated (due to any of the situations as described in section \ref{sec:riscvcpu-atomic-lr}), it will set a fail code (currently always 1) in the destination register rd.
+
+If a misaligned address is encountered, it will cause an exception with \hyperref[regdesc:MCAUSE]{mcause} = 6.
+
+\subsubsection{AMO Instructions}
+\label{sec:riscvcpu-atomic-amo}
+
+An atomic memory operation (AMO) instruction executes in 3 steps:
+
+\begin{enumerate}
+    \item Read data from the memory address given by rs1, and save it to destination register rd.
+    \item Combine the data in rd and rs2 according to the operation type and keep the result for Step 3 below.
+    \item Write the result obtained in Step 2 above to the memory address given by rs1.
+\end{enumerate}
+
+There are 9 different AMO operations: SWAP, ADD, AND, OR, XOR, MAX, MIN, MAXU and MINU.
+
+During this whole process, the memory address is kept locked from being accessed by other harts. If a misaligned address is encountered, it will cause an exception with \hyperref[regdesc:MCAUSE]{mcause} = 6.
+
+For AMO operations both load and store access faults (PMP/PMA) are checked in the 1st step itself. For such cases \hyperref[regdesc:MCAUSE]{mcause} = 7.
+
+\end{document}

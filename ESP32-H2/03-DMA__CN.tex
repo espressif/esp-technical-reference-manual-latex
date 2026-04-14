@@ -1,0 +1,439 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-H2/03-DMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{dma}{}
+\chapter{通用 DMA 控制器 (GDMA)}
+\label{mod:dma}
+
+
+\section{概述}
+
+通用直接存储访问 (General Direct Memory Access, GDMA) 用于在外设与存储器之间以及存储器与存储器之间提供高速数据传输。软件可以在无需 CPU 干预的情况下通过 GDMA 快速搬移数据，从而降低了 CPU 的工作负载，提高了效率。
+
+\chipname{} 的 GDMA 控制器共有 6 个独立的通道，其中包括 3 个发送通道和 3 个接收通道。这 6 个通道由支持 GDMA 功能的外设共享，用户可以将通道分配给任何支持 DMA 功能的外设。这些外设包括：SPI2、UHCI (UART0/UART1)、I2S、AES、SHA、ADC 和 PARLIO。UART0 与 UART1 共用一个 UHCI 接口。
+
+GDMA 控制器支持通道间固定优先级及轮询仲裁以管理外设不同的带宽需求。
+
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/module_with_dma}}
+\centering
+\caption{具有 GDMA 功能的模块和 GDMA 通道}
+\label{Figure:Module_with_DMA}
+\end{figure}
+
+\section{特性}
+
+GDMA 控制器具有以下几个特点：
+
+\begin{itemize}
+    \item AHB 总线架构
+    \item 数据传输以字节为单位，传输数据量可软件编程
+    \item 支持链表
+    \item 访问内部 RAM 时，支持 INCR burst 传输
+    \item GDMA 能够访问的内部 RAM 最大地址空间为 324 KB（320 KB HP SRAM，4 KB LP SRAM）
+    \item 包含 3 个 TX、3 个 RX 通道
+    \item 任一通道支持可配置的外设选择
+    \item 支持通道间固定优先级及轮询仲裁
+\end{itemize}
+
+\section{架构}
+
+\chipname{} 中所有需要进行高速数据传输的模块都具有 GDMA 功能。GDMA 控制器与 CPU 的数据总线使用相同的地址空间访问内部 RAM。图 \ref{fig:gdma-controller} 为 GDMA 控制器基本架构图。
+
+\begin{figure}[H]
+\fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/gdma_controller}}
+\centering
+\caption{GDMA 控制器的架构}
+\label{fig:gdma-controller}
+\end{figure}
+
+GDMA 控制器共有 6 个独立的通道，其中包括 3 个发送通道和 3 个接收通道。每个通道可选择与不同的外设相连，从而实现通道资源由外设共享。
+
+GDMA 控制器通过 AHB\_BUS 将数据存入内部 RAM 或者将数据从内部 RAM 取出。在通过 AHB\_BUS 传输数据之前，GDMA 采用固定优先级的仲裁机制对每个通道的读写请求进行仲裁。内部 RAM 的具体使用范围详见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+软件可以通过挂载链表的方式来使用 GDMA 控制器。链表本身须存储在片内 RAM 中，包括 outlink\textcolor{red}{\it{n}} 与 inlink\textcolor{red}{\it{n}}，本文以 \textcolor{red}{\it{n}} 来表示通道号，\textcolor{red}{\it{n}}为 0 \verb+~+ 2。GDMA 从片内 RAM 中取得链表，然后根据 outlink\textcolor{red}{\it{n}} 中的内容将相应 RAM 中的数据发送出去，也可根据 inlink\textcolor{red}{\it{n}} 中的内容将接收的数据存入指定 RAM 地址空间。
+
+
+\section{功能描述}
+
+\subsection{链表}
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/link_strut}
+\centering
+\caption{链表结构图}
+\label{fig:gdma-link-descriptor}
+\end{figure}
+
+图 \ref{fig:gdma-link-descriptor} 所示为链表的结构图。发送链表与接收链表结构相同。每个链表由一个或者若干个描述符构成，一个描述符由 3 个字组成。链表应存放在内部 RAM 中，供 GDMA 控制器使用。描述符每一字段的意义如下：
+
+\begin{itemize}
+    \item owner (DW0) [31]：表示当前描述符对应的 buffer 允许的操作者。\\
+    0：允许的操作者为 CPU。\\
+    1：允许的操作者为 GDMA 控制器。\\
+    在 GDMA 使用完该描述符对应的 buffer 后，对于 接收描述符，硬件默认会自动将该位清零；对于 发送描述符，需要将 \hyperref[fielddesc:GDMAOUTAUTOWRBACKCHN]{GDMA\_OUT\_AUTO\_WRBACK\_CH\regindex{n}} 置1，硬件才会自动将该位清零。 软件也可通过置位 \hyperref[fielddesc:GDMAOUTLOOPTESTCHN]{GDMA\_OUT\_LOOP\_TEST\_CH\regindex{n}} 或 \hyperref[fielddesc:GDMAINLOOPTESTCHN]{GDMA\_IN\_LOOP\_TEST\_CH\regindex{n}} 来关闭硬件自动清零的功能。软件在挂载链表时需要将该位置1。
+
+    {\bfseries 注意： }本文以 GDMA\_OUT 开头的寄存器对应 TX 通道寄存器，以 GDMA\_IN 开头的寄存器对应 RX 通道寄存器。
+    \item suc\_eof (DW0) [30]：表示一个描述符对应的数据成功传输后是否触发 GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 或 GDMA\_OUT\_EOF\_CH\regindex{n}\_INT 中断。\\
+    1'b0：当前描述符成功传输后不会触发中断；\\
+    1'b1：当前描述符成功传输后触发中断。\\
+    对于接收描述符，需要软件将该 位 写 0，硬件会在接收到包含 EOF 标志的数据后将该 位 置1。\\对于发送描述符，需要软件按需要将描述符中的该 位 置 1。
+    如果软件将在某个描述符中将该位配置为 1，则 GDMA 在处理完该描述符时，会在发送给外设的数据中加入 EOF 标志，告知外设该段数据是一个阶段性结束。
+
+    \item Reserved (DW0) [29]：保留。此位为无关项。
+    \item err\_eof (DW0) [28]：表示接收结束错误标志。\\
+    0：接收数据没有错误。\\
+    1：接收数据有错误。\\
+    该位只用于 UHCI 或 PARLIO 利用 GDMA 接收数据。对于接收描述符，硬件在收完描述符对应的数据段并检测到接收数据错误会将该位置1。
+    \item Reserved (DW0) [27:24]：保留。
+    \item length (DW0) [23:12]：表示当前描述符对应的 buffer 中的有效字节数。对于发送描述符，该段由软件填写，表示从 buffer 中读取数据时需要读取的字节数；对于接收描述符，该段由硬件使用完该 buffer 后或者接收到最后一个数据时自动填写，表示 buffer 中存储的有效字节数。
+    \item size (DW0) [11:0]：表示当前描述符对应的 buffer 容量的字节数。
+    \item buffer address pointer (DW1)：buffer 的地址。
+    \item next descriptor address (DW2)：下一个描述符的地址。如果当前描述符为链表中最后一个描述符，该值可以为 0。该地址必须指向片内 RAM 的地址空间。
+\end{itemize}
+
+
+用 GDMA 接收数据时，如果接收数据的长度小于当前描述符指定的 buffer size，那么下一个描述符对应的接收数据不会占用该 buffer 的剩余空间。
+
+
+\subsection{外设到存储及存储到外设的数据传输}
+GDMA 支持存储到外设及外设到存储的数据传输，分别对应 TX 及 RX 功能。TX 通道通过 outlink\textcolor{red}{\it{n}} 实现将指定存储区域中的数据搬运到外设的发送端；RX 通道通过 inlink\textcolor{red}{\it{n}} 实现将外设接收到的数据搬运到指定的存储区域。
+
+每个RX/TX 通道均可以被配置连接到任意一个支持 GDMA 功能的外设，表 \ref{tab:gdma-peri-sel} 所示为通过寄存器配置通道与其对应外设的关系。其中 “Dummy-\regindex{n}” 是存储到存储数据传输时可选配的寄存器值。当其中一个通道已经与某一个外设连接时，其他通道将不能配置为与该外设连接。
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{配置寄存器与外设选择关系表}
+\label{tab:gdma-peri-sel}\\
+\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:GDMAPERIINSELCHN]{GDMA\_PERI\_IN\_SEL\_CH\regindex{n}}} & \\
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:GDMAPERIOUTSELCHN]{GDMA\_PERI\_OUT\_SEL\_CH\regindex{n}}} & \multirow{-2}{*}{\textbf{外设}}\\
+    \hline
+    0   & SPI2 \\ \hline
+    1   & Dummy-1 \\ \hline
+    2   & UHCI  \\ \hline
+    3   & I2S \\ \hline
+    4   & Dummy-4 \\ \hline
+    5   & Dummy-5  \\ \hline
+    6   & AES \\ \hline
+    7   & SHA \\ \hline
+    8   & ADC  \\ \hline
+    9   & PARLIO  \\ \hline
+    10 \verb+~+  15   & Dummy-10  \verb+~+  15  \\ \hline
+    16 \verb+~+  63 & 无效值 \\\hline
+\end{longtable}
+
+\subsection{存储到存储数据传输}
+GDMA 支持存储到存储的数据传输。置位 \hyperref[fielddesc:GDMAMEMTRANSENCHN]{GDMA\_MEM\_TRANS\_EN\_CH\regindex{n}}，TX 通道\textcolor{red}{\it{n}}的输出将与 RX 通道\textcolor{red}{\it{n}}的输入相连，从而使能存储到存储的数据传输功能。需要注意的是，一个 TX 通道只与其编号对应的 RX 通道相连而实现存储到存储的数据传输，并且需要将 \hyperref[fielddesc:GDMAPERIINSELCHN]{GDMA\_PERI\_IN\_SEL\_CH\regindex{n}} 和 \hyperref[fielddesc:GDMAPERIOUTSELCHN]{GDMA\_PERI\_OUT\_SEL\_CH\regindex{n}} 配置成相同且对应为 Dummy 的值。
+
+\subsection{启动 GDMA}
+
+软件通过挂载链表的方式来使用 GDMA。对于接收数据，软件挂载好接收链表并准备好接收数据，配置 \\\hyperref[fielddesc:GDMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} 字段指向第一个接收链表描述符，置位 \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} 位启动 GDMA。对于发送数据，软件挂载好发送链表并准备好发送数据，配置 \hyperref[fielddesc:GDMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}} 字段指向第一个发送链表描述符，置位 \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 位启动 GDMA。\hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} 与 \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 位由硬件自动清零。
+
+有时您可能想要在 DMA 数据传输已经开始后追加更多描述符。要挂载更多描述符，原本看似只需清空已挂载链表最后一个描述符的 EOF 位，并将该描述符的 next descriptor address (DW2) 字段配置为新链表第一个描述符。但如果 DMA 数据传输已经或马上就要结束，这个方法便行不通了。GDMA 控制器有专门的逻辑来确保数据传输继续或重启：如果数据传输仍在进行，GDMA 控制器会确保顾及到新追加的描述符；如果数据传输已经结束，GDMA 控制器会重启数据传输，传输新追加的描述符。这个逻辑由 Restart 功能实现。
+
+软件使用 Restart 功能时，需要重写已挂载链表的最后一个描述符，使其第三个字中的内容（即 DW2）指向新链表的首地址；然后置位\hyperref[fielddesc:GDMAINLINKRESTARTCHN]{GDMA\_INLINK\_RESTART\_CH\regindex{n}} 或者 \hyperref[fielddesc:GDMAOUTLINKRESTARTCHN]{GDMA\_OUTLINK\_RESTART\_CH\regindex{n}}（这两个位由硬件自动清零），如图 \ref{fig:gdma-link-restart}所示，硬件会在读取已挂载链表的最后一个描述符时，获取新挂载链表的地址，从而继续处理新挂载的链表。
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/link_restart}
+\centering
+\caption{链表关系图}
+\label{fig:gdma-link-restart}
+\end{figure}
+
+
+\subsection{读链表}
+
+软件在配置并启动 GDMA 后，GDMA会从内部RAM读取链表。GDMA  会检查读入的链表描述符是否正确。只有当链表描述符通过检查时，GDMA 对应的通道 才会开始搬运数据。当链表描述符没有通过检查，硬件将触发描述符错误中断（GDMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT 或者 GDMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT），同时该通道将会处于阻塞状态，停止工作。
+
+描述符检查项包括：
+\begin{itemize}
+    \item \hyperref[fielddesc:GDMAINCHECKOWNERCHN]{GDMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} 或者 \hyperref[fielddesc:GDMAOUTCHECKOWNERCHN]{GDMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} 置 1 时，检查描述符的 owner 位。如果该位为 0，表示当前操作者为 CPU，则不通过检查。\hyperref[fielddesc:GDMAINCHECKOWNERCHN]{GDMA\_IN\_CHECK\_OWNER\_CH\regindex{n}} 或者 \hyperref[fielddesc:GDMAOUTCHECKOWNERCHN]{GDMA\_OUT\_CHECK\_OWNER\_CH\regindex{n}} 置 0 时，不检查描述符的 owner 位。\\
+
+    \item 检查描述符中第二个字指示的地址是否在 0x40800000 \verb+~+ 0x4084FFFF 时（请参见本节 \ref{sec:dma-access-inter-ram}）。如果在该范围内，则通过检查。否则，不通过检查。\\
+\end{itemize}
+
+软件在检查到通道描述符错误中断后，需要复位对应的通道，并置位 \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 或者  \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} 位启动 GDMA。
+
+{\bfseries 注意：}描述符的第三个字指示的地址只能在片内，指向下一个可用描述符；所有描述符都需存在内存中。
+
+
+\subsection{数据传输结束标志}
+
+GDMA通过EOF来指示对应描述符所需传输的数据段传输结束。
+
+发送数据时，置位 \hyperref[fielddesc:GDMAOUTTOTALEOFCHNINTENA]{GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT\_ENA} 位使能  GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT 中断， 当带有 EOF 标志的描述符对应 buffer 的数据传输完成后， GDMA 会产生该中断。
+
+接收数据时， 置位 \hyperref[fielddesc:GDMAINSUCEOFCHNINTENA]{GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT\_ENA} 位使能 GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 中断，表示带有 EOF 标志的数据段接收完成。GDMA 还支持中断 GDMA\_IN\_ERR\_CH\regindex{n}\_EOF\_INT，置位 \hyperref[fielddesc:GDMAINERREOFCHNINTENA]{GDMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT\_ENA} 使能该中断，表示对应描述符所需传输的数据段接收完成但该帧或包接收数据有错误。需要注意的是，只有当通道连接的外设为 UHCI 或 PARLIO 时，才支持该中断。
+
+软件在检测到 GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT 或 GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 中断时，可以记录 \\\hyperref[fielddesc:GDMAOUTEOFDESADDRCHN]{GDMA\_OUT\_EOF\_DES\_ADDR\_CH\regindex{n}} 或 \hyperref[fielddesc:GDMAINSUCEOFDESADDRCHN]{GDMA\_IN\_SUC\_EOF\_DES\_ADDR\_CH\regindex{n}} 字段的值，即最后一个描述符的地址。这样，软件可以知道哪些描述符已经被使用并根据需要回收描述符。
+
+{\bfseries 注意：}本章中提到发送链表描述符的 EOF 为 suc\_eof，接收链表描述符的 EOF 可以为 suc\_eof 和 err\_eof。
+
+\subsection{访问片内 RAM}\label{sec:dma-access-inter-ram}
+GDMA 任意 RX/TX 通道均可以访问片内 RAM，其可访问的片内地址空间为0x40800000 \verb+~+ 0x4084FFFF。为加速数据传输速率，支持突发传输模式。置位 \hyperref[fielddesc:GDMAINDATABURSTENCHN]{GDMA\_IN\_DATA\_BURST\_EN\_CH\regindex{n}} 使能 RX 通道突发传输模式；置位 \hyperref[fielddesc:GDMAOUTDATABURSTENCHN]{GDMA\_OUT\_DATA\_BURST\_EN\_CH\regindex{n}} 使能 TX 通道突发传输模式。默认情况下，突发传输没有使能。
+
+\begin{longtable}[c]{ | l | l | l | l | l | }
+    \caption{链表描述符参数对齐要求}
+    \label{tab:gdma-inter-desc-param-align}
+    \\\hline
+    \rowcolor{lightgray}
+   \textbf{接收/发送} & \textbf{突发传输} & \textbf{Size} & \textbf{Length} & \textbf{Buffer Address Pointer} \\\hline
+
+    % table contents
+    \multirow{2}{*}{接收链表描述符}  & 0  & --- & ---  & --- \\\cline{2-5}
+     & 1 & 字对齐   & ---  & 字对齐 \\\hline
+    \multirow{2}{*}{发送链表描述符} & 0  & --- & ---  & --- \\\cline{2-5}
+     & 1 & --- & ---  & --- \\\hline
+\end{longtable}
+
+
+如表 \ref{tab:gdma-inter-desc-param-align} 所示为访问片内时，链表描述符参数配置对齐要求。
+
+当突发模式没有被使能时，无论是发送链表描述符还是接收链表描述符，其参数 size、length 及 buffer address pointer 均没有字对齐的要求。也就是说，对于一个描述符，在可访问的片内地址空间，GDMA 可以从任意起始地址，读出配置长度的数据，长度取值范围为 1 \verb+~+ 4095；或者，将接收到的数据长度（1 \verb+~+ 4095）写入任意起始地址开始的连续地址。
+
+当突发模式使能时，对于发送链表描述符，参数 size、length 及 buffer address pointer 均没有字对齐的要求。而对于接收链表描述符，除了参数 length， 参数 size 和 buffer address pointer 均需要保持字对齐。
+
+
+\subsection{仲裁}
+
+为了确保及时响应高速低延迟的外设请求，比如 SPI 等，GDMA 在通道仲裁机制中引入固定优先级，即每个通道的优先级可配置。GDMA 支持 6（0 \verb+~+ 5）个等级的优先级。其数值越大，对应的优先级越高，请求响应越及时。当若干个通道配置为相同的优先级时，这几个通道间对请求的响应将采用轮询仲裁机制。
+
+
+
+
+\subsection{事件任务矩阵功能} \label{sec:dma-etm-func}
+
+
+
+
+在 \chipname{} 中，GDMA 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 GDMA 的 ETM 任务，或者通过 GDMA 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与 GDMA 相关的 ETM 任务和 ETM 事件。
+
+
+GDMA 可接收的 ETM 任务有：
+
+\begin{itemize}
+\item GDMA\_TASK\_IN\_START\_CH\regindex{n}：触发时开启 GDMA 的接收通道 \regindex{n} 进行数据传输。
+\item GDMA\_TASK\_OUT\_START\_CH\regindex{n}：触发时开启 GDMA 的发送通道 \regindex{n} 进行数据传输。
+\end{itemize}
+
+\begin{tiplisting}
+以上两个 ETM 任务与 CPU 配置 \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLNIK\_START\_CH\regindex{n}}、\hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 实现的功能相同。 当 \hyperref[fielddesc:GDMAINETMENCHN]{GDMA\_IN\\\_ETM\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:GDMAOUTETMENCHN]{GDMA\_OUT\_ETM\_EN\_CH\regindex{n}} 为 1 时，只有ETM可以配置对应方向及对应通道 GDMA 的启动，当 \hyperref[fielddesc:GDMAINETMENCHN]{GDMA\_IN\_ETM\_EN\_CH\regindex{n}} 或 \hyperref[fielddesc:GDMAOUTETMENCHN]{GDMA\_OUT\_ETM\_EN\_CH\regindex{n}} 为0时，仅可通过 CPU 使能对应的 GDMA。
+\end{tiplisting}
+
+GDMA 可产生的 ETM 事件有：
+
+\begin{itemize}
+\item GDMA\_EVT\_IN\_DONE\_CH\regindex{n}：表示通道 \regindex{n} 接收方向链表描述符指向的数据接收完成。
+\item GDMA\_EVT\_IN\_SUC\_EOF\_CH\regindex{n}：通道 \regindex{n} 接收方向 EOF 位为 1 的链表描述符指向的数据接收完成指示。
+\item GDMA\_EVT\_IN\_FIFO\_EMPTY\_CH\regindex{n}：通道 \regindex{n} 接收方向 FIFO 非空到空状态改变指示。
+\item GDMA\_EVT\_IN\_FIFO\_FULL\_CH\regindex{n}：通道 \regindex{n} 接收方向 FIFO 非满到满状态改变指示。
+\item GDMA\_EVT\_OUT\_DONE\_CH\regindex{n}：通道 \regindex{n} 表示通道 \regindex{n} 发送方向链表描述符指向的数据发送完成。
+\item GDMA\_EVT\_OUT\_SUC\_EOF\_CH\regindex{n}：通道 \regindex{n} 发送方向 EOF 位为 1 的链表描述符指向的数据发送完成指示。
+\item GDMA\_EVT\_OUT\_TOTAL\_EOF\_CH\regindex{n}：通道 \regindex{n} 发送方向最后一个并且 EOF 位为 1 的链表描述指向的数据发送符完成指示。
+\item GDMA\_EVT\_OUT\_FIFO\_EMPTY\_CH\regindex{n}：通道 \regindex{n} 发送方向 FIFO 非空到空状态改变指示。
+\item GDMA\_EVT\_OUT\_FIFO\_FULL\_CH\regindex{n}：通道 \regindex{n} 发送方向 FIFO 非满到满状态改变指示。
+\end{itemize}
+
+在具体应用中，GDMA 的 ETM 事件可以用来触发 GDMA 的 ETM 任务，例如，GDMA\_EVT\_OUT\_TOTAL\_EOF\_CH0 事件可以触发 GDMA\_TASK\_IN\_START\_CH1 任务，从而触发新一轮的 GDMA 操作。
+
+
+
+\section{GDMA 中断}
+
+\chipname{} 中 GDMA 可产生以下 6 个中断信号，并将其发送给\textit{\nameref{mod:intmtrx}}：
+\begin{itemize}
+    \item GDMA\_IN\_CH0\_INTR
+    \item GDMA\_IN\_CH1\_INTR
+    \item GDMA\_IN\_CH2\_INTR
+    \item GDMA\_OUT\_CH0\_INTR
+    \item GDMA\_OUT\_CH1\_INTR
+    \item GDMA\_OUT\_CH2\_INTR
+\end{itemize}
+
+以下中断源会触发 GDMA\_IN\_CH\regindex{n}\_INTR 中断信号。
+\begin{itemize}
+\item \label{int:GDMAOUTFIFOOVFINT} GDMA\_OUTFIFO\_OVF\_CH\regindex{n}\_INT：当 GDMA 发送数据方向缓存溢出时触发此中断。
+\item \label{int:GDMAOUTFIFOUDFINT}GDMA\_OUTFIFO\_UDF\_CH\regindex{n}\_INT：当 GDMA 发送数据方向缓存无数据时触发此中断。
+\item \label{int:GDMAINDSCREMPTYINT}GDMA\_IN\_DSCR\_EMPTY\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收链表描述符指向的 buffer size 小于待接收数据长度时触发此中断。
+\item \label{int:GDMAINDSCRERRINT}GDMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收链表描述符里有错误时触发此中断。
+\item \label{int:GDMAINERREOFINT}GDMA\_IN\_ERR\_EOF\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收的描述符对应数据段中有错误发生时触发此中断。(该中断只用于外设选择 UHCI（UART0/UART1）或 PARLIO 时）。
+\item \label{int:GDMAINSUCEOFINT}GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT：对于接收通道\regindex{n}，当一个接收链表描述符对应的数据接收完成，并且描述符的 suc\_eof 为 1 时触发此中断。
+\item \label{int:GDMAINDONEINT}GDMA\_IN\_DONE\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当一个接收链表描述符对应的数据接收完成时触发此中断。
+\end{itemize}
+
+以下中断源会触发 GDMA\_OUT\_CH\regindex{n}\_INTR 中断信号。
+\begin{itemize}
+\item \label{int:GDMAINFIFOOVFINT} GDMA\_INFIFO\_OVF\_CH\regindex{n}\_INT：当 GDMA 接收数据方向缓存溢出时触发此中断。
+\item \label{int:GDMAINFIFOUDFINT}GDMA\_INFIFO\_UDF\_CH\regindex{n}\_INT：当 GDMA 接收数据方向缓存无数据时触发此中断。
+\item \label{int:GDMAOUTTOTALEOFINT}GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当一个链表（可包含多个链表描述符）对应的所有数据都已发送完成时触发此中断。
+\item \label{int:GDMAOUTDSCRERRINT}GDMA\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当发送链表描述符里有错误时触发此中断。
+\item \label{int:GDMAOUTEOFINT}GDMA\_OUT\_EOF\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当发送描述符的 EOF 位为 1，并且该描述符对应的数据发送完成时触发此中断。当 \hyperref[fielddesc:GDMAOUTEOFMODECHN]{GDMA\_OUT\_EOF\_MODE\_CH\regindex{n}}为 0 时，该描述符对应的最后一个数据进入到 GDMA TX 通道时，该中断触发；当 \hyperref[fielddesc:GDMAOUTEOFMODECHN]{GDMA\_OUT\_EOF\_MODE\_CH\regindex{n}}为 1 时，该描述符对应的最后一个数据从 GDMA TX 通道取出时，该中断触发。
+\item \label{int:GDMAOUTDONEINT}GDMA\_OUT\_DONE\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当一个发送链表描述符对应的数据发送完成时触发此中断。
+\end{itemize}
+
+\section{编程流程}
+
+
+可通过配置 \hyperref[fielddesc:PCRGDMACLKEN]{PCR\_GDMA\_CLK\_EN} 寄存器管理 GDMA 时钟门控，默认时钟门控打开。可通过配置 \hyperref[fielddesc:PCRGDMARSTEN]{PCR\_GDMA\_RST\_EN} 对 GDMA 模块全局复位。
+
+
+\subsection{GDMA TX 通道配置流程}
+利用 GDMA 发送数据时，GDMA TX 通道的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:GDMAOUTRSTCHN]{GDMA\_OUT\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 GDMA TX 通道状态机和FIFO 指针。
+    \item 挂载好发送链表，配置寄存器 \hyperref[fielddesc:GDMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}} 指向第一个发送链表描述符。
+    \item 配置 \hyperref[fielddesc:GDMAPERIOUTSELCHN]{GDMA\_PERI\_OUT\_SEL\_CH\regindex{n}} 为对应的外设号，见表 \ref{tab:gdma-peri-sel}。
+    \item 置位 \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 启动 GDMA TX 通道发送数据。
+    \item 配置对应的外设，并启动该外设，具体配置请参考对应的外设章节。
+    \item 等待 GDMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT 中断，即数据传输完成。
+\end{enumerate}
+
+\subsection{GDMA RX 通道配置流程}
+利用 GDMA 接收数据时，GDMA RX 通道的软件配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:GDMAINRSTCHN]{GDMA\_IN\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 GDMA RX 通道状态机和FIFO 指针。
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:GDMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} 指向第一个接收链表描述符。
+    \item 配置 \hyperref[fielddesc:GDMAPERIINSELCHN]{GDMA\_PERI\_IN\_SEL\_CH\regindex{n}} 为对应的外设号，见表 \ref{tab:gdma-peri-sel}。
+    \item 置位 \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} 启动 GDMA RX 通道发送数据。
+    \item 配置对应的外设，并启动该外设，具体配置请参考对应的外设章节。
+\end{enumerate}
+
+\subsection{GDMA 存储器到存储器配置流程}
+利用 GDMA 从存储到存储搬运数据时配置流程如下：
+\begin{enumerate}
+    \item 对寄存器 \hyperref[fielddesc:GDMAOUTRSTCHN]{GDMA\_OUT\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 GDMA TX 通道状态机和FIFO 指针。
+    \item 对寄存器 \hyperref[fielddesc:GDMAINRSTCHN]{GDMA\_IN\_RST\_CH\regindex{n}} 置 1 然后置 0，复位 GDMA RX 通道状态机和FIFO 指针。
+    \item 挂载好发送链表，配置寄存器 \hyperref[fielddesc:GDMAOUTLINKADDRCHN]{GDMA\_OUTLINK\_ADDR\_CH\regindex{n}} 指向第一个发送链表描述符。
+    \item 挂载好接收链表，配置寄存器 \hyperref[fielddesc:GDMAINLINKADDRCHN]{GDMA\_INLINK\_ADDR\_CH\regindex{n}} 指向第一个接收链表描述符。
+    \item 置位 \hyperref[fielddesc:GDMAMEMTRANSENCHN]{GDMA\_MEM\_TRANS\_EN\_CH\regindex{n}} 使能 memory-to-memory 传输功能。
+    \item 置位 \hyperref[fielddesc:GDMAOUTLINKSTARTCHN]{GDMA\_OUTLINK\_START\_CH\regindex{n}} 启动 GDMA TX 通道发送数据。
+    \item 置位 \hyperref[fielddesc:GDMAINLINKSTARTCHN]{GDMA\_INLINK\_START\_CH\regindex{n}} 启动 GDMA RX 通道发送数据。
+    \item 如果某个发送链表描述符的 suc\_eof 位配置为 1，则该描述符对应的数据段传输结束后会触发 GDMA\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 中断。
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{dma-reg-summ}{}
+\section{寄存器列表}
+\label{sec:dma-reg-summ}
+
+本小节的所有地址均为相对于 GDMA 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/03-DMA-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 GDMA 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/03-DMA-reg__CN}
+
+
+\end{document}

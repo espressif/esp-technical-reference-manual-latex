@@ -1,0 +1,576 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./28-USBOTG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{usbotg}{}
+\chapter{USB OTG}
+\label{mod:usbotg}
+
+\section{概述}
+ESP32-S2 带有一个集成了收发器的 USB On-The-Go (OTG\_FS) 外设。该 OTG\_FS 外设可配置成主机模式或设备模式，完全符合 USB 2.0 协议规范。它支持全速 (Full-Speed, FS) 12 Mbit/s 和低速 (Low-Speed, LS) 1.5 Mbit/s 收发器，还支持主机协商协议 (Host Negotiation Protocol, HNP) 和会话请求协议 (Session Request Protocol, SRP)。
+
+\section{特性}
+
+\subsection{通用特性}
+\begin{itemize}
+    \item 支持全速和低速速率
+    \item 主机协商协议 (HNP) 和会话请求协议 (SRP)，均可作为 A 或 B 设备
+    \item 动态 FIFO (DFIFO) 大小
+    \item 支持多种存储器访问模式
+    \begin{itemize}
+        \item Scatter/Gather DMA 模式
+        \item 缓冲 (Buffer) DMA 模式
+        \item Slave 模式
+    \end{itemize}
+    \item 可选择集成收发器或外部收发器
+\end{itemize}
+
+\subsection{设备 (Device) 模式特性}
+\begin{itemize}
+    \item 1 个双向控制端点 0（包含 EP0 IN 和 EP0 OUT）
+\item 另外 6 个端点 (1 \verb+~+ 6)，可配置为 IN 或 OUT
+\item 最多 5 个 IN 端点同时工作（包括 EP0 IN）
+\item 所有 OUT 端点共享一个 RX FIFO
+\item 每个 IN 端点都有专用的 TX FIFO
+\end{itemize}
+
+\subsection{主机 (Host) 模式特性}
+\begin{itemize}
+    \item 8 个通道（管道）
+    \begin{itemize}
+        \item 控制管道同时包含IN与OUT两个通道，因为IN和OUT必须分开处理，仅支持控制传输类型。
+        \item	其余 7 个管道可被配置为 IN 或 OUT，支持批量、同步、中断中的任意传输类型。
+    \end{itemize}
+\item 所有通道共用一个 RX FIFO、一个非周期性 TX FIFO、和一个周期性 TX FIFO。每个 FIFO 大小可配置。
+\end{itemize}
+
+\section{功能描述}
+\subsection{控制器内核与接口}
+
+\begin{figure}[ht!]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/usb_system_architecture_cn}
+\centering
+\caption {OTG\_FS 系统架构}\label{USB_architecture}
+\end{figure}
+
+OTG\_FS 的核心称为 USB 控制器内核。如图 \ref{USB_architecture} 所示，控制器内核有以下 4 个接口：
+
+\begin{itemize}
+    \item {\bfseries CPU 接口}\\
+   CPU 可以通过该接口读写控制器内核的多个寄存器和 FIFO。该接口在内部实现为 AHB 从机接口。通过该接口访问 FIFO 的方式称为 Slave 模式。
+
+   \item {\bfseries APB 接口}\\
+    CPU可以通过 USB 外部控制器 (USB external controller) 来控制 USB 控制器内核的接口。
+
+    \item {\bfseries DMA 接口}\\
+    控制器内核的内部 DMA 可以通过该接口读写系统存储器（例如在 DMA 模式下获取和写入有效数据）。该接口在内部实现为 AHB 主机接口。
+
+    \item {\bfseries USB 2.0 接口}\\
+   控制器内核通过该接口连接 USB 2.0 全速串行收发器。ESP32-S2 内置一个收发器，软件可通过 USB 外部控制器中 USB\_WRAP\_OTG\_CONF 寄存器的 USB\_PHY\_SEL 位来控制该接口连接到 ESP32-S2 内置收发器或者通过 GPIO 交换矩阵连接外部收发器。
+
+    \item {\bfseries USB 外部控制器}\\
+    USB 外部控制器主要用于将 USB 2.0 全速串行接口连接到内部或外部收发器。 USB 外部控制器还能实现省电模式，具体做法是门控控制器内核的时钟（AHB 时钟）,或将所连接的 SPRAM 时钟置于掉电模式。需要注意的是此节能模式与通过 SRP 实现的节能方式有所不同。
+
+    \item {\bfseries 数据 FIFO RAM 接口}\\
+    控制器内核使用的多个 FIFO 实际上并不位于控制器内核内部，而是位于 SPRAM（单端口 RAM）上。FIFO 支持动态大小，因此在运行时在 SPRAM 中进行分配。CPU、DMA 或控制器通过该接口读写 FIFO。
+\end{itemize}
+
+\subsection{存储器布局}
+图 \ref{usb_register_layout} 显示了用于配置和控制 USB 控制器内核的寄存器布局。USB 外部控制器使用另外一组寄存器（称为 wrap 寄存器）。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.6\textwidth]{\modulefiles/figures/usb_register_layout_cn}
+\centering
+\caption {内核地址映射}\label{usb_register_layout}
+\end{figure}
+
+\subsubsection{控制 \& 状态寄存器 (CSR)}
+
+\begin{itemize}
+    \item {\bfseries 内核全局 CSR}\\
+    内核全局寄存器用于配置/控制 OTG\_FS 的通用功能（即主机和设备模式共同的功能），并表示其内部状态。通用功能包括 OTG 控制（HNP，SRP 和 A/B 设备检测），USB 配置（选择主机或设备模式，PHY 选择），以及系统级中断。在主机和设备模式下，软件均可以对内核全局 CSR 进行访问。
+
+    \item {\bfseries 主机模式 CSR}\\
+    主机模式寄存器用于主机模式下的配置/控制/状态表示，只能在主机模式下被访问。每个通道各自有一组主机模式寄存器。
+
+    \item {\bfseries 设备模式 CSR}\\
+    设备模式寄存器用于设备模式下的配置/控制/状态表示，只能在设备模式下被访问。每个端点各自有一组设备模式寄存器。
+
+    \item {\bfseries 电源和时钟门控寄存器}\\
+    此单一寄存器用于控制模块电源和门控时钟。
+\end{itemize}
+
+\subsubsection{FIFO 访问}
+
+OTG\_FS 利用多个 FIFO 缓冲发送或接收的有效数据。FIFO 的数量和类型取决于主机或设备模式，以及所使用的通道或端点的数量（参考章节 \ref{FIFO and Queue Organization}）。FIFO 访问有 DMA 和 Slave 两种模式，当使用 Slave 模式时，CPU 需要通过读写 DFIFO 的队列操作 (push/pop) 区域或调试区域来访问这些 FIFO。FIFO 访问遵循以下规则：
+
+\begin{itemize}
+\item 对 4 KB 队列操作区域中任何地址的读访问将在共享 RX FIFO 中产生一个出队 (pop) 操作。
+\item 对特定 4 KB 队列操作区域的写访问将写入相应的端点或通道的 TX FIFO（前提是该端点是 IN 端点，或者该通道是 OUT 通道）。
+\begin{itemize}
+\item 在设备模式下，数据写入相应的 IN 端点的专用 TX FIFO。
+\item 在主机模式下，根据通道是非周期性通道还是周期性通道，数据写入非周期性 TX FIFO 或周期性 TX FIFO。
+\end{itemize}
+\item 访问 128 KB 调试区域将直接读/写，而不是进行队列操作。此种访问通常仅用于调试目的。
+\end{itemize}
+
+请注意，仅在 Slave 模式下，才需要由 CPU 直接向 FIFO 读写数据。在 DMA 模式下，内部 DMA 将处理 TX FIFO 和 RX FIFO 的数据进出队列操作。
+
+\subsection{FIFO 和队列组织}\label{FIFO and Queue Organization}
+OTG\_FS 中的 FIFO 主要用于保存有效数据（USB 数据包的数据字段）。TX FIFO 用于存储将由主机模式下的 OUT 事务或设备模式下的 IN 事务发送的有效数据。RX FIFO 用于存储主机模式下 IN 事务或设备模式下 OUT 事务的已接收的有效数据。在 Slave 模式下，RX FIFO 还存储各种状态条目，用于指示各类通道事件。
+
+可用于 FIFO 分配的 SPRAM 大小为 256×35 位（35 位包括 32 个数据位加 3 个控制位）。各个通道（在主机模式下）或端点（在设备模式下）使用的多个 FIFO 被分配到 SPRAM 中，并且可以动态调整大小。
+
+\subsubsection{主机模式 FIFO 和队列}
+
+如图 \ref{usb_host_mode_FIFOs} 所示，主机模式使用以下 FIFO：
+
+\begin{itemize}
+\item {\bfseries 非周期性 TX FIFO}：存储所有通道的批量和控制类型的 OUT 事务的有效数据。
+\item {\bfseries 周期性 TX FIFO}：存储所有通道的中断或同步类型的 OUT 事务的有效数据。
+\item {\bfseries RX FIFO}：存储所有 IN 事务的有效数据，以及用于指示有效数据大小和事务/通道事件（例如传输完成或通道暂停）的状态条目。
+\end{itemize}
+
+除 FIFO 外，主机模式还包含两个请求队列，用于存储来自多个通道的事务请求。 请求队列中的每个条目都包含 IN/OUT 通道编号以及执行事务的其他信息（例如事务类型）。请求队列也用于存储其他请求类型，例如通道暂停请求。
+
+与 FIFO 不同，请求队列的大小是固定的，且不能由软件直接访问。相反，一旦启用了通道，主机内核会自动将请求写入请求队列。请求写入队列的顺序决定了 USB 事务的处理顺序。
+
+主机模式包含以下请求队列：
+
+\begin{itemize}
+
+\item {\bfseries 非周期性请求队列}：针对非周期性事务（批量和控制）的请求队列，最多可以存储 4 个条目。
+\item {\bfseries 周期性请求队列}：针对周期性事务（中断和同步）的请求队列，最多可以存储 8 个条目。
+\end{itemize}
+
+调度事务时，硬件将首先执行周期性请求队列上的所有请求，再执行非周期性请求队列上的请求。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/usb_host_mode_FIFOs_cn}
+\centering
+\caption {主机模式 FIFO}\label{usb_host_mode_FIFOs}
+\end{figure}
+
+\subsubsection{设备模式 FIFO}
+
+\begin{figure}[ht!]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/usb_device_mode_FIFOs_cn}
+\centering
+\caption {设备模式 FIFO}\label{usb_device_mode_FIFOs}
+\end{figure}
+
+如图 \ref{usb_device_mode_FIFOs} 所示，设备模式使用以下 FIFO：
+
+\begin{itemize}
+\item {\bfseries RX FIFO}：存储数据包内接收的有效数据和状态条目（用于指示有效数据的大小）。
+\item {\bfseries 专用 TX FIFO}：每个使能的 IN 端点都有一个专用的 TX FIFO，用于存储该端点的所有 IN 有效数据，而无论事务类型（周期性或非周期性 IN 事务）。
+\end{itemize}
+
+由于有专用的 FIFO，设备模式不使用任何请求队列。IN 事务的顺序由主机确定。
+
+\subsection{中断层次结构}
+OTG\_FS 有一条中断线，可以通过中断矩阵连接到一个 CPU。可以通过设置 USB\_GLBLINTRMSK 来屏蔽中断信号。OTG\_FS 中断是 USB\_GINTSTS\_REG 寄存器中所有位的或 (OR)，且置位 USB\_GINTMSK\_REG 寄存器中的相应位可以使能 USB\_GINTSTS\_REG 中的位。USB\_GINTSTS\_REG 包含系统级中断，还包含主机或设备模式专有的中断位以及 OTG 有关中断。 OTG\_FS 中断源按以下层次结构组织。
+
+\begin{figure}[ht!]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/usb_interrupt_hierarchy.eps}
+\centering
+\caption {OTG\_FS 中断层次结构图}\label{usb_interrupt_hierarchy}
+\end{figure}
+
+USB\_GINTSTS\_REG 寄存器的以下位指示较低层级的中断源：
+
+\begin{itemize}
+
+\item {\bfseries USB\_PRTINT} 表示主机端口有未处理的中断。USB\_HPRT\_REG 寄存器指示中断源。
+\item {\bfseries USB\_HCHINT} 表示一个或多个主机通道有未处理的中断。通过 USB\_HAINT\_REG 寄存器可以确定哪些通道有未处理的中断，然后查询该通道的 USB\_HCINT\regindex{n}\_REG 寄存器以确定中断源。
+\item {\bfseries USB\_OEPINT} 表示一个或多个 OUT 端点有未处理的中断。通过 USB\_DAINT\_REG 寄存器可以确定哪些 OUT 端点有未处理的中断，然后查询 OUT 端点的 USB\_DOEPINT\regindex{n}\_REG 寄存器以确定中断源。
+\item {\bfseries USB\_IEPINT} 表示一个或多个 IN 端点有未处理的中断。通过 USB\_DAINT\_REG 寄存器可以确定哪些 IN 端点有未处理的中断，然后查询 IN 端点的 USB\_DIEPINT\regindex{n}\_REG 寄存器以确定中断源。
+\item {\bfseries USB\_OTGINT} 表示 OTG 事件已触发中断。查询 USB\_GOTGINT\_REG 寄存器以确定哪些 OTG 事件触发了中断。
+
+\end{itemize}
+
+\subsection{DMA 模式和 Slave 模式}
+USB OTG 支持 3 种存储器访问方式：Scatter/Gather DMA 模式、缓冲 (Buffer) DMA 模式，和 Slave 模式。
+
+
+\subsubsection{Slave 模式}
+在 Slave 模式下，所有有效数据放入 FIFO 或从 FIFO 中取出都必须通过 CPU 进行。
+
+\begin{itemize}
+\item 使用 IN 端点或 OUT 通道传输数据包时，必须将有效数据放入相应的端点或通道的 TX FIFO 中。
+\item 接收到数据包时，必须先通过读取 USB\_GRXSTSP\_REG 从 RX FIFO 中取出数据包的状态条目，以确定数据包中有效数据的长度（以字节为单位）。然后必须由 CPU 手动从 RX FIFO 中取出相应的字节数（通过读取 RX FIFO 中的存储区域）。
+\end{itemize}
+
+\subsubsection{缓冲 DMA 模式}
+缓冲模式类似于 Slave 模式，只是利用内部 DMA 将有效数据放入 FIFO 或从 FIFO 中取出。
+
+\begin{itemize}
+\item 使用 IN 端点或 OUT 通道传输数据包时，应将有效数据的存储地址写入 USB\_HCDMA\regindex{n}\_REG（主机模式）或 USB\_DIEPDMA\regindex{n}\_REG（设备模式）寄存器。启用端点或通道后，内部 DMA 会将有效数据从存储器中推送到通道或端点的 TX FIFO 中。
+\item 使用 OUT 端点或 IN 通道接收数据包时，应将存储器中空缓冲区的地址写入 USB\_HCDMA\regindex{n}\_REG（主机模式）或 USB\_DOEPDMA\regindex{n}\_REG（设备模式）寄存器。启用端点或通道后，内部 DMA 将把有效数据从 RX FIFO 弹出到相应缓冲区中。
+\end{itemize}
+
+\subsubsection{Scatter/Gather DMA 模式}
+
+\begin{figure}[ht!]
+\includegraphics[width=0.7\textwidth]{\modulefiles/figures/usb_dma_descriptor_list_cn}
+\centering
+\caption {Scatter/Gather DMA 链表结构}\label{usb_dma_descriptor_list}
+\end{figure}
+
+在 Scatter/Gather DMA 模式下，包含有效数据的接收缓冲区可能分散在整个存储器各处。每个端点或通道都有一个连续的 DMA 描述符列表。每个描述符包含一个指向有效数据或接收缓冲区的 32 位指针和一个 32 位的缓冲区描述符 (BufferStatus Quadlet)。有效数据和接收缓冲区可以对应单个事务（即 < 1 MPS 字节）或整个传输（> 1 MPS 字节）。MPS (maximum packet size) 代表最大包长。该列表的实现为环形缓冲区，意味着 DMA 在遇到列表中的最后一个条目时将返回至第一个条目。
+
+\begin{itemize}
+\item 当使用 IN 端点或 OUT 通道发送传输/事务时，DMA 将从多个缓冲区收集有效数据并将其放入 TX FIFO。
+\item 当使用 OUT 端点或 IN 通道接收传输/事务时，DMA 将取出来自 RX FIFO 的接收有效数据，并将它们分别存放到 DMA 列表条目所指向的多个缓冲区中。
+\end{itemize}
+
+\subsection{事务和传输级操作}
+在主机或设备模式下，通信可以在事务级或传输级进行。
+
+\subsubsection{DMA 模式下的事务和传输级操作}
+在 DMA 模式下的传输级操作，只有当一个传输通道被终止时，中断才会发生。以下三种情况下发生传输通道终止：传输通道中所有要求传送的数据全部成功传送、接收到 STALL 或出现连续事物级错误（如，3 个连续的事务级错误）。在 DMA 设备模式下操作时，所有错误均由控制器内核进行处理。
+
+在 DMA 模式下的事务级操作，传输大小是一个数据包的大小（最大数据包大小或短数据包大小）。
+
+\subsubsection{Slave 模式下的事务和传输级操作}
+在 Slave 模式下的事务级操作，一次只能处理一个事务。每组有效数据应对应一个数据包，软件必须根据 USB 接收到的握手应答（例如 ACK 或 NAK）来确定是否需要重启事务。
+
+下表描述了 Slave 模式下进行 IN 和 OUT 事务级操作的方法。
+
+\begin{longtable}[c]{|p{7.5cm}|p{7.5cm}|}
+  \caption{Slave 模式下的 IN 和 OUT 事务级操作}
+  \label{table:IN_and_OUT_Transactions_in_Slave_Mode}
+  \\\hline
+  \rowcolor{lightgray}
+  主机模式 & 设备模式 \\\hline
+    \hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+  主机模式 & 设备模式 \\\hline
+  \hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+ \multicolumn{2}{|l|}{OUT 事务} \\\hline
+ \begin{enumerate}
+     \item 软件配置 USB\_HCTSIZ\regindex{n}\_REG 寄存器，指定数据包的大小和数量（1 个），使能该通道，然后将数据包的有效数据复制到 TX FIFO 中。
+     \item 软件在写完每个数据包的最后一个 DWORD 之后，控制器内核将自动把请求条目写入相应的请求队列。
+     \item 如果该事务成功，将生成 USB\_XFERCOMPL 中断。如果该事务失败，则会发生错误中断（例如 USB\_H\_NACK\regindex{n}）。
+ \end{enumerate}
+  &
+ \begin{enumerate}
+     \item 软件配置 USB\_DIEPTSIZ\regindex{n}\_REG 寄存器，指定数据包的大小 (1 MPS) 和数量（1 个）。端点使能后，将等待主机向其发送数据包。
+     \item 接收到的数据包将与数据包状态条目一起放入 RX FIFO。
+     \item 如果该事务失败（例如，由于 RX FIFO 已满），则端点将回传 NAK。
+ \end{enumerate}
+ \\\hline
+  \multicolumn{2}{|l|}{IN 事务} \\\hline
+ \begin{enumerate}
+     \item 软件配置 USB\_HCTSIZ\regindex{n}\_REG 寄存器，指定数据包的大小和数量（1 个），然后使能该通道。
+     \item 控制器内核自动将请求条目写入相应的请求队列。
+     \item 如果该事务成功，接收数据以及状态条目将写入 RX FIFO。否则，会产生错误中断（例如 USB\_H\_NACK\regindex{n}）。
+ \end{enumerate}
+ &
+ \begin{enumerate}
+     \item 软件配置 USB\_DOEPTSIZ\regindex{n}\_REG 寄存器，指定数据包的大小和数量（1 个）。端点使能后，将等待主机从其读取数据包。
+     \item 数据包传输完成后，将产生 USB\_XFERCOMPL 中断。
+ \end{enumerate}
+ \\\hline
+\end{longtable}
+
+在 Slave 模式下进行传输级操作时，可以在队列中一次性排入一个或多个事务级操作，达到类似于 DMA 模式下的传输级操作的效果。在同一次触发的传输中，多个事务的数据包均可以从 FIFO 中读写，这样就无需以数据包为单位触发软件中断。
+
+Slave 模式下进行传输级操作的方法类似于事务级操作，不同之处在于，需要配置 USB\_HCTSIZ\regindex{n}\_REG 或 USB\_DOEPTSIZ\regindex{n}\_REG 寄存器以指定整次传输的大小和数据包个数。使能通道或端点后，应分别向 TX FIFO 或 RX FIFO 写入或读取对应于多个数据包的有效数据（假设有足够的空间或足够的数据量）。
+
+
+\section{OTG}
+
+USB OTG 允许 OTG 设备作为 USB 主机或 USB 设备。因此，OTG 设备上一般都有一个 Mini-AB 或 Micro-AB 接口，可用于连接 A-plug 或 B-plug。当 OTG 设备连接上 A-plug/B-plug 时，其将成为 A 设备/B 设备。
+
+\begin{itemize}
+    \item A 设备默认为主机模式（A 主机），B 设备默认为设备模式（B 外设）。
+    \item 通过使用主机协商协议 (NHP)，A、B设备可互相交换角色，即变更为 A 外设和 B 主机。
+    \item A 设备可关闭 Vbus 省电。然后，B 设备可通过请求 A 设备启动 Vbus 并发起一个新的会话来唤醒 A 设备。该机制称为会话请求协议 (SRP)。
+    \item Vbus 只能由 A 设备供电，即使 A 设备为外设模式。
+\end{itemize}
+
+OTG 设备可通过接头的 ID 管脚确定其连接的是 A-plug 还是 B-plug。A-plug 中的 ID 管脚为接地，B-plug 中的 ID 管脚则为悬空。
+
+\subsection{ID 管脚检测}
+
+寄存器 USB\_GOTGCTL\_REG 中的位 USB\_CONIDSTS 指示 OTG 控制器为 A 设备 (1'b0) 还是 B 设备 (1'b1)。当 USB\_CONIDSTS 发生改变（即连接或断开插头时），会产生 USB\_CONIDSTSCHNG 中断。
+
+\subsection{OTG 接口}
+
+OTG\_FS 支持 OTG Revision 1.3 规范的 SRP 和 HNP 协议。 OTG\_FS 控制器内核通过 UTMI+ OTG 接口与收发器（内部或外部）连接。 UTMI+ OTG 接口允许控制器内核操作收发器（比如启用/禁用HNP中的上拉和下拉）以实现 OTG 的功能，并且还允许收发器指示与 OTG 相关的事件。 如果改用外部收发器，那么 UTMI+ OTG 将连接到 ESP32-S2 的 GPIO。 表 \ref{table:USB_utmip_otg_interface} 描述了 UTMI+ OTG 接口信号。
+
+\begin{longtable}[c]{|l|l|m{11cm}|}
+    \caption{UTMI OTG 接口 \label{table:USB_utmip_otg_interface}} \\
+
+    \hline
+    \rowcolor{lightgray}
+    接口信号 & I/O & 描述 \\
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    接口信号 & I/O & 描述 \\
+    \hline
+    \endhead
+    \endfoot
+    usb\_otg\_iddig\_in & I & 迷你 A/B插头指示器。 指示所连接的插头是 mini-A 还是 mini-B。 仅在 usb\_otg\_idpullup 被采样断言时有效。\newline 1'b0：连接 mini-A \newline 1'b1：连接 mini-B \\
+    \hline
+    usb\_otg\_avalid\_in & I & A 类外设会话有效。指示 Vbus 电压是否在 A 类外设会话的有效电平上。比较器阈值为： \newline1'b0: Vbus \textless 0.8 V\newline1'b1: Vbus \textgreater 2.0 V \\
+    \hline
+    usb\_otg\_bvalid\_in & I & B 类外设会话有效。指示 Vbus 电压是否在 B 类外设会话的有效电平上。比较器阈值为：\newline 1'b0: Vbus \textless 0.8 V\newline 1'b1: Vbus \textgreater 4 V \\
+    \hline
+    usb\_otg\_vbusvalid\_in & I & Vbus 有效。指示 Vbus 电压是否在 A/B 设备/外设操作的有效电平上。比较器阈值为：\newline1'b0: Vbus \textless 4.4 V \newline 1'b1: Vbus \textgreater 4.75 V \\
+    \hline
+    usb\_srp\_sessend\_in & I & B 设备会话结束。指示 Vbus 电压是否在 B 设备会话结束的阈值以下。比较器阈值为：\newline 1'b0: Vbus \textgreater 0.8 V \newline 1'b1: Vbus \textless 0.2 V \\
+    \hline
+    usb\_otg\_idpullup & O & \begin{tabular}[c]{@{}l@{}} 模拟 ID 输入采样使能。使能采样模拟 ID 线。\\ 1'b0: ID 管脚采样禁能 \\ 1'b1: ID 管脚采样使能 \end{tabular} \\
+    \hline
+    usb\_otg\_dppulldown & O & D+ 下拉电阻使能。使能 D+ 线上的 15 k$\Omega$ 下拉电阻。 \\
+    \hline
+    usb\_otg\_dmpulldown & O & D- 下拉电阻使能。使能 D- 线上的 15 k$\Omega$ 下拉电阻。\\
+    \hline
+    usb\_otg\_drvvbus & O & 驱动 Vbus。驱动 Vbus 到 5 V。\newline1'b0：不驱动 Vbus \newline 1'b1：驱动 Vbus \\
+    \hline
+    usb\_srp\_chrgvbus & O & Vbus 输入充电使能。指示 PHY 为 Vbus 充电。\newline 1'b0：不通过电阻为 Vbus 充电 \newline 1'b1：通过电阻为 Vbus 充电（需激活至少 30 ms）\\
+    \hline
+    usb\_srp\_dischrgvbus & O & Vbus 输入放电使能。指示 PHY 为 Vbus 放电。\newline 1'b0：不通过电阻为 Vbus 放电 \newline 1'b1：通过电阻为 Vbus 放电（需激活至少 50 ms）\\
+    \hline
+\end{longtable}
+
+\subsection{会话请求协议 (SRP)}
+
+\subsubsection{A 设备 SRP}
+图 \ref{figure:usb_srp_A_device} 说明了 OTG\_FS 充当 A 设备（即默认主机并为 Vbus 供电）时的 SRP 流程。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.8\textwidth]{\modulefiles/figures/usb_srp_A_device}
+\centering
+\caption {A 设备 SRP}\label{figure:usb_srp_A_device}
+\end{figure}
+
+\begin{enumerate}
+\item 为了节省电能，当总线空闲时，应用程序将挂起并关闭端口电源，方法是写入主机端口控制和状态寄存器中的端口挂起位（USB\_PRTSUSP 置为 1'b0）和端口电源位（USB\_PRTPWR 置为 1'b0）。
+
+\item PHY 通过使 usb\_otg\_vbusvalid\_in 信号无效来指示端口断电。
+
+\item 当 Vbus 电源关闭时，A 设备必须检测到 SE0 至少 2 ms 才能启动 SRP。
+
+\item 要启动 SRP，B 设备会打开其数据线上拉电阻 5 到 10 ms。OTG\_FS 内核将检测数据线脉冲。
+
+\item 设备将 Vbus 驱动到 A 设备会话有效阈值之上（至少 2.0 V）以执行 Vbus 脉冲。OTF\_FS 内核在检测 SRP 时中断应用程序。全局中断状态寄存器中的会话请求检测位 (USB\_SESSREQINT) 将被置位。
+
+\item 应用程序必须处理会话请求检测中断，并通过写入主机端口控制和状态寄存器中的端口电源位来打开端口电源位。PHY 通过确认 usb\_otg\_vbusvalid\_in 信号来指示端口上电。
+
+\item 当 USB 上电时，B 设备连接，完成 SRP 过程。
+\end{enumerate}
+
+\subsubsection{B 设备 SRP}
+
+图 \ref{figure:usb_srp_B_device} 说明了 OTG\_FS 充当 B 设备（即不为 Vbus 供电）时的 SRP 流程。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/usb_srp_B_device}
+\centering
+\caption {B 设备 SRP}\label{figure:usb_srp_B_device}
+\end{figure}
+
+\begin{enumerate}
+\item 为了节省电能，当总线空闲时，主机（A 设备）将挂起并关闭端口电源。PHY 通过使 usb\_otg\_vbusvalid\_in 信号无效来指示端口掉电。在检测到 3 ms 总线空闲后，OTG\_FS 内核将内核中断寄存器中的早期挂起位（USB\_ERLYSUSP 中断）置 1。之后，OTF\_FS 内核将内核中断寄存器中的 USB 挂起位 (USB\_USBSUSP) 置 1。PHY 通过使 usb\_otg\_bvalid\_in 信号无效来指示 B 设备会话结束。
+
+\item OTG\_FS 内核确认 usb\_otg\_dischrgvbus 信号，指示 PHY 加快 Vbus 放电。
+
+\item PHY 通过确认 usb\_otg\_sessend\_in 信号来指示会话结束。这是 SRP 的初始条件。OTG\_FS 内核在启动 SRP 之前需要检测到 SE0 2 ms。对于 USB 2.0 全速串行收发器，在 USB\_BSESVLD 无效后，应用程序必须等待 Vbus 放电至 0.2 V。
+
+\item 应用程序等待 1.5 秒（TB\_SE0\_SRP 时间），然后写入 OTG 控制和状态寄存器中的会话请求位 (USB\_SESREQ) 并启动 SRP。OTG\_FS 内核执行数据线脉冲，然后执行 Vbus 脉冲。
+
+\item 主机（A 设备）从数据线或 Vbus 脉冲检测到 SRP，然后打开 Vbus。PHY 确认 usb\_otg\_vbusvalid\_in 信号指示 Vbus 上电。
+
+\item OTG\_FS 内核确认 usb\_srp\_chrgvbus 并执行 Vbus 脉冲。主机（A 设备）打开 Vbus，启动新会话，指示 SRP 成功。OTG\_FS 内核通过设置 OTG 中断状态寄存器中的会话请求成功状态改变位 (USB\_SESREQSC) 来中断应用程序。应用程序读取 OTG 控制和状态寄存器中的会话请求成功位。
+
+\item 当 USB 通电时，OTG\_FS 内核连接，从而完成 SRP 过程。
+\end{enumerate}
+
+\subsection{主机协商协议 (HNP)}
+
+\subsubsection{A 设备 HNP}
+
+图 \ref{figure:usb_hnp_A_device} 说明了 OTG\_FS 充当 A 设备时的 HNP 流程。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/usb_hnp_A_device}
+\centering
+\caption {A 设备 HNP}\label{figure:usb_hnp_A_device}
+\end{figure}
+
+\begin{enumerate}
+\item OTG\_FS 内核向 B 设备发送 SetFeature b\_hnp\_enable 描述符以启用 HNP 支持。B 设备回复 ACK 则表明其支持 HNP。应用程序必须置位 OTG 控制和状态寄存器中的主机设置 HNP 使能位 (USB\_HSTSETHNPEN) 向 OTG\_FS 内核说明 B 设备支持 HNP。
+
+\item 使用完总线后，应用程序写入主机端口控制和状态寄存器中的端口挂起位 (USB\_PRTSUSP) 并挂起。
+
+\item 当 B 设备观察到 USB 挂起时，它将断开连接，表明 HNP 的初始状态。B 设备仅在必须切换到主机角色时才启动 HNP；否则，总线将继续挂起。OTG\_FS 内核在 OTG 中断状态寄存器中设置主机协商中断 (USB\_HSTNEGDET)，以指示 HNP 的开始。 OTG\_FS 内核将 usb\_otg\_dppulldown 和 usb\_otg\_dmpulldown 信号置为无效，以指示设备角色。PHY 启用 D+ 上拉电阻，指示 B 设备的连接。应用程序必须读取 OTG 控制和状态寄存器中的当前模式位 (USB\_CURMOD\_INT) 以确定设备模式。
+
+\item B 设备检测到连接，发出 USB 复位，对 OTG\_FS 内核进行枚举以开始数据通信。
+
+\item B 设备继续充当主机角色，启动数据通信，并在完成后挂起总线。OTG\_FS 内核在检测到 3 ms 总线空闲之后，将内核中断寄存器中的早期挂起位 (USB\_ERLYSUSP) 置 1。之后，OTG\_FS 内核将内核中断寄存器中的 USB 挂起位 (USB\_USBSUSP) 置 1。
+
+\item 在协商模式下，OTG\_FS 内核检测到挂起，断开连接并切换回主机角色。OTG\_FS 内核确认 usb\_otg\_dppulldown 和 usb\_otg\_dmpulldown 信号，以表明其承担了主机角色。
+
+\item OTG\_FS 内核将 OTG 中断状态寄存器中的连接器 ID 状态改变中断 (USB\_CONIDSTS) 置位。应用程序必须读取 OTG 控制和状态寄存器中的连接器 ID 状态，以确定 OTG\_FS 内核作为 A 设备。这表明该应用程序已完成 HNP。应用程序必须读取 OTG 控制和状态寄存器中的当前模式位，以确定主机模式操作。
+
+\item B 设备连接，完成 HNP 过程。
+\end{enumerate}
+
+\subsubsection{B 设备 HNP}
+
+图 \ref{figure:usb_hnp_B_device} 说明了 OTG\_FS 充当 B 设备时的 HNP 流程。
+
+\begin{figure}[ht!]
+\includegraphics[width=0.9\textwidth]{\modulefiles/figures/usb_hnp_B_device}
+\centering
+\caption {B 设备 HNP}\label{figure:usb_hnp_B_device}
+\end{figure}
+
+\begin{enumerate}
+\item A 设备发送 SetFeature b\_hnp\_enable 描述符以启用 HNP 支持。OTG\_FS 内核回复 ACK 响应以表明其支持 HNP。应用程序必须将 OTG 控制和状态寄存器中的设备 HNP 使能位 (USB\_DEVHNPEN) 置 1，以表明支持 HNP。应用程序将 OTG 控制和状态寄存器中的 HNP 请求位 (USB\_DEVHNPEN) 置 1，以指示 OTG\_FS 内核启动 HNP。
+
+\item A 设备使用完总线后，将挂起总线。
+    \begin{enumerate}
+        \item OTG\_FS 内核在总线空闲 3 ms 之后将内核中断寄存器中的早期挂起位 (USB\_ERLYSUSP) 置 1。之后，OTG\_FS 内核将内核中断寄存器中的 USB 挂起位 (USB\_USBSUSP) 置 1。OTG\_FS 内核断开连接，并且 A 设备检测到总线上的 SE0，指示 HNP。
+
+        \item OTG\_FS 内核确认 usb\_otg\_dppulldown 和 usb\_otg\_dmpulldown 信号，以表明其承担了主机角色。
+
+        \item A 设备通过在检测到 SE0 的 3 ms 内激活 D+ 上拉电阻来做出响应。OTG\_FS 内核将检测到连接。
+
+        \item OTG\_FS 内核将 OTG 中断状态寄存器中的主机协商成功状态改变位 (USB\_CONIDSTS) 置 1，以指示 HNP 状态。应用程序必须读取 OTG 控制和状态寄存器中的主机协商成功位 (USB\_HSTNEGSCS)，才能确定主机协商成功。应用程序必须读取内核中断寄存器中的当前模式位 (USB\_CURMOD\_INT)，才能确定主机模式操作。
+    \end{enumerate}
+    \item 将 USB\_PRTPWR 位设置为 1'b1，以驱动 USB 上的 Vbus。
+
+    \item 等待 USB\_PRTCONNDET 中断。这表明设备已连接到端口。
+
+    \item 应用程序将重置位 (USB\_PRTRST) 置为 1，OTG\_FS 内核将发出 USB 重置，对 A 设备进行枚举并开始数据通信。
+
+    \item 等待 USB\_PRTENCHNG 中断。
+
+    \item OTG\_FS 内核继续充当启动数据通信的主机角色，完成后，通过写入主机端口控制和状态寄存器中的端口挂起位 (USB\_PRTSUSP) 将总线挂起。
+
+    \item 在协商模式下，当 A 设备检测到挂起时，它将断开连接并切换回主机角色。OTG\_FS 内核将 usb\_otg\_dppulldown 和 usb\_otg\_dmpulldown 信号置为无效，以指示承担设备角色。
+
+    \item 应用程序必须读取内核中断寄存器中的当前模式位 (USB\_CURMOD\_INT)，以确定主机模式操作。
+
+    \item OTG\_FS 内核连接，完成 HNP 过程。
+\end{enumerate}
+
+
+\section{基地址}\label{USB base address}
+如表 \ref{table:USBbaseaddress} 所示，用户可以通过不同的寄存器基地址访问 USB OTG 的内核寄存器和 USB 外部控制器的寄存器（即 wrap 寄存器）。更多有关通过不同总线访问外设的信息，请参考章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}。
+
+
+\begin{longtable}[c]{|l |l|c|}
+    \caption{USB 控制器基地址}
+    \label{table:USBbaseaddress}
+    \\\hline
+    \rowcolor{lightgray}
+   寄存器 & 访问外设总线  & 地址值 \\\hline
+\multirow{2}*{USB 内核寄存器} & PeriBUS1 &  \hexprefix{}3F480000\\\cline{2-3}
+& PeriBUS2 & \hexprefix{}60080000 \\\hline
+\multirow{2}*{USB 外部控制器寄存器} & PeriBUS1 &   \hexprefix{}3F439000\\\cline{2-3}
+& PeriBUS2 & \hexprefix{}60039000 \\\hline
+\end{longtable}
+
+
+
+
+\section{寄存器}
+
+USB OTG 寄存器列表及详细描述受 IP 供应商保密协议 (NDA) 的约束。若需获取某一寄存器的支持信息，请通过 \href{https://www.espressif.com/zh-hans/contact-us/technical-inquiries}{Technical Inquires} 联系乐鑫技术支持团队。
+
+\end{document}

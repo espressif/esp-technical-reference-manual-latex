@@ -1,0 +1,417 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./20-SPI}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{spi}{}
+\chapter{SPI 控制器 (SPI)}
+\label{mod:spi}
+
+\section{概述}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{./20-SPI/figures/SPI_ARCH}}
+    \caption{SPI 系统框图}
+    \label{Figure:SPI_ARCH}
+\end{figure}
+
+如图 \ref{Figure:SPI_ARCH} 所示，ESP32 共有 4 个 SPI 控制器 SPI0、SPI1、SPI2、SPI3，用于连接支持 SPI 协议的设备。SPI0 控制器作为 cache 访问外部存储单元接口使用，SPI1 作为主机使用，SPI2 和 SPI3 控制器既可作为主机使用又可作为从机使用。作主机使用时，每个 SPI 控制器可以使用多个片选信号 (CS0 \verb+~+ CS2) 来连接多个 SPI 从机设备。SPI1\verb+ ~ +SPI3 控制器共享两个 DMA 通道。
+
+SPI0 和 SPI1 控制器通过一个仲裁器共用一组信号总线，这组带前缀 SPI 的信号总线由 D、Q、CS0 \verb+~+ CS2、CLK、WP 和 HD 信号组成，如表 \ref{table:SPI_signals} 所示。相应地，控制器 SPI2 和 SPI3 分别使用带前缀 HSPI 和 VSPI 的信号总线。这些信号总线包含的输入输出信号线可以经过 GPIO 交换矩阵和 IO\_MUX 模块实现与芯片管脚的映射（详见章节 \hyperref[mod:iomuxgpio]{IO\_MUX}）。
+
+SPI 控制器在 GP-SPI 模式下，支持标准的四线全双工/半双工通信 （MOSI、MISO、CS、CLK）和 三线半双工通信（DATA、CS、CLK）。SPI 控制器在 QSPI 模式下使用信号总线 D、Q、CS0 \verb+~+ CS2、CLK、WP 和 HD 作为 4-bit 并行 SPI 总线来访问外部 flash 或 SRAM。不同模式下管脚功能信号与总线信号的对应关系如表 \ref{table:SPI_signals} 所示。
+
+\begin{longtable}[c]{|p{3.5cm}|p{2.5cm}|p{2cm}|p{2cm}|p{2.5cm}|p{2.5cm}|}
+    \caption{管脚功能信号与总线信号映射关系}
+    \label{table:SPI_signals}\\
+    \hline
+       \rowcolor{lightgray}
+    GP-SPI 四线 & GP-SPI 三线 & QSPI & \multicolumn{3}{c|}{引脚功能信号}\\
+    \cline{4-6}
+    \rowcolor{lightgray}
+    \multirow{-1}{*}{全双工/半双工信号总线} & \multirow{-1}{*}{半双工信号总线} & \multirow{-1}{*}{信号总线} & SPI 信号总线 & HSPI 信号总线 & VSPI 信号总线\\
+    \hline
+    MOSI & DATA & D  & SPID  & HSPID  & VSPID\\
+    \hline
+    MISO & -    & Q  & SPIQ  & HSPIQ  & VSPIQ\\
+    \hline
+      CS & CS   & CS & SPICS0& HSPICS0& VSPICS0\\
+    \hline
+     CLK & CLK  & CLK& SPICLK& HSPICLK& VSPICLK\\
+    \hline
+       - & -    & WP & SPIWP & HSPIWP & VSPIWP\\
+    \hline
+       - & -    & HD & SPIHD & HSPIHD & VSPIHD\\
+    \hline
+\end{longtable}
+
+\section{SPI 特征}
+{\bfseries GP-SPI（通用 SPI）接口}
+\begin{itemize}
+    \item 数据传输长度以 byte 为单位可配置
+    \item 支持四线全双工/半双工通信和三线半双工通信
+    \item 主机模式和从机模式
+    \item 时钟极性 (CPOL) 和时钟相位 (CPHA) 可配置
+    \item 时钟可配置
+\end{itemize}
+{\bfseries 并行 QSPI 接口}
+\begin{itemize}
+    \item 支持诸如 flash 等特殊从机设备的通信格式
+    \item 可配置的通信格式
+    \item 支持 6 种读 flash 操作
+    \item 支持访问 flash 和 SRAM 自动切换
+    \item 支持自动等待 flash 空闲
+\end{itemize}
+{\bfseries SPI DMA 接口}
+\begin{itemize}
+    \item 支持使用链表收/发数据
+\end{itemize}
+{\bfseries SPI 中断接口}
+\begin{itemize}
+    \item SPI 中断
+    \item SPI DMA 中断
+\end{itemize}
+
+\section{GP-SPI 接口}\label{GP-SPI}
+
+ESP32 SPI 支持四线全双工/半双工通信和三线半双工通信。四线全双工/半双工通信电气连接如图 \ref{Figure:ESP32_SPI_full_duplex} 所示。
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.4\textwidth]{./20-SPI/figures/ESP32_SPI_full_duplex}
+    \caption{SPI 四线全双工/半双工通信}
+    \label{Figure:ESP32_SPI_full_duplex}
+\end{figure}
+ESP32 SPI1\verb+ ~ +SPI3 可以作为 SPI 主机与其他从机通信， SPI2 和 SPI3 也可以作为从机。 每个 ESP32 SPI 主机默认最多可以接 3 个从机。在非 DMA 模式下，一次最多可以接收/发送 64 byte 的数据，收发数据长度以字节为单位。
+
+\subsection{GP-SPI 四线全双工模式}
+当配置成四线全双工模式时，ESP32 SPI 既可以作为主机也可以作为从机使用。 使用时，软件需要配置接收和发送数据的长度：在主机模式下，通过寄存器SPI\_MISO\_DLEN\_REG 和 SPI\_MOSI\_DLEN\_REG 配置； 在从机模式下，通过寄存器 SPI\_SLV\_RDBUF\_DLEN\_REG 和 SPI\_SLV\_WRBUF\_DLEN\_REG 配置。还需要配置寄存器 SPI\_USER\_REG 的 SPI\_DOUTDIN 位和 SPI\_USR\_MOSI 位来使能四线全双工模式。最后需要配置寄存器 SPI\_CMD\_REG 的 SPI\_USR 位来启动一次数据传输。
+\subsection{GP-SPI 四线半双工模式}
+当配置成四线半双工模式时，ESP32 SPI 既可以作为主机也可以作为从机使用。此时 ESP32 SPI 具有灵活的通信格式： 命令 + 地址 + 等待 + 接收和/或发送数据。具体为：
+
+\begin{enumerate}
+    \item 命令：长度 0 \verb+~+ 16 bit；主机输出从机输入。
+    \item 地址：长度 0 \verb+~+ 32 bit/64 bit；主机输出从机输入。
+    \item 等待：长度 0 \verb+~+ 256 个SPI 时钟。
+    \item 接收和/或发送数据：长度 0 \verb+~+ 512 bit (64 byte)； 主机输出从机输入或主机输入从机输出。
+\end{enumerate}
+其中 GP-SPI 主机模式的地址状态最大长度为 32 bit，QSPI 主机模式的地址状态最大长度为 64 bit。命令状态、地址状态、等待状态和收/发数据状态分别对应 SPI\_USER\_REG 寄存器的 SPI\_USR\_COMMAND、SPI\_USR\_ADDR、SPI\_USR\_DUMMY 和 SPI\_USR\_MISO/SPI\_USR\_MOSI 等域。仅当这些比特位被置 1 时，一次 SPI 操作才会经历该状态， 详见章节\hyperref[regdesc:SPIUSERREG]{寄存器说明}。作为主机使用时，软件可以根据需要通过配置寄存器来选择是否包含命令、地址、等待和接收或发送数据等状态。
+
+作为从机使用时，传输时必须包含命令、地址和接收或发送数据状态，并且从机命令固定为表 \ref{table:slave_cmd_description}。在一次收/发过程中，片选信号 CS 必须保持低电平。如果在发送过程中 CS 被拉高，从机内部状态将会复位。
+
+\begin{table}[H]
+    \centering
+    \caption{从机命令描述}
+    \label{table:slave_cmd_description}
+    \begin{tabular}[c]{|p{1cm}|p{14cm}|}
+    \hline
+    \rowcolor{lightgray}
+    命令 & 描述\\
+    \hline
+    0x1 & 从机接收， 将主机发送数据通过 MOSI 写入从机状态寄存器\\
+    \hline
+    0x2 & 从机接收， 将主机发送数据通过 MOSI 写入从机数据缓存\\
+    \hline
+    0x3 & 从机发送， 将从机缓存中的数据通过 MISO 发送到主机\\
+    \hline
+    0x4 & 从机发送， 将从机状态寄存器中的数据通过MISO发送到主机\\
+    \hline
+    0x6 & 先将MOSI上的主机数据写入数据缓存， 然后再将从机数据缓存中的数据发送至 MISO\\
+    \hline
+    \end{tabular}
+\end{table}
+
+主机可以写 SPI 从机的状态寄存器 SPI\_SLV\_WR\_STATUS\_REG，并可以通过 SPI\_SLAVE1\_REG 寄存器中的 SPI\_SLV\_STATUS\_READBACK 位，决定读 SPI\_SLV\_WR\_STATUS\_REG 寄存器还是 SPI\_RD\_STATUS\_REG 寄存器的数据。SPI 主机可以通过读写从机状态寄存器， 达到与从机保持沟通的目的，以此实现较复杂的通信。
+
+软件通过主机模式的 SPI\_MISO\_DLEN\_REG 和 SPI\_MOSI\_DLEN\_REG 寄存器、从机模式的 SPI\_SLV\_RDBUF\_DLEN\_REG、SPI\_SLV\_WRBUF\_DLEN\_REG 来配置 SPI 接收或发送数据的长度。 通过配置寄存器 SPI\_USER\_REG 的 SPI\_USR\_MOSI 位或 SPI\_USR\_MISO 位来控制 SPI 接收或发送数据。最后配置寄存器 SPI\_CMD\_REG 的 SPI\_USR 位来启动一次数据传输。
+
+\subsection{GP-SPI 三线半双工模式}
+ESP32 SPI 的三线半双工和四线半双工的区别在于接收和发送数据使用同一根信号线，且必须包含命令、地址和接收或发送数据状态。 软件需要通过配置 SPI\_USER\_REG 寄存器的 SPI\_SIO 位 来使能三线半双工模式。
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item 在半双工模式下，命令、地址和接收或发送数据的顺序不可变；
+\item 在半双工模式下，“命令 + 地址 + 收收据 + 发数据”和“收数据 + 发数据”这两种通信格式不支持 DMA；
+\item ESP32 SPI 作为从机时，主机 CS 需要提前至少一个 SPI 时钟长度有效；读/写结束后，CS 需要至少延迟一个 SPI 时钟长度失效。
+\end{itemize}
+\end{tiplisting}
+
+\subsection{GP-SPI 数据缓存}
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.5\textwidth]{./20-SPI/figures/SPI_data_buffer_c}
+    \caption{SPI 数据缓存}
+    \label{Figure:SPI_data_buffer_c}
+\end{figure}
+
+ESP32 SPI 共有大小为 16 × 32 bit 的数据缓存，用于存储发送/接收的数据。如图 \ref{Figure:SPI_data_buffer_c} 所示。
+接收数据时，数据默认从 SPI\_W0\_REG 的低字节部分开始填充，一直到 SPI\_W15\_REG 结束。如果数据长度大于 64 byte，多出部分从 SPI\_W0\_REG 开始继续填充。
+
+数据缓存的 SPI\_W0\_REG\verb+ ~ +SPI\_W7\_REG  和 SPI\_W8\_REG\verb+ ~ +SPI\_W15\_REG 分别对应低和高两个部分，他们可以分开使用。由寄存器 SPI\_USER\_REG 的SPI\_USR\_MOSI\_HIGHPART 和 SPI\_USR\_MISO\_HIGHPART 两个比特控制。例如，当 SPI 作为主机，当 SPI\_USR\_MOSI\_HIGHPART = 1 时，SPI\_W8\_REG\verb+ ~ +SPI\_W15\_REG 作为发送数据缓存使用，当 SPI\_USR\_MISO\_HIGHPART = 1 时，SPI\_W8\_REG-SPI\_W15\_REG 作为接收数据缓存使用。而当 SPI 作为从机时，若 SPI\_USR\_MOSI\_HIGHPART = 1，则 SPI\_W8\_REG\verb+ ~ +SPI\_W15\_REG 作为接收数据缓存使用，若 SPI\_USR\_MISO\_HIGHPART = 1，则 SPI\_W8\_REG-SPI\_W15\_REG 作为发送数据缓存使用。
+
+\section{GP-SPI 时钟控制}
+
+ESP32 GP-SPI 主机输出时钟频率最高为 $f_{\textrm{apb}}/2$， 从机输入时钟最高为 $f_{\textrm{apb}}/8$。 主机可以通过分频得到其他时钟频率。
+
+    \[
+    f_{\textrm{spi}}=\frac{f_{\textrm{apb}}} {\textrm{(SPI\_CLKCNT\_N+1)(SPI\_CLKDIV\_PRE+1)}}
+    \]
+
+其中 SPI\_CLKCNT\_N 和 SPI\_CLKDIV\_PRE 为寄存器 SPI\_CLOCK\_REG 的两个位（详见 \ref{regdesc:SPICLOCKREG} 寄存器描述），$\textrm{SPI\_CLKCNT\_H} =\lfloor \frac{\textrm{SPI\_CLKCNT\_N+1}}{2} – 1\rfloor$，SPI\_CLKCNT\_N=SPI\_CLKCNT\_L。当寄存器 SPI\_CLOCK\_REG 的\\ SPI\_CLK\_EQU\_SYSCLK 位置 1，其他位置为 0 时，SPI 输出时钟为 $f_{\textrm{apb}}$；除此之外，SPI\_CLK\_EQU\_SYSCLK 位均需置为 0。在从机模式下，SPI\_CLKCNT\_N、SPI\_CLKCNT\_L、SPI\_CLKCNT\_H 和 SPI\_CLKDIV\_PRE 均需要置为 0。
+
+\subsection{GP-SPI 时钟极性和时钟相位}\label{GP-SPI Clock Polarity (CPOL) and Clock Phase (CPHA)}
+
+ESP32 SPI 的时钟极性和相位，由寄存器 SPI\_PIN\_REG 的 SPI\_CK\_IDLE\_EDGE 位、寄存器 SPI\_USER\_REG 的 SPI\_CK\_OUT\_EDGE 位与 SPI\_CK\_I\_EDGE 位，以及 SPI\_CTRL2\_REG 寄存器的 SPI\_MISO\_DELAY\_MODE[1:0] 位、SPI\_MISO\_DELAY\_NUM[2:0] 位、SPI\_MOSI\_DELAY\_MODE[1:0] 位与 SPI\_MOSI\_DELAY\_MUM[2:0] 位控制。表 \ref{table:clockpol_master} 和表 \ref{table:clockpol_slave} 分别对应为 ESP32 SPI 主机和从机时钟极性和相位控制及其对应寄存器值。表 \ref{table:clockpol_slave} 中 mode0 和 mode2 分为 DMA 模式和非 DMA 模式下的寄存器配置。需要注意的是 DMA 模式下 mode0 和 mode2 从机的数据会提前输出。
+
+\begin{table}[H]
+    \centering
+    \caption{主机模式时钟极性和相位控制寄存器值}
+    \label{table:clockpol_master}
+    \begin{tabular}[c]{|p{5cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|}
+    \hline
+    \rowcolor{lightgray}
+    寄存器 & mode0 & mode1 & mode2 & mode3\\
+    \hline
+    SPI\_CK\_IDLE\_EDGE & 0 & 0 & 1 & 1\\
+    \hline
+    SPI\_CK\_OUT\_EDGE  & 0 & 1 & 1 & 0\\
+    \hline
+    SPI\_MISO\_DELAY\_MODE & 2(0) & 1(0) & 1(0) & 2(0)\\
+    \hline
+    SPI\_MISO\_DELAY\_NUM & 0 & 0 & 0 & 0\\
+    \hline
+    SPI\_MOSI\_DELAY\_MODE & 0 & 0 & 0 & 0\\
+    \hline
+    SPI\_MOSI\_DELAY\_NUM & 0 & 0 & 0 & 0\\
+    \hline
+    \end{tabular}
+\end{table}
+
+\begin{longtable}[c]{|p{4.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|}
+\caption{从机模式时钟极性和相位控制寄存器值}\label{table:clockpol_slave}
+\\\hline
+\rowcolor{lightgray}
+寄存器& \multicolumn{2}{c|}{mode0} & mode1 & \multicolumn{2}{c|}{mode2} & mode3\\\cline{2-3}\cline{5-6}
+\rowcolor{lightgray}
+&非 DMA&DMA&&非 DMA&DMA&\\\hline
+    SPI\_CK\_IDLE\_EDGE & 1 & 0  & 1 & 0 & 1 & 0\\\hline
+    SPI\_CK\_I\_EDGE  & 0 & 1  & 1 & 1 & 0  & 0\\\hline
+    SPI\_MISO\_DELAY\_MODE & 0 & 0  & 2 & 0 & 0  & 1\\\hline
+    SPI\_MISO\_DELAY\_NUM & 0 & 2  & 0 & 0 & 2  & 0\\\hline
+    SPI\_MOSI\_DELAY\_MODE & 2 & 0  & 0 & 1 & 0  & 0\\\hline
+    SPI\_MOSI\_DELAY\_NUM & 2 & 3  & 0 & 2 & 3  & 0\\\hline
+\end{longtable}
+
+\begin{enumerate}
+    \item mode0 表示 CPOL=0, CPHA=0，SPI 空闲时，时钟的输出为低电平，数据在 SPI 下降沿变化，在上升沿采样；
+    \item mode1 表示 CPOL=0, CPHA=1，SPI 空闲时，时钟的输出为低电平，数据在 SPI 上升沿变化，在下降沿采样；
+    \item mode2 表示 CPOL=1, CPHA=0，SPI 空闲时，时钟的输出为高电平，数据在 SPI 上升沿变化，在下降沿采样；
+    \item mode3 表示 CPOL=1, CPHA=1，SPI 空闲时，时钟的输出为高电平，数据在 SPI 下降沿变化，在上升沿采样。
+\end{enumerate}
+
+
+\subsection{GP-SPI 时序}\label{GP-SPI Timing}
+
+ESP32 GP-SPI 接口的数据信号既可以通过 IO\_MUX 映射到管脚，又可以通过 IO\_MUX 和 GPIO 交换矩阵映射到管脚。当信号通过交换矩阵时，输入信号会被延迟两个 $clk_{\textrm{apb}}$ 时钟周期，输出信号不会被延迟。
+
+GP-SPI 作为主机，并且信号不经过 GPIO 交换矩阵进入到 SPI 控制器时，若 GP-SPI 输出时钟频率为 $clk_{\textrm{apb}}/2$，则在配置时钟极性时，寄存器 SPI\_MISO\_DELAY\_MODE 需要置为 0。若 GP-SPI 输出时钟频率不大于 $clk_{\textrm{apb}}/4$，则在配置时钟极性时， SPI\_MISO\_DELAY\_MODE 可以置为表 \ref{table:clockpol_master} 中的对应数值。
+
+GP-SPI 作为主机时，并且信号经过 GPIO 交换矩阵进入到 SPI 控制器：
+\begin{enumerate}
+    \item 如果 GP-SPI 输出时钟频率为 $clk_{\textrm{apb}}/2$， 则在配置时钟极性时，寄存器 SPI\_MISO\_DELAY\_MODE 需要置为 0，同时需要使能等待状态 (SPI\_USR\_DUMMY = 1)，等待长度为 1 个 $clk_{\textrm{spi}}$ 时钟周期\\(SPI\_USR\_DUMMY\_CYCLELEN = 0)；
+    \item 如果 GP-SPI 输出时钟频率为 $clk_{\textrm{apb}}/4$，在配置时钟极性时寄存器 SPI\_MISO\_DELAY\_MODE 需要置为 0；
+    \item 如果 GP-SPI 输出时钟频率不大于 $clk_{\textrm{apb}}/8$， 则在配置时钟极性时，SPI\_MISO\_DELAY\_MODE 可以置为表 \ref{table:clockpol_master} 中的对应数值。
+\end{enumerate}
+
+GP-SPI 作为从机时，要求时钟信号和数据信号选择相同的方式进入 SPI 控制器，即时钟信号和数据信号都不经过或都经过 GPIO 交换矩阵进入 SPI 控制器。这样才能防止在信号到达 SPI 硬件之前，延迟的时间不同。
+
+以mode0 为例, 图 \ref{Figure:SPI_slv_o} 中 $t_{\textrm{spi}}$、$t_{\textrm{pre}}$ 和 $t_{\textrm{v}}$ 分别为 SPI 时钟周期、数据输出提前时间和 数据输出延后时间，同时假设SPI 从机主时钟周期为 $t_{\textrm{apb}}$。
+在非DMA模式下，从机数据会延后输出， 延后时间 $t_{\textrm{v}}$：
+\begin{itemize}
+\item 如果 CLK 不经过交换矩阵输入， 那么 $t_{\textrm{v}} < 3.5*t_{\textrm{apb}}$;
+\item 如果 CLK 经过交换矩阵输入， 那么 $t_{\textrm{v}} < 5.5*t_{\textrm{apb}}$;
+\end{itemize}
+在 DMA 模式下, mode1 和 mode3, 从机数据会延后输出, 延后时间 $t_{\textrm{v}}$ 和非 DMA 模式相同。而在 mode0 和 mode2, 从机数据会提前输出, 提前时间 $t_{\textrm{pre}}$:
+\begin{itemize}
+\item 如果 clk 不经过 交换矩阵输入， 那么  $t_{\textrm{pre}} < ( t_{\textrm{spi}}/2 - 5.5*t_{\textrm{apb}} )$;
+\item 如果 clk 经过 交换矩阵输入， 那么  $t_{\textrm{pre}} < ( t_{\textrm{spi}}/2 - 7.5*t_{\textrm{apb}} )$;
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.4\textwidth]{./20-SPI/figures/SPI_slv_o}}
+    \caption{GP-SPI 从机数据输出}
+    \label{Figure:SPI_slv_o}
+\end{figure}
+
+因此，如果信号不经过交换矩阵输入从机，那么从机时钟最高为 $f_{\textrm{apb}}/8$，如果信号经过交换矩阵输入从机，那么从机时钟最高为 $f_{\textrm{apb}}/12$ 。同时需要注意的是，当 mode0 和 mode2 时，($t_{\textrm{spi}}/2 - t_{\textrm{pre}}$) 也是从机输出数据的保持时间。
+
+
+\section{并行 QSPI 接口}
+
+ESP32 SPI 控制器对 SPI 接口存储器（如 flash，SRAM）做了特殊的支持。SPI 管脚与存储器的硬件连接如图 \ref{Figure:ESP32_SPI_memory_inf} 所示。
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.4\textwidth]{./20-SPI/figures/ESP32_SPI_memory_inf}
+    \caption{并行 QSPI 接口}
+    \label{Figure:ESP32_SPI_memory_inf}
+\end{figure}
+
+SPI1、SPI2 和 SPI3 控制器也可以作为 QSPI 接口的主机和外部存储器连接。SPI 存储器接口的最高输出时钟频率为 $f_{\textrm{apb}}$，时钟配置和 GP-SPI 接口主机时钟配置相同。
+
+\subsection{并行 QSPI 接口通信格式}\label{Communication Format of Parallel QSPI}
+
+ESP32 QSPI 为了支持与特殊从机模式之间的通信， 单独设计与之相对应的通信协议。ESP32 QSPI 主机通信格式与 GP-SPI 四线半双工模式相同。不同的是在地址状态和数据状态，软件可以通过配置寄存器使能2线或者4线模式传输数据，如图 \ref{Figure:communication_format_c} 所示， 为地址和数据均为4线传输的通信模式。
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./20-SPI/figures/communication_format_c}
+    \caption{并行 QSPI 接口的通信模式}
+    \label{Figure:communication_format_c}
+\end{figure}
+
+ESP32 QSPI 接口支持一线模式、两线模式和四线模式的 flash 读操作。与 GP-SPI相同， 作为主机时， QSPI模式可以根据需要对命令、地址、等待和接收或发送数据等状态进行增减。
+
+{\bfseries 注意：}在 GPI-SPI 全双工模式下等待状态不可用。
+
+\section{GP-SPI 中断硬件}
+
+ESP32 SPI 中断分为两类，一类为 SPI 接口中断，另一类为 SPI DMA 接口中断。
+
+ESP32 SPI 将发送和/或接收两种操作结束时的中断统一成一个，即认为同是控制器一次操作的结束，而不加以区分。ESP32 SPI 作为从机时，根据操作的不同，从机会产生读/写状态寄存器和读/写缓存数据中断。
+
+\subsection{SPI 中断}
+通过将寄存器 SPI\_SLAVE\_REG 的 SPI\_*\_INTEN 位置 1，可以使能 SPI 接口中断。当中断发生时，对应的 SPI\_*\_DONE 寄存器的中断标志也会被置 1。中断标志寄存器可写， 若要清除中断，只需将对应 bit 置 0。
+
+\begin{itemize}
+\item \label{int:SPITRANSDONEINT}SPI\_TRANS\_DONE\_INT：SPI 操作结束被触发。
+\item \label{int:SPISLVWRSTAINT}SPI\_SLV\_WR\_STA\_INT：SPI 从机写状态结束时被触发。
+\item \label{int:SPISLVRDSTAINT}SPI\_SLV\_RD\_STA\_INT：SPI 从机读状态结束时被触发。
+\item \label{int:SPISLVWRBUFINT}SPI\_SLV\_WR\_BUF\_INT：SPI 从机写缓存结束时被触发。
+\item \label{int:SPISLVRDBUFINT}SPI\_SLV\_RD\_BUD\_INT：SPI 从机读缓存结束时被触发。
+\end{itemize}
+
+\subsection{DMA 中断}
+\begin{itemize}
+\item \label{int:SPIOUTTOTALEOFINT}SPI\_OUT\_TOTAL\_EOF\_INT：所有链表发送完时被触发。
+\item \label{int:SPIOUTEOFINT}SPI\_OUT\_EOF\_INT：一个链表发送完时被触发。
+\item \label{int:SPIOUTDONEINT}SPI\_OUT\_DONE\_INT：最后一个链表长度为 0 时被触发。
+\item \label{int:SPIINSUCEOFINT}SPI\_IN\_SUC\_EOF\_INT：所有链表被接受时被触发。
+\item \label{int:SPIINERREOFINT}SPI\_IN\_ERR\_EOF\_INT：接收链表出现错误时被触发。
+\item \label{int:SPIINDONEINT}SPI\_IN\_DONE\_INT：接收的最后一个链表长度为 0 时被触发。
+\item \label{int:SPIINLINKDSCRERRORINT}SPI\_INLINK\_DSCR\_ERROR\_INT：接收链表清单错误时被触发。
+\item \label{int:SPIOUTLINKDSCRERRORINT}SPI\_OUTLINK\_DSCR\_ERROR\_INT：要发送的链表无效时被触发。
+\item \label{int:SPIINLINKDSCREMPTYINT}SPI\_INLINK\_DSCR\_EMPTY\_INT：无有效链表时被触发。
+\end{itemize}
+
+\hypertarget{spi-reg-summ}{}
+\section{寄存器列表}
+\label{Section:SPIREGList}
+
+本小节的所有地址均为相对于 SPI 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/spi_reg_summary_cn.tex}
+
+\newpage
+
+\section{寄存器}\label{Section:SPIREG}
+
+本小节的所有地址均为相对于 SPI 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping}。寄存器绝对地址见章节 \ref{Section:SPIREGList} \textit{\nameref{Section:SPIREGList}}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subfile{\modulefiles/spi_reg_JLW20181205_cn.tex}
+
+\end{document}

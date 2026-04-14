@@ -1,0 +1,974 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./02-RISCVTRACENC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{riscvtracenc}{}
+\chapter{RISC-V Trace Encoder (TRACE)}
+\label{mod:riscvtracenc}
+
+
+
+The high-performance CPU (HP CPU) of \chipname{} supports the instruction trace interface through the trace encoder. The trace encoder connects to HP CPU's instruction trace interface, compresses the information into smaller packets, and then stores the packets into internal SRAM (see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}).
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=0.8\textwidth]{\modulefiles/figures/trace.pdf}
+        \caption{Trace Encoder Overview}
+        \label{fig:encoder}
+\end{figure}
+
+\section{Terminology}
+
+To better illustrate the functions of the RISC-V Trace Encoder, the following terms are used in this chapter.
+
+\begin{longtable}[c]{ R{4cm} p{10cm} }
+\textbf{hart} &  RISC-V hardware thread \\
+\textbf{branch} & an instruction which conditionally changes the execution flow \\
+\textbf{uninferable discontinuity (updiscon)} & a program counter change that can not be inferred from the program binary alone \\
+\textbf{delta} & a change in the program counter that is other than the difference between two instructions placed consecutively in memory \\
+\textbf{trap} & the transfer of control to a trap handler caused by either an exception or an interrupt \\
+\textbf{qualification} & an instruction that meets the filtering criteria passes the qualification, and will be traced \\
+\textbf{te\_inst} & the name of the packet type emitted by the encoder \\
+\textbf{retire} & the final stage of executing an instruction, when the machine state is updated \\
+\textbf{EPC} & exception program counter \\
+
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+In complex systems, understanding program execution flow is not straightforward. This may be due to a number of factors, for example, interactions with other cores, peripherals, real-time events, poor implementations, or some combination of all of the above.
+
+It is hard to use a debugger to monitor the program execution flow of a running system in real time, as this is intrusive and might affect the running state. However, it is important to provide the visibility of program execution.
+
+That is where instruction trace comes in, which provides trace of the program execution.
+
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=1\textwidth]{\modulefiles/figures/trace_over.pdf}
+        \caption{Trace Flow Overview}
+        \label{fig:trace}
+\end{figure}
+
+Figure \ref{fig:trace} shows the instruction delta trace flow. Each HP Core has a private encoder that can work independently, and the trace flow of each core is the same:
+\begin{itemize}
+    \item The HP CPU core provides an instruction trace interface that outputs the instruction information executed by the HP CPU. Such information includes instruction address, instruction type, etc. For more details about \chipname{} HP CPU's instruction trace interface, please refer to Chapter \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}.
+    \item The trace encoder collects the relevant instruction trace information from HP CPU's instruction trace interface, compresses the information into lower bandwidth packets, and then stores the packets in system memory.
+    \item The debugger (debug host) can dump the trace packets from the system memory via JTAG or USB Serial/JTAG, and use a decoder to decompress and reconstruct the program execution flow. The trace decoder, usually software on an external PC, takes in the trace packets and reconstructs the program instruction flow with the program binary that runs on the originating hart. This decoding step can be done offline or in real time while the hart is executing.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:riscvtracenc-features}
+
+\begin{itemize}
+    \item Compatible with Efficient Trace for RISC-V Version 2.0. See Table \ref{tab:encoder_parameters} for the implemented parameters
+    \item Support for delta address mode and full address mode
+    \item Support for a filter unit
+    \item Support for notifying an instruction address via debug trigger or filter unit
+    \item Support for the following sideband signals to control trace data flow:
+        \begin{itemize}
+            \item Support for debugging trigger to start or end encoder
+            \item When the hart is halted, the encoder can report the last packet and then stop
+            \item When the hart is reset, the encoder can report the last packet and then stop
+            \item Support for stalling the hart when FIFO is almost full
+        \end{itemize}
+    \item Arbitrary address range of the trace memory size
+    \item Configurable synchronization modes:
+        \begin{itemize}
+            \item Synchronization counter counts by packet
+            \item Synchronization counter counts by cycle
+            \item Synchronization counter can be disabled
+        \end{itemize}
+    \item Trace lost status to indicate packet loss
+    \item Automatic restart after packet loss
+    \item Memory writing in the loop or non-loop mode
+    \item Support two interrupts:
+        \begin{itemize}
+            \item Triggered when the packet size exceeds the configured memory space
+            \item Triggered when a packet is lost
+        \end{itemize}
+    \item FIFO (128 × 8 bits) to buffer packets
+    \item AHB burst transmission with configurable burst length
+\end{itemize}
+
+\begin{longtable}[c]{ |l|r|l| }
+    \caption{Trace Encoder Parameters}
+    \label{tab:encoder_parameters}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Parameter Name} & \textbf{Value} & \textbf{Description} \\\hline
+    \endfirsthead
+
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Parameter Name} & \textbf{Value} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    arch\_p & 0 & Initial version  \\\hline
+    bpred\_size\_p & 0 & Branch prediction mode is not supported \\\hline
+    cache\_size\_p & 0 & Jump target cache mode is not supported \\\hline
+    call\_counter\_size\_p & 0 & Implicit return mode is not supported \\\hline
+    ctype\_width\_p & 0 & Width of the ctype bus \\\hline
+    context\_width\_p & 0 & Width of context bus \\\hline
+    ecause\_width\_p & 6 & Width of exception cause \\\hline
+    ecause\_choice\_p & 0 & Multiple choice is not supported \\\hline
+    f0s\_width\_p & 0 & Format 0 packets are not supported \\\hline
+    filter\_context\_p & 0 & Filtering on context is not supported \\\hline
+    filter\_excint\_p & 1 & Filtering on exception cause or interrupt is supported \\\hline
+    filter\_privilege\_p & 1 & Filtering on privilege is supported \\\hline
+    filter\_tval\_p & 1 & Filtering on trap value is supported \\\hline
+    iaddress\_lsb\_p & 1 & Compressed instructions are supported \\\hline
+    iaddress\_width\_p & 32 & The instruction bus is 32-bit \\\hline
+    iretire\_width\_p & 1 & Width of the iretire bus \\\hline
+    ilastsize\_width\_p & 0 & Width of the ilastsize \\\hline
+    itype\_width\_p & 3 & Width of the itype bus \\\hline
+    nocontext\_p & 1 & Exclude context from te\_inst packets \\\hline
+    notime\_p & 1 & Exclude time from te\_inst packets \\\hline
+    privilege\_width\_p & 1 & Only machine and user mode are supported \\\hline
+    retires\_p & 1 & Maximum number of instructions that can be retired per block \\\hline
+    return\_stack\_size\_p & 0 & Implicit return mode is not supported \\\hline
+    sijump\_p & 0 & Sequentially inferable jump mode is not supported \\\hline
+    taken\_branches\_p & 1 & Only one instruction retired per cycle \\\hline
+    impdef\_width\_p & 0 & Not implemented \\\hline
+
+ \end{longtable}
+
+For detailed descriptions of the above parameters, please refer to the Efficient Trace for RISC-V Version 2.0 > Chapter Parameters and Discovery.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:riscvtracenc-arch-overview}
+
+This chapter mainly introduces the implementation details of \chipname{}'s trace encoder.
+
+As shown in Figure \ref{fig:encoder}, the trace encoder contains an encoder, a FIFO, a register configuration module, and a transmission control module.
+
+The encoder receives the HP CPU's instruction information via the instruction trace interface, compresses it into different packets, and writes it to the internal FIFO.
+
+The transmission control module writes the data in the FIFO to the internal SRAM through the AHB bus.
+
+The FIFO is 128 deep and 8-bit wide. When the memory bandwidth is insufficient, the FIFO may overflow, and packet loss occurs. If a packet is lost, the encoder will send a packet to tell that a packet is lost, stop working until the FIFO is empty, and also trigger an interrupt meanwhile if the interrupt is enabled.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:riscvtracenc-func-desc}
+
+\subsection{Synchronization}
+
+In order to make the trace robust there must be regular synchronization points within the trace. Synchronization is accomplished by sending a full valued instruction address. When the synchronization counter value reaches the value of the \hyperref[fielddesc:TRACERESYNCPROLONGED]{TRACE\_RESYNC\_PROLONGED} field of the \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG} register, the encoder will send a synchronization packet (format 3 subformat 0, see Section \ref{sec:riscvtracenc-format-3-sub-0}).
+
+The synchronization counter is configured via \hyperref[fielddesc:TRACERESYNCMODE]{TRACE\_RESYNC\_MODE}:
+\begin{itemize}
+    \item 0: Disable the synchronization counter
+    \item 1: Invalid. No effect
+    \item 2: Synchronization counter counts by packet
+    \item 3: Synchronization counter counts by cycle
+\end{itemize}
+
+You can adjust the trace bandwidth by increasing the value of \hyperref[fielddesc:TRACERESYNCPROLONGED]{TRACE\_RESYNC\_PROLONGED} to reduce the frequency of sending synchronization packets, thereby reducing the bandwidth occupied by packets.
+
+\subsection{Address Mode}
+
+\chipname{} supports two address modes: delta address mode and full address mode.
+\begin{itemize}
+    \item Delta address mode (default): In delta address mode, addresses are encoded as the difference between the actual address of the current instruction and the actual address of the instruction reported in the previous packet that contained an address. This differential encoding requires fewer bits than the full address, and thus results in more efficient trace compression.
+    \item Full address mode: In full address mode, all addresses in the trace are encoded as absolute addresses instead of in differential form. This kind of encoding is always less efficient, but it can be a useful debugging aid for software decoder developers. This mode is enabled by setting \hyperref[fielddesc:TRACEFULLADDRESS]{TRACE\_FULL\_ADDRESS}.
+\end{itemize}
+
+\subsection{Optional Sideband Signals}
+
+The Efficient Trace for RISC-V Version 2.0 > Chapter Optional Sideband Signals has provided some optional sideband signals for encoder control. \chipname{} has implemented the following functions:
+
+\begin{longtable}[c]{ |l|L{12cm}| }
+    \caption{Optional sideband signals}
+    \label{tab:sideband_signal}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Signal} & \textbf{Function}  \\\hline
+    \endfirsthead
+    \hline\rowcolor{lightgray}
+     \textbf{Signal} & \textbf{Function}  \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    trigger[2:0] &
+        \begin{itemize}
+            \item A pulse on bit 0 will cause the encoder to start tracing, and continue until further notice, subject to other filtering criteria also being met.
+            \item A pulse on bit 1 will cause the encoder to stop tracing until further notice.
+            \item A pulse on bit 2 will cause the encoder to report a specific address.
+        \end{itemize}
+        This function is enabled by setting \hyperref[fielddesc:TRACEDMTRIGGERENA]{TRACE\_DM\_TRIGGER\_ENA}. The trigger signal is asserted upon a  trigger match. For example, if the \hyperref[fielddesc:MCONTROLACTION]{action} field of \hyperref[regdesc:MCONTROL]{mcontrol} is 2, while the trigger matched it will assert trigger bit0; if the \hyperref[fielddesc:MCONTROLACTION]{action} is 3, while the trigger matched it will assert trigger bit1. For details, please refer to Table \ref{tab:debug_mcontrol}.\\\hline
+
+    halted & Hart is halted. Upon assertion, the encoder will output a packet to report the address of the last instruction retired before halting, followed by a support packet to indicate that tracing has stopped. Upon deassertion, the encoder will start tracing again, commencing with a synchronization packet. This function is enabled by setting \hyperref[fielddesc:TRACEHALTENA]{TRACE\_HALT\_ENA}. \\\hline
+
+    reset & Hart is in reset. Behavior is as described above for halted. \\\hline
+
+    stall & Stall request to hart. Some applications may require lossless trace, which can be achieved by using this signal to stall the hart if the trace encoder is unable to output a trace packet (internal FIFO almost full). This function is enabled by setting \hyperref[fielddesc:TRACESTALLENA]{TRACE\_STALL\_ENA}. \\\hline
+
+\end{longtable}
+
+
+
+
+\subsection{Filtering}\label{sec:riscvtracenc-filter}
+
+Filtering provides a mechanism to control the criteria for encoder to produce a trace. For example, it may be desirable to trace:
+\begin{itemize}
+    \item When the instruction address is within a particular range
+    \item Starting from one instruction address and continue until a second instruction address
+    \item For one or more specified privilege levels
+    \item Exception and/or interrupt handlers for specified exception causes
+\end{itemize}
+
+The filtering unit has a filter and a comparator unit.
+
+Each comparator unit is actually a pair of comparators (Primary and Secondary, or P, S) allowing a bounded range to be matched with a signal unit if required, and offers:
+
+\begin{itemize}
+    \item Input selected from iaddress and tval
+    \item A range of arithmetic options ($<$, $>$, $=$, $!=$, etc.) independently selectable for each comparator
+    \item Secondary match value may be used as a mask for the primary comparator
+    \item The two comparators can be combined in several ways: $P$, $P\&\&S$, $!(P\&\&S)$, latch (set on P clear on S)
+    \item Each comparator can also be used to explicitly report a particular instruction address
+\end{itemize}
+
+Each filter can specify filtering against instruction from the hart, and offers:
+\begin{itemize}
+    \item 1 run-time selectable comparator units to match
+    \item Multiple choice selection for priv and cause inputs
+    \item Select matching for interrupt
+\end{itemize}
+
+
+\subsection{Anchor Tag}
+
+Since the length of data packets is variable, in order to identify boundaries between data packets when packed packets are written to memory, the \chipname{} encoder inserts zero bytes between data packets:
+\begin{itemize}
+    \item The maximum packet length is 13 bytes, so a sequence of at least 14 zero bytes cannot occur within a normal packet. Therefore, the first non-zero byte seen after a sequence of at least 14 zero bytes must be the first byte of a packet.
+    \item Every time when 128 packets are transmitted, the encoder writes 14 zero bytes to the memory partition boundary as anchor tags.
+\end{itemize}
+
+\subsection{Memory Writing Mode}
+
+When writing the trace memory, the size of the trace packets might exceed the capacity of the memory. In this case, you can choose whether to wrap around the trace memory or not by configuring the memory writing mode:
+
+\begin{itemize}
+    \item Loop mode: When the size of the trace packets exceeds the capacity of the trace memory (namely when \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} reaches the value of \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG}), the trace memory is wrapped around, so that the encoder loops back to the memory's starting address \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG}, and old data in the memory will be overwritten by new data.
+    \item Non-loop mode: When the size of the trace packets exceeds the capacity of the trace memory, the trace memory is not wrapped around. The encoder stops at \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG}, and old data will be retained.
+\end{itemize}
+
+\subsection{Automatic Restart}
+
+When packets are lost due to FIFO overflow, the encoder will stop working and need to be resumed by software manually or restarted by hardware automatically. If the \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} bit of \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} is set, once the FIFO is empty, the encoder can automatically be restarted.
+
+If the automatic restart feature is enabled, the encoder will be restarted in any case. Therefore, to disable the encoder, the automatic restart feature must be disabled first by clearing the \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} bit of the \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} register.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Encoder Output Packets %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Encoder Output Packets}
+\label{sec:riscvtracenc-packetes}
+
+This section mainly introduces \chipname{} trace encoder output packet format.
+
+\begin{figure}[H]
+        \centering
+        \includegraphics[width=0.7\textwidth]{\modulefiles/figures/package.pdf}
+        \caption{Trace packet Format}
+        \label{fig:encoder-data-packet}
+    \end{figure}
+
+A packet includes header, index and payload. Header, index and payload are transmitted sequentially in bit stream form, from the fields listed at the top of tables below to the fields listed at the bottom. If a field consists of multiple bits, then the least significant bit is transmitted first.
+
+
+\subsection{Header}
+
+Header is 1-byte long. The format of header is shown in Table \ref{tab:header}.
+
+
+\begin{longtable}[c]{ |l|r|l|l| }
+    \caption{Header Format}
+    \label{tab:header}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field} & \textbf{Bits} & \textbf{Description} & \textbf{Value}\\\hline
+    \endfirsthead
+    \textbf{Field} & \textbf{Bits} & \textbf{Description} & \textbf{Value}\\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    length & 5 & Length of whole packet & 4 \verb+~+ 13 \\\hline
+    flow & 2 & Reserved & 0 \\\hline
+    timestamp & 1 & Reserved & 0 \\\hline
+ \end{longtable}
+
+
+\subsection{Index}
+
+Index has 2 bytes. The format of index is shown in Table \ref{tab:index}.
+
+\begin{longtable}[c]{ |l|r|l|l| }
+    \caption{Index Format}
+    \label{tab:index}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field} & \textbf{Bits} & \textbf{Description} & \textbf{Value}\\\hline
+    \endfirsthead
+    \textbf{Field} & \textbf{Bits} & \textbf{Description} & \textbf{Value}\\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    index & 16 & The index of each packet & 0\verb+~+65536 \\\hline
+ \end{longtable}
+
+\subsection{Payload}
+
+The length of payload ranges from 1 byte to 10 bytes.
+
+\subsubsection{Format 3 Packets}
+
+Format 3 packets are used for synchronization, and report supporting information. There are 4 subformats defined in the specification. \chipname{} only supports 3 of them.
+
+\subparagraph{Format 3 Subformat 0 - Synchronization}\label{sec:riscvtracenc-format-3-sub-0}
+
+This packet contains all the information the decoder needs to fully identify an instruction. It is sent for the first traced instruction (unless that instruction also happens to be the first one in an exception handler), and when synchronization has been scheduled by expiry of the synchronization timer. The payload length is 5 bytes.
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 3 subformat 0}
+    \label{tab:f3s0}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endfirsthead
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync): Synchronization \\\hline
+    subformat & 2 & 00 (start): Start of tracing, or resync \\\hline
+    branch & 1 & Set to 0 if the address points to a branch instruction, and the branch was taken. Set to 1 if the instruction is not a branch or if the branch is not taken. \\\hline
+    privilege & 1 & The privilege level of the reported instruction \\\hline
+    address & 31 & Full instruction address. The address must be left shifted 1 bit in order to recreate the original byte address. \\\hline
+    sign\_extend & 3 & Reserved \\\hline
+ \end{longtable}
+
+\subparagraph{Format 3 Subformat 1 - Exception}
+This packet also contains all the information the decoder needs to fully identify an instruction. It
+is sent following an exception or interrupt, and includes the cause, the 'trap value' (for exceptions),
+and the address of the trap handler or of the exception itself. The length is variable: if the interrupt field is 1, the tvalepc field is omitted and the length is 6 bytes, otherwise the length is 10 bytes.
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 3 subformat 1}
+    \label{tab:f3s1}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endfirsthead
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync): Synchronization \\\hline
+    subformat & 2 & 01 (exception): Exception cause and trap handler address \\\hline
+    branch & 1 & Set to 0 if the address points to a branch instruction, and the branch was taken. Set to 1 if the instruction is not a branch or if the branch is not taken. \\\hline
+    privilege & 1 & The privilege level of the reported instruction \\\hline
+    ecause & 6 & Exception cause \\\hline
+    interrupt & 1 & Interrupt \\\hline
+    theaddr & 1 & When set to 1, the address field points to the trap handler address. When set to 0, the address field points to the EPC (exception program counter) for an exception at the target for an updiscon, and is undefined for other exceptions and interrupts. \\\hline
+    address & 31 & Full instruction address. The value of this field must be left shifted 1 bit in order to recreate the original byte address. \\\hline
+    tvalepc & 32 & Value from appropriate utval/stval/mtval CSR (control/status register). Omitted if the interrupt is 1 \\\hline
+    sign\_extend & 3 & Reserved \\\hline
+ \end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subparagraph{Format 3 Subformat 3 - Support}
+
+This packet provides supporting information to aid the decoder. It is issued when the trace is ended, filter match is failed, or a packet is lost. The length is 2 bytes.
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 3 subformat 3}
+    \label{tab:f3s3}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endfirsthead
+    \hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 11 (sync): Synchronization \\\hline
+    subformat & 2 & 11 (support): Supporting information for the decoder \\\hline
+    enable & 1 & Indicates if the encoder is enabled \\\hline
+    encoder\_mode & 1 & Always 0. Only supported by branch trace \\\hline
+    qual\_status & 2 & Indicates qualification status:
+    \begin{itemize}
+        \item 00 (no\_change): No change to filter qualification
+        \item 01 (ended\_rep): Qualification ended, preceding instruction sent explicitly to indicate last qualification instruction
+        \item 10 (trace lost): One or more packets lost
+        \item 11 (ended\_upd): Qualification ended, preceding te\_inst would have been sent anyway due to an updiscon, even if wasn't the last qualified instruction
+        \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+    ioptions & 6 & Indicates optional modes:
+    \begin{itemize}
+        \item sequentially inferred jumps (Bits 5): When set to 1, the targets of sequentially inferable jumps will not be reported. (This feature is not implemented, so bit 5 should always be 0)
+        \item branch prediction (Bit 4): When set to 1, the branch prediction is enabled. (This feature is not implemented, so bit 4 should always be 0)
+        \item jump target cache (Bit 3): When set to 1, the jump target cache is enabled. (This feature is not implemented, so bit 3 should always be 0)
+        \item full address (Bit 2):
+            \begin{itemize}
+                \item 0: delta address mode
+                \item 1: full address mode
+            \end{itemize}
+        \item implicit exception (Bit 1): Exclude address from format 3 subformat 1 packet if trap vector can be determined from ecause. (This feature is not implemented, so bit 1 should always be 0)
+        \item implicit return (Bit 0): When set to 1, function return addresses will not be reported. (This feature is not implemented, bit 0 should always be 0)
+    \end{itemize}
+    \\\hline
+    sign\_extend & 2 & Reserved \\\hline
+
+ \end{longtable}
+
+
+
+\subsubsection{Format 2 Packets}
+
+This packet contains only an instruction address, and is used when the address of an instruction must be reported (for example if the instruction is the target for an updiscon, or is the last instruction before exception), and there is no reported branch information.
+
+
+The length is variable if delta address mode is enabled, ranging from 5 bytes to 8 bytes. The address field can be 8/16/24/32 bits, inferred from the packet length. For example, if the header length is $n$ bytes, the address bits are $n-4$ bytes. A sign bit is required to extend the address field to 32 bits.
+
+
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 2}
+    \label{tab:f2}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endfirsthead
+    \hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 10 (addr-only): No branch information \\\hline
+    notify & 1 & If the value of this bit is different from the MSB of address, it indicates that this packet is reporting an instruction that is not the target of an uninferable discontinuity because a notification was requested via trigger[2] or a filter matched. \\\hline
+    updiscon & 1 & If the value of this bit is different from notify, it indicates that this packet is reporting the instruction following an uninferable discontinuity and is also the instruction before an exception, privilege change or resync. \\\hline
+    zero\_extend & 4 & Reserved \\\hline
+    address & Variable & Delta instruction address. These bits can be 8/16/24/32. \\\hline
+
+ \end{longtable}
+
+
+\subsubsection{Format 1 Packets}
+
+This packet includes branch information, and is used when either the branch information must be reported (for example because the branch map is full), or when the address of instruction must be reported, and there has been at least one branch since the previous packet.
+
+
+The packet length is variable if delta address mode is enabled, ranging from 5 bytes to 12 bytes. The address field can be 8/16/24/32 bits, inferred from the packet length. For example:
+\begin{itemize}
+    \item The header length is $n$ bytes
+    \item The value of the format field is 1
+    \item The value of the branch field is:
+        \begin{itemize}
+            \item 0: the packet is format 1 without address
+            \item 1: branch\_map is 1 bit wide, zero\_ext is 6 bits wide, and address is $n-5$ bits wide
+            \item 2 \verb+~+ 3:  branch\_map is 3 bits wide, zero\_ext is 4 bits wide, and address is $n-5$ bits wide
+            \item 4 \verb+~+ 7: branch\_map is 7 bits wide, zero\_ext is 0 bits wide, and address is $n-5$ bits wide
+            \item 8 \verb+~+ 15: branch\_map is 15 bits wide, zero\_ext is 0 bits wide, and address is $n-6$ bits wide
+            \item 16 \verb+~+ 31: branch\_map is 31 bits wide, zero\_ext is 0 bits wide, and address is $n-8$ bits wide
+        \end{itemize}
+\end{itemize}
+
+\subparagraph{Format 1 - address, branch\_map}
+The length is variable.
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 1 with address}
+    \label{tab:riscvtracenc-format-1-address}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \multicolumn{1}{c|}{\textbf{Bits}} & \textbf{Description} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Field name} & \multicolumn{1}{c|}{\textbf{Bits}} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 01: Includes branch information \\\hline
+
+    branches & 5 & Number of valid bits branch\_map. The number of bits of branch\_map is determined as follows:
+    \begin{itemize}
+        \item 0: (cannot occur for this format)
+        \item 1: 1 bit
+        \item 2 \verb+~+ 3: 3 bits
+        \item 4 \verb+~+ 7: 7 bits
+        \item 8 \verb+~+ 15: 15 bits
+        \item 16 \verb+~+ 31: 31 bits
+    \end{itemize}
+    For example if branches = 12, branch\_map is 15-bit long, and the 12 LSBs are valid. \\\hline
+    branch\_map & Variable & An array of bits indicating whether branches are taken or not. Bit 0 represents the oldest branch instruction executed. For each bit:
+    \begin{itemize}
+        \item 0: branch taken
+        \item 1: branch not taken
+    \end{itemize}
+    The field Bits is variable and determined by the branches field. \\\hline
+    notify & 1 & If the value of this bit is different from the MSB of address, it indicates that this packet is reporting an instruction that is not the target of an uninferable discontinuity because a notification was requested via trigger[2] or a filter matched. \\\hline
+    updiscon & 1 & If the value of this bit is different from notify, it indicates that this packet is reporting the instruction following an uninferable discontinuity and is also the instruction before an exception, privilege change or resync. \\\hline
+
+    \multirow{4}{*}{zero\_ext} & \multirow{4}{*}{Variable} & The length of this field is determined by branches as follows:
+    \begin{itemize}
+        \item 1: 6 bits
+        \item 2 \verb+~+ 3: 4 bits
+        \item 4 \verb+~+ 31: 0 bits
+    \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+    address & Variable & Delta instruction address. These bits can be 8/16/24/32 \\\hline
+ \end{longtable}
+
+ \subparagraph{Format 1 - no address, branch\_map}
+ The length is 5 bytes.
+\begin{longtable}[c]{ |l|r|L{10cm}| }
+    \caption{Packet format 1 without address}
+    \label{riscvtracenc-format-1-wo-address}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Field name} & \textbf{Bits} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    format & 2 & 01: includes branch information \\\hline
+    branches & 5 & Number of valid bits in branch\_map. The length of branch\_map is 31 bits. Only 0 valid. \\\hline
+
+    \multirow{4}{*}{branch\_map} & 31 & An array of bits indicating whether branches are taken or not. Bit 0 represents the oldest branch instruction executed. For each bit:
+    \begin{itemize}
+        \item 0: branch taken
+        \item 1: branch not taken
+    \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+
+    sign\_extend & 2 & Reserved \\\hline
+ \end{longtable}
+
+%%%%%%%%%%%%%%%%%
+%%% Interrupt %%%
+%%%%%%%%%%%%%%%%%
+
+\section{Interrupt}
+
+\chipname{}'s CORE\regindex{n}\_TRACE (i.e., the trace encoder of core 0 or core 1) can generate the CORE\regindex{n}\_TRACE\_INTR interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+There are several internal interrupt sources from CORE\regindex{n}\_TRACE that can generate the above interrupt signal. The interrupt sources from \textcolor{red}{CORE\regindex{n}\_TRACE} are listed with their trigger conditions and the resulted interrupt signals in Table \ref{tab:riscvtracenc-int-sources}.
+
+\begin{longtable}{ | L{5cm} | L{7cm} | L{3.5cm} | }
+\caption{CORE\regindex{n}\_TRACE's Internal Interrupt Sources} \label{tab:riscvtracenc-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+
+TRACE\_MEM\_FULL\_INTR & Triggered when the packet size exceeds the capacity of the trace memory, namely when \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} reaches the value of \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG}. If necessary, this interrupt can be enabled to notify the HP CPU for processing, such as applying for a new memory space again & CORE\regindex{n}\_TRACE\_INTR \\\hline
+
+TRACE\_FIFO\_OVERFLOW\_INTR & Triggered when the internal FIFO overflows and one or more packets have been lost. & CORE\regindex{n}\_TRACE\_INTR \\\hline
+
+\end{longtable}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:riscvtracenc-reg-summ} \textit{\nameref{sec:riscvtracenc-reg-summ}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:riscvtracenc-prog-procedures}
+
+\subsection{Encoder Option Configuration}
+The Encoder has some optional configuration options.
+\begin{itemize}
+    \item Full address mode
+        \begin{itemize}
+            \item The encoder uses delta address mode by default. Users can set \hyperref[fielddesc:TRACEFULLADDRESS]{TRACE\_FULL\_ADDRESS} to enable full address mode for debugging.
+        \end{itemize}
+
+        \item Restart after packet loss
+            \begin{itemize}
+                \item Once the trace packet is lost due to FIFO overflow, the encoder will automatically stop if \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} is set. When the FIFO is empty, the encoder will restart to report packets.
+            \end{itemize}
+
+        \item Stall CPU while FIFO is almost full
+            \begin{itemize}
+                \item If \hyperref[fielddesc:TRACESTALLENA]{TRACE\_STALL\_ENA} is set, when the FIFO is almost full, a stall request will be asserted to the CPU, and the CPU will be stalled until the request is deasserted.
+            \end{itemize}
+
+        \item Stop tracing when the CPU is halted
+
+            If \hyperref[fielddesc:TRACEHALTENA]{TRACE\_HALT\_ENA} is set, when the CPU is halted, the encoder will output a packet to report the address of the last instruction before halting, followed by a support packet to indicate that tracing has stopped. Upon the deassertion of the halted signal, the encoder will start tracing again, commencing with a synchronization packet.
+
+        \item Stop tracing when the CPU is in reset
+
+            The encoder will be reset separately, if \hyperref[fielddesc:TRACERESETENA]{TRACE\_RESET\_ENA} is set. When the CPU is in reset, the encoder will output a packet to report the address of the last instruction before reset, followed by a support packet to indicate that tracing has stopped. Once the CPU exits from reset, the encoder will start tracing again, commencing with a synchronization packet.
+
+        \item Using trigger outputs from the Debug Module
+
+            The debug module of the RISC-V hart has a trigger unit. This defines a match control register (\hyperref[regdesc:MCONTROL]{mcontrol}) containing a 4-bit \hyperref[fielddesc:MCONTROLACTION]{action} field, and reserves codes 2 \verb+~+ 4 of this field for trace use. \chipname{} has implemented this feature. The values of the \hyperref[fielddesc:MCONTROLACTION]{action} field are listed in Table \ref{tab:debug_mcontrol}.
+
+            \begin{longtable}[c]{ |l|l| }
+    \caption{Debug module trigger support (the \hyperref[fielddesc:MCONTROLACTION]{action} field of the \hyperref[regdesc:MCONTROL]{mcontrol} register)}
+    \label{tab:debug_mcontrol}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Value} & \textbf{Description} \\\hline
+    \endfirsthead
+    \textbf{Value} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    2 & Trace-on: start trace \\\hline
+    3 & Trace-off: end trace \\\hline
+    4 & Trace-notify: notify the encoder to report an address \\\hline
+
+    \end{longtable}
+\end{itemize}
+
+For details about the debug module trigger unit, please refer to Chapter \ref{mod:riscvcpu} \textit{\nameref{mod:riscvcpu}}.
+
+
+\subsection{Filter Configuration}
+
+
+The filter unit described in Section \ref{sec:riscvtracenc-filter} can be configured as follows:
+
+
+\begin{enumerate}
+    \item Select one of the following match modes:
+        \begin{itemize}
+            \item Set \hyperref[fielddesc:TRACEMATCHPRIVILEGE]{TRACE\_MATCH\_PRIVILEGE} to enable privilege match mode:
+                \begin{itemize}
+                    \item Configure \hyperref[fielddesc:TRACEMATCHCHOICEPRIVILEGE]{TRACE\_MATCH\_CHOICE\_PRIVILEGE} to specify the privilege level.
+                \end{itemize}
+            \item Set \hyperref[fielddesc:TRACEMATCHECAUSE]{TRACE\_MATCH\_ECAUSE} to enable ecause match mode:
+                \begin{itemize}
+                    \item Configure \hyperref[fielddesc:TRACEMATCHCHOICEECAUSE]{TRACE\_MATCH\_CHOICE\_ECAUSE} to specify the ecause value
+                \end{itemize}
+            \item Set \hyperref[fielddesc:TRACEMATCHINTERRUPT]{TRACE\_MATCH\_INTERRUPT} to enable interrupt match mode:
+                \begin{itemize}
+                    \item Configure \hyperref[fielddesc:TRACEMATCHVALUEINTERRUPT]{TRACE\_MATCH\_VALUE\_INTERRUPT} to specify interrupt level
+                \end{itemize}
+            \item Set \hyperref[fielddesc:TRACEMATCHCOMP]{TRACE\_MATCH\_COMP} to enable comparator match mode:
+                \begin{itemize}
+                    \item Configure the primary comparator:
+                        \begin{itemize}
+                            \item Configure \hyperref[fielddesc:TRACEPINPUT]{TRACE\_P\_INPUT} to choose the input
+                            \item Configure \hyperref[fielddesc:TRACEPFUNCTION]{TRACE\_P\_FUNCTION} to select the comparator function
+                            \item Configure \hyperref[regdesc:TRACEFILTERPCOMPARATORMATCHREG]{TRACE\_FILTER\_P\_COMPARATOR\_MATCH\_REG} to define match value
+                        \end{itemize}
+                    \item Configure the secondary comparator if needed:
+                        \begin{itemize}
+                            \item Configure \hyperref[fielddesc:TRACESINPUT]{TRACE\_S\_INPUT} to choose the input
+                            \item Configure \hyperref[fielddesc:TRACESFUNCTION]{TRACE\_S\_FUNCTION} to select the comparator function
+                            \item Configure \hyperref[regdesc:TRACEFILTERSCOMPARATORMATCHREG]{TRACE\_FILTER\_S\_COMPARATOR\_MATCH\_REG} to define match value
+                        \end{itemize}
+                    \item Choose which comparator to match via \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE}:
+                        \begin{itemize}
+                            \item 0: only the primary comparator matches, and the secondary comparator has no effect
+                            \item 1: both the primary comparator and the secondary comparator  match ($P\&\&S$)
+                            \item 2: neither the primary comparator nor secondary comparator  match  $!(P\&\&S)$
+                            \item 3: start filtering when primary matches up until secondary matches
+                        \end{itemize}
+                \end{itemize}
+                If \hyperref[fielddesc:TRACEPNOTIFY]{TRACE\_P\_NOTIFY} or \hyperref[fielddesc:TRACESNOTIFY]{TRACE\_S\_NOTIFY} is set, the comparator will report the matched address as a notification, the instructions will not be filtered. For example:
+                \begin{itemize}
+                    \item If the \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE} is 0, and \hyperref[fielddesc:TRACEPNOTIFY]{TRACE\_P\_NOTIFY} is set, then all instructions will be traced, and the matched primary comparator will be notified.
+                    \item If the \hyperref[fielddesc:TRACEMATCHMODE]{TRACE\_MATCH\_MODE} is 0, and \hyperref[fielddesc:TRACESNOTIFY]{TRACE\_S\_NOTIFY} is set, the instruction will be filtered by the primary comparator, and the instruction that matches the secondary comparator will be notified.
+                \end{itemize}
+        \end{itemize}
+    \item Set \hyperref[fielddesc:TRACEFILTEREN]{TRACE\_FILTER\_EN} to enable filter unit.
+\end{enumerate}
+
+
+\subsection{Enable Encoder}
+
+
+\begin{itemize}
+    \item Configure the address space for the trace memory via \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG} and \hyperref[regdesc:TRACEMEMENDADDRREG]{TRACE\_MEM\_END\_ADDR\_REG}. The encoder can access L2 MEM and PSRAM:
+        \begin{itemize}
+            \item L2MEM: 0x4FF00000 \verb+~+ 0x4FFBFFFF
+            \item PSRAM: 0x48000000 \verb+~+ 0x4BFFFFFF
+        \end{itemize}
+    \item Update the value of \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} to the value of \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG} by setting \hyperref[fielddesc:TRACEMEMCURRENTADDRUPDATE]{TRACE\_MEM\_CURRENT\_ADDR\_UPDATE}
+
+
+    \item (Optional) Configure the memory writing mode via the \hyperref[fielddesc:TRACEMEMLOOP]{TRACE\_MEM\_LOOP} bit of \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG}
+        \begin{itemize}
+            \item 0: Non-loop mode
+            \item 1: Loop mode (default)
+        \end{itemize}
+
+    \item Configure the synchronization mode via the \hyperref[fielddesc:TRACERESYNCMODE]{TRACE\_RESYNC\_MODE} bit of \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG}
+            \begin{itemize}
+                    \item 0: Disable the synchronization counter
+                    \item 1: Invalid. No effect
+                    \item 2: Synchronization counter counts by packet
+                    \item 3: Synchronization counter counts by cycle
+            \end{itemize}
+
+    \item (Optional) Configures the threshold for the synchronization counter (default value is 128) via \hyperref[regdesc:TRACERESYNCPROLONGEDREG]{TRACE\_RESYNC\_PROLONGED\_REG}
+
+
+    \item (Optional) Enable Interrupt
+        \begin{itemize}
+            \item Set the corresponding bit of \hyperref[regdesc:TRACEINTRENAREG]{TRACE\_INTR\_ENA\_REG} to enable the corresponding interrupt
+            \item Set the corresponding bit of \hyperref[regdesc:TRACEINTRCLRREG]{TRACE\_INTR\_CLR\_REG} to clear the corresponding interrupt
+            \item Read \hyperref[regdesc:TRACEINTRRAWREG]{TRACE\_INTR\_RAW\_REG} to know which interrupt occurs
+        \end{itemize}
+    \item (Optional) Enable automatic restart by setting the \hyperref[fielddesc:TRACERESTARTENA]{TRACE\_RESTART\_ENA} bit of \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG}. This function is enabled by default
+
+
+
+    \item There are 2 ways to enable the trace encoder:
+        \begin{itemize}
+            \item Setting the \hyperref[fielddesc:TRACETRIGGERON]{TRACE\_TRIGGER\_ON} bit of \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG}
+            \item Through the Debug module Trace-on to start the encoder. When the trigger is matched and the \hyperref[fielddesc:MCONTROLACTION]{action} is 2, it will start the encoder. For trigger configurations, please refer to the RISC-V Debug Specification.
+        \end{itemize}
+
+\end{itemize}
+
+Once the encoder is enabled, it will keep tracing the HP CPU's instruction trace interface and writing packets to the trace memory.
+
+\subsection{Disable Encoder}
+
+There are two ways to end output trace packets:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:TRACETRIGGEROFF]{TRACE\_TRIGGER\_OFF} of \hyperref[regdesc:TRACETRIGGERREG]{TRACE\_TRIGGER\_REG} to end the encoder
+    \item Through the Debug module Trace-off to end the encoder. When the trigger is matched and the \hyperref[fielddesc:MCONTROLACTION]{action} is 3, it will end the encoder. For trigger configurations, please refer to the RISC-V Debug Specification.
+\end{enumerate}
+
+Due to the internal FIFO, the packets are not written to the memory immediately after the end of the trace. It is recommended to query the \hyperref[regdesc:TRACEFIFOSTATUSREG]{TRACE\_FIFO\_STATUS\_REG} to confirm that the data is all written to memory.
+
+\begin{longtable}[c]{ |l|L{10cm}| }
+    \caption{Trace Status}
+    \label{riscvtracenc-trace-status}
+    \\\hline\rowcolor{lightgray}
+    \textbf{Field} & \textbf{Description} \\\hline
+    \endfirsthead
+    \textbf{Field} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+    \endlastfoot
+
+    \hyperref[fielddesc:TRACEFIFOEMPTY]{TRACE\_FIFO\_EMPTY} & If 1 indicates that the FIFO is empty, all data have been written to memory \\\hline
+    \hyperref[fielddesc:TRACEWORKSTATUS]{TRACE\_WORK\_STATUS} & Encoder's work status:
+    \begin{itemize}
+        \item 0: idle state, the encoder is not started
+        \item 1: the encoder is normally working that output packets
+        \item 2: the encoder is not outputting packets, the CPU is halted or in reset
+        \item 3: the encoder is not outputting packets, it occurs while a packet is lost, and is waiting for FIFO empty to restart.
+    \end{itemize}
+    \\\hline
+
+\end{longtable}
+
+\subsection{Notify}
+
+Users may want to report a special address, even if it is not the target of an uninferable discontinuity. There are two ways to notify and report a special address:
+\begin{enumerate}
+    \item The debug trigger unit matched, and the \hyperref[fielddesc:MCONTROLACTION]{action} is 4
+    \item The filter comparator matched
+\end{enumerate}
+
+When a notification is requested, the encoder will report a format 2 or format 1 with an address packet, determined by the branch\_map. If branch\_map is 0, report format 2, otherwise report format 1. The notify field shows whether the packet is reporting a notification address. If it is the target of an uninferable discontinuity, even if it is a notification, the notify field will not be asserted, otherwise the decoder cannot reconstruct the instruction stream correctly.
+
+
+\subsection{Decode Data Packets}
+
+\begin{itemize}
+    \item Find the first address to decode
+        \begin{itemize}
+            \item Read the \hyperref[fielddesc:TRACEMEMFULLINTRRAW]{TRACE\_MEM\_FULL\_INTR\_RAW} bit of the \hyperref[regdesc:TRACEINTRRAWREG]{TRACE\_INTR\_RAW\_REG} register to know if the trace memory is full
+            \begin{itemize}
+                \item if read 0, read the trace packets from \hyperref[regdesc:TRACEMEMSTARTADDRREG]{TRACE\_MEM\_START\_ADDR\_REG}
+                \item if read 1, and the loop mode is enabled, then the old trace packets are overwritten. In this case, read the \hyperref[regdesc:TRACEMEMCURRENTADDRREG]{TRACE\_MEM\_CURRENT\_ADDR\_REG} to know the last writing address, and use this address as the first address to decode
+            \end{itemize}
+        \end{itemize}
+
+    \item Use the decoder to decode data packets
+        \begin{itemize}
+            \item The decoder reads all data packets starting from the first address, and reconstructs the data stream with the binary file
+            \item As mentioned in \ref{sec:riscvtracenc-packetes}, the encoder writes 14 zero bytes to the memory partition boundary every time when 128 packets are transmitted. Given this fact, the first non-zero byte after 14 zero bytes should be the header of a new packet
+        \end{itemize}
+\end{itemize}
+
+\subsection{AHB Configuration}
+
+\chipname{} encoder supports the AHB bus. There are some optional configurations to control the transmission bandwidth of the encoder.
+
+If there are many DMA masters, users can increase the bandwidth of Trace by setting AHB burst \hyperref[regdesc:TRACEAHBCONFIGREG]{TRACE\_AHB\_CONFIG\_REG}.
+\begin{itemize}
+    \item The \hyperref[fielddesc:TRACEHBURST]{TRACE\_HBURST} supports the following configurations:
+        \begin{itemize}
+            \item 0x0: SINGLE
+            \item 0x1: INCR (length not defined)
+            \item 0x2: INCR4
+            \item 0x4: INCR8
+            \item Others: reserved
+        \end{itemize}
+        Burst transfer means that once arbitration is successful, multiple words can be transferred continuously. For SINGLE, the length is 1; for INCR, the length is undefined; for INCR4, the length is 4; for INCR8, the length is 8. The longer the burst length, the better the bandwidth.
+
+    \item When configured as INCR transfer, since INCR is a burst of indeterminate length, in order to avoid Trace occupying the bus for a long time, it will end the INCR transfer after the transfer length up to \hyperref[fielddesc:TRACEMAXINCR]{TRACE\_MAX\_INCR}, and restart bus arbitration.
+\end{itemize}
+
+This is the configuration used to adjust the bandwidth. When the bandwidth is sufficient, it's not required to do the configuration, and users can use the default configuration.
+
+\subsection{Software Retention}
+
+The \hyperref[fielddesc:TRACEWORKSTATUS]{TRACE\_WORK\_STATUS} represents the state of the encoder. When the encoder is not in the IDLE state, it must backup and restore the configuration when the chip enters sleep.
+
+
+
+
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{riscvtracenc-reg-summ}{}
+\section{Register Summary}
+\label{sec:riscvtracenc-reg-summ}
+
+The addresses in this section are relative to RISC-V Trace Encoder base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+\subfile{\modulefiles/02-RISCVTRACENC-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to RISC-V Trace Encoder base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/02-RISCVTRACENC-reg__EN}
+
+
+\end{document}

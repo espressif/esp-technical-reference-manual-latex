@@ -1,0 +1,1103 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./37-ISP}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned, comment out for full justification
+\raggedright
+\raggedbottom
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{isp}{}
+\chapter{Image Signal Processor (ISP)}
+\label{mod:isp}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+\chipseries{} includes an image signal processor (ISP), which is a pipeline composed of various image processing algorithms.
+
+ISP reads image data from the DVP or MIPI-CSI camera interface, or from the system memory directly, and writes the processed image data to the system memory through VDMA.
+
+The SoC architecture of ISP is shown in Figure \ref{fig:isp-soc-arch}. ISP must work with other modules to read and write data and can not work alone.
+
+\begin{itemize}
+    \item When outputting images, ISP uses CSI\_Bridge to convert data to AXI interface and stores the images to system memory through the VDMA controller. For more information about VDMA, see Chapter \ref{mod:vdma} \textit{\nameref{mod:vdma}}
+    \item When the input image comes from the system memory, ISP must acquire the image data through VDMA
+    \item When the input image comes from the MIPI-CSI camera interface,
+    \begin{itemize}
+        \item ISP must acquire the image data through CSI HOST. For details, see Chapter \ref{mod:mipicsi} \textit{\nameref{mod:mipicsi}}
+        \item CSI\_CM can preprocess it to perform 8-bit or 16-bit bit-swapping, color-channel reordering for RGB888, RGB565, or YUV422, downsample RGB888 to RGB565, or downsample YUV422 to YUV420
+    \end{itemize}
+    \item When the input image comes from the DVP camera interface, ISP acquire the image data through the DVP IO. For details, see Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/isp_soc_arch_eco5.pdf}
+    \caption{\chipseries{} ISP SoC Architecture}
+    \label{fig:isp-soc-arch}
+\end{figure}
+
+
+\section{Terminology}
+
+\begin{longtable}[c]{ r l }
+     \textbf{MIPI-CSI} & Camera serial interface, a high-speed serial interface for cameras complaint with MIPI specifications\\
+     \textbf{Image Interface} & Image data interface, the output interface of CSI HOST \\
+                  & Classified into Image Interface 32 and Image Interface 64 based on bit width\\
+     \textbf{DVP} & Digital video parallel interface, generally composed of vsync, hsync, de, and data signals\\
+     \textbf{RAW} & Unprocessed data directly output from an image sensor, typically divided into R, Gr, Gb, and B channels \\
+                  & Classified into RAW8, RAW10, RAW12, etc., based on bit width \\
+     \textbf{RGB} & Colored image format composed of red, green, and blue colors \\
+                  & Classified into RGB888, RGB565, etc., based on the bit width of each color \\
+     \textbf{YUV} & Colored image format composed of luminance and chrominance \\
+                  & Classified into YUV444, YUV422, YUV420, etc., based on the data arrangement \\
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+
+ISP supports the following features:
+
+\begin{itemize}
+    \item maximum resolution: 1920 x 1080
+    \item three input channels: MIPI-CSI, DVP, and VDMA
+    \item input formats: RAW8, RAW10, and RAW12
+    \item output formats: RAW8, RGB888, RGB565, YUV422, and YUV420
+    \item pipeline features:
+        \begin{itemize}
+        \item Black level correction (BLC)
+        \item Defect pixel correction (DPC)
+        \item Bayer filter (BF)
+        \item Lens shading correction (LSC)
+        \item Demosaic
+        \item White balance gain (WBG)
+        \item Color correction matrix (CCM)
+        \item Gamma correction
+        \item RGB2YUV
+        \item Sharpen
+        \item Contrast/hue/saturation/luminance adjustment (COLOR)
+        \item YUV\_limit
+        \item YUV2RGB
+        \item Crop
+        \item Automatic exposure statistics (AE)
+        \item Automatic focus statistics (AF)
+        \item Automatic white balance statistics (AWB)
+        \item Histogram statistics (HIST)
+        \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:isp-arch-overview}
+
+ISP architecture is shown in Figure \ref{fig:isp-arch}, consisting of ISP\_Header, ISP\_Pipeline, ISP\_Tail, and CSI\_Bridge.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/isp_arch_eco5.pdf}
+    \caption{ISP IP Architecture}
+    \label{fig:isp-arch}
+\end{figure}
+
+\begin{itemize}
+    \item ISP\_Header selects data from various input sources based on the configuration and buffers it. Then it transmits the buffered data to ISP\_Pipeline in a standardized format.
+    \item ISP\_Pipeline serves as the core module of the ISP, containing all the algorithms for image processing.
+    \item ISP\_Tail has two input sources, MIPI-CSI and ISP\_Pipeline. When ISP is disabled, Image Interface 32 data from MIPI-CSI is converted into Image Interface 64 format by ISP\_Tail and transmitted to CSI\_Bridge. When ISP is enabled, the output of ISP\_Pipeline is cropped and converted into Image Interface 64 format by ISP\_Tail, and then transmitted to CSI\_Bridge.
+    \item As the output of the ISP, CSI\_Bridge transmits the images from ISP to the system memory through VDMA.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:isp-func-descr}
+\subsection{ISP\_Header}
+ISP\_Header serves as the input of ISP. The main features are:
+\begin{itemize}
+    \item Select image data as input source based on the configuration of \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC}
+    \item Buffer image data, and convert images to the format required by ISP\_Pipeline based on the configured type and size of image data
+    \begin{itemize}
+        \item When MIPI-CSI is the input, set the input type via \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE}
+        \item When DVP is the input, set \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE} to 0, then set the data type via \hyperref[fielddesc:ISPCAMDATATYPE]{ISP\_CAM\_DATA\_TYPE}
+        \item When VDMA is the input, set the input type via \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE}, and configure \hyperref[fielddesc:ISPDMADATATYPE]{ISP\_DMA\_DATA\_TYPE} accordingly
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{ISP\_Pipeline}
+\label{sec:isp_pipeline}
+ISP\_Pipeline is the core of ISP, housing all the image processing algorithms. Each algorithm module can be enabled or disabled via the corresponding bit of \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG}. Except for modules related to color space conversion (demosaic, RGB2YUV, and YUV2RGB), other modules can be enabled or disabled dynamically without the need to shut down the ISP for reconfiguration. Moreover, once enabled, each algorithm module generates an end-of-frame interrupt, capable of triggering an interrupt after processing each image frame.
+
+
+\subsubsection{Black Level Correction (BLC)}
+\label{sec:isp_blc}
+This module is used to subtract the black level offset of the sensor. The black level offset to be subtracted for each Bayer channel is configured via \hyperref[fielddesc:ISPBLCR0VALUE]{ISP\_BLC\_R\textcolor{red}{x}\_VALUE}. With the black level offset subtracted, the pixel range will be reduced, which can be stretched back to 0-255 via \hyperref[fielddesc:ISPBLCR0STRETCH]{ISP\_BLC\_R\textcolor{red}{x}\_STRETCH}.
+
+There are four Bayer channels in total. The mapping between channel and index is as follows:
+\begin{itemize}
+\item R0 refers to the top-left channel
+\item R1 refers to the top-right channel
+\item R2 refers to the bottom-left channel
+\item R3 refers to to the bottom-right channel
+\end{itemize}
+
+
+\subsubsection{Defective Pixel Correction (DPC)}
+\label{sec:isp_dpc}
+This module removes defective pixels from the input image. DPC supports both dynamic correction and static correction, which are controlled by \hyperref[fielddesc:ISPSTAEN]{ISP\_STA\_EN} and \hyperref[fielddesc:ISPDYNEN]{ISP\_DYN\_EN}, respectively. The two correction modes can be enabled simultaneously.
+
+Dynamic correction automatically detects defective pixels based on the input pixel values and replaces them with the median value. Two defective pixel detection algorithms are supported:
+
+\begin{itemize}
+    \item \textbf{Algorithm 0:} Compute the minimum value \textit{min8} and the maximum value \textit{max8} among the eight neighboring pixels of the current pixel. If the current pixel value is greater than max8 + \hyperref[fielddesc:ISPDPCTHRESHOLDH]{ISP\_DPC\_THRESHOLD\_H}, or less than min8 - \hyperref[fielddesc:ISPDPCTHRESHOLDL]{ISP\_DPC\_THRESHOLD\_L}, the pixel is classified as defective.
+
+    \item \textbf{Algorithm 1:} Let the current pixel value be \textit{pix}. Compute the mean value \textit{est} of the eight neighboring pixels, and the absolute difference \textit{dif} = $|\textit{est} - \textit{pix}|$. Define \textit{avg} = (sum of the eight neighbors + $8 \times \textit{pix}$) / 16. Detection is performed in two steps:
+    \begin{itemize}
+        \item \textbf{Step 1:} Determine the maximum value \textit{max8} among the eight neighboring pixels. If $\textit{pix} < \textit{max8} \times$ \hyperref[fielddesc:ISPDPCTHRESHOLDH]{ISP\_DPC\_THRESHOLD\_H} and $\textit{pix} > \textit{max8} \times$ \hyperref[fielddesc:ISPDPCTHRESHOLDL]{ISP\_DPC\_THRESHOLD\_L}, the pixel is considered non-defective; otherwise, proceed to Step~2.
+        \item \textbf{Step 2:} The pixel is classified as defective if either of the following conditions is met:
+        \begin{itemize}
+            \item $\textit{dif} > \textit{avg} \times$ \hyperref[fielddesc:ISPDPCFACTORDARK]{ISP\_DPC\_FACTOR\_DARK} and $\textit{est} \ge \textit{pix}$
+            \item $\textit{dif} > (255 - \textit{avg}) \times$ \hyperref[fielddesc:ISPDPCFACTORBRIG]{ISP\_DPC\_FACTOR\_BRIG} and $\textit{est} < \textit{pix}$
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
+
+Static correction is implemented using a defective pixel coordinate lookup table (LUT). Pixels whose coordinates are stored in the LUT are replaced with the median value. The defective pixel coordinates must be obtained through static calibration. During calibration, neither static nor dynamic correction can be enabled.
+
+The calibration procedure is as follows:
+\begin{itemize}
+    \item Black image defective pixel calibration
+        \begin{itemize}
+            \item Set \hyperref[fielddesc:ISPDPCBLACKEN]{ISP\_DPC\_BLACK\_EN} = 1
+            \item Set \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 1
+            \item Set \hyperref[fielddesc:ISPDPCEN]{ISP\_DPC\_EN} = 1
+            \item Input a black image and wait for the calibration to complete
+            \item Set \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 0
+            \item Software reads all defective pixel coordinates for the black image from the LUT registers
+        \end{itemize}
+
+    \item White image defective pixel calibration
+        \begin{itemize}
+            \item Set \hyperref[fielddesc:ISPDPCBLACKEN]{ISP\_DPC\_BLACK\_EN} = 0
+            \item Set \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 1
+            \item Set \hyperref[fielddesc:ISPDPCEN]{ISP\_DPC\_EN} = 1
+            \item Input a white image and wait for the calibration to complete
+            \item Set \hyperref[fielddesc:ISPDPCCHECKEN]{ISP\_DPC\_CHECK\_EN} = 0
+            \item Software reads all defective pixel coordinates for the white image from the LUT registers
+        \end{itemize}
+
+    \item Software merges the defective pixel coordinates obtained from the black and white images, removes duplicates, and writes the final list back to the LUT
+\end{itemize}
+
+The LUT read and write procedure is described in Section \ref{sec:isp_lsc}. By setting \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM} = 1, the defective pixel coordinate LUT for DPC is selected. This LUT has a depth of 512, allowing up to 512 defective pixel coordinates to be stored.
+
+
+\subsubsection{Bayer Filter (BF)}
+\label{sec:isp_bf}
+This module is designed for denoising input images in the Bayer domain. The denoising strength can be adjusted using \hyperref[fielddesc:ISPSIGMA]{ISP\_SIGMA}, and the denoising template can be fine-tuned using \hyperref[fielddesc:ISPGAUTEMPLATE00]{ISP\_GAU\_TEMPLATE\textcolor{red}{xx}}.
+
+
+\subsubsection{Lens Shading Correction (LSC)}
+\label{sec:isp_lsc}
+This module is utilized for lens shading correction in the Bayer domain. It corrects the R, Gr, Gb, and B channels independently by dividing each channel into a 32 x 32 grid (equivalent to a 64 x 64 division for the entire image) and stores the correction coefficients for each channel in a lookup table (LUT).
+
+Before using this module, calibration is necessary to obtain the LUT correction coefficients. Specifically, first we capture a white image in a scene with uniform ambient lighting. Divide the image into a 32 x 32 grid for each channel, and use the luminance at the center of the image as a reference. Calculate the luminance gain at each grid vertex based on this reference luminance. For grids extending beyond the image boundaries on the right or bottom, calculate the gain at the image boundary points. Then, use a linear relationship based on the gain of the previous point to calculate the gain at the next grid boundary. Finally, store these gains in the LUT in a left-to-right, top-to-bottom order to complete the initialization.
+
+In the context of a 1920 x 1080 resolution image, each channel operates at 960 x 540 resolution and is divided into a 32 x 32 grid, consisting of 30 grids horizontally and 17 grids vertically. Assuming the image's luminance center aligns with its geometric center, we derive the reference luminance ref\_lum from the average luminance of pixels around coordinates (480, 270). Moving methodically from left to right and top to bottom, derive the actual pixel luminance act\_lum for each grid vertex. Using the formula $gain = ref\_lum / act\_lum$, we compute the correction coefficient, which is then stored sequentially in the LUT.
+
+In cases where grids extend beyond the image boundaries, such as the vertical coordinate of the last grid reaching 543 (beyond the maximum vertical coordinate of 539), we leverage the correction coefficients gain\_0 at coordinate 511 and gain\_1 at coordinate 539. Then the gain for coordinate 543 can be calculated based on $gain = gain\_0 + (gain\_1 - gain\_0) / (539 - 511) * (543 - 511)$.
+
+LSC employs two LUTs for storing gains related to specific color channels: Gb and B are stored in one LUT, while R and Gr are stored in the other. Each LUT has a depth of 560. The number of gain coefficients per channel, determined by the image resolution, must not exceed this value. The gain values are represented as 10-bit fixed-point numbers, with the high 2 bits representing the integer part and the low 8 bits the fractional part. The storage order within the LUTs is detailed in Table \ref{tab:lsc_lut_order}. The LUTs can be accessed through specific registers:
+\begin{itemize}
+    \item A write operation writes the data from \hyperref[regdesc:ISPLUTWDATAREG]{ISP\_LUT\_WDATA\_REG} into the LUT.
+    \item A read operation stores the data read from the LUT into \hyperref[regdesc:ISPLUTRDATAREG]{ISP\_LUT\_RDATA\_REG}.
+    \item Trigger LUT operations via \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG}. Each write to this register initiates a read or write operation on the LUT. It is required to write to all the fields within this register at the same time.
+    \begin{itemize}
+        \item \hyperref[fielddesc:ISPLUTCMD]{ISP\_LUT\_CMD}: Set to 0 for a read operation and 1 for a write operation
+        \item \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM}: Set to 0 to select the LSC LUT
+        \item \hyperref[fielddesc:ISPLUTADDR]{ISP\_LUT\_ADDR}: Specifies the LUT address to access. If bits [11:10] are 0, LUT\_Gb\_B is selected; if bits [11:10] are 1, LUT\_R\_Gr is selected
+    \end{itemize}
+\end{itemize}
+
+\begin{longtable}[c]{ |p{5cm}|p{3cm}|p{3cm}| }
+    \caption{Gain Storage Sequence in LSC LUTs}
+    \label{tab:lsc_lut_order}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{LUT sel} & \textbf{bit [19:10]} & \textbf{bit [9:0]} \\\hline
+    \endfirsthead
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{LUT sel} & \textbf{bit [19:10]} & \textbf{bit [9:0]} \\\hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+
+    %\insertTableNotes
+    \endlastfoot
+
+        LUT\_Gb\_B & Gb & B \\\hline
+        LUT\_R\_Gr & R & Gr \\\hline
+
+\end{longtable}
+
+Before enabling LSC, \hyperref[fielddesc:ISPLSCXTABLESIZE]{ISP\_LSC\_XTABLESIZE} should be configured to set the number of horizontal correction coefficients. The number is determined by
+$ISP\_LSC\_XTABLESIZE = fix((line\_width -1)/2/32) + 2$, where $fix()$ denotes rounding down. For example, if the input RAW image has a horizontal width of 1920 pixels, then $ISP\_LSC\_XTABLESIZE = fix((1920-1)/2/32)+2 = 29+2 = 31$.
+
+
+\subsubsection{Demosaic}
+\label{sec:isp_demosaic}
+The demosaicing process converts Bayer images to RGB888 images. The conversion effect can be fine-tuned using \hyperref[fielddesc:ISPDEMOSAICGRADRATIO]{ISP\_DEMOSAIC\_GRAD\_RATIO}. This register field comprises 2 integer bits and 4 fractional bits, with a default value of 1.0.
+
+
+\subsubsection{White Balance Gain (WBG)}
+\label{sec:isp_wbg}
+This module performs white balance adjustment on the input image. The adjustment is achieved by multiplying the pixel value of each color channel by its corresponding \hyperref[fielddesc:ISPWBGR]{ISP\_WBG\_\textcolor{red}{R/B/G}} gain coefficient. Each gain coefficient consists of a 4-bit integer part and an 8-bit fractional part.
+
+
+\subsubsection{Color Correction Matrix (CCM)}
+\label{sec:isp_ccm}
+CCM is a correction matrix for image pixels that can adjust RGB888 pixels, including white balance adjustments. The relationship between the output R', G', B' and the input R, G, B is described by the following matrix. The parameters RR, RG, RB, GR, GG, GB, BR, BG, and BB can be configured with \hyperref[fielddesc:ISPCCMRR]{ISP\_CCM\_\textcolor{red}{xx}}. Each parameter is a 13-bit fixed-point number, where bit [12] is the sign bit, bits [11:0] represent the absolute value of the number, bits [11:8] the integer part, and bits [7:0] the fractional part.
+
+\begin{equation}
+    \left[\begin{array}{c}
+        R' \\
+        G' \\
+        B'
+    \end{array}\right] = \left[\begin{array}{ccc}
+        RR & RG & RB \\
+        GR & GG & GB \\
+        BR & BG & BB
+    \end{array}\right]\times\left[\begin{array}{c}
+        R \\
+        G \\
+        B
+    \end{array}\right]
+\end{equation}
+
+
+\subsubsection{Gamma Correction}
+\label{sec:isp_gamma}
+This module is used to adjust the gamma curve of an image. The gamma curve should be configured before gamma correction is enabled. Gamma curves can be configured using registers, with each R, G, B channel having an independent curve consisting of 16 sampling points. For the X component (input value), the values are indirectly obtained through \hyperref[fielddesc:ISPGAMMARX00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_X\textcolor{red}{n}} (where n ranges from 00 to 0F). The Y component (output value) can be directly set using \hyperref[fielddesc:ISPGAMMARY00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_Y\textcolor{red}{n}} (where n ranges from 00 to 0F). Once configuration is complete, writing 1 to \hyperref[fielddesc:ISPGAMMAUPDATE]{ISP\_GAMMA\_UPDATE} applies the gamma curve settings. The gamma curve is illustrated in Figure \ref{figure:isp_gamma_curve}.
+
+For the X component, taking the R channel as an example, the following conditions must be satisfied:
+$$X(n) - X(n-1) = 2^{ISP\_GAMMA\_R\_X(n)}$$
+$$\sum(2^{ISP\_GAMMA\_R\_X(n)}) = 256, n = 00 \textasciitilde 0F$$
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{\modulefiles/figures/isp_gamma_curve_eco5.pdf}
+    \caption{Gamma Curve}
+    \label{figure:isp_gamma_curve}
+\end{figure}
+
+
+\subsubsection{RGB2YUV}
+\label{sec:isp_rgb2yuv}
+The RGB2YUV module converts RGB888 pixels into full-range YUV422 format. The conversion protocol can be configured with \hyperref[fielddesc:ISPYUVMODE]{ISP\_YUV\_MODE}.
+
+
+\subsubsection{Sharpen}
+\label{sec:isp_sharpen}
+The sharpen module is used to sharpen images. This module separates the low-frequency and high-frequency components of the image using a low-pass filter template (such as a mean template or Gaussian template) via \hyperref[fielddesc:ISPSHARPFILTERCOE00]{ISP\_SHARP\_FILTER\_COE\textcolor{red}{xx}}. For low-frequency components, no processing will be done. For high-frequency components, each pixel undergoes the following processing to achieve sharpening:
+\begin{itemize}
+    \item Pixels with frequencies below \hyperref[fielddesc:ISPSHARPTHRESHOLDLOW]{ISP\_SHARP\_THRESHOLD\_LOW} are set to 0.
+    \item Pixels with frequencies above \hyperref[fielddesc:ISPSHARPTHRESHOLDLOW]{ISP\_SHARP\_THRESHOLD\_LOW} but below \hyperref[fielddesc:ISPSHARPTHRESHOLDHIGH]{ISP\_SHARP\_THRESHOLD\_HIGH} are multiplied by the coefficient \hyperref[fielddesc:ISPSHARPAMOUNTLOW]{ISP\_SHARP\_AMOUNT\_LOW}.
+    \item Pixels with frequencies above \hyperref[fielddesc:ISPSHARPTHRESHOLDHIGH]{ISP\_SHARP\_THRESHOLD\_HIGH} are multiplied by the coefficient \hyperref[fielddesc:ISPSHARPAMOUNTHIGH]{ISP\_SHARP\_AMOUNT\_HIGH}.
+\end{itemize}
+
+At the end of each frame, the maximum value of high-frequency component pixels in that frame can be obtained by reading \hyperref[fielddesc:ISPSHARPGRADIENTMAX]{ISP\_SHARP\_GRADIENT\_MAX}. This value can serve as a reference for configuring settings for the next frame.
+
+
+\subsubsection{Contrast/Hue/Saturation/Luminance Adjustment (COLOR)}
+
+This module is designed to modify the contrast, saturation, hue, and luminance of an image. Contrast, saturation, and luminance are configured through \hyperref[fielddesc:ISPCOLORCONTRAST]{ISP\_COLOR\_CONTRAST}, \hyperref[fielddesc:ISPCOLORSATURATION]{ISP\_COLOR\_SATURATION}, and \hyperref[fielddesc:ISPCOLORBRIGHTNESS]{ISP\_COLOR\_BRIGHTNESS}, respectively. Hue adjustment is achieved by combining \hyperref[fielddesc:ISPCOLORHUEH]{ISP\_COLOR\_HUE\_H} and \hyperref[fielddesc:ISPCOLORHUE]{ISP\_COLOR\_HUE} to form a 9-bit control value.
+
+
+\subsubsection{YUV\_Limit and YUV2RGB}
+\label{sec:isp_yuv2rgb}
+The YUV\_Limit module converts full-range YUV422 pixels to limited-range YUV422 pixels. This module is activated only when RGB2YUV is enabled, YUV2RGB is disabled, and \hyperref[fielddesc:ISPYUVRANGE]{ISP\_YUV\_RANGE} is set to 1. With this configuration, the ISP output type is either YUV422 or YUV420.
+
+YUV2RGB converts full-range YUV422 pixels to RGB888 format. The conversion protocol can be configured with \hyperref[fielddesc:ISPYUVMODE]{ISP\_YUV\_MODE}.
+
+\begin{tiplisting}
+    For full-range YUV, Y, U, and V channels range from 0 to 255.\\
+    For limited-range YUV, Y channel ranges from 16 to 235, and U and V channels range from 16 to 240.
+\end{tiplisting}
+
+
+\subsubsection{Cropping (CROP)}
+\label{sec:isp_crop}
+The CROP module performs image cropping. The start and end coordinates in the X and Y directions are configured using \hyperref[fielddesc:ISPCROPXSTART]{ISP\_CROP\_X\_START}, \hyperref[fielddesc:ISPCROPXEND]{ISP\_CROP\_X\_END}, \hyperref[fielddesc:ISPCROPYSTART]{ISP\_CROP\_Y\_START}, and \hyperref[fielddesc:ISPCROPYEND]{ISP\_CROP\_Y\_END}, respectively. The start coordinates must be even, and the end coordinates must be odd.
+
+
+\subsubsection{Automatic Exposure Statistics (AE)}
+
+Auto Exposure (AE) uses 25 statistical sub-windows for image luminance statistics, forming a 5 x 5 grid of statistical window. The size of these windows is set using the register \hyperref[regdesc:ISPAEBXREG]{ISP\_AE\_\textcolor{red}{BX/BY}\_REG}. Each sub-window is numbered as shown in Figure \ref{figure:isp_subwin}. The average luminance of each sub-window, represented as an 8-bit value, can be read with \hyperref[fielddesc:ISPAEB00MEAN]{ISP\_AE\_B\textcolor{red}{xx}\_MEAN}. These statistics can be utilized to implement automatic exposure algorithms for cameras.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/isp_subwin.pdf}
+    \caption{Sub-Window Numbering}
+    \label{figure:isp_subwin}
+\end{figure}
+
+AE utilizes two data sampling points: the output of the \hyperref[sec:isp_demosaic]{Demosaic} module and the output of the \hyperref[sec:isp_gamma]{Gamma} module. These sampling points can be configured using \hyperref[fielddesc:ISPAESELECT]{ISP\_AE\_SELECT}.
+
+AE also includes a simple luminance monitoring module, implemented either by hardware or software. This module calculates the average luminance of all sub-windows every \hyperref[fielddesc:ISPAEMONITORPERIOD]{ISP\_AE\_MONITO\_RPERIOD} frames. If the average luminance falls outside the thresholds set by \hyperref[fielddesc:ISPAEMONITORTL]{ISP\_AE\_MONITOR\_\textcolor{red}{TH/TL}}, interrupt for AE luminance monitoring will be triggered. Note that the luminance monitoring module does not support setting different weights for individual sub-windows. Therefore, if you wish to implement monitoring with different weights (for instance, prioritize highlights), you need to perform software-triggered manual statistics and process the statistical data accordingly.
+
+
+\subsubsection{Automatic Focus Statistics (AF)}
+
+AF gathers luminance and sharpness information within specified statistical windows based on the output of the \hyperref[sec:isp_sharpen]{sharpen} module. There are 3 independent statistical windows, and the size and position of each window can be configured using \hyperref[regdesc:ISPAFHSCALEAREG]{ISP\_AF\_\textcolor{red}{H/V}SCALE\_\textcolor{red}{A/B/C}\_REG}. The module supports automatic and manual trigger modes for statistics collection. The results of luminance and sharpness statistics for each window can be accessed using \hyperref[fielddesc:ISPAFLUMA]{ISP\_AF\_LUM\textcolor{red}{A/B/C}} and \hyperref[fielddesc:ISPAFSUMA]{ISP\_AF\_SUM\textcolor{red}{A/B/C}}. These statistics can be used to implement automatic focus algorithms for cameras.
+
+AF also includes a focus scene monitoring module, which users can choose to implement hardware-based monitoring with this module or implement via software. This module evaluates cumulative changes in luminance and sharpness across all statistical windows as criteria. It performs statistics every \hyperref[fielddesc:ISPAFENVPERIOD]{ISP\_AF\_ENV\_PERIOD} frames. If consecutive statistics show a difference from baseline values for luminance and sharpness that exceeds the specified threshold, an interrupt is triggered indicating a change in the focus scene that requires refocusing. The baseline values are automatically updated after each automatic or manually triggered statistics collection. There are three methods for setting the threshold:
+\begin{itemize}
+    \item Directly set the luminance and sharpness thresholds using \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} and \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM}
+    \item If \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} is 0, use the corresponding baseline sharpness value multiplied by \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD} (4 fractional bits) as the sharpness threshold
+    \item If \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} is 0, use the corresponding baseline luminance value multiplied by \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD} (4 fractional bits) as the luminance threshold
+\end{itemize}
+
+
+\subsubsection{Automatic White Balance Statistics (AWB)}
+
+AWB gathers white balance information for specified windows containing white patches. The coordinates of the window can be set using \hyperref[regdesc:ISPAWBHSCALEREG]{ISP\_AWB\_\textcolor{red}{H/V}SCALE\_REG}. White patches are filtered based on luminance limits \hyperref[fielddesc:ISPAWBMAXLUM]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_LUM}, $R/G$ limits \hyperref[fielddesc:ISPAWBMAXRG]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_RG}, and $B/G$ limits \hyperref[fielddesc:ISPAWBMAXBG]{ISP\_AWB\_\textcolor{red}{MAX/MIN}\_BG}.
+
+The statistics include the number of white patches and the accumulated values of the R, G, B components for all white patches. These statistics can be obtained using \hyperref[fielddesc:ISPAWB0WHITECNT]{ISP\_AWB0\_WHITE\_CNT} and \hyperref[fielddesc:ISPAWB0ACCR]{ISP\_AWB0\_ACC\_\textcolor{red}{R/G/B}}. They can be used to implement automatic white balance algorithms in cameras.
+
+In addition, AWB supports dividing the window into 5 × 5 sub-windows, which are configured via \hyperref[fielddesc:ISPAWBXSTART]{ISP\_AWB\_X\_START}, \hyperref[fielddesc:ISPAWBXBSIZE]{ISP\_AWB\_X\_BSIZE}, \hyperref[fielddesc:ISPAWBYSTART]{ISP\_AWB\_Y\_START}, and \hyperref[fielddesc:ISPAWBYBSIZE]{ISP\_AWB\_Y\_BSIZE}. The sub-window range must not exceed the range of the main window, as shown in figure \ref{figure:isp_awb_subwin}. The statistics results are written to the AWB LUT and can be accessed by setting \hyperref[fielddesc:ISPLUTNUM]{ISP\_LUT\_NUM} = 2. The detailed access procedure can be found in Section \ref{sec:isp_lsc}. The statistics are stored in the order of sub-windows from left to right and from top to bottom. Each sub-window occupies four consecutive addresses, which store, from low to high addresses, the number of white patches, and the accumulated values of the R, G, B components for white patches.
+
+AWB relies on two data sampling points: the output of \hyperref[sec:isp_demosaic]{Demosaic} and the output of \hyperref[sec:isp_ccm]{CCM}, which can be configured with \hyperref[fielddesc:ISPAWBSAMPLE]{ISP\_AWB\_SAMPLE}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/isp_awb_subwin.pdf}
+    \caption{AWB window}
+    \label{figure:isp_awb_subwin}
+\end{figure}
+
+
+\subsubsection{Histogram Statistics (HIST)}
+
+HIST calculates brightness information for the image through statistical analysis. This module can define a statistical window, which can be divided into 5 x 5 sub-windows similar to AE. The configuration is done using registers \hyperref[regdesc:ISPHISTOFFSREG]{ISP\_HIST\_OFFS\_REG} and \hyperref[regdesc:ISPHISTSIZEREG]{ISP\_HIST\_SIZE\_REG}. The weight of each sub-window can be independently adjusted with \hyperref[fielddesc:ISPHISTWEIGHT00]{ISP\_HIST\_WEIGHT\_\textcolor{red}{xx}}.
+
+The statistics are presented as a histogram with 16 intervals. The x-axis of the histogram is defined using \hyperref[fielddesc:ISPHISTSEG01]{ISP\_HIST\_SEG\_\textcolor{red}{x\_x}}, and the final statistics can be retrieved using \hyperref[fielddesc:ISPHISTBIN0]{ISP\_HIST\_BIN\_\textcolor{red}{x}}.
+
+HIST involves three data sampling points: \hyperref[sec:isp_bf]{BF}, \hyperref[sec:isp_demosaic]{demosaic}, and \hyperref[sec:isp_rgb2yuv]{RGB2YUV}, corresponding to RAW, RGB, and YUV data sampling points respectively. These can be configured using \hyperref[fielddesc:ISPHISTMODE]{ISP\_HIST\_MODE}. When the sampling point is set to RGB, RGB weighting coefficients can be adjusted via \hyperref[fielddesc:ISPHISTCOEFFR]{ISP\_HIST\_COEFF\_\textcolor{red}{R/G/B}}.
+
+
+\subsection{ISP\_Tail}
+ISP\_Tail is the post-processing section that handles data from two input sources, ultimately outputting in Image Interface 64 format to CSI\_Bridge.
+
+When the ISP is turned off, ISP\_Tail receives Image Interface 32 data from the MIPI CSI HOST, converts it to Image Interface 64 format, and outputs it to CSI\_Bridge. The byte order of the input Image Interface 32 data can be adjusted using \hyperref[fielddesc:ISPBYTEENDIANORDER]{ISP\_BYTE\_ENDIAN\_ORDER}.
+
+When the ISP is turned on, ISP\_Tail receives data from ISP\_Pipeline and processes them before outputting to CSI\_Bridge. This processing includes:
+\begin{itemize}
+    \item Converting RGB888 to RGB565 based on register configurations
+    \item Converting YUV422 to YUV420 based on register configurations
+    \item Converting data from ISP\_Pipeline to Image Interface 64 format
+\end{itemize}
+
+
+\subsection{Sequence Control}
+
+For modules involving matrix operations, it is necessary to buffer multiple lines of data before starting operations. In such cases, it is crucial for the module to generate an output sequence when the last few lines of image data are buffered. This output sequence can be controlled using \hyperref[fielddesc:ISPBFTAILPIXENPULSETH]{ISP\_\textcolor{red}{BF/DEMOSAIC/SHARP}\_TAIL\_PIXEN\_PULSE\_\textcolor{red}{TH/TL}}, to prevent buffer overflow in the CSI\_Bridge due to excessive speed. Please exercise caution when setting this register too large, as it may disrupt the normal data sequence. TH must be smaller than \hyperref[fielddesc:ISPHADRNUM]{ISP\_HADR\_NUM}-1, and it is recommended to set \hyperref[fielddesc:ISPBFTAILPIXENPULSETH]{ISP\_\textcolor{red}{BF/DEMOSAIC/SHARP}\_TAIL\_PIXEN\_PULSE\_\textcolor{red}{TH/TL}} to a value less than or equal to 8.
+
+
+\subsection{Shadow Registers}
+Some ISP modules support shadow registers. The supported modules include:
+\begin{itemize}
+    \item BLC
+    \item DPC
+    \item BF
+    \item WBG
+    \item CCM
+    \item GAMMA
+    \item SHARP
+    \item COLOR
+\end{itemize}
+
+For the GAMMA module, the shadow register update method is fixed and must strictly follow the procedure described in Section \ref{sec:isp_gamma}. For all other modules, the update method can be configured via \hyperref[fielddesc:ISPSHADOWUPDATESEL]{ISP\_SHADOW\_UPDATE\_SEL}.
+
+
+\subsection{CSI\_CM}
+For MIPI CSI input, the CSI\_CM module can perform simple data conversions by configuring \hyperref[regdesc:CSIBRIGHOSTCMCTRLREG]{CSI\_BRIG\_HOST\_CM\_CTRL\_REG}, including:
+\begin{itemize}
+    \item Swapping high and low 8-bit data
+    \item Swapping high and low 16-bit data
+    \item Adjusting RGB888 color channel order (pixels per line must be a multiple of 4)
+    \item Down-sampling from RGB888 to RGB565 (pixels per line must be a multiple of 4)
+    \item Adjusting RGB565 color channel order (pixels per line must be a multiple of 2)
+    \item Adjusting YUV422 color channel order (pixels per line must be a multiple of 2)
+    \item Down-sampling from YUV422 to YUV420 (pixels per line must be a multiple of 16)
+\end{itemize}
+
+The module structure is shown in Figure \ref{fig:isp-csi-cm}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/isp_csi_cm.pdf}
+    \caption{\chipseries{} CSI CM Architecture}
+    \label{fig:isp-csi-cm}
+\end{figure}
+
+
+\subsection{CSI\_Bridge}
+
+CSI\_Bridge serves as the interface between the ISP and the system memory. This module utilizes VDMA to transmit data from the ISP into the system memory. The image can be transferred either as a single block or divided into multiple blocks, which can be configured via \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN} and \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE}.
+
+\begin{itemize}
+    \item \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN} configures the amount of 64-bit data in a VDMA burst transfer.
+    \item \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE} configures the number of VDMA bursts in a VDMA block transfer. If an image frame is transferred with only one block, and this block contains $n$ VDMA bursts, then configure this field to a value greater than $n$. It is recommended to set it to the maximum value, 0x1FFF.
+\end{itemize}
+
+
+\subsection{Color Mode and Byte Order}
+\subsubsection{Output Pixel Layout Format}
+
+When the ISP is disabled, ISP\_Tail directly receives Image Interface 32 data from the MIPI CSI HOST. The pixel layout can be referenced from Chapter \ref{mod:mipicsi} \textit{\nameref{mod:mipicsi}}. In this case, the Image Interface 32 data output from CSI HOST can go through two levels of byte ordering in ISP\_Tail and CSI\_Bridge, refer to \hyperref[sec:isp_byte_order]{Byte Order} for details.
+
+After the ISP is enabled and the data has been processed by the ISP\_Pipeline, the layout format of the output pixel is as shown in Table \ref{tab:isp_output_color_space}.
+
+\scriptsize
+\begin{longtable}[c]{ |p{2cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}| }
+    \caption{ISP Output Pixel Layout Format}
+    \label{tab:isp_output_color_space}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Color Mode} & \textbf{Addr + 7} & \textbf{Addr + 6} & \textbf{Addr + 5} & \textbf{Addr + 4} & \textbf{Addr + 3} & \textbf{Addr + 2} & \textbf{Addr + 1} & \textbf{Addr + 0} \\\hline
+    \endfirsthead
+
+
+    \multicolumn{9}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Color Mode} & \textbf{Addr + 7} & \textbf{Addr + 6} & \textbf{Addr + 5} & \textbf{Addr + 4} & \textbf{Addr + 3} & \textbf{Addr + 2} & \textbf{Addr + 1} & \textbf{Addr + 0} \\\hline
+    \endhead
+
+    \multicolumn{9}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+
+    \endlastfoot
+        \textbf{RAW8} & \textbf{RAW7}[7:0] & \textbf{RAW6}[7:0] & \textbf{RAW5}[7:0] & \textbf{RAW4}[7:0] & \textbf{RAW3}[7:0] & \textbf{RAW2}[7:0] & \textbf{RAW1}[7:0] & \textbf{RAW0}[7:0] \\\hline
+        \multirow{3}{*}{\textbf{RGB888}} & \textbf{G2}[7:0] & \textbf{B2}[7:0] & \textbf{R1}[7:0] & \textbf{G1}[7:0] & \textbf{B1}[7:0] & \textbf{R0}[7:0] & \textbf{G0}[7:0] & \textbf{B0}[7:0] \\\cline{2-9}
+        & \textbf{B5}[7:0] & \textbf{R4}[7:0] & \textbf{G4}[7:0] & \textbf{B4}[7:0] & \textbf{R3}[7:0] & \textbf{G3}[7:0] & \textbf{B3}[7:0] & \textbf{R2}[7:0] \\\cline{2-9}
+        & \textbf{R7}[7:0] & \textbf{G7}[7:0] & \textbf{B7}[7:0] & \textbf{R6}[7:0] & \textbf{G6}[7:0] & \textbf{B6}[7:0] & \textbf{R5}[7:0] & \textbf{G5}[7:0] \\\hline
+        \textbf{RGB565} & \textbf{R3}[4:0]\textbf{G3}[5:3] & \textbf{G3}[2:0]\textbf{B3}[4:0] & \textbf{R2}[4:0]\textbf{G2}[5:3] & \textbf{G2}[2:0]\textbf{B2}[4:0]  & \textbf{R1}[4:0]\textbf{G1}[5:3] & \textbf{G1}[2:0]\textbf{B1}[4:0] & \textbf{R0}[4:0]\textbf{G0}[5:3] & \textbf{G0}[2:0]\textbf{B0}[4:0] \\\hline
+        \textbf{YUV422} & \textbf{Y3}[7:0] & \textbf{V2}[7:0] & \textbf{Y2}[7:0] & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{V0}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\(Odd-numbered\\rows)}} & \textbf{Y4}[7:0] & \textbf{U4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] & \textbf{U2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{U0}[7:0] \\\cline{2-9}
+        & \textbf{U10}[7:0] & \textbf{Y9}[7:0] & \textbf{Y8}[7:0] & \textbf{U8}[7:0] & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{U6}[7:0] & \textbf{Y5}[7:0] \\\cline{2-9}
+        & \textbf{Y15}[7:0] & \textbf{Y14}[7:0] & \textbf{U14}[7:0] & \textbf{Y13}[7:0] & \textbf{Y12}[7:0] & \textbf{U12}[7:0] & \textbf{Y11}[7:0] & \textbf{Y10}[7:0] \\\hline
+        \multirow{3}{*}{\makecell[l]{\textbf{YUV420}\\(Even-numbered\\rows)}} & \textbf{Y4}[7:0] & \textbf{V4}[7:0] & \textbf{Y3}[7:0] & \textbf{Y2}[7:0] & \textbf{V2}[7:0] & \textbf{Y1}[7:0] & \textbf{Y0}[7:0] & \textbf{V0}[7:0] \\\cline{2-9}
+        & \textbf{V10}[7:0] & \textbf{Y9}[7:0] & \textbf{Y8}[7:0] & \textbf{V8}[7:0] & \textbf{Y7}[7:0] & \textbf{Y6}[7:0] & \textbf{V6}[7:0] & \textbf{Y5}[7:0] \\\cline{2-9}
+        & \textbf{Y15}[7:0] & \textbf{Y14}[7:0] & \textbf{V14}[7:0] & \textbf{Y13}[7:0] & \textbf{Y12}[7:0] & \textbf{V12}[7:0] & \textbf{Y11}[7:0] & \textbf{Y10}[7:0] \\\hline
+
+\end{longtable}
+\normalsize
+
+
+\subsubsection{Byte Order}
+\label{sec:isp_byte_order}
+CSI\_Bridge can reorder the bytes of the input 64-bit data via \hyperref[fielddesc:CSIBRIGBYTEENDIANORDER]{CSI\_BRIG\_BYTE\_ENDIAN\_ORDER}. ISP\_Tail can also reorder the bytes via \hyperref[fielddesc:ISPBYTEENDIANORDER]{ISP\_BYTE\_ENDIAN\_ORDER}. The byte ordering functionality within ISP\_Tail differs from that of CSI\_Bridge, as illustrated in Figure \ref{figure:isp_byte_endian}.
+
+\begin{itemize}
+    \item ISP\_Tail byte ordering: This operation applies to its Image Interface 32 input. It reverses the high and low bytes of the 32-bit input data and then concatenates them to output 64-bit data. This step only functions when the ISP is disabled and is mainly used for processing Image Interface 32 YUV422 and YUV420 input types.
+    \item CSI\_Bridge byte ordering: This operation acts on the 64-bit input data (i.e., the output data from ISP\_Tail) by reversing its high and low bytes.
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/isp_byte_endian.pdf}
+    \caption{Byte Ordering}
+    \label{figure:isp_byte_endian}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+
+\chipname{}'s ISP can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item isp\_interrupt
+        \item csi\_bridge\_interrupt
+    \end{itemize}
+
+There are several internal interrupt sources from ISP that can generate the above interrupt signal. The interrupt sources from ISP are listed with their trigger conditions and the resulted interrupt signal in Table \ref{tab:isp-int-sources}.
+
+
+\begin{longtable}{ | L{5.5cm} | L{6.5cm} | L{3cm} | }
+\caption{ISP's Internal Interrupt Sources} \label{tab:isp-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+    ISP\_CROP\_ERR\_INT & When the crop module window is configured incorrectly & isp\_interrupt \\ \hline
+    ISP\_WBG\_FRAME\_INT & After module WBG processes a frame & isp\_interrupt \\ \hline
+    ISP\_CROP\_FRAME\_INT & After module crop processes a frame & isp\_interrupt \\ \hline
+    ISP\_HEADER\_IDI\_FRAME\_INT & After MIPI-CSI inputs a frame. This interrupt is not affected by whether \hyperref[fielddesc:ISPMIPIDATAEN]{ISP\_MIPI\_DATA\_EN} is enabled & isp\_interrupt \\ \hline
+    ISP\_TAIL\_IDI\_FRAME\_INT & After ISP\_Tail outputs a frame & isp\_interrupt \\ \hline
+    ISP\_YUV2RGB\_FRAME\_INT & After module YUV2RGB processes a frame & isp\_interrupt \\ \hline
+    ISP\_COLOR\_FRAME\_INT & After module contrast/hue/saturation/luminance adjustment processes a frame & isp\_interrupt \\ \hline
+    ISP\_SHARP\_FRAME\_INT & After module sharpen processes a frame & isp\_interrupt \\ \hline
+    ISP\_RGB2YUV\_FRAME\_INT & After module RGB2YUV processes a frame & isp\_interrupt \\ \hline
+    ISP\_GAMMA\_FRAME\_INT & After module gamma correction processes a frame & isp\_interrupt \\ \hline
+    ISP\_CCM\_FRAME\_INT & After module CCM processes a frame & isp\_interrupt \\ \hline
+    ISP\_DEMOSAIC\_FRAME\_INT & After module demosaic processes a frame & isp\_interrupt \\ \hline
+    ISP\_BF\_FRAME\_INT & After module BF processes a frame & isp\_interrupt \\ \hline
+    ISP\_DPC\_FRAME\_INT & After module DPC processes a frame & isp\_interrupt \\ \hline
+    ISP\_LSC\_FRAME\_INT & After module LSC processes a frame & isp\_interrupt \\ \hline
+    ISP\_BLC\_FRAME\_INT & After module BLC processes a frame & isp\_interrupt \\ \hline
+    ISP\_FRAME\_INT & After ISP\_Pipeline outputs a frame & isp\_interrupt \\ \hline
+    ISP\_HIST\_FDONE\_INT & After module HIST processes a frame & isp\_interrupt \\ \hline
+    ISP\_AWB\_FDONE\_INT & After module AWB processes a frame & isp\_interrupt \\ \hline
+    ISP\_AF\_ENV\_INT & When module AF detects a change in the focus scene & isp\_interrupt \\ \hline
+    ISP\_AF\_FDONE\_INT & After module AF processes a frame & isp\_interrupt \\ \hline
+    ISP\_AE\_FRAME\_DONE\_INT & After module AE processes a frame & isp\_interrupt \\ \hline
+    ISP\_AE\_MONITOR\_INT & When module AE detects a change in the luminance & isp\_interrupt \\ \hline
+    ISP\_GAMMA\_XCOORD\_ERR\_INT & When the GAMMA parameter is set incorrectly, the X length in \hyperref[fielddesc:ISPGAMMARX00]{ISP\_GAMMA\_\textcolor{red}{R/G/B}\_X\textcolor{red}{00-0F}} is not 256 & isp\_interrupt \\ \hline
+    ISP\_DPC\_CHECK\_DONE\_INT & After DPC static calibration processes a frame & isp\_interrupt \\ \hline
+    ISP\_MIPI\_HNUM\_UNMATCH\_INT & When the width HNUM settings do not match the actual input from MIPI-CSI & isp\_interrupt \\ \hline
+    ISP\_DATA\_TYPE\_SETTING\_ERR\_INT & When DATA\_TYPE settings do not match the actual input data & isp\_interrupt \\ \hline
+    ISP\_HVNUM\_SETTING\_ERR\_INT & When the width HNUM and the height VNUM settings are incorrect: Image dimensions must be even; with the RAW10 input, HNUM must be a multiple of 4 & isp\_interrupt \\ \hline
+    ISP\_BUF\_FULL\_INT & When ISP\_Header buffer is full & isp\_interrupt \\ \hline
+    ISP\_ASYNC\_FIFO\_OVF\_INT & When asynchronous FIFO of ISP\_Header is overflowed & isp\_interrupt \\ \hline
+    ISP\_DATA\_TYPE\_ERR\_INT & When illegal DATA\_TYPE is used for input data (not RAW8/RAW10/RAW12) & isp\_interrupt \\ \hline
+    CSI\_BRIG\_DMA\_CFG\_HAS\_          UPDATED\_INT & When VDMA configuration of CSI\_Bridge is updated & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_CSI\_ASYNC\_FIFO\_OVF\_  INT & When asynchronous FIFO of CSI\_Bridge is overflowed & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_CSI\_BUF\_OVERRUN\_INT & When CSI\_Bridge buffer is overflowed & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_DISCARD\_INT & When any frame is discarded in CSI\_Bridge & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_VADR\_NUM\_LT\_INT & When \hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM} is less than the actual value & csi\_bridge\_interrupt \\\hline
+    CSI\_BRIG\_VADR\_NUM\_GT\_INT & When \hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM} is greater than the actual value & csi\_bridge\_interrupt \\\hline
+\end{longtable}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:isp-reg-summ} \textit{\nameref{sec:isp-reg-summ}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:isp-prog-procedures}
+
+
+\subsection{ISP Clock Reset Configuration}
+\label{sec:isp_clkrst_proc}
+\begin{enumerate}
+    \item Enable the bus clock for the ISP and CSI\_Bridge modules;
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTCSIBRGSYSCLKEN]{HP\_SYS\_CLKRST\_CSI\_BRG\_SYS\_CLK\_EN} to 1 to activate the clock for ISP and CSI\_Bridge
+    \end{itemize}
+    \item Configure the working clock for ISP;
+    \begin{itemize}
+        \item Choose the clock source via \hyperref[fielddesc:HPSYSCLKRSTISPCLKSRCSEL]{HP\_SYS\_CLKRST\_ISP\_CLK\_SRC\_SEL}
+        \item Configure the clock divisor via \hyperref[fielddesc:HPSYSCLKRSTISPCLKDIVNUM]{HP\_SYS\_CLKRST\_ISP\_CLK\_DIV\_NUM}
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTISPCLKEN]{HP\_SYS\_CLKRST\_ISP\_CLK\_EN} to 1 to activate the ISP working clock
+    \end{itemize}
+    \item Reset ISP and CSI\_Bridge modules.
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:HPSYSCLKRSTRSTENCSIBRG]{HP\_SYS\_CLKRST\_RST\_EN\_CSI\_BRG} to 1 and then 0 to reset ISP and CSI\_Bridge
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{CSI\_Bridge Configuration}
+\label{sec:isp_csi_bridge_proc}
+\begin{enumerate}
+    \item Set the width and height of the image via \hyperref[fielddesc:CSIBRIGHADRNUM]{CSI\_BRIG\_HADR\_NUM} and \hyperref[fielddesc:CSIBRIGVADRNUM]{CSI\_BRIG\_VADR\_NUM}. The width is measured in "64-bit" units, and the height is measured in rows;
+
+    \item Set the valid range for DATA\_TYPE via \hyperref[fielddesc:CSIBRIGDATATYPEMIN]{CSI\_BRIG\_DATA\_TYPE\_MIN} and \hyperref[fielddesc:CSIBRIGDATATYPEMAX]{CSI\_BRIG\_DATA\_TYPE\_MAX};
+
+    \item Specify the burst length via \hyperref[fielddesc:CSIBRIGDMABURSTLEN]{CSI\_BRIG\_DMA\_BURST\_LEN}. Ensure that this value matches the SRC\_MSIZE (length per burst) and SRC\_TR\_WIDTH (data width) of the corresponding VDMA channel. The data width for CSI\_Bridge is measured in "64-bit" units;
+
+    \item If the image is transferred in multiple blocks, specify the maximum number of VDMA bursts per block via \hyperref[fielddesc:CSIBRIGDMABLKSIZE]{CSI\_BRIG\_DMABLK\_SIZE};
+
+    \item Enable CSI\_Bridge by writing 1 to \hyperref[fielddesc:CSIBRIGCSIBRIGEN]{CSI\_BRIG\_CSI\_BRIG\_EN}.
+\end{enumerate}
+
+
+\subsection{VDMA Configuration}
+\label{sec:isp_vdma_proc}
+\begin{enumerate}
+    \item Configure the register corresponding to the channel;
+    \begin{itemize}
+        \item Set SRC/DST\_MULTBLK\_TYPE to 3 (configure with linked list)
+        \item Configure TT\_FC
+        \begin{itemize}
+            \item For CSI\_Bridge, set TT\_FC to 4 (peripheral to memory with peripheral flow control)
+            \item For memory to ISP, set TT\_FC to 6 (memory to peripheral with peripheral flow control)
+        \end{itemize}
+        \item Configure HS\_SEL
+        \begin{itemize}
+            \item For CSI\_Bridge, set HS\_SEL\_SRC to 0 (peripheral uses hardware handshake), and set HS\_SEL\_DST to 1 (memory uses software handshake)
+            \item For memory to ISP, set HS\_SEL\_SRC to 1 (memory uses software handshake), and set HS\_SEL\_DST to 0 (peripheral uses hardware handshake)
+        \end{itemize}
+        \item Assign hardware handshake channels
+        \begin{itemize}
+            \item For CSI\_Bridge, set SRC\_PER to 1
+            \item For memory to ISP, set DST\_PER to 2
+        \end{itemize}
+        \item Set SRC/DST\_TR\_WIDTH to 3 (data width of 64 bits)
+    \end{itemize}
+
+    \item Establish the linked list based on the configured registers.
+\end{enumerate}
+
+\begin{tiplisting}
+    The VDMA configuration outlined in this section covers essential steps. For detailed procedures, refer to Chapter \ref{mod:vdma} \textit{\nameref{mod:vdma}}.\\ Ensure that image dimensions and start addresses are aligned to 8 bytes.
+\end{tiplisting}
+
+
+\subsection{ISP General Configuration}
+\label{sec:isp_common_proc}
+\begin{enumerate}
+    \item Configure the input image size via \hyperref[fielddesc:ISPHADRNUM]{ISP\_HADR\_NUM} and \hyperref[fielddesc:ISPVADRNUM]{ISP\_VADR\_NUM}
+
+    \item Set image arrangement mode in the Bayer domain via \hyperref[fielddesc:ISPBAYERMODE]{ISP\_BAYER\_MODE};
+
+    \item Specify the ISP output data format via \hyperref[fielddesc:ISPOUTTYPE]{ISP\_OUT\_TYPE};
+
+   \item Configure each module in ISP\_Pipeline. Refer to the corresponding section in \ref{sec:isp_pipeline} for details;
+
+    \item Enable the necessary Pipeline modules by setting the fields in register \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG}. Ensure that the format conversion-related modules (\hyperref[sec:isp_demosaic]{Demosaic}, \hyperref[sec:isp_rgb2yuv]{RGB2YUV}, \hyperref[sec:isp_yuv2rgb]{YUV2RGB}) are enabled before enabling the ISP, and that they match the final output format.
+\end{enumerate}
+
+
+\subsection{Enabling ISP for Image Capture from MIPI-CSI}
+\begin{enumerate}
+    \item Configure ISP and CSI\_Bridge clocks and reset as described in Section \ref{sec:isp_clkrst_proc};
+
+    \item Configure CSI\_Bridge as described in Section \ref{sec:isp_csi_bridge_proc};
+
+    \item Configure VDMA as described in Section \ref{sec:isp_vdma_proc};
+
+    \item Configure MIPI CSI HOST according to Chapter \ref{mod:mipicsi} \textit{\nameref{mod:mipicsi}};
+
+    \item Configure ISP general settings as described in Section \ref{sec:isp_common_proc};
+
+    \item Select the input source as MIPI-CSI by setting \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} to 0;
+
+    \item Configure the input data type via \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE};
+
+    \item Enable the ISP by setting \hyperref[fielddesc:ISPEN]{ISP\_EN} to 1;
+
+    \item Enable MIPI-CSI data input by setting \hyperref[fielddesc:ISPMIPIDATAEN]{ISP\_MIPI\_DATA\_EN} to 1.
+\end{enumerate}
+
+
+\subsection{Enabling ISP for Image Capture from DVP}
+\begin{enumerate}
+    \item Configure ISP and CSI\_Bridge clocks and reset as described in Section \ref{sec:isp_clkrst_proc};
+
+    \item Configure CSI\_Bridge as described in Section \ref{sec:isp_csi_bridge_proc};
+
+    \item Configure VDMA as described in Section \ref{sec:isp_vdma_proc};
+
+    \item Configure ISP general settings as described in Section \ref{sec:isp_common_proc};
+
+    \item Select the input source as DVP by setting \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} to 1;
+
+    \item Configure the input data type via \hyperref[fielddesc:ISPCAMDATATYPE]{ISP\_CAM\_DATA\_TYPE}, and write 0 to \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE};
+
+    \item Enable the ISP by setting \hyperref[fielddesc:ISPEN]{ISP\_EN} to 1;
+
+    \item Configure the data mode for DVP interface via \hyperref[regdesc:ISPCAMCONFREG]{ISP\_CAM\_CONF\_REG};
+
+    \item Reset the DVP interface by setting \hyperref[fielddesc:ISPCAMRESET]{ISP\_CAM\_RESET} to 1, waiting for a period, then setting it to 0;
+
+    \item Write 1 to \hyperref[fielddesc:ISPCAMUPDATEREG]{ISP\_CAM\_UPDATE\_REG};
+
+    \item Enable the DVP interface by setting \hyperref[fielddesc:ISPCAMEN]{ISP\_CAM\_EN} to 1;
+
+    \item Wait for \hyperref[fielddesc:ISPCAMUPDATEREG]{ISP\_CAM\_UPDATE\_REG} to automatically clear for initialization.
+\end{enumerate}
+
+
+\subsection{Enabling ISP for Image Capture from VDMA}
+\begin{enumerate}
+    \item Configure ISP and CSI\_Bridge clocks and reset as described in Section \ref{sec:isp_clkrst_proc};
+
+    \item Configure CSI\_Bridge as described in Section \ref{sec:isp_csi_bridge_proc};
+
+    \item Configure VDMA as described in Section \ref{sec:isp_vdma_proc};
+
+    \item Configure ISP general settings as described in Section \ref{sec:isp_common_proc};
+
+    \item Select the input source as VDMA by setting \hyperref[fielddesc:ISPINSRC]{ISP\_IN\_SRC} to 2;
+
+    \item Configure the input data type via \hyperref[fielddesc:ISPDMADATATYPE]{ISP\_DMA\_DATA\_TYPE} and \hyperref[fielddesc:ISPDATATYPE]{ISP\_DATA\_TYPE};
+
+    \item Configure the total amount of raw image data for one frame in "64-bit" units using \hyperref[fielddesc:ISPDMARAWNUMTOTAL]{ISP\_DMA\_RAW\_NUM\_TOTAL}, which value should equal image width x image height x bits per pixel/64. Then, write 1 to \hyperref[fielddesc:ISPDMARAWNUMTOTALSET]{ISP\_DMA\_RAW\_NUM\_TOTAL\_SET} to activate the configuration;
+
+    \item Configure the burst length via \hyperref[fielddesc:ISPDMABURSTLEN]{ISP\_DMA\_BURST\_LEN}, which needs to align with the VDMA configuration;
+
+    \item Write 1 to \hyperref[fielddesc:ISPDMAUPDATEREG]{ISP\_DMA\_UPDATE\_REG} to update the VDMA configuration, and wait for the update to complete;
+
+    \item Send a frame of data by setting \hyperref[fielddesc:ISPDMAEN]{ISP\_DMA\_EN} to 1.
+\end{enumerate}
+
+
+\subsection{LSC LUT Configuration}
+LSC can be configured after the ISP is enabled. Before enabling LSC, initialize the LSC LUT as follows:
+
+\begin{enumerate}
+    \item Write to LUT;
+    \begin{itemize}
+        \item Write the data to be stored in the LUT by writing to \hyperref[regdesc:ISPLUTWDATAREG]{ISP\_LUT\_WDATA\_REG}
+        \item Store the data at the specified address by writing to \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG}
+    \end{itemize}
+
+    \item Read from LUT.
+    \begin{itemize}
+        \item Retrieve the data stored at the specified address by writing to \hyperref[regdesc:ISPLUTCMDREG]{ISP\_LUT\_CMD\_REG}
+        \item Obtain the data read from the LUT by reading from \hyperref[regdesc:ISPLUTRDATAREG]{ISP\_LUT\_RDATA\_REG}
+    \end{itemize}
+\end{enumerate}
+
+
+
+
+\subsection{AE Configuration}
+AE can be configured after the ISP is enabled as follows:
+
+\begin{enumerate}
+    \item Select sampling points via \hyperref[fielddesc:ISPAESELECT]{ISP\_AE\_SELECT};
+
+    \item Set up statistical windows;
+    \begin{itemize}
+        \item Set the horizontal starting point with \hyperref[fielddesc:ISPAEXSTART]{ISP\_AE\_X\_START}
+        \item Configure the horizontal dimension of each sub-window with \hyperref[fielddesc:ISPAEXBSIZE]{ISP\_AE\_X\_BSIZE}
+        \item Set the vertical starting point with \hyperref[fielddesc:ISPAEYSTART]{ISP\_AE\_Y\_START}
+        \item Configure the vertical dimension of each sub-window with \hyperref[fielddesc:ISPAEYBSIZE]{ISP\_AE\_Y\_BSIZE}
+        \item Specify the number of pixels in each sub-window with \hyperref[fielddesc:ISPAESUBWINPIXNUM]{ISP\_AE\_SUBWIN\_PIXNUM}
+        \item Set the reciprocal of the number of pixels in each sub-window with \hyperref[fielddesc:ISPAESUBWINRECIP]{ISP\_AE\_SUBWIN\_RECIP} (20 fractional bits)
+    \end{itemize}
+
+    \item Enable luminance monitoring;
+    \begin{itemize}
+        \item If monitoring is required, set \hyperref[fielddesc:ISPAEMONITORTH]{ISP\_AE\_MONITOR\_TH} and \hyperref[fielddesc:ISPAEMONITORTL]{ISP\_AE\_MONITOR\_TL} to non-zero values
+        \item Specify the monitoring statistical period in frames via \hyperref[fielddesc:ISPAEMONITORPERIOD]{ISP\_AE\_MONITOR\_PERIOD}
+    \end{itemize}
+
+    \item Enable AE by writing 1 to \hyperref[fielddesc:ISPAEEN]{ISP\_AE\_EN};
+
+    \item Obtain statistics;
+    \begin{itemize}
+        \item Clear the completion status by writing 1 to \hyperref[fielddesc:ISPAEFRAMEDONEINTCLR]{ISP\_AE\_FRAME\_DONE\_INT\_CLR}
+        \item Initiate statistics by writing 1 to \hyperref[fielddesc:ISPAEUPDATE]{ISP\_AE\_UPDATE}. Each write to this register resets the frame count for monitoring. It is recommended to disable monitoring before manual statistics and re-enable it after completion to prevent automatic results from overwriting manual results prematurely
+        \item Wait for the statistics to complete
+        \begin{itemize}
+            \item Wait for the ISP interrupt triggered by AE\_FDONE\_INT
+            \item Or query the status using \hyperref[fielddesc:ISPAEFRAMEDONEINTRAW]{ISP\_AE\_FRAME\_DONE\_INT\_RAW}
+        \end{itemize}
+        \item Obtain statistics for each sub-window by reading \hyperref[fielddesc:ISPAEB00MEAN]{ISP\_AE\_B\textcolor{red}{xx}\_MEAN}
+    \end{itemize}
+
+    \item Perform luminance monitoring.
+    \begin{itemize}
+        \item Wait for the ISP interrupt triggered by AE\_MONITOR\_INT
+        \item Or query the status using \hyperref[fielddesc:ISPAEMONITORINTRAW]{ISP\_AE\_MONITOR\_INT\_RAW}
+        \item After detecting a change in luminance, disable luminance monitoring, re-initiate camera exposure, and then re-enable monitoring
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{AF Configuration}
+AF can be configured after the ISP is enabled as follows:
+
+\begin{enumerate}
+    \item Set up three statistical windows A, B, and C, ensuring each window does not exceed 1024 x 1024;
+    \begin{itemize}
+        \item Set the left boundary using \hyperref[fielddesc:ISPAFLPOINTA]{ISP\_AF\_LPOINT\_\textcolor{red}{A/B/C}}
+        \item Set the right boundary using \hyperref[fielddesc:ISPAFRPOINTA]{ISP\_AF\_RPOINT\_\textcolor{red}{A/B/C}}
+        \item Set the top boundary using \hyperref[fielddesc:ISPAFTPOINTA]{ISP\_AF\_TPOINT\_\textcolor{red}{A/B/C}}
+        \item Set the bottom boundary using \hyperref[fielddesc:ISPAFBPOINTA]{ISP\_AF\_BPOINT\_\textcolor{red}{A/B/C}}
+    \end{itemize}
+
+    \item Set the sharpness threshold via \hyperref[fielddesc:ISPAFTHRESHOLD]{ISP\_AF\_THRESHOLD};
+
+    \item Configure focus scene monitoring;
+    \begin{itemize}
+        \item If focus scene monitoring is required, set the monitoring period \hyperref[fielddesc:ISPAFENVPERIOD]{ISP\_AF\_ENV\_PERIOD} to a non-zero value
+        \item There are two ways to set the threshold
+        \begin{itemize}
+            \item If \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} or \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} is non-zero, use the specified values as thresholds for sharpness and brightness changes
+            \item If \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDSUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_SUM} or \hyperref[fielddesc:ISPAFENVUSERTHRESHOLDLUM]{ISP\_AF\_ENV\_USER\_THRESHOLD\_LUM} is zero, use the sharpness and brightness of the most recent statistics multiplied by \hyperref[fielddesc:ISPAFENVTHRESHOLD]{ISP\_AF\_ENV\_THRESHOLD} (4 fractional bits) as the change threshold
+        \end{itemize}
+    \end{itemize}
+
+    \item Configure the statistical trigger mode. After each trigger completes, update the monitoring baseline;
+    \begin{itemize}
+        \item If \hyperref[fielddesc:ISPAFAUTOUPDATE]{ISP\_AF\_AUTO\_UPDATE} is 1, it is in automatic triggering mode, which performs statistics for every frame with AF enabled. Since each statistical calculation clears the frame count for monitoring, the monitoring will be disabled
+        \item If \hyperref[fielddesc:ISPAFAUTOUPDATE]{ISP\_AF\_AUTO\_UPDATE} is 0, it is in manual triggering mode. The monitoring is working only under this condition
+    \end{itemize}
+
+    \item Enable AF by writing 1 to \hyperref[fielddesc:ISPAFEN]{ISP\_AF\_EN};
+
+    \item Obtain statistics;
+    \begin{itemize}
+        \item Clear the completion status by writing 1 to \hyperref[fielddesc:ISPAFFDONEINTCLR]{ISP\_AF\_FDONE\_INT\_CLR}
+        \item Trigger statistics
+        \begin{itemize}
+            \item With automatic triggering, statistics are performed for every frame
+            \item With manual triggering, write 1 to \hyperref[fielddesc:ISPAFMANUALUPDATE]{ISP\_AF\_MANUAL\_UPDATE} to trigger statistics manually
+        \end{itemize}
+        \item Wait for the statistics to complete
+        \begin{itemize}
+            \item Wait for the ISP interrupt triggered by AF\_FDONE\_INT.
+            \item Or query the status using \hyperref[fielddesc:ISPAFFDONEINTRAW]{ISP\_AF\_FDONE\_INT\_RAW}
+        \end{itemize}
+        \item Obtain sharpness statistics by reading \hyperref[fielddesc:ISPAFSUMA]{ISP\_AF\_SUM\textcolor{red}{A/B/C}} and obtain brightness statistics by reading \hyperref[fielddesc:ISPAFLUMA]{ISP\_AF\_LUM\textcolor{red}{A/B/C}}
+    \end{itemize}
+
+    \item Performs focus scene monitoring.
+    \begin{itemize}
+        \item Wait for the ISP interrupt triggered by AF\_ENV\_INT
+        \item Or query the status using \hyperref[fielddesc:ISPAFENVINTRAW]{ISP\_AF\_ENV\_INT\_RAW}
+        \item After detecting a change in the focus scene, disable monitoring, refocus the camera, and then re-enable monitoring
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{AWB Configuration}
+AWB can be configured after the ISP is enabled.
+
+\begin{enumerate}
+    \item Select sampling points via \hyperref[fielddesc:ISPAWBSAMPLE]{ISP\_AWB\_SAMPLE} and write 1 to \hyperref[fielddesc:ISPAWBMODE]{ISP\_AWB\_MODE};
+
+    \item Set up statistical windows;
+    \begin{itemize}
+        \item Set the left boundary using \hyperref[fielddesc:ISPAWBLPOINT]{ISP\_AWB\_LPOINT}
+        \item Set the right boundary using \hyperref[fielddesc:ISPAWBRPOINT]{ISP\_AWB\_RPOINT}
+        \item Set the top boundary using \hyperref[fielddesc:ISPAWBTPOINT]{ISP\_AWB\_TPOINT}
+        \item Set the bottom boundary using \hyperref[fielddesc:ISPAWBBPOINT]{ISP\_AWB\_BPOINT}
+    \end{itemize}
+
+    \item Configure white patch constraints;
+    \begin{itemize}
+        \item Set maximum luminance with \hyperref[fielddesc:ISPAWBMAXLUM]{ISP\_AWB\_MAX\_LUM}
+        \item Set minimum luminance with \hyperref[fielddesc:ISPAWBMINLUM]{ISP\_AWB\_MIN\_LUM}
+        \item Set maximum R/G ratio with \hyperref[fielddesc:ISPAWBMAXRG]{ISP\_AWB\_MAX\_RG} (2 integer bits, 8 fractional bits)
+        \item Set minimum R/G ratio with \hyperref[fielddesc:ISPAWBMINRG]{ISP\_AWB\_MIN\_RG} (2 integer bits, 8 fractional bits)
+        \item Set maximum B/G ratio with \hyperref[fielddesc:ISPAWBMAXBG]{ISP\_AWB\_MAX\_BG} (2 integer bits, 8 fractional bits)
+        \item Set minimum B/G ratio with \hyperref[fielddesc:ISPAWBMINBG]{ISP\_AWB\_MIN\_BG} (2 integer bits, 8 fractional bits)
+    \end{itemize}
+
+    \item Obtain statistics;
+    \begin{itemize}
+        \item Clear the completion status by writing 1 to \hyperref[fielddesc:ISPAWBFDONEINTCLR]{ISP\_AWB\_FDONE\_INT\_CLR}
+        \item Trigger statistics by writing 0 and then 1 to \hyperref[fielddesc:ISPAWBEN]{ISP\_AWB\_EN}
+        \item Wait for the statistics to complete
+        \begin{itemize}
+            \item Wait for the ISP interrupt triggered by AWB\_FDONE\_INT
+            \item Or query the status using \hyperref[fielddesc:ISPAWBFDONEINTRAW]{ISP\_AWB\_FDONE\_INT\_RAW}
+        \end{itemize}
+        \item Get the number of white patches within the statistical window by reading \hyperref[fielddesc:ISPAWB0WHITECNT]{ISP\_AWB0\_WHITE\_CNT}
+        \item Get the accumulated values of the R, G, B components for the white patches within the statistical window by reading \hyperref[fielddesc:ISPAWB0ACCR]{ISP\_AWB0\_ACC\_\textcolor{red}{R/G/B}}
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{HIST Configuration}
+HIST can be configured after the ISP is enabled.
+
+\begin{enumerate}
+    \item Select sampling points via \hyperref[fielddesc:ISPHISTMODE]{ISP\_HIST\_MODE};
+    \begin{itemize}
+        \item If sampling points are set to RGB, use \hyperref[fielddesc:ISPHISTCOEFFR]{ISP\_HIST\_COEFF\_\textcolor{red}{R/G/B}} to set RGB weights with 8 fractional bits
+    \end{itemize}
+
+    \item Set up statistical windows;
+    \begin{itemize}
+        \item Set the horizontal start point with \hyperref[fielddesc:ISPHISTXOFFS]{ISP\_HIST\_X\_OFFS}
+        \item Configure the horizontal dimension of each sub-window with \hyperref[fielddesc:ISPHISTXSIZE]{ISP\_HIST\_X\_SIZE}
+        \item Set the vertical start point with \hyperref[fielddesc:ISPHISTYOFFS]{ISP\_HIST\_Y\_OFFS}
+        \item Configure the vertical dimension of each sub-window with \hyperref[fielddesc:ISPHISTYSIZE]{ISP\_HIST\_Y\_SIZE}
+    \end{itemize}
+
+    \item Configure histograms;
+    \begin{itemize}
+        \item Set histogram interval divisions using \hyperref[fielddesc:ISPHISTSEG01]{ISP\_HIST\_SEG\_\textcolor{red}{x}\_\textcolor{red}{x}}
+        \item Set window weights using \hyperref[fielddesc:ISPHISTWEIGHT00]{ISP\_HIST\_WEIGHT\_\textcolor{red}{xx}} with 8 fractional bits
+    \end{itemize}
+
+    \item Enable HIST by writing 1 to \hyperref[fielddesc:ISPHISTEN]{ISP\_HIST\_EN};
+
+    \item Obtain statistics.
+    \begin{itemize}
+        \item Clear the completion status by writing 1 to \hyperref[fielddesc:ISPHISTFDONEINTCLR]{ISP\_HIST\_FDONE\_INT\_CLR}
+        \item With HIST enabled, statistics are performed at the end of every frame. Wait for the statistics to complete
+        \begin{itemize}
+            \item Wait for the ISP interrupt triggered by HIST\_FDONE\_INT
+            \item Or query the status using \hyperref[fielddesc:ISPHISTFDONEINTRAW]{ISP\_HIST\_FDONE\_INT\_RAW}.
+        \end{itemize}
+        \item Obtain the statistics for each interval by reading \hyperref[fielddesc:ISPHISTBIN0]{ISP\_HIST\_BIN\_\textcolor{red}{x}}.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{ISP\_Pipeline Module Update Configuration}
+\begin{enumerate}
+    \item Disable the module via \hyperref[regdesc:ISPCNTLREG]{ISP\_CNTL\_REG};
+    \item Wait for the interrupt from the corresponding module;
+    \item Update module configurations;
+    \item Re-enable the module.
+\end{enumerate}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{isp-reg-summ}{}
+\section{Register Summary}
+\label{sec:isp-reg-summ}
+
+\subsection{ISP Register Summary}
+
+The addresses in this section are relative to \textbf{ISP} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/37-ISP-reg-summ-latest__EN}
+
+
+\subsection{MIPI CSI\_Bridge Register Summary}
+
+The addresses in this section are relative to \textbf{MIPI CSI\_Bridge} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/37-ISP_MIPI_CSI_BRIG-reg_summ-latest__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+\subsection{ISP Registers}
+
+The addresses in this section are relative to \textbf{ISP} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/37-ISP-reg-latest__EN}
+
+
+\subsection{MIPI CSI\_Bridge Registers}
+
+The addresses in this section are relative to \textbf{MIPI CSI\_Bridge} base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/37-ISP_MIPI_CSI_BRIG-reg-latest__EN}
+
+
+\end{document}

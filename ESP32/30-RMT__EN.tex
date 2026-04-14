@@ -1,0 +1,167 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./30-RMT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{rmt}{}
+\chapter{Remote Control Peripheral (RMT)}
+\label{mod:rmt}
+
+\section{Introduction}
+
+The RMT (Remote Control) module is primarily designed to send and receive infrared remote control signals that implement on-off keying in a carrier frequency, but due to its design it can be used to generate various types of signals. An RMT transmitter does this by reading consecutive duration values of an active and inactive output from the built-in RAM block, optionally modulating it with a carrier wave. A receiver will inspect its input signal, optionally filtering it, and will place the lengths of time the signal is active and inactive in the RAM block.
+
+The RMT module has eight channels, numbered zero to seven; registers, signals and blocks that are duplicated in each channel are indicated by an \textcolor{red}{\it{n}} which is used as a placeholder for the channel number.
+
+\section{Functional Description}
+\subsection{RMT Architecture}
+\begin{figure}[h!]
+\includegraphics[width=0.7\textwidth]{./30-RMT/figures/rmt2-1_20190313}
+\centering
+\caption{RMT Architecture} \label{Figure:RMT2-1}
+\end{figure}
+
+The RMT module contains eight channels. Each channel has both a transmitter and a receiver, but only one of them can be active in every channel. The eight channels share a 512x32-bit RAM block which can be read and written by the processor cores over the APB bus, read by the transmitters, and written by the receivers. The transmitted signal can optionally be modulated by a carrier wave. Each channel is clocked by a divided-down signal derived from either the APB bus clock or REF\_TICK.
+
+\subsection{RMT RAM}\label{RMTRAM}
+\begin{figure}[htb!]
+\includegraphics[width=0.5\textwidth]{./30-RMT/figures/rmt_data_structure}
+\centering
+\caption{Data Structure} \label{Figure:RMT2-2}
+\end{figure}
+The data structure in RAM is shown in Figure \ref{Figure:RMT2-2}. Each 32-bit value contains two 16-bit entries, with two fields in every entry, "level" and "period". "Level" indicates whether a high-/low-level value was received or is going to be sent, while "period" points out the divider-clock cycles for which the level lasts. A zero period is interpreted as an end-marker: the transmitter will stop transmitting once it has read this, and the receiver will write this, once it has detected that the signal it received has gone idle.
+
+Normally, only one block of 64x32-bit worth of data can be sent or received. If the data size is larger than this block size, blocks can be extended or the channel can be configured for the wraparound mode.
+
+The RMT RAM can be accessed via the APB bus. The initial address is 0x3FF56800. The RAM block is divided into eight 64x32-bit blocks. By default, each channel uses one block (block zero for channel zero, block one for channel one, and so on). Users can extend the memory to a specific channel by configuring the RMT\_MEM\_SIZE\_CH\textcolor{red}{\it{n}} register; setting this to >1 will prompt the channel to use the memory of subsequent channels as well. The RAM address range of channel \textcolor{red}{\it{n}} is start\_addr\_CH\textcolor{red}{\it{n}} to end\_addr\_CH\textcolor{red}{\it{n}}, which is defined by:
+
+$ \textrm{start\_addr\_ch}\textcolor{red}{\it{n}} = \textrm{0x3FF56800} + 64*4*\textcolor{red}{\it{n}}$\textrm{,   and} \\
+$ \textrm{end\_addr\_ch}\textcolor{red}{\it{n}} = \textrm{0x3FF56800} + (64*4*\textcolor{red}{\it{n}}+64*4*\textrm{RMT\_MEM\_SIZE\_CH}\textcolor{red}{\it{n}})\textrm{mod}(512*4)-4 $
+
+To protect a receiver from overwriting the blocks a transmitter is about to transmit, RMT\_MEM\_OWNER\_CH\textcolor{red}{\it{n}} can be configured to designate the owner, be it a transmitter or receiver, of channel \textcolor{red}{\it{n}}’s RAM block. This way, if this ownership is violated, the RMT\_CH\textcolor{red}{\it{n}}\_ERR interrupt will be generated.
+
+{\bfseries Note:} When enabling the continuous transmission mode by setting RMT\_REG\_TX\_CONTI\_MODE, the transmitter will transmit the data on the channel continuously, that is, from the first byte to the last one, then from the first to the last again, and so on. In this mode, there will be an idle level lasting one clk\_div cycle between N and N+1 transmissions.
+
+\subsection{Clock}
+The main clock of a channel is generated by taking either the 80 MHz APB clock or REF\_TICK (usually 1MHz), according to the state of RMT\_REF\_ALWAYS\_ON\_CH\textcolor{red}{\it{n}}. (For more information on clock sources, please see Chapter \hyperref[mod:resclk]{Reset And Clock}.) Then, the aforementioned state gets scaled down using a configurable 8-bit divider to create the channel clock which is used by both the carrier wave generator and the counter. The divider value can be set by configuring RMT\_DIV\_CNT\_CH\textcolor{red}{\it{n}}.
+
+\subsection{Transmitter}\label{rmt:transmitter}
+When the RMT\_TX\_START\_CH\textcolor{red}{\it{n}} register is 1, the transmitter of channel \textcolor{red}{\it{n}} will start reading and sending data from RAM. The transmitter will receive a 32-bit value each time it reads from RAM. Of these 32 bits, the low 16-bit entry is sent first and the high entry second.
+
+To transmit more data than can be fitted in the channel's RAM, the wraparound mode can be enabled. In this mode, when the transmitter has reached the last entry in the channel's memory, it will loop back to the first byte. To use this mechanism for sending more data than can be fitted in the channel's RAM, fill the RAM with the initial events and set RMT\_CH\textcolor{red}{\it{n}}\_TX\_LIM\_REG to cause an RMT\_CH\textcolor{red}{\it{n}}\_TX\_THR\_EVENT\_INT interrupt before the wraparound happens. Then, when the interrupt happens, the already sent data should be replaced by subsequent events, so that when the wraparound happens the transmitter will seamlessly continue sending the new events.
+
+With or without the wraparound mode enabled, transmission ends when an entry with zero length is encountered. When this happens, the transmitter will generate an RMT\_CH\textcolor{red}{\it{n}}\_TX\_END\_INT interrupt and return to the idle state. When a transmitter is in the idle state, the output level defaults to end-mark 0. Users can also configure RMT\_IDLE\_OUT\_EN\_CH\textcolor{red}{\it{n}} and RMT\_IDLE\_OUT\_LV\_CH\textcolor{red}{\it{n}} to control the output level manually.
+
+The output of the transmitter can be modulated using a carrier wave by setting RMT\_CARRIER\_EN\_CH\textcolor{red}{\it{n}}. The carrier frequency and duty cycle can be configured by adjusting the carrier's high and low durations in channel-clock cycles, in RMT\_CARRIER\_HIGH\_CH\textcolor{red}{\it{n}} and RMT\_CARRIER\_LOW\_CH\textcolor{red}{\it{n}}.
+
+\subsection{Receiver}
+When RMT\_RX\_EN\_CH\textcolor{red}{\it{n}} is set to 1, the receiver in channel \textcolor{red}{\it{n}} becomes active, measuring the duration between input signal edges. These will be written as period/level value pairs to the channel RAM in the same fashion as the transmitter sends them. Receiving ends, when the receiver detects no change in signal level for more than RMT\_IDLE\_THRES\_CH\textcolor{red}{\it{n}} channel clock ticks. The receiver will write a final entry with 0 period, generate an RMT\_CH\textcolor{red}{\it{n}}\_RX\_END\_INT\_RAW interrupt and return to the idle state.
+
+The receiver has an input signal filter which can be configured using RMT\_RX\_FILTER\_EN\_CH\textcolor{red}{\it{n}}: The filter will remove pulses with a length of less than RMT\_RX\_FILTER\_THRES\_CH\textcolor{red}{\it{n}} in APB clock periods.
+
+When the RMT module is inactive, the RAM can be put into low-power mode by setting the RMT\_MEM\_PD register to 1.
+
+
+\subsection{Interrupts}
+\begin{itemize}
+\item \label{int:RMTCHnTXTHREVENTINT}RMT\_CH\textcolor{red}{\it{n}}\_TX\_THR\_EVENT\_INT: Triggered when the amount of data the transmitter has sent matches the value of RMT\_CH\textcolor{red}{\it{n}}\_TX\_LIM\_REG.
+\item \label{int:RMTCHnTXENDINT}RMT\_CH\textcolor{red}{\it{n}}\_TX\_END\_INT: Triggered when the transmitter has finished transmitting the signal.
+\item \label{int:RMTCHnRXENDINT}RMT\_CH\textcolor{red}{\it{n}}\_RX\_END\_INT: Triggered when the receiver has finished receiving a signal.
+\end{itemize}
+
+\hypertarget{rmt-reg-summ}{}
+\section{Register Summary}\label{sec:rmt-reg-summ}
+
+The addresses in this section are relative to the RMT base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/rmt-reg_summary_en.tex}
+
+\section{Registers}
+
+The addresses in this section are relative to the RMT base address provided in Table \ref{table:Peripheral_Address_Mapping} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}. The absolute register addresses are listed in Section \ref{sec:rmt-reg-summ} \textit{\nameref{sec:rmt-reg-summ}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/rmt-reg_en.tex}
+
+\end{document}
+

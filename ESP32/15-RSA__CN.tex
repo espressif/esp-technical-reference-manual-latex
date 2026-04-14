@@ -1,0 +1,339 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./15-RSA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+\hypertarget{rsa}{}
+\chapter{RSA 加速器 (RSA)}
+\label{mod:rsa}
+
+\section{概述}
+
+RSA 加速器为多种运用于 RSA 非对称式加密演算法的高精度计算提供硬件支持。这些高精度计算包括大数模幂运算、大数模乘运算和大数乘法运算等。
+
+RSA 加速器极大地降低了这三种运算的软件复杂度，
+并且支持多种运算子长度，使得运算效率不被浪费。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 支持大数模幂运算
+    \item 支持大数模乘运算
+    \item 支持大数乘法运算
+    \item 支持多种运算子长度
+\end{itemize}
+
+
+\section{功能描述}
+
+\subsection{初始化}
+通过使能对应的外设时钟并且清零 DPORT\_RSA\_PD\_CTRL\_REG 寄存器中的 DPORT\_RSA\_PD 位即可以复位释放并使能 RSA 加速器。
+
+当 RSA 加速器被复位释放后，寄存器 RSA\_CLEAN\_REG 读到 0，初始化开始。硬件将 4 块存储器初始化为 0。初始化过程完成后，寄存器 RSA\_CLEAN\_REG 读到 1。因此，RSA 加速器被复位之后第一次使用时，软件需要先查询寄存器 RSA\_CLEAN\_REG，以确保RSA 加速器处于可工作状态。
+
+\subsection{大数模幂运算}
+
+大数模幂运算的算法是 \begin{math}Z = X^{Y} \bmod M\end{math}，它是基于 Montgomery Multiplication （蒙哥马利乘法）实现的。
+所以对于大数模幂运算，除了需要运算子
+\begin{math}X\end{math}、
+\begin{math}Y\end{math}、
+\begin{math}M\end{math}外，
+还需要额外两个运算子，即参数
+\begin{math}\overline{r}\end{math} 和 
+\begin{math}M^{\prime}\end{math}。
+这两个参数需要通过软件提前运算得到。
+
+RSA 加速器支持
+\begin{math}N \in \{512,1024,1536,2048,2560,3072,3584,4096\}\end{math} 
+8 种长度的大数模幂运算。
+即
+\begin{math}Z\end{math}、
+\begin{math}X\end{math}、
+\begin{math}Y\end{math}、
+\begin{math}M\end{math} 和 
+\begin{math}\overline{r}\end{math}
+的位宽为这 8 种中的任意一种，但是它们的位宽必须都相同，
+而 \begin{math}M^{\prime}\end{math} 的位宽始终是 32。
+
+设进制数
+\begin{gather*}
+    b = 2^{32}
+\end{gather*}
+
+则运算子可以由若干个 \begin{math}b\end{math} 进制数来表示：
+\begin{gather*}
+    n = \frac{N}{32} \\
+    Z = ( Z_{n-1} Z_{n-2} \cdots Z_{0} )_{b} \\
+    X = ( X_{n-1} X_{n-2} \cdots X_{0} )_{b} \\
+    Y = ( Y_{n-1} Y_{n-2} \cdots Y_{0} )_{b} \\
+    M = ( M_{n-1} M_{n-2} \cdots M_{0} )_{b} \\
+    \overline{r} = ( \overline{r}_{n-1} \overline{r}_{n-2} \cdots \overline{r}_{0} )_{b}
+\end{gather*}
+
+其中
+\begin{math}Z_{n-1}\end{math} \verb+~+ \begin{math}Z_{0}\end{math}、
+\begin{math}X_{n-1}\end{math} \verb+~+ \begin{math}X_{0}\end{math}、
+\begin{math}Y_{n-1}\end{math} \verb+~+ \begin{math}Y_{0}\end{math}、
+\begin{math}M_{n-1}\end{math} \verb+~+ \begin{math}M_{0}\end{math}、
+\begin{math}\overline{r}_{n-1}\end{math} \verb+~+ \begin{math}\overline{r}_{0}\end{math}
+分别表示一个 \begin{math}b\end{math} 进制数，位宽皆为 32。
+且
+\begin{math}Z_{n-1}\end{math}、
+\begin{math}X_{n-1}\end{math}、
+\begin{math}Y_{n-1}\end{math}、
+\begin{math}M_{n-1}\end{math}、
+\begin{math}\overline{r}_{n-1}\end{math}
+分别为
+\begin{math}Z\end{math}、
+\begin{math}X\end{math}、
+\begin{math}Y\end{math}、
+\begin{math}M\end{math}、
+\begin{math}\overline{r}\end{math}
+最高位的 \begin{math}b\end{math} 进制数，
+而
+\begin{math}Z_{0}\end{math}、
+\begin{math}X_{0}\end{math}、
+\begin{math}Y_{0}\end{math}、
+\begin{math}M_{0}\end{math}、
+\begin{math}\overline{r}_{0}\end{math}
+分别为
+\begin{math}Z\end{math}、
+\begin{math}X\end{math}、
+\begin{math}Y\end{math}、
+\begin{math}M\end{math}、
+\begin{math}\overline{r}\end{math}
+最低位的 \begin{math}b\end{math} 进制数。
+
+另设
+\begin{gather*}
+    R = b^{n}
+\end{gather*}
+
+则计算得参数：
+\begin{gather}
+    \overline{r} = R^{2} \bmod M \label{equation:r_bar} \\
+    \begin{cases}
+        \displaystyle M^{\prime\prime} \times M + 1 = R \times R^{-1} \\
+        \displaystyle M^{\prime} = M^{\prime\prime} \bmod b
+    \end{cases} \label{equation:M_prime}
+\end{gather}
+
+
+（公式 (2) 的形式适用于使用扩展二进制 GCD 算法的运算。）
+
+大数模幂运算的软件流程为：
+
+\begin{enumerate}
+
+    \item 对寄存器 RSA\_MODEXP\_MODE\_REG写入 \begin{math}( \frac{N}{512} - 1 )\end{math}。
+
+    \item 将
+        \begin{math}X_{i}\end{math}、
+        \begin{math}Y_{i}\end{math}、
+        \begin{math}M_{i}\end{math}、
+        \begin{math}\overline{r}_{i}\end{math}
+        (\begin{math}i \in [0,n) \cap \mathbb{N}\end{math})
+        分别写入存储器 RSA\_X\_MEM、RSA\_Y\_MEM、RSA\_M\_MEM、RSA\_Z\_MEM。每块存储器的容量都是 128 word。每块存储器的每一个 word 刚好存放一个 \begin{math}b\end{math} 进制数。
+        这些存储器都是低地址存放运算子的低位进制数，高地址存放运算子的高位进制数。
+        
+        只需要根据运算子长度，将各个运算子中有效的数据写入存储器，
+        没有使用到的存储器可以是任意值。
+        
+    \item 将 \begin{math}M^{\prime}\end{math} 写入寄存器 RSA\_M\_PRIME\_REG。
+
+    \item 对寄存器 RSA\_MODEXP\_START\_REG 写入 1。
+
+    \item 等待运算结束。轮询寄存器 RSA\_INTERRUPT\_REG 直到读到 1，或者等待 RSA\_INTR 中断产生。
+        
+    \item 从存储器 RSA\_Z\_MEM 读出运算结果 \begin{math}Z_{i}\end{math} (\begin{math}i \in [0,n) \cap \mathbb{N}\end{math})。
+
+    \item 对寄存器 RSA\_INTERRUPT\_REG 写入 1 以清除中断。
+
+\end{enumerate}
+
+运算结束后，
+寄存器 RSA\_MODEXP\_MODE\_REG 中存储的运算子长度信息以及
+存储器 RSA\_Y\_MEM 中的 \begin{math}Y_{i}\end{math}、
+存储器 RSA\_M\_MEM 中 的 \begin{math}M_{i}\end{math}、
+寄存器 RSA\_M\_PRIME\_REG 中的 \begin{math}M^{\prime}\end{math} 都不会变化。
+但是，存储器 RSA\_X\_MEM 中的 \begin{math}X_{i}\end{math} 与
+存储器 RSA\_Z\_MEM 中的 \begin{math}\overline{r}_{i}\end{math} 
+都已经被覆盖了。所以当需要连续运算时，只需要更新必需的寄存器与存储器即可。
+
+
+\subsection{大数模乘运算}
+
+大数模乘运算也是基于 Montgomery Multiplication 实现运算
+\begin{math}Z = X \times Y \bmod M\end{math}，
+所以也需要如式 \ref{equation:r_bar}、式 \ref{equation:M_prime}
+预先通过软件计算得到 
+\begin{math}\overline{r}\end{math} 和 
+\begin{math}M^{\prime}\end{math}。
+
+RSA 加速器也支持 8 种运算子长度的大数模乘运算。大数模乘运算采用软硬件相结合的方式，运算期间需要软件介入一次。
+
+大数模乘运算的软件流程为：
+
+\begin{enumerate}
+
+    \item 对寄存器 RSA\_MULT\_MODE\_REG 写入 \begin{math}( \frac{N}{512} - 1 )\end{math}。
+
+    \item 将
+        \begin{math}X_{i}\end{math}、
+        \begin{math}M_{i}\end{math}、
+        \begin{math}\overline{r}_{i}\end{math}
+        (\begin{math}i \in [0,n) \cap \mathbb{N}\end{math})
+        分别写入存储器 RSA\_X\_MEM、RSA\_M\_MEM、RSA\_Z\_MEM。同样只需要根据运算子长度，将各个运算子中有效的数据写入存储器，没有使用到的存储器可以是任意值。
+        
+    \item 将 \begin{math}M^{\prime}\end{math} 写入寄存器 RSA\_M\_PRIME\_REG。
+
+    \item 对寄存器 RSA\_MULT\_START\_REG 写入 1。
+
+    \item 等待第一轮运算结束。轮询寄存器 RSA\_INTERRUPT\_REG 直到读到 1，或者等待 RSA\_INTR 中断产生。
+        
+    \item 对寄存器 RSA\_INTERRUPT\_REG 写入 1 以清除中断。
+
+    \item 将
+        \begin{math}Y_{i}\end{math}
+        (\begin{math}i \in [0,n) \cap \mathbb{N}\end{math})
+        写入存储器 RSA\_X\_MEM。只需要根据运算子长度，将运算子中有效的数据写入存储器，没有使用到的存储器不用更改。
+
+    \item 对寄存器 RSA\_MULT\_START\_REG 写入 1。
+
+    \item 等待第二轮运算结束。轮询寄存器 RSA\_INTERRUPT\_REG 直到读到 1，或者等待 RSA\_INTR 中断产生。
+    
+    \item 从存储器 RSA\_Z\_MEM 读出运算结果 \begin{math}Z_{i}\end{math}
+        (\begin{math}i \in [0,n) \cap \mathbb{N}\end{math})。
+
+    \item 对寄存器 RSA\_INTERRUPT\_REG 写入 1 以清除中断。
+
+\end{enumerate}
+
+运算结束后，只有寄存器 RSA\_MULT\_MODE\_REG 中存储的运算模式与运算子长度信息以及
+存储器 RSA\_M\_MEM 中的 \begin{math}M_{i}\end{math}、
+寄存器 RSA\_M\_PRIME\_REG 中的 \begin{math}M^{\prime}\end{math} 没有被覆盖。所以连续运算时，可以不再对这些寄存器与存储器重复写入。
+
+\subsection{大数乘法运算}
+
+大数乘法运算实现了 \begin{math}Z = X \times Y\end{math}。其中运算子 \begin{math}Z\end{math} 的长度是
+运算子 \begin{math}X\end{math}、\begin{math}Y\end{math} 长度的两倍。
+所以 RSA 加速器只支持 4 种 \begin{math}N \in \{512,1024,1536,2048\}\end{math}
+运算子长度的大数乘法运算。运算子 \begin{math}Z\end{math} 的长度 \begin{math}\hat{N}\end{math} 为 \begin{math}2 \times N\end{math}。
+
+首先构造 \begin{math}\hat{X}\end{math}、\begin{math}\hat{Y}\end{math}，它们与运算子 \begin{math}Z\end{math} 的长度一致 (\begin{math}\hat{N}\end{math})。
+\begin{gather*}
+    n = \frac{N}{32} \\
+    \hat{N} = 2 \times N\\
+    \hat{n} = \frac{\hat{N}}{32} = 2n\\
+    \hat{X}
+        = ( \hat{X}_{\hat{n}-1} \hat{X}_{\hat{n}-2} \cdots \hat{X}_{0} )_{b}
+        = ( \underbrace{0 0 \cdots 0}_{n}
+            X )_{b}
+        = ( \underbrace{0 0 \cdots 0}_{n}
+            X_{n-1} X_{n-2} \cdots X_{0} )_{b} \\
+    \hat{Y}
+        = ( \hat{Y}_{\hat{n}-1} \hat{Y}_{\hat{n}-2} \cdots \hat{Y}_{0} )_{b}
+        = ( Y
+            \underbrace{0 0 \cdots 0}_{n} )_{b}
+        = ( Y_{n-1} Y_{n-2} \cdots Y_{0}
+            \underbrace{0 0 \cdots 0}_{n} )_{b}
+\end{gather*}
+
+大数乘法运算的软件流程为：
+
+\begin{enumerate}
+
+    \item 对寄存器 RSA\_MULT\_MODE\_REG 写入 \begin{math}( \frac{\hat{N}}{512} - 1 + 8 )\end{math}。
+
+    \item 将
+        \begin{math}\hat{X}_{i}\end{math}、\begin{math}\hat{Y}_{i}\end{math}
+        (\begin{math}i \in [0,\hat{n}) \cap \mathbb{N}\end{math})
+        分别写入存储器 RSA\_X\_MEM、RSA\_Z\_MEM。
+        
+        只需要根据运算子长度，将这两个运算子中有效的数据写入存储器，没有使用到的存储器可以是任意值。写入存储器的若干 \begin{math}b\end{math} 进制数中有一半都是 0，
+        这些 0 不可或缺。
+        
+    \item 对寄存器 RSA\_MULT\_START\_REG 写入 1。
+
+    \item 等待运算结束。轮询寄存器 RSA\_INTERRUPT\_REG 直到读到 1，或者等待 RSA\_INTR 中断产生。
+    
+    \item 从存储器 RSA\_Z\_MEM 读出运算结果 \begin{math}Z_{i}\end{math}
+        (\begin{math}i \in [0,\hat{n}) \cap \mathbb{N}\end{math})。
+
+    \item 对寄存器 RSA\_INTERRUPT\_REG 写入 1 以清除中断。
+
+\end{enumerate}
+
+运算结束后，只有寄存器 RSA\_MULT\_MODE\_REG 中存储的运算模式与运算子长度信息没被更改。
+
+\hypertarget{rsa-reg-summ}{}
+\section{寄存器列表}
+\subfile{\modulefiles/rsa_reg-summary_cn}
+{\clearpage}
+\section{寄存器}
+\subfile{\modulefiles/rsa_reg_cn}
+\end{document}

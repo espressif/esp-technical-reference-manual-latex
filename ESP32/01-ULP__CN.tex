@@ -1,0 +1,906 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./01-ULP}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\setchineseformatting
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{ulp}{}
+\chapter{超低功耗协处理器 (ULP)}
+\label{mod:ulp}
+
+\section{概述}
+
+超低功耗协处理器 (ULP Coprocessor) 是一种功耗极低的协处理器设备，可在主系统级芯片 (SoC) 系统进入 Deep-sleep 状态时保持上电，允许开发者通过存储在 RTC 中的专用程序，访问 外围设备、内部传感器及 RTC 寄存器。ULP 协处理器的主要应用场景包括一些需要在保证最低功耗的情况下，通过外部活动或计时器（或两者兼有）唤醒 CPU 的应用。
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 可访问最多 8 KB SRAM RTC 慢速内存，储存指令和数据
+    \item 采用 8 MHz RTC\_FAST\_CLK 时钟频率
+    \item 支持正常模式和 Deep-sleep 模式
+    \item 可唤醒 CPU 或向 CPU 发送中断
+    \item 可访问外围设备、内部传感器及 RTC 寄存器
+    \item 采用 4 个 16 位通用寄存器 (R0 - R3)，进行数据操作和内存访问
+    \item 采用 1 个 8 位阶段计数器寄存器 Stage\_cnt，可通过 ALU 指令进行操作并用于 JUMP 指令
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./01-ULP/figures/ulp_cp.pdf}
+    \caption{ULP 协处理器基本架构}
+    \label{figure:ULP-coprocessor}
+\end{figure}
+
+\section{功能描述}
+
+ULP 协处理器是一种可编程有限状态机 (FSM)，可在 CPU 进入 Deep-sleep 状态时工作。协处理器支持部分通用 CPU 指令，可协助进行一些复杂逻辑运算。此外，还支持一些特殊的 RTC 控制与外围设备控制指令。与 CPU 一样，ULP 协处理器也可访问 8 KB SRAM RTC 慢速内存。也正因如此，这块内存经常被用于存储一些协处理器和 CPU 的通用指令。
+
+ULP 协处理器可由软件程序或硬件定时器周期性启动，并通过执行 \hyperref[subsection:HALT]{HALT} 指令停止。协处理器的功能非常强大，可以通过内置指令和 RTC 寄存器，访问 RTC 域中的几乎所有模块。ULP 协处理器可在很多应用场景中成为 CPU 的有力补充，甚至取代 CPU，特别是在一些对功耗很敏感的应用中。ULP 协处理器的基本架构可见图 \ref{figure:ULP-coprocessor}。
+
+
+\section{指令集}
+
+ULP 协处理器可支持下列指令：
+
+\begin{itemize}
+    \item 算数与逻辑 - ALU
+    \item 加载与数据存储 - LD、ST、REG\_RD 及 REG\_WR
+    \item 跳转至某地址 - JUMP
+    \item 管理程序执行 - WAIT 和 HALT
+    \item 控制协处理器的睡眠周期 - SLEEP
+    \item 唤醒 CPU 及与 SoC 通信 - WAKE
+    \item 测量 - ADC
+    \item I2C 总线通信 - I2C\_RD 和 I2C\_WR
+\end{itemize}
+
+ULP 协处理器指令的格式可见图 \ref{figure:ULP-instruction}。
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,27,28,31} \\
+        \bitbox{4}{\it{OpCode}} & \bitbox{28}{\it{Operands}}
+    \end{bytefield}
+    \caption{ULP 协处理器的指令格式}
+    \label{figure:ULP-instruction}
+\end{figure}
+
+根据 \textit{Operands} 的设置不同，同一个 \textit{OpCode} 可对应多种不同操作。比如，\hyperref[subsection:ALU]{ALU} 能够执行 10 种不同的算数和逻辑运算，\hyperref[subsection:JUMP]{JUMP} 也可执行有条件跳转、无条件跳转、绝对跳转及相对跳转等多种形式的跳转。
+
+ULP 协处理器的所有指令均固定为 32 位。通过这一系列指令，协处理器程序即可得到执行。程序内部的执行均采用 32 位寻址。该程序具体存储在 1 块专用的慢速内存区 (RTC\_SLOW\_MEM)，地址范围为 0x5000\_0000 到 0x5000\_1FFF (8 KB)，对主 CPU 可见。
+
+本文中 \textit{OpCode} 的格式为 4'd\textcolor{red}{\textit{x}}，其中 4 代表 4 位宽，'d 代表十进制，\textcolor{red}{\textit{x}} 代表 \textit{OpCode} 的值 (\textcolor{red}{\textit{x}}: 0 \verb+~+ 15)。
+
+
+\subsection{ALU - 算数与逻辑运算} \label{subsection:ALU}
+
+算数逻辑单元 (ALU) 可以进行算数和逻辑运算，对象为协处理器寄存器中存储的数值或指令中存储的立即值。\\
+具体可以支持的运算类型如下：
+\begin{itemize}
+    \item 算数 - 加 (ADD) 和减 (SUB)
+    \item 逻辑 - 按位与 (AND) 和按位或 (OR)
+    \item 移位 - 左移 (LSH) 和右移 (RSH)
+    \item 寄存器赋值 - 移动 (MOVE)
+    \item 计数器寄存器操作 - STAGE\_RST、STAGE\_INC 和 STAGE\_DEC
+\end{itemize}
+
+尽管 OpCode 相同, 但可通过设置协处理器指令 [27:21] 位，选择特定的算数和逻辑运算。
+
+
+\subsubsection{对寄存器数值的运算}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,3,4,5,21,24,25,27,28,31} \\
+        \bitbox{4}{4'd7} & \bitbox{3}{3'b0} & \bitbox{4}{ALU\_sel} & \bitbox{15}{} & \bitbox{2}{Rsrc2} & \bitbox{2}{Rsrc1} & \bitbox{2}{Rdst}
+    \end{bytefield}
+    \caption{指令类型 - 对寄存器数值的 ALU 运算}
+    \label{figure:ALU-among-registers}
+\end{figure}
+
+如图 \ref{figure:ALU-among-registers} 所示，当协处理器指令 [27:25] 位设置为 3'b0 时，ALU 将对协处理器寄存器 R[0-3] 中存储的内容进行运算，运算类型则取决于指令的 ALU\_sel [24:21] 位，具体设置方式见下表 \ref{table:ALU-among-registers}。
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:ALU-among-registers} \\
+\textit{ALU\_sel} & ALU 运算类型\\
+\textit{Rdst} & 寄存器 R[0-3]，目标地址寄存器 \\
+\textit{Rsrc1} & 寄存器 R[0-3]，源地址寄存器 \\
+\textit{Rsrc2} & 寄存器 R[0-3]，源地址寄存器
+\end{tabular}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{ c l l l }
+    \textbf{ALU\_sel} & \textbf{指令} & \textbf{运算类型} & \textbf{描述} \\ \hline
+    0 & ADD & \textit{Rdst} = \textit{Rsrc1} + \textit{Rsrc2} & 加 \\
+    1 & SUB & \textit{Rdst} = \textit{Rsrc1} - \textit{Rsrc2} & 减 \\
+    2 & AND & \textit{Rdst} = \textit{Rsrc1} \& \textit{Rsrc2} & 按位与 \\
+    3 & OR & \textit{Rdst} = \textit{Rsrc1} | \textit{Rsrc2} & 按位或 \\
+    4 & MOVE & \textit{Rdst} = \textit{Rsrc1} & 寄存器赋值 \\
+    5 & LSH & \textit{Rdst} = \textit{Rsrc1} \textless\textless\  \textit{Rsrc2} & 左移 \\
+    6 & RSH & \textit{Rdst} = \textit{Rsrc1} \textgreater\textgreater\  \textit{Rsrc2} & 右移 \\
+    \end{tabular}
+    \caption{对寄存器数值的 ALU 运算}
+    \label{table:ALU-among-registers}
+\end{table}
+
+\textbf{注意：}
+\begin{itemize}
+    \item ADD 和 SUB 运算可用于设置或清除 ALU 溢出标志位。
+    \item 所有 ALU 运算均可用于设置或清除 ALU 零标志位。
+\end{itemize}
+
+
+\subsubsection{对指令立即值的运算}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,3,4,19,21,24,25,27,28,31} \\
+        \bitbox{4}{4'd7} & \bitbox{3}{3'b1} & \bitbox{4}{ALU\_sel} & \bitbox{1}{} & \bitbox{16}{Imm} & \bitbox{2}{Rsrc1} & \bitbox{2}{Rdst}
+    \end{bytefield}
+    \caption{指令类型 - 对指令立即值的 ALU 运算}
+    \label{figure:ALU-with-immediate-value}
+\end{figure}
+
+如图 \ref{figure:ALU-with-immediate-value} 所示，当协处理器指令 [27:25] 位设置为 3'b1 时，ALU 将对协处理器寄存器 R[0-3] 和 指令 [19:4] 位存储的立即值进行运算，运算类型取决于指令的 ALU\_sel [24:21] 位，具体设置方式见下表 \ref{table:ALU-with-immediate-value}。
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:ALU-with-immediate-value} \\
+\textit{ALU\_sel} & ALU 运算类型 \\
+\textit{Rdst} & 寄存器 R[0-3]，目标地址寄存器 \\
+\textit{Rsrc1} & 寄存器 R[0-3]，源地址寄存器 \\
+\textit{Imm} & 指令立即值，16 位有符号数
+\end{tabular}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{ c l l l }
+    \textbf{ALU\_sel} & \textbf{指令} & \textbf{运算} & \textbf{描述} \\ \hline
+    0 & ADD & \textit{Rdst} = \textit{Rsrc1} + \textit{Imm} & 加 \\
+    1 & SUB & \textit{Rdst} = \textit{Rsrc1} - \textit{Imm} & 减 \\
+    2 & AND & \textit{Rdst} = \textit{Rsrc1} \& \textit{Imm} & 按位与 \\
+    3 & OR & \textit{Rdst} = \textit{Rsrc1} | \textit{Imm} & 按位或 \\
+    4 & MOVE & \textit{Rdst} = \textit{Imm} & 寄存器赋值 \\
+    5 & LSH & \textit{Rdst} = \textit{Rsrc1} \textless\textless\  \textit{Imm} & 左移 \\
+    6 & RSH & \textit{Rdst} = \textit{Rsrc1} \textgreater\textgreater\  \textit{Imm} & 右移 \\
+    \end{tabular}
+    \caption{对指令立即值的 ALU 运算}
+    \label{table:ALU-with-immediate-value}
+\end{table}
+
+\textbf{注意：}
+\begin{itemize}
+    \item ADD 和 SUB 运算可用于设置或清除 ALU 溢出标志位。
+    \item 所有 ALU 运算均可用于设置或清除 ALU 零标志位。
+\end{itemize}
+
+
+\subsubsection{对阶段计数器寄存器数值的运算} \label{ALU-stage-count}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{4,11,21,24,25,27,28,31} \\
+        \bitbox{4}{4'd7} & \bitbox{3}{3'b2} & \bitbox{4}{ALU\_sel} & \bitbox{9}{} & \bitbox{8}{Imm} & \bitbox{4}{}
+    \end{bytefield}
+    \caption{指令类型 - 对阶段计数器寄存器的 ALU 运算}
+    \label{figure:ALU-with-stage-count}
+\end{figure}
+
+如图 \ref{figure:ALU-with-stage-count} 所示，当协处理器指令 [27:25] 位设置为 3'b2 时，ALU 将对 8 位寄存器 Stage\_cnt 进行递增、递减或重置操作，运算类型取决于指令的 ALU\_sel [24:21] 位，具体设置方式见下表 \ref{figure:ALU-with-stage-count}。
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:ALU-with-stage-count} \\
+\textit{ALU\_sel} & ALU 运算类型 \\
+\textit{Stage\_cnt} & 专用 8 位阶段计数器寄存器，可存储循环下标等变量 \\
+\textit{Imm} & 指令立即值，8 位数
+\end{tabular}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{ c l l l }
+    \textbf{ALU\_sel} & \textbf{指令} & \textbf{运算} & \textbf{描述} \\ \hline
+    0 & STAGE\_INC & \textit{Stage\_cnt} = \textit{Stage\_cnt} + \textit{Imm} & 阶段计数器寄存器递增 \\
+    1 & STAGE\_DEC & \textit{Stage\_cnt} = \textit{Stage\_cnt} - \textit{Imm} & 阶段计数器寄存器递减 \\
+    2 & STAGE\_RST & \textit{Stage\_cnt} = 0 & 阶段计数器寄存器复位
+    \end{tabular}
+    \caption{对阶段计数器寄存器的 ALU 运算}
+    \label{table:ALU-with-stage-count}
+\end{table}
+\vspace{2em}
+
+\subsection{ST – 存储数据至内存}\label{st instruction}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,3,10,20,25,27,28,31} \\
+        \bitbox{4}{4'd6} & \bitbox{3}{3'b100} & \bitbox{4}{4'b0} & \bitbox{11}{Offset} & \bitbox{6}{6'b0} & \bitbox{2}{Rdst} & \bitbox{2}{Rsrc}
+    \end{bytefield}
+    \caption{指令类型 - ST}
+    \label{figure:ST}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:ST} \\
+\textit{Offset} & 10 位有符号数，单位为 32 位字\\
+\textit{Rsrc} & 寄存器 R[0-3]，保留需存储的 16 位数 \\
+\textit{Rdst} & 寄存器 R[0-3]，目标寄存器地址，单位为 32 位字
+\end{tabular}
+
+
+\textbf{描述}
+
+该指令可将 \textit{Rsrc} 中保留的 16 位数存储至内存地址为 \textit{Rdst} + \textit{Offset} 的低半字中。该内存中的高半字为程序计数器 (PC) 中的内容（以字为单位）左移 5 位，逻辑或 Rdst (0..3)：
+
+~
+\begin{centering}
+    Mem [ Rdst + Offset ]\{31:0\} = \{PC[10:0], 3'b0, Rdst, Rsrc[15:0]\} \\
+\end{centering}
+~\\
+应用程序可通过高半字判断 ULP 程序中的哪条指令具体向内存写入了什么内容。
+
+\textbf{注意：}
+\begin{itemize}
+    \item 该指令仅能以 32 位字为单位进行访问。
+    \item 任何情况下，\textit{Rsrc} 中保留的 16 位数永远仅能存储至内存的低半字中，即永远不可能将 \textit{Rsrc} 存储至内存的高半字中。
+    \item Mem 写入的是 RTC\_SLOW\_MEM 慢速内存，ULP 协处理器的地址 0 即相当于主 CPU 的地址 0x50000000。
+\end{itemize}
+
+
+\subsection{LD – 从内存加载数据}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,3,10,20,28,31} \\
+        \bitbox{4}{4'd13} & \bitbox{7}{} & \bitbox{11}{Offset} & \bitbox{6}{} & \bitbox{2}{Rsrc} & \bitbox{2}{Rdst}
+    \end{bytefield}
+    \caption{指令类型 - LD}
+    \label{figure:LD}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:LD} \\
+\textit{Offset} & 10 位有符号数，单位为 32 位字 \\
+\textit{Rsrc} & 寄存器 R[0-3]，保留目标寄存器的地址，单位为 32 位字 \\
+\textit{Rdst} & 寄存器 R[0-3]，目标寄存器
+\end{tabular}
+
+\textbf{描述}
+
+该指令可将内存地址 \textit{Rsrc} + \textit{offset} 中的低半字加载至目标寄存器 \textit{Rdst}：
+
+~
+\begin{centering}
+    Rdst[15:0] = Mem[ Rsrc + Offset ][15:0] \\
+\end{centering}
+~\\
+\textbf{注意：}
+\begin{itemize}
+    \item 该指令仅能以 32 位字为单位进行访问。
+    \item 任何情况下， \textit{Rsrt} 仅可加载内存的低半字，即永远不可能将内存的高半字加载至 \textit{Rsrt} 中。
+    \item 加载的 Mem 将存储至 RTC\_SLOW\_MEM 慢速内存中，ULP 协处理器的地址 0 即相当于主 CPU 的地址 0x50000000。
+\end{itemize}
+
+
+\subsection{JUMP – 跳转至绝对地址} \label{subsection:JUMP}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,12,21,22,24,25,27,28,31} \\
+        \bitbox{4}{4'd8} & \bitbox{3}{3'b0} & \bitbox{3}{Type} & \bitbox{1}{\rotatebox{90}{\small Sel}} & \bitbox{8}{} & \bitbox{11}{ImmAddr} & \bitbox{2}{Rdst}
+    \end{bytefield}
+    \caption{指令类型 - JUMP}
+    \label{figure:JUMP}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:JUMP} \\
+\textit{Rdst} & 寄存器 R[0-3]，储存需跳转至的目标地址 \\
+\textit{ImmAddr} & 11 位地址，单位为 32 位字\\
+\textit{Sel} & 跳转目标地址来源： \\
+ & 0 - \textit{ImmAddr} 存储的地址\\
+ & 1 - \textit{Rdst} 存储的地址 \\
+\textit{Type} & 跳转类型： \\
+ & 0 - 无条件跳转 \\
+ & 1 - 有条件跳转，仅当最后一次 ALU 运算设置了零标志位时跳转 \\
+ & 2 - 有条件跳转，仅当最后一次 ALU 运算设置了溢出标志位时跳转
+\end{tabular}
+
+\textbf{注意：} \\
+所有跳转地址均以 32 位字为单位。
+
+\textbf{描述} \\
+该指令可以让协处理器跳转至特定地址，跳转可以为无条件跳转或有条件跳转。
+
+
+\subsection{JUMPR – 跳转至相对地址（基于 R0 寄存器判断）}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,15,16,17,24,25,27,28,31} \\
+        \bitbox{4}{4'd8} & \bitbox{3}{3'b1} & \bitbox{8}{Step} & \bitbox{1}{\rotatebox{90}{\scriptsize Cond}} & \bitbox{16}{Threshold}
+    \end{bytefield}
+    \caption{指令类型 - JUMPR}
+    \label{figure:JUMPR}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:JUMPR} \\
+\textit{Step} & 相对移位量，单位为 32 位字：\\
+ & 如果 Step[7] = 0，则 PC = PC + Step[6:0] \\
+ & 如果 Step[7] = 1，则 PC = PC - Step[6:0] \\
+\textit{Threshold} & 跳转条件阈值（见下方 \textit{Cond} ）\\
+\textit{Cond} & 跳转条件：\\
+ & 0 - 如果 R0 < \textit{Threshold}，即跳转 \\
+ & 1 - 如果 R0 >= \textit{Threshold}，即跳转
+\end{tabular}
+
+\textbf{注意：} \\
+所有跳转地址均以 32 位字为单位。
+
+\textbf{描述} \\
+如果跳转条件（即比较 R0 寄存器的值与 \textit{Threshold} 阈值）为真，该指令可以让协处理器跳转至 1 个相对地址。
+
+
+\subsection{JUMPS – 跳转至相对地址（基于阶段计数器寄存器判断）}\label{jumpstorelativeaddress}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,7,15,16,17,24,25,27,28,31} \\
+        \bitbox{4}{4'd8} & \bitbox{3}{3'b2} & \bitbox{8}{Step} & \bitbox{2}{Cond} & \bitbox{7}{} & \bitbox{8}{Threshold}
+    \end{bytefield}
+    \caption{指令类型 - JUMPS}
+    \label{figure:JUMPS}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:JUMPS} \\
+\textit{Step} & 相对位移量，单位为 32 位字： \\
+ & 如果 Step[7] = 0，则 PC = PC + Step[6:0] \\
+ & 如果 Step[7] = 1，则 PC = PC - Step[6:0] \\
+\textit{Threshold} & 跳转条件阈值（见下方 \textit{Cond} ）\\
+\textit{Cond} & 跳转条件： \\
+ & 1X - 如果 \textit{Stage\_cnt} <= \textit{Threshold}，即跳转 \\
+ & 00 - 如果 \textit{Stage\_cnt} < \textit{Threshold}，即跳转 \\
+ & 01 - 如果 \textit{Stage\_cnt} >= \textit{Threshold}，即跳转
+\end{tabular}
+
+\textbf{注意：}
+\begin{itemize}
+    \item 有关阶段计数器的相关设置，请见 \ref{ALU-stage-count}{ ALU 阶段计数器}章节。
+    \item 所有跳转地址均以 32 位字为单位。
+\end{itemize}
+
+\textbf{描述} \\
+如果跳转条件（即比较 \textit{Stage\_cnt} 阶段计数器寄存器的值与 \textit{Threshold} 阈值）为真，该指令可以让协处理器跳转至 1 个相对地址。
+
+
+\subsection{HALT – 结束程序} \label{subsection:HALT}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,28,31} \\
+        \bitbox{4}{4'd11} \bitbox{28}{}
+    \end{bytefield}
+    \caption{指令类型 - HALT}
+    \label{figure:HALT}
+\end{figure}
+
+\textbf{描述} \\
+该指令可以让协处理器进入断电模式。
+
+\textbf{注意：} \\
+执行该指令后，ULP 协处理器的硬件计时器将开始计时。
+
+
+\subsection{WAKE – 唤醒芯片}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,25,27,28,31} \\
+        \bitbox{4}{4'd9} & \bitbox{3}{3'b0} & \bitbox{24}{} & \bitbox{1}{\rotatebox{90}{\scriptsize 1'b1}}
+    \end{bytefield}
+    \caption{指令类型 - WAKE}
+    \label{figure:WAKE}
+\end{figure}
+
+\textbf{描述} \\
+该指令可以让 ULP 协处理器向 RTC 控制器发送中断。
+\begin{itemize}
+    \item 当 SoC 处于 Deep-sleep 模式时，该指令可唤醒 SoC。
+    \item 当 SoC 处于 Deep-sleep 之外的模式时，如果 RTC\_CNTL\_INT\_ENA\_REG 寄存器设置了 RTC\_CNTL\_ULP\_CP\_INT\_ENA 中断位，该指令即触发 RTC 中断。
+\end{itemize}
+
+
+\subsection{SLEEP – 设置硬件计时器的唤醒周期} \label{subsection:SLEEP}
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,2,25,27,28,31} \\
+        \bitbox{4}{4'd9} & \bitbox{3}{3'b1} & \bitbox{22}{} & \bitbox{3}{\small sleep\_reg}
+    \end{bytefield}
+    \caption{指令类型 - SLEEP}
+    \label{figure:SLEEP}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:SLEEP} \\
+\textit{sleep\_reg} & 在 5 个存储了不同唤醒周期的 \hyperref[regdesc:SENSULPCPSLEEPCYCnREG]{SENS\_ULP\_CP\_SLEEP\_CYC\textcolor{red}{\it{n}}\_REG} (\textcolor{red}{\it{n}}: 0-4) 寄存器中进行选择。
+\end{tabular}
+
+
+\textbf{描述} \\
+该指令可选择 ULP 协处理器计时器的唤醒周期来源，即 \hyperref[regdesc:SENSULPCPSLEEPCYCnREG]{SENS\_ULP\_CP\_SLEEP\_CYC\textcolor{red}{\it{n}}\_REG} (\textcolor{red}{\it{n}}: 0-4) 寄存器中的 1 个。默认情况下，ULP 协处理器将采用 \hyperref[regdesc:SENSULPCPSLEEPCYCnREG]{SENS\_ULP\_CP\_SLEEP\_CYC0\_REG} 中的值为唤醒周期。
+
+\subsection{WAIT – 等待若干个周期}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,15,28,31} \\
+        \bitbox{4}{4'd4} & \bitbox{12}{} & \bitbox{16}{Cycles}
+    \end{bytefield}
+    \caption{指令类型 - WAIT}
+    \label{figure:WAIT}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:WAIT} \\
+\textit{Cycles} & 两次睡眠之间的等待周期数
+\end{tabular}
+
+\textbf{描述} \\
+该指令可以设定协处理器两次睡眠之间的等待周期。
+
+
+\subsection{ADC – 对 ADC 进行测量} \label{subsection:ADC}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,1,2,5,6,28,31} \\
+        \bitbox{4}{4'd5} & \bitbox{21}{} & \bitbox{1}{\rotatebox{90}{\small Sel}} & \bitbox{4}{Sar Mux} & \bitbox{2}{Rdst}
+    \end{bytefield}
+    \caption{指令类型 - ADC}
+    \label{figure:ADC}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:ADC} \\
+\textit{Rdst} & 目标地址寄存器 R[0-3]，将存储测量结果\\
+\textit{Sel} & 选择 ADC：0 代表选择 SAR ADC1；1 代表选择 SAR ADC2，具体可见表 \ref{table:adc inputs1}。 \\
+\textit{Sar Mux} & 使能 SARADC 管脚 [Sar\_Mux - 1]，见表 \ref{table:adc inputs1}。 \\
+\end{tabular}
+
+\begin{longtable}{ |p{7cm}|p{3cm}|p{4cm}| }
+    \caption{ADC 指令的输入信号}
+    \label{table:adc inputs1}
+    \\\hline
+    \rowcolor{lightgray}
+    管脚名 / 信号名 / GPIO \ & \textit{Sar\_Mux} & ADC 选择（\textit{Sel}） \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    管脚名 / 信号名 / GPIO \ & \textit{Sar\_Mux} & ADC 选择（\textit{Sel}） \\\hline
+    \endhead
+    \hline
+    \endfoot
+    SENSOR\_VP (GPIO36)    &  1  & \multirow{8}{*}{\textit{Sel} = 0，选择 SAR ADC1} \\ \cline{1-2}
+    SENSOR\_CAPP (GPIO37)  &  2  & \\ \cline{1-2}
+    SENSOR\_CAPN (GPIO38)  &  3  & \\ \cline{1-2}
+    SENSOR\_VN (GPIO39)    &  4  & \\ \cline{1-2}
+    32K\_XP (GPIO33)       &  5  & \\ \cline{1-2}
+    32K\_XN (GPIO32)       &  6  & \\ \cline{1-2}
+    VDET\_1 (GPIO34)       &  7  & \\ \cline{1-2}
+    VDET\_2 (GPIO35)       &  8  & \\ \hline
+    GPIO4                  &  1  & \multirow{10}{*}{\textit{Sel} = 1，选择 SAR ADC2 } \\ \cline{1-2}
+    GPIO0                  &  2  & \\ \cline{1-2}
+    GPIO2                  &  3  & \\ \cline{1-2}
+    MTDO (GPIO15)          &  4  & \\ \cline{1-2}
+    MTCK (GPIO13)          &  5  & \\ \cline{1-2}
+    MTDI (GPIO12)          &  6  & \\ \cline{1-2}
+    MTMS (GPIO14)          &  7  & \\ \cline{1-2}
+    GPIO27                 &  8  & \\ \cline{1-2}
+    GPIO25                 &  9  & \\ \cline{1-2}
+    GPIO26                 &  10  &
+\end{longtable}
+
+\textbf{描述} \\
+该指令可对 ADC 的信号进行测量。ADC 指令测量的管脚与信号见表 \ref{table:adc inputs1}。
+
+
+\subsection{I2C\_RD / I2C\_WR – 读 / 写 I2C} \label{subsection:I2C}
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,7,8,15,16,18,19,21,22,25,27,28,31} \\
+        \bitbox{4}{4'd3} & \bitbox{1}{\rotatebox{90}{\scriptsize R/W}} & \bitbox{1}{} & \bitbox{4}{I2C Sel} & \bitbox{3}{High} & \bitbox{3}{Low} & \bitbox{8}{Data} & \bitbox{8}{Sub-addr}
+    \end{bytefield}
+    \caption{指令类型 - I2C}
+    \label{figure:I2C}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:I2C} \\
+\textit{Sub-addr} & 从机的寄存器地址 \\
+\textit{Data} & I2C\_WR 运算中需写入的数据（但不会用于 I2C\_RD 运算）\\
+\textit{Low} & 位掩码的高位 \\
+\textit{High} & 位掩码的低位 \\
+\textit{I2C Sel} & 在 8 个存储 I2C 从机地址的寄存器 \hyperref[regdesc:SENSSARSLAVEADDR1REG]{SENS\_I2C\_SLAVE\_ADDR\textcolor{red}{\it{n}}} (\textcolor{red}{\it{n}}: 0-7) 中进行选择 \\
+\textit{R/W} & I2C 通信类型：\\
+ & 1 - I2C 写 \\
+ & 0 - I2C 读
+\end{tabular}
+
+\textbf{描述} \\
+该指令可以支持与外部 I2C 从机进行通信（读/写），有关 RTC I2C 外围设备的使用，可见 \ref{subsection:RTC_I2C-Controller}。
+
+\textbf{注意：} \\
+在主机模式下，RTC\_I2C 可在 SCL 时钟的下降沿对 SDA 输入信号进行采样。
+
+
+\subsection{REG\_RD – 从外围寄存器读取} \label{subsection:REG_RD}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,9,18,22,23,27,28,31} \\
+        \bitbox{4}{4'd2} & \bitbox{5}{High} & \bitbox{5}{Low} & \bitbox{8}{} & \bitbox{10}{Addr}
+    \end{bytefield}
+    \caption{指令类型 - REG\_RD}
+    \label{figure:REG_RD}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:REG_RD} \\
+\textit{Addr} & 外围设备寄存器地址，单位为 32 位字 \\
+\textit{High} & 寄存器结束位 \\
+\textit{Low} & 寄存器开始位
+\end{tabular}
+
+\textbf{描述}
+
+该指令可以从外围从机寄存器中读取最高 16 位的内容，并存入通用寄存器 R0。
+
+~
+\begin{centering}
+    R0 = REG[Addr][High:Low] \\
+\end{centering}
+~\\
+如需读取的内容超过 16 位，即 \textit{High} - \textit{Low} + 1 > 16，则该指令将返回 [Low+15:Low] 的内容。
+
+\textbf{注意：}
+\begin{itemize}
+    \item 该指令可访问 RTC\_CNTL、RTC\_IO、SENS 及 RTC\_I2C 外围设备中的寄存器。ULP 协处理器可通过相同寄存器在 DPORT 总线上的地址，计算外围寄存器的地址，具体方式见下：
+
+    ~
+    \begin{centering}
+        addr\_ulp = (addr\_dport - DR\_REG\_RTCCNTL\_BASE) / 4 \\
+    \end{centering}
+    ~
+
+    \item \textit{addr\_ulp} 以 32 位字（而非字节）为单位，0 可投射至 DR\_REG\_RTCCNTL\_BASE（从主 CPU 的角度）。因此，10 位 ULP 协处理器的地址可覆盖外围寄存器空间的 4096 字节，包括 DR\_REG\_RTCCNTL\_BASE、DR\_REG\_RTCIO\_BASE、DR\_REG\_SENS\_BASE 及 DR\_REG\_RTC\_I2C\_BASE 区域。
+\end{itemize}
+
+
+\subsection{REG\_WR – 写入外围寄存器} \label{subsection:REG_WR}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}{32}
+        \bitheader[bitformatting={\scriptsize}]{0,9,10,17,18,22,23,27,28,31} \\
+        \bitbox{4}{4'd1} & \bitbox{5}{High} & \bitbox{5}{Low} & \bitbox{8}{Data} & \bitbox{10}{Addr}
+    \end{bytefield}
+    \caption{指令类型 - REG\_WR}
+    \label{figure:REG_WR}
+\end{figure}
+
+\begin{tabular}{ l l }
+\textbf{Operand} & \textbf{描述} - 见图 \ref{figure:REG_WR} \\
+\textit{Addr} & 目标寄存器地址，单位为 32 位字 \\
+\textit{High} & 寄存器结束位 \\
+\textit{Low} & 寄存器开始位 \\
+\textit{Data} & 需写入的值，8 位数
+\end{tabular}
+
+\textbf{描述}
+
+该指令可以向外设寄存器写入一个 8 位立即值 (Data)。
+
+~
+\begin{centering}
+    REG[Addr][High:Low] = Data \\
+\end{centering}
+~\\
+如需写入的内容超过 8 位，即 \textit{High} - \textit{Low} + 1 > 8，则该指令会给 8 位以上的内容填充 0。
+
+\textbf{注意：}
+
+有关 \textit{addr\_ulp} 的内容，请见 \ref{subsection:REG_RD}。
+
+
+\section{ULP 协处理器程序的执行}\label{ULP Program Execution}
+
+ULP 协处理器经过专门设计，可独立于主 CPU 运行，无论后者是否处于 Deep-sleep 模式。
+
+在典型场景中，为了降低功耗，系统可使主 CPU 进入 Deep-sleep 状态，而利用 ULP 协处理器进行必要操作。为了进一步降低功耗，ULP 协处理器自身也可以进入睡眠模式。在这种情况下，由于无法运行任何软件程序，因此系统配备了 1 个特殊的硬件计时器，可用于唤醒 ULP 协处理器。该硬件计时器必须提前进行配置，并在 5 个存储了不同唤醒周期的 \hyperref[regdesc:SENSULPCPSLEEPCYCnREG]{SENS\_ULP\_CP\_SLEEP\_CYC\textcolor{red}{\it{n}}\_REG} 寄存器中进行选择。主 CPU 和 ULP 协处理器程序均可通过 \hyperref[subsection:REG_WR]{REG\_WR} 和 \hyperref[subsection:SLEEP]{SLEEP} 指令进行相关设置。接着，系统可通过设置 RTC\_CNTL\_STATE0\_REG 寄存器中的 RTC\_CNTL\_ULP\_CP\_SLP\_TIMER\_EN 位，启动 ULP 协处理器计时器。
+
+ULP 协处理器可通过执行 \hyperref[subsection:HALT]{HALT} 指令进入睡眠状态，这也将同时触发 ULP 协处理器的硬件计时器 RTC\_SLOW\_CLK 开始统计时钟数（默认状态下，来自内部的 150 kHz RC 振荡器）。计时器一旦到期，ULP 协处理器将上电并通过存储在 SENS\_PC\_INIT 中的 PC 启动。上述信号与寄存器之间的关系可见图 \ref {figure:ULP-program-control}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{./01-ULP/figures/ulp-exec-control.eps}
+    \caption{ULP 协处理器程序框图}
+    \label{figure:ULP-program-control}
+\end{figure}
+
+复位和上电瞬间，ULP 协处理器程序仅会在 ULP 计时器的默认周期 \hyperref[regdesc:SENSULPCPSLEEPCYCnREG]{SENS\_ULP\_CP\_SLEEP\_CYC0\_REG} 过期后启动。
+
+ULP 协处理器程序的运行顺序示例可见图 \ref {figure:ULP-sample-sequence}，其中具体步骤包括：
+
+\begin{enumerate}
+    \item 软件通过 RTC\_CNTL\_ULP\_CP\_SLP\_TIMER\_EN 位启动 ULP 计时器。
+    \item ULP 计时器过期，ULP 协处理器开始从 PC = SENS\_PC\_INIT 处运行程序。
+    \item 执行 HALT 指令，ULP 程序停止运行，ULP 计时器再次启动。
+    \item 执行 SLEEP 指令，修改睡眠计时器周期寄存器。
+    \item ULP 协处理器程序或软件通过 RTC\_CNTL\_ULP\_CP\_SLP\_TIMER\_EN 位，关闭 ULP 协处理器计时器。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{./01-ULP/figures/ulp-exec-control-flow.eps}
+    \caption{ULP 协处理器程序流控图}
+    \label{figure:ULP-sample-sequence}
+\end{figure}
+
+ULP 协处理器唤醒、执行程序和睡眠的具体时序由 ULP FSM 控制，具体为：
+\begin{enumerate}
+    \item ULP 计时器过期时，FSM 唤醒 ULP 协处理器，这个过程持续两个时钟周期。
+    \item ULP 协处理器程序执行之前，FSM 等待 \hyperref[regdesc:RTCCNTLTIMER2REG]{RTC\_CNTL\_TIMER2\_REG} 寄存器中 \hyperref[RTCCNTLULPCPTOUCHSTARTWAIT]{RTC\_CNTL\_ULPCP\_TOUCH\_START\_WAIT} 设置的若干个时钟周期，这个过程是为了等待 8 MHz 时钟状态稳定。
+    \item ULP 协处理器程序执行。
+    \item 调用 HALT 指令后，ULP 协处理器程序执行停止。FSM 还需要两个时钟周期来使 ULP 协处理器进入睡眠状态。
+\end{enumerate}
+
+\section{RTC\_I2C 控制器} \label{subsection:RTC_I2C-Controller}
+
+ULP 协处理器可使用 1 款位于 RTC 域的独立 I2C 控制器，与外部 I2C 从机进行通信。与 I2C0 / I2C1 外围设备相比，RTC\_I2C 的功能集相对有限。
+
+
+\subsection{配置 RTC\_I2C}
+
+ULP 协处理器在正常使用 I2C 指令之前必须配置 RTC\_I2C 中的特定参数，可通过某主 CPU 或 ULP 协处理器本身运行程序完成，具体即向 RTC\_I2C 寄存器写入特定计时参数。
+
+\begin{enumerate}
+    \item 通过 \hyperref[regdesc:RTCI2CSCLLOWPERIODREG]{RTC\_I2C\_SCL\_LOW\_PERIOD\_REG} 和 \hyperref[regdesc:RTCI2CSCLHIGHPERIODREG]{RTC\_I2C\_SCL\_HIGH\_PERIOD\_REG} 设置 RTC\_FAST\_CLK 周期中 SCL 时钟的高低电平宽度和周期（例，频率为 100 kHz时，设置 RTC\_I2C\_SCL\_LOW\_PERIOD = 40、 RTC\_I2C\_SCL\_HIGH\_PERIOD = 40）。
+    \item 通过 RTC\_FAST\_CLK 中的 \hyperref[regdesc:RTCI2CSDADUTYREG]{RTC\_I2C\_SDA\_DUTY\_REG} 设置 SDA 切换前等待的周期数（例，RTC\_I2C\_SDA\_DUTY=16）。
+    \item 通过 \hyperref[regdesc:RTCI2CSCLSTARTPERIODREG]{RTC\_I2C\_SCL\_START\_PERIOD\_REG} 设置启动信号后的等待时间（例，RTC\_I2C\_SCL\_START\_PERIOD = 30）。
+    \item 通过 \hyperref[regdesc:RTCI2CSCLSTOPPERIODREG]{RTC\_I2C\_SCL\_STOP\_PERIOD\_REG} 设置停止信号前的等待时间（例，RTC\_I2C\_SCL\_STOP\_PERIOD = 44）。
+    \item 通过 \hyperref[regdesc:RTCI2CTIMEOUTREG]{RTC\_I2C\_TIMEOUT\_REG} 设置通信超时参数（例，RTC\_I2C\_TIMEOUT = 200）。
+    \item 通过 \hyperref[regdesc:RTCI2CCTRLREG]{RTC\_I2C\_CTRL\_REG} 中的 RTC\_I2C\_MS\_MODE 位启动主机模式。
+    \item 将外部从机的地址写入 \hyperref[regdesc:SENSSARSLAVEADDR1REG]{SENS\_I2C\_SLAVE\_ADDR\textcolor{red}{\it{n}}} (\textcolor{red}{\it{n}}: 0-7)，最多可通过这种方式预编程 8 个从机地址。此后，可为每次通信选择 1 个上述地址，共同组成协处理器 I2C 指令。
+\end{enumerate}
+
+完成上述 RTC\_I2C 配置后，即可使用 \hyperref[subsection:I2C]{I2C\_RD / I2C\_WR – 读/写 I2C} 指令。
+
+
+\subsection{使用 RTC\_I2C}
+
+ULP 协处理器的 2 个指令集（采用同 1 个 OpCode）均可使用 RTC\_I2C  控制器：I2C\_RD （读） 和 I2C\_WR （写），详见 \hyperref[subsection:I2C]{I2C\_RD / I2C\_WR – 读/写 I2C} 章节。
+
+
+\subsubsection{I2C\_RD - 读取单个字节}
+
+I2C\_RD 指令的执行步骤如下，见图 \ref{figure:I2C-read-operation}：
+
+\begin{enumerate}
+    \item 主机发送启动信号。
+    \item 主机发送命令字节，包括从机地址和读/写控制位（此时，读/写控制位置为 0，代表“写”）。从机地址可从 \hyperref[regdesc:SENSSARSLAVEADDR1REG]{SENS\_I2C\_SLAVE\_ADDR\textcolor{red}{\it{n}}} 中获取，其中寄存器的具体选择可通过 \hyperref[subsection:I2C]{I2C\_RD} 设置。
+    \item 从机发送应答信号。
+    \item 主机发送从机寄存器地址，其中寄存器的具体选择可通过 \hyperref[subsection:I2C]{I2C\_RD} 设置。
+    \item 从机发送应答信号。
+    \item 主机发送重复启动信号。
+    \item 主机发送从机地址，其中读/写控制位置为 1，代表“读”。
+    \item 从机发送 1 个字节的数据。
+    \item 主机发送非应答信号。
+    \item 主机发送停止信号，结束读取。
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}[bitwidth=1em]{}
+        \bitbox[]{5}{} & \bitbox[]{2}{1} & \bitbox[]{8}{2} & \bitbox[]{1}{3} & \bitbox[]{8}{4} & \bitbox[]{1}{5} & \bitbox[]{2}{6} & \bitbox[]{8}{7} & \bitbox[]{8}{8} & \bitbox[]{1}{9} & \bitbox[]{2}{10} \\
+        \bitbox[]{5}{\textbf{Master}} & \bitbox{2}{\rotatebox{90}{\tiny START}} & \bitbox{8}{Slave Address W} & \bitbox{1}{} & \bitbox{8}{Reg Address} & \bitbox{1}{} & & \bitbox{2}{\rotatebox{90}{\tiny RSTRT}} \bitbox{8}{Slave Address R} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny NACK}} & \bitbox{2}{\rotatebox{90}{\tiny STOP}} \\
+        \bitbox[]{5}{\textbf{Slave}} & \bitbox{2}{} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny ACK}} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny ACK}} & \bitbox{2}{} & \bitbox{8}{} & \bitbox{8}{Data} & \bitbox{1}{} & \bitbox{2}{}
+    \end{bytefield}
+    \caption{I2C 读操作}
+    \label{figure:I2C-read-operation}
+\end{figure}
+
+\textbf{注意：} \\
+RTC\_I2C 控制器外围设备会对 SCL 时钟下降沿上的 SDA 信号进行采样。如果从机的 SDA 信号在约 0.38 ms 内发生改变，主机则将接收到不正确的数据。
+
+从机接收到的字节将存储在 R0 寄存器中。
+
+
+\subsubsection{I2C\_WR - 写入单个字节}
+
+I2C\_WR 指令的执行步骤如下，见图 \ref{figure:I2C-write-operation}：
+
+\begin{enumerate}
+    \item 主机发送开始信号。
+    \item 主机发送命令字节，包括从机地址和读/写控制位（此时，读/写控制位置为 0，代表“写”）。从机地址可从 \hyperref[regdesc:SENSSARSLAVEADDR1REG]{SENS\_I2C\_SLAVE\_ADDR\textcolor{red}{\it{n}}} 中获取，其中寄存器的具体选择可通过 \hyperref[subsection:I2C]{I2C\_WR} 设置。
+    \item 从机发送应答信号。
+    \item 主机发送从机寄存器地址，其中寄存器的具体选择可通过 \hyperref[subsection:I2C]{I2C\_WR} 设置。
+    \item 从机发送应答信号。
+    \item 主机发送重复启动信号。
+    \item 主机发送从机地址，其中读/写位置为 0，代表“写”。
+    \item 主机发送 1 个字节的数据。
+    \item 从机发送应答信号。
+    \item 主机发送停止信号，结束写入。
+\end{enumerate}
+
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}[bitwidth=1em]{}
+        \bitbox[]{5}{} & \bitbox[]{2}{1} & \bitbox[]{8}{2} & \bitbox[]{1}{3} & \bitbox[]{8}{4} & \bitbox[]{1}{5} & \bitbox[]{2}{6} & \bitbox[]{8}{7} & \bitbox[]{8}{8} & \bitbox[]{1}{9} & \bitbox[]{2}{10} \\
+        \bitbox[]{5}{\textbf{Master}} & \bitbox{2}{\rotatebox{90}{\tiny START}} & \bitbox{8}{Slave Address W} & \bitbox{1}{} & \bitbox{8}{Reg Address} & \bitbox{1}{} & & \bitbox{2}{\rotatebox{90}{\tiny RSTRT}} \bitbox{8}{Slave Address W} & \bitbox{8}{Data} & \bitbox{1}{} & \bitbox{2}{\rotatebox{90}{\tiny STOP}} \\
+        \bitbox[]{5}{\textbf{Slave}} & \bitbox{2}{} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny ACK}} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny ACK}} & \bitbox{2}{} & \bitbox{8}{} & \bitbox{8}{} & \bitbox{1}{\rotatebox{90}{\tiny ACK}} & \bitbox{2}{}
+    \end{bytefield}
+    \caption{I2C 写操作}
+    \label{figure:I2C-write-operation}
+\end{figure}
+
+\subsubsection{检测错误条件} \label{paragraph:ULP-detecting-errors}
+
+
+ULP 协处理器指令 I2C\_RD 和 I2C\_WR 不会通过寄存器报告从机 NACK 等错误条件。相反，应用程序可以通过查询 \hyperref[regdesc:RTCI2CINTSTREG]{RTC\_I2C\_INT\_ST\_REG} 寄存器中的特定位，判断指令是否成功执行。为了检查特定的通信活动，\hyperref[regdesc:RTCI2CINTENREG]{RTC\_I2C\_INT\_EN\_REG} 寄存器中的相应位应进行设置。注意，系统位图将移 1。如果检测到特定通信活动，且设置了 \hyperref[regdesc:RTCI2CINTSTREG]{RTC\_I2C\_INT\_ST\_REG} 寄存器，则可通过 \hyperref[regdesc:RTCI2CINTCLRREG]{RTC\_I2C\_INT\_CLR\_REG} 寄存器清零。
+
+\subsubsection{连接 I2C 信号}\label{Connecting I2C Signals}
+
+SDA 和 SCL 时钟信号可通过配置 \hyperref[regdesc:RTCIOSARI2CIOREG]{RTCIO\_SAR\_I2C\_IO\_REG} 寄存器，连接至 2 个 GPIO 管脚（共 4 个），详细定义请见章节 \hyperref[mod:iomuxgpio]{\it{IO\_MUX 和 GPIO 交换矩阵}}中的表 \hyperref[table:rtcmux pads]{\it{RTC\_MUX 管脚清单}}。
+
+\hypertarget{ulp-reg-summ}{}
+\section{寄存器列表}
+
+\subsection{SENS\_ULP 地址空间}\label{sec:sens-ulp-reg-summ}
+
+\subfile{\modulefiles/ULP-Coprocessor_sens_ulp_reg_summary_cn}
+
+\subsection{RTC\_I2C 地址空间}
+
+\label{subsection:RTC_I2C-register-summary}
+\subfile{\modulefiles/ULP-Coprocessor_rtc_i2c_reg_summary_cn}
+
+\textbf{注意：} \\
+来自 RTC\_I2C 控制器的中断暂时尚未连接，以上中断寄存器仅用于\hyperref[paragraph:ULP-detecting-errors]{调试}目的。
+
+\clearpage
+\section{寄存器}
+
+\subsection{SENS\_ULP 地址空间}
+本小节括号中的地址均为相对于 (RTC 基地址 + 0x0800) 的地址偏移量（相对地址）。RTC 基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。寄存器绝对地址见章节 \ref{sec:sens-ulp-reg-summ} \textit{\nameref{sec:sens-ulp-reg-summ}}。
+
+
+\begin{longtable}{ | m{6cm} | m{5.5cm} | m{2cm} | m{1.5cm} | }
+\hline\rowcolor{lightgray}
+名称 & 描述 &  地址 & 访问类型 \\ \hline
+\multicolumn{4}{|l|}{\textbf{RTC I2C 控制寄存器}} \\ \hline
+\hyperref[regdesc:RTCI2CCTRLREG]{RTC\_I2C\_CTRL\_REG} & 传输设置 & 0x3FF48C04 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CDEBUGSTATUSREG]{RTC\_I2C\_DEBUG\_STATUS\_REG} & 调试状态 & 0x3FF48C08 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CTIMEOUTREG]{RTC\_I2C\_TIMEOUT\_REG} & 超时设置 & 0x3FF48C0C & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CSLAVEADDRREG]{RTC\_I2C\_SLAVE\_ADDR\_REG} & 本地从设备地址设置 & 0x3FF48C10 & 读/写 \\ \hline
+\multicolumn{4}{|l|}{\textbf{RTC I2C 信号设置寄存器}} \\ \hline
+\hyperref[regdesc:RTCI2CSDADUTYREG]{RTC\_I2C\_SDA\_DUTY\_REG} & 配置 SCL 下降沿后的 SDA 保持时间 & 0x3FF48C30 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CSCLLOWPERIODREG]{RTC\_I2C\_SCL\_LOW\_PERIOD\_REG} & 配置 SCL 时钟的低电平宽度 & 0x3FF48C00 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CSCLLOWPERIODREG]{RTC\_I2C\_SCL\_HIGH\_PERIOD\_REG} & 配置 SCL 时钟的高电平宽度 & 0x3FF48C38 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CSCLSTARTPERIODREG]{RTC\_I2C\_SCL\_START\_PERIOD\_REG} & 配置开始条件下，SDA 与 SCL 下降沿之间的延迟 & 0x3FF48C40 & 读/写 \\ \hline
+
+\hyperref[regdesc:RTCI2CSCLSTOPPERIODREG]{RTC\_I2C\_SCL\_STOP\_PERIOD\_REG} & 配置停止条件下，SDA 与 SCL 下降沿之间的延迟 & 0x3FF48C44 & 读/写 \\ \hline
+\multicolumn{4}{|l|}{\textbf{RTC I2C 中断寄存器 - 仅用于调试目的}} \\ \hline
+\hyperref[regdesc:RTCI2CINTCLRREG]{RTC\_I2C\_INT\_CLR\_REG} & 清除 I2C 通信活动状态 & 0x3FF48C24 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CINTENREG]{RTC\_I2C\_INT\_EN\_REG} & 开始捕捉 I2C 通信状态活动 & 0x3FF48C28 & 读/写 \\ \hline
+\hyperref[regdesc:RTCI2CINTSTREG]{RTC\_I2C\_INT\_ST\_REG} & 捕捉 I2C 通信活动的状态 & 0x3FF48C2C & 只读 \\ \hline
+\end{longtable}
+\subfile{\modulefiles/ULP-Coprocessor_sens_ulp_reg_cn}
+
+\subsection{RTC\_I2C 地址空间}
+本小节括号中的地址均为相对于 (RTC 基地址 + 0x0C00) 的地址偏移量（相对地址）。RTC 基地址见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{table:Peripheral_Address_Mapping} \textit{外设地址映射}。寄存器绝对地址见章节 \ref{subsection:RTC_I2C-register-summary} \textit{\nameref{subsection:RTC_I2C-register-summary}}。
+\subfile{\modulefiles/ULP-Coprocessor_rtc_i2c_reg_cn}
+
+\end{document}

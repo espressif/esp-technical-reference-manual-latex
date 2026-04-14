@@ -1,0 +1,359 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./09-BOOTCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{bootctrl}{}
+\chapter{芯片 Boot 控制}
+\label{mod:bootctrl}
+
+\section{概述}
+
+芯片启动过程以及芯片的某些功能是在上电或硬件复位时由 strapping 管脚和一些 eFuse 来确定的，具体包括以下功能：
+
+
+\begin{itemize}
+    \item \textbf{控制 Boot 模式}
+    \begin{itemize}
+        \item strapping 管脚：GPIO8 和 GPIO9
+    \end{itemize}
+    \item \textbf{SDIO 输入采样沿和输出驱动沿控制}
+        \begin{itemize}
+            \item Strapping 管脚：MTDI 和 MTMS
+        \end{itemize}%
+    \item \textbf{控制 ROM 日志输出到 UART0/USB}
+    \begin{itemize}
+        \item strapping 管脚: GPIO8
+        \item eFuse 参数：EFUSE\_UART\_PRINT\_CONTROL 和 EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT
+    \end{itemize}
+    \item \textbf{控制 JTAG 信号源}
+    \begin{itemize}
+        \item strapping 管脚：GPIO7
+        \item eFuse 参数：
+            EFUSE\_DIS\_PAD\_JTAG、EFUSE\_DIS\_USB\_JTAG 和 EFUSE\_JTAG\_SEL\_ENABLE
+    \end{itemize}
+\end{itemize}
+
+上述 eFuse 位的默认值均为 0，也就是说没有烧写过。eFuse 只能烧写一次，一旦烧写为 1，便不能恢复为 0。有关烧写 eFuse 的信息，请参考章节 \ref{mod:efuse} \textit{\nameref{mod:efuse}}。
+
+在上电复位和欠压复位过程中（请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}），硬件将采样 strapping 管脚电平存储到锁存器中，并一直保持到芯片掉电或下一次芯片复位。strapping 管脚的锁存值可以通过软件从寄存器 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 中读取。
+
+
+\section{功能描述}
+本小节主要介绍芯片复位时的功能以及控制该功能使用到的 strapping 管脚和 eFuse 组合模式。
+
+\begin{importantlisting}\\
+请使用本章节所介绍的组合，其它组合可能会导致不可控结果。
+\end{importantlisting}
+
+\subsection{默认配置}
+
+GPIO9 默认连接内部上拉电阻。如果这一管脚没有外部连接或者连接的外部线路处于高阻抗状态，内部弱上拉将决定这一管脚输入电平的默认值，如表 \ref{tab:bootctrl-default-config-strapping-pins} 所示。
+
+\begin{longtable}[c]{|p{1.5cm}|c|}
+\caption{管脚默认上拉/下拉}
+\label{tab:bootctrl-default-config-strapping-pins} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{管脚} & \textbf{默认值} \\ \hline
+  \textbf{MTMS} & 浮空 \\ \hline
+  \textbf{MTDI} & 浮空 \\ \hline
+  \textbf{GPIO7} & 浮空 \\ \hline
+  \textbf{GPIO8} & 浮空 \\ \hline
+  \textbf{GPIO9} & 上拉 \\ \hline
+\end{longtable}
+
+如需改变 strapping 管脚的默认值，用户可以应用外部下拉/上拉电阻，或者应用主机 MCU 的 GPIO 来控制 \chipname{} 上电复位时的 strapping 管脚电平。复位释放后，strapping 管脚和普通管脚功能相同。
+
+
+\subsection{Boot 模式控制} \label{sec:bootModeControl}
+
+
+复位释放后，GPIO9 和 GPIO8 共同控制 Boot 模式。表 \ref{tab:bootctrl-boot-mode-control} 列出了 GPIO9 和 GPIO8 的 strapping 值及其对应的系统启动模式。
+
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] x：任何取值均不会对结果有影响，因此可忽略。
+    \item[2] Joint Download Boot 模式：Joint Download Boot 模式下支持以下下载方式：
+    \begin{itemize}
+        \item USB-Serial-JTAG Download Boot
+        \item UART Download Boot
+        \item SDIO Slave 2.0 Download Boot
+    \end{itemize}
+
+\end{TableNotes}
+\begin{longtable}[c]{|p{10cm}|c|c|}
+\caption{系统启动模式}
+\label{tab:bootctrl-boot-mode-control} \\
+    \hline
+    \rowcolor{lightgray}
+  \textbf{启动模式} & \textbf{GPIO9} & \textbf{GPIO8} \\ \hline  
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+  SPI Boot 模式 & 1 & x\tnote{1}  \\ \hline 
+  Joint Download Boot 模式\tnote{2} & 0 & 1   \\ \hline
+
+\end{longtable}
+\end{ThreePartTable}
+
+
+在 \textbf{SPI Boot 模式}下，ROM 引导加载程序通过从 SPI flash 中读取程序来启动系统。SPI Boot 模式可进一步细分为以下两种启动方式：
+
+\begin{itemize}
+    \item \textbf{常规 flash 启动方式}：支持安全启动，ROM 引导加载程序将程序从 flash 加载到 SRAM 并执行。在大多数实际应用场景中，上述执行的程序多为二级引导程序，该二级引导程序将启动最终的应用程序。
+    \item \textbf{直接启动方式}：不支持安全启动，程序直接从 flash 中运行。如需使能这一启动方式，请确保下载至 flash 的 bin 文件其前两个字为 0xaedb041d。详细的启动流程，见图 \ref{fig:boot_flow}。
+\end{itemize}
+
+
+在 \textbf{Joint Download Boot 模式}下，用户可通过 UART0 、USB 或 SDIO Slave 接口将二进制文件下载至 flash，或将二进制文件下载至 SRAM 并运行 SRAM 中的程序。
+
+
+
+芯片启动的具体流程见图 \ref{fig:boot_flow}。
+
+
+\begin{figure}[H]
+    \centering
+    {\includegraphics[width=1.2\textwidth]{\modulefiles/figures/boot_flow_250526.eps}}\\
+    \caption{芯片启动流程}
+    \label{fig:boot_flow}
+\end{figure}
+
+\begin{importantlisting}
+    图中“Strapping Value”、“1xxx”和 “01xx”是 GPIO9、GPIO8 的组合值，见表 \ref{tab:bootctrl-boot-mode-control}。
+\end{importantlisting}
+
+下面几个 eFuse 可用于控制启动模式的具体行为：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDISFORCEDOWNLOAD]{\textbf{EFUSE\_DIS\_FORCE\_DOWNLOAD}}
+    \begin{itemize}
+        \item 如果此 eFuse 设置为 0（默认），软件可通过设置 \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT}，触发 CPU 复位，将芯片启动模式强制从 SPI Boot 模式切换至 Joint Download Boot 模式。这种情况下，硬件会将寄存器 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING}[3:2] 的值从 "1x" 覆盖为 "01"；
+    
+        \item 如果此 eFuse 设置为 1，则禁用 \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT}，寄存器 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值不受影响 。 
+    \end{itemize}
+    
+    \item \hyperref[fielddesc:EFUSEDISDOWNLOADMODE]{\textbf{EFUSE\_DIS\_DOWNLOAD\_MODE}}
+
+    如果此 eFuse 设置为 1，则禁用 Joint Download Boot 模式，寄存器 \hyperref[fielddesc:GPIOSTRAPPING]{GPIO\_STRAPPING} 的值则不受 \hyperref[fielddesc:LPAONFORCEDOWNLOADBOOT]{LP\_AON\_FORCE\_DOWNLOAD\_BOOT} 的影响。
+    
+    \item \hyperref[fielddesc:EFUSEENABLESECURITYDOWNLOAD]{\textbf{EFUSE\_ENABLE\_SECURITY\_DOWNLOAD}}
+
+    如果此 eFuse 设置为 1，则在 Joint Download Boot 模式下，只允许读取、写入和擦除明文 flash，不支持 SRAM 或寄存器操作。如已禁用 Joint Download Boot 模式，请忽略此 eFuse。
+    \item \hyperref[fielddesc:EFUSEDISDIRECTBOOT]{\textbf{EFUSE\_DIS\_DIRECT\_BOOT}}
+
+    如果此 eFuse 设置为 1，则禁用 Direct Boot 模式。
+\end{itemize}
+
+USB Serial/JTAG 控制器可将芯片从 SPI Boot 模式强制切换到 Joint Download Boot 模式，或从 Joint Download Boot 模式强制切换到 SPI Boot 模式。更多信息，请参考章节 \ref{mod:usbserialjtag} \textit{\nameref{mod:usbserialjtag}}。
+
+
+\subsection{SDIO 输入采样沿和输出驱动沿控制}
+
+MTMS 和 MTDI 管脚可用于调节 SDIO 输入采样沿和输出驱动沿。详见表 \ref{tab:bootctrl-sdio-input-output-edge-control} \textit{\nameref{tab:bootctrl-sdio-input-output-edge-control}}。
+
+\begin{table}[H]
+    \centering
+    \caption{SDIO 输入采样沿/输出驱动沿控制}
+    \label{tab:bootctrl-sdio-input-output-edge-control}
+
+    \begin{threeparttable}
+        \begin{tabular}{ | p{4.5cm} | c | c | }
+        \hline
+            \rowcolor{lightgray}
+            \textbf{沿控制} & \textbf{MTMS\tnote{1}} & \textbf{MTDI\tnote{1}} \\\hline
+            下降沿采样下降沿输出 & 0 & 0 \\\hline
+            下降沿采样上升沿输出 & 0 & 1 \\\hline
+            上升沿采样下降沿输出 & 1 & 0 \\\hline
+            上升沿采样上升沿输出 & 1 & 1 \\\hline
+         \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] MTMS 和 MTDI 默认浮空，以上均非默认配置。
+        \end{tablenotes}
+     \end{threeparttable}
+\end{table}
+
+
+\subsection{ROM 代码日志打印控制}
+
+系统在 SPI flash 启动模式下的 ROM 引导阶段，GPIO8、\hyperref[regdesc:LPAONSTORENREG]{LP\_AON\_STORE4\_REG}[0] 与 \hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\_PRINT\_CONTROL} 一起控制 ROM 代码日志打印。
+
+
+
+\begin{table}[H]
+    \centering
+    \caption{ROM 代码日志打印控制}
+    \label{tab:bootctrl-rom-code-printing-control}
+    \begin{threeparttable}
+    \begin{tabular}{ |p{2.8cm}<{\centering}|p{3cm}<{\centering}|p{1.3cm}<{\centering}|p{5cm}|}
+    \hline
+        \rowcolor{lightgray}
+    \textbf{\hyperref[regdesc:LPAONSTORENREG]{LP\_AON\newline\_STORE4\_REG}[0]} &   \textbf{\hyperref[fielddesc:EFUSEUARTPRINTCONTROL]{EFUSE\_UART\newline\_PRINT\_CONTROL}} &   \textbf{GPIO8}      & \textbf{ROM 代码日志打印} \\\hline
+    \multirow{6}*{0}   & 0(0b00) &  x\tnote{1}  & ROM 代码日志始终打印至 UART0\\\cline{2-4}
+     & \multirow{2}*{1(0b01)}   & 0     & 使能 \\\cline{3-4}
+      & & 1       & 关闭 \\\cline{2-4}
+     & \multirow{2}*{2(0b10)}   & 0     & 关闭 \\\cline{3-4}
+      & & 1       & 使能 \\\cline{2-4}
+      & 3(0b11) &  x  & 关闭\\\hline
+     1 & x & x & 关闭\\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] x: 任何取值均不会对结果有影响，因此可忽略。
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+
+ROM 代码日志上电默认打印至 UART0 和 USB Serial/JTAG 控制器，可通过置位\hyperref[fielddesc:EFUSEDISUSBSERIALJTAGROMPRINT]{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT} 禁用 USB Serial/JTAG 控制器打印。
+
+注意：在 \hyperref[fielddesc:EFUSEDISUSBSERIALJTAGROMPRINT]{EFUSE\_DIS\_USB\_SERIAL\_JTAG\_ROM\_PRINT} 设置为 0，即可打印至 USB 的情况下，如果 USB Serial/JTAG 控制器已被禁用，则 ROM 代码将无法打印到 USB Serial/JTAG 控制器。
+
+
+\subsection{JTAG 信号源控制}
+
+在系统启动早期阶段，GPIO7 可用于控制 JTAG 信号源。该管脚没有内部上下拉电阻，strapping 的值必须由不处于高阻抗状态的外部电路控制。
+
+GPIO7 与 \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG}、\hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\_USB\_JTAG} 和 \hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\_SEL\_ENABLE} 共同控制 JTAG 信号源，见表 \ref{tab:bootctrl-jtag-signal-src-control}。
+
+
+\begin{table}[H]
+    \centering
+    \caption{JTAG 信号源控制}
+    \label{tab:bootctrl-jtag-signal-src-control}
+    \begin{threeparttable}
+    \begin{tabular}{ | C{2cm} | C{2cm} | C{2.2cm} | C{1.5cm} | l | }
+    \hline
+
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\newline\_PAD\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSEDISUSBJTAG]{EFUSE\_DIS\newline\_USB\_JTAG}} & \textbf{\hyperref[fielddesc:EFUSEJTAGSELENABLE]{EFUSE\_JTAG\newline\_SEL\_ENABLE}} & \textbf{GPIO7} & \textbf{JTAG 信号源} \\\hline
+
+    \multirow{3}*{0} & \multirow{3}*{0} & 0 &  x\tnote{1}  & \multirow{2}*{USB 串口/JTAG 控制器} \\\cline{3-4}
+      &   & \multirow{2}*{1}   & 1     & \\\cline{4-5}
+      &   &                    & 0     & \multirow{3}*{JTAG 管脚 MTDI、MTCK、MTMS 和 MTDO} \\\cline{1-4} 
+    0 & x & x                  & x     & \\\cline{1-4}
+    0 & 1 & x                  & x     &                                                 \\\hline
+    1 & 0 & x                  & x     & USB 串口/JTAG 控制器 \\\hline
+    1 & x & x                  & x     & \multirow{2}*{JTAG 关闭} \\\cline{1-4}
+    1 & 1 & x                  & x     &                         \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] x：x 表示该值被忽略，任何取值不影响该状态。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\end{document}

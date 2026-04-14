@@ -1,0 +1,839 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./17-AES}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{aes}{}
+\chapter{AES Accelerator (AES)}\label{mod:aes}
+
+\section{Introduction}
+
+ESP32-S2 integrates an Advanced Encryption Standard (AES) Accelerator, which is a hardware device that speeds up AES Algorithm significantly, compared to AES algorithms implemented solely in software. The AES Accelerator integrated in ESP32-S2 has two working modes, which are \hyperref[subsection:typicalaes]{Typical AES} and \hyperref[subsection:dma-aes]{DMA-AES}.
+
+\section{Features}
+
+The following functionality is supported:
+\begin{itemize}
+    \item Typical AES working mode
+        \begin{itemize}
+            \item AES-128/AES-192/AES-256 encryption and decryption
+            \item Four variations of key endianness and four variations of text endianness
+        \end{itemize}
+    \end{itemize}
+
+    \begin{itemize}
+    \item DMA-AES working mode
+        \begin{itemize}
+            \item Block mode
+                \begin{itemize}
+                    \item ECB (Electronic Codebook)
+                    \item CBC (Cipher Block Chaining)
+                    \item OFB (Output Feedback)
+                    \item CTR (Counter)
+                    \item CFB8 (8-bit Cipher Feedback)
+                    \item CFB128 (128-bit Cipher Feedback)
+                \end{itemize}
+            \item GCM (Galois/Counter Mode)
+            \item Interrupt on completion of computation
+        \end{itemize}
+    \end{itemize}
+
+\section{Working Modes}
+
+The AES Accelerator integrated in ESP32-S2 has two working modes, which are \hyperref[subsection:typicalaes]{Typical AES} and \hyperref[subsection:dma-aes]{DMA-AES}.
+
+\begin{itemize}
+    \item Typical AES Working Mode: supports AES-128/AES-192/AES-256 encryption and decryption under \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197}. In this working mode, the plaintext and ciphertext is written and read via CPU directly.
+    \item DMA-AES Working Mode: supports block cipher algorithms ECB/CBC/OFB/CTR/CFB8/CFB128 under \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A}, and GCM mode of operation under \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D}. In this working mode, the plaintext and ciphertext is written and read via crypto DMA. An interrupt will be generated when operation completes.
+\end{itemize}
+
+Users can choose the working mode for AES accelerator by configuring the \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} register according to Table \ref{table:AES_DMA_ENABLE} below.
+
+\begin{longtable}[c]{ | c | l | }
+\caption{AES Accelerator Working Mode}
+    \label{table:AES_DMA_ENABLE}
+    \\\hline
+    \rowcolor{lightgray}
+\hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG}       & Working Mode\\
+        \hline
+        0                       & Typical AES    \\
+        \hline
+        1                       & DMA-AES        \\
+        \hline
+\end{longtable}
+
+
+
+For detailed introduction on these two working modes, please refer to Section \ref{subsection:typicalaes} and Section \ref{subsection:dma-aes} below.
+
+\begin{importantlisting}
+\vspace{-0.5em}
+
+    ESP32-S2's \nameref{mod:digsig} and \hyperref[mod:extmemencr]{External Memory Manual Encryption} modules also call the AES accelerator. Therefore, users cannot access the AES accelerator when these modules are working.
+\end{importantlisting}
+
+\section{Typical AES Working Mode}\label{subsection:typicalaes}
+
+In the Typical AES working mode, the AES accelerator is capable of using cryptographic keys of 128, 192, and 256 bits to encrypt and decrypt data, i.e. AES-128/AES-192/AES-256 encryption and decryption. Users can choose the operation type for AES accelerator working in Typical AES working mode by configuring the \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} register according to Table \ref{table:AESOperation} below.
+
+\begin{longtable}[c]{ | c | l | }
+\caption{Operation Type under Typical AES Working Mode}
+\label{table:AESOperation}
+\\\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}[2:0]     & Operation Type\\
+    \hline
+    0                   & AES-128 encryption    \\
+    \hline
+    1                   & AES-192 encryption    \\
+    \hline
+    2                   & AES-256 encryption    \\
+    \hline
+    4                   & AES-128 decryption    \\
+    \hline
+    5                   & AES-192 decryption    \\
+    \hline
+    6                   & AES-256 decryption    \\
+    \hline
+\end{longtable}
+
+Users can check the working status of the AES accelerator by inquiring the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} register and comparing the return value against the Table \ref{table:AESStateValue-aes} below.
+
+\begin{longtable}[c]{ | c | l | l| }
+\caption{Working Status under Typical AES Working Mode}
+\label{table:AESStateValue-aes}
+\\\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} & Status &  Description \\ \hline
+
+    0                   & IDLE      &   The AES accelerator is idle or completed operation.\\ \hline
+    1                   & WORK      &   The AES accelerator is in the middle of an operation.     \\ \hline
+\end{longtable}
+
+In the Typical AES working mode, the AES accelerator requires 11 \verb+~+ 15 clock cycles to encrypt a message block, and 21 or 22 clock cycles to decrypt a message block.
+
+
+\subsection{Key, Plaintext, and Ciphertext}
+
+The encryption or decryption key is stored in \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}, which is a set of eight 32-bit registers.
+
+\begin{itemize}
+    \item For AES-128 encryption/decryption, the 128-bit key is stored in \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG} \verb+~+ \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}.
+    \item For AES-192 encryption/decryption, the 192-bit key is stored in \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG} \verb+~+ \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}.
+    \item For AES-256 encryption/decryption, the 256-bit key is stored in \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG} \verb+~+ \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}.
+\end{itemize}
+
+The plaintext and ciphertext are stored in \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} and \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG}, which are two sets of four 32-bit registers.
+
+\begin{itemize}
+    \item For AES-128/AES-192/AES-256 encryption, the \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} registers are initialized with plaintext. Then, the AES Accelerator stores the ciphertext into \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} after operation.
+    \item For AES-128/AES-192/AES-256 decryption, the \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} registers are initialized with ciphertext. Then, the AES Accelerator stores the plaintext into \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} after operation.
+\end{itemize}
+
+
+\subsection{Endianness}
+
+\textbf{Text Endianness}
+
+In Typical AES working mode, the AES Accelerator uses cryptograohic keys to encrypt and decrypt data in blocks of 128 bits. The Bit 2 and Bit 3 of the \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} register define the endianness of input text, while the Bit 4 and Bit 5 define the endianness of output text. To be more specific, Bit 2 and Bit 4 control how the four bytes are stored in each word, and Bit 3 and Bit 5 control how the four words are stored in each message block.
+
+Users can choose one of the four text endianness types provided by the AES Accelerator by configuring the \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} register. Details can been seen in Table \ref{table:TypicalAESPlaintextCiphertextEndian}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{tiny}
+\begin{longtable}[c]
+{|m{1.8cm}|m{1.8cm}|p{0.3cm}|p{0.3cm}|p{2.2cm}|p{2.2cm}|p{2.2cm}|p{2.2cm}|}
+\caption{Text Endianness Types for Typical AES}
+\label{table:TypicalAESPlaintextCiphertextEndian}\\
+\hline
+\rowcolor{lightgray}
+Word Endian Controlling Bit & Byte Endian Controlling Bit & \multicolumn{6}{c|}{Plaintext/Ciphertext$^2$} \\\hline
+\endhead
+\endfoot
+\multirow{6}{4cm}{0} &\multirow{6}{4cm}{0} &\multicolumn{2}{c|}{\multirow{2}{*}{State$^1$}} &\multicolumn{4}{c|}{c}\\\cline{5-8}
+&&\multicolumn{2}{c|}{} & 0 & 1 & 2 & 3\\\cline{3-8}
+&&\multirow{4}{*}{r} & 0 &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[31:24]  &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[31:24]   &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[31:24]   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[31:24]\\
+\cline{4-8}
+&& &1       &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[23:16]\\
+\cline{4-8}
+&& &2   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[15:8]     &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[15:8]\\
+\cline{4-8}
+&& &3   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[7:0]\\
+\hline
+\multirow{6}{4cm}{0}    &   \multirow{6}{4cm}{1}    &\multicolumn{2}{c|}{\multirow{2}{*}{State}}    &\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{}     &   \multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[7:0] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[7:0]\\
+\cline{4-8}
+&& &1       &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[15:8]     &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[15:8]\\
+\cline{4-8}
+&& &2   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[23:16]\\
+\cline{4-8}
+&& &3   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[31:24]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[31:24]    & \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[31:24]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[31:24]\\
+\hline
+\multirow{6}{4cm}{1}    &   \multirow{6}{4cm}{0}    &\multicolumn{2}{c|}{\multirow{2}{*}{State}}    &\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{}     &   \multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[31:24]   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[31:24]    & \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[31:24]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[31:24]\\
+\cline{4-8}
+&& &1       &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[23:16]\\
+\cline{4-8}
+&& &2   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[15:8]     &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[15:8]\\
+\cline{4-8}
+&& &3   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[7:0]\\
+\hline
+\multirow{6}{4cm}{1}    &   \multirow{6}{4cm}{1}    &\multicolumn{2}{c|}{\multirow{2}{*}{State}}    &\multicolumn{4}{c|}{c}\\
+\cline{5-8}
+\multirow{6}{4cm}{}     &   \multirow{6}{4cm}{} &\multicolumn{2}{c|}{} &0 &1 &2 &3\\
+\cline{3-8}
+&&\multirow{4} {*}r & 0 &\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[7:0] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[7:0]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[7:0]\\
+\cline{4-8}
+&& &1       &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[15:8]     &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[15:8] &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[15:8]\\
+\cline{4-8}
+&& &2   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[23:16]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[23:16]\\
+\cline{4-8}
+&& &3   &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[31:24]    &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[31:24]    & \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[31:24]  &   \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[31:24]\\
+\hline
+\end{longtable}
+\end{tiny}
+\newpage
+\begin{tiplisting}
+\vspace{-2.5em}
+\begin{enumerate}
+\item The definition of ``State" is described in Section 3.4 The State in \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197}.
+\item Where,
+\begin{itemize}
+    \item When \regindex{x} = IN, the Word Endian and Byte Endian controlling bits of \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} are the Bit 2 and Bit 3 of \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}, respectively;
+    \item When \regindex{x} = OUT, the Word Endian and Byte Endian controlling bits of \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} are the Bit 4 and Bit 5 of \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}, respectively.
+\end{itemize}
+\end{enumerate}
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\textbf{Key Endianness}
+
+In Typical AES working mode, Bit 0 and bit 1 in \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} define the key endianness.
+
+Users can choose one of the four key endianness types provided by the AES accelerator by configuring the \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} register. Details can been seen in Table \ref{table:AES128KeyEndian}, Table \ref{table:AES192KeyEndian}, and Table \ref{table:AES256KeyEndian}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newgeometry{left=1cm,right=1cm,top=2cm,bottom=2cm}
+\begin{landscape}
+
+\begin{tiny}
+\begin{longtable}[c]
+{ |p{2cm}|p{2cm}|p{1cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|}
+\caption{Key Endianness Types for AES-128 Encryption and Decryption}\label{table:AES128KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit$^2$ &   w[0]    &   w[1]    &   w[2]    &   w[3]$^1$    \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit &   w[0]    &   w[1]    &   w[2]    &   w[3]    \\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\cline{3-7}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-7}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-7}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{1}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\cline{3-7}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-7}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-7}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]\\
+\cline{3-7}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]\\
+\cline{3-7}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]\\
+\cline{3-7}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{1}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]\\
+\cline{3-7}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]\\
+\cline{3-7}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]\\
+\cline{3-7}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]\\
+\hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2.5em}
+\begin{enumerate}
+\item w[0] \verb+~+ w[3] are ``the first Nk words of the expanded key" as specified in Section 5.2 Key Expansion in \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197}.
+\item ``Column Bit" specifies the bytes of each word stored in w[0] \verb+~+ w[3].
+\end{enumerate}
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{longtable}[c]
+{ |p{1.5cm}|p{1.5cm}|p{0.5cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|}
+\caption{Key Endianness Types for AES-192 Encryption and Decryption}\label{table:AES192KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit$^2$ &   w[0]    &   w[1]    &   w[2]    &   w[3]    &   w[4]    &   w[5]$^1$    \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit &   w[0]    &   w[1]    &   w[2]    &   w[3]    &   w[4]    &   w[5]    \\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\cline{3-9}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-9}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-9}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{1}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\cline{3-9}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-9}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-9}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]      &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]\\
+\cline{3-9}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]\\
+\cline{3-9}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]\\
+\cline{3-9}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{1}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]\\
+\cline{3-9}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]\\
+\cline{3-9}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]\\
+\cline{3-9}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]\\
+\hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2.5em}
+\begin{enumerate}
+\item w[0] \verb+~+ w[5] are ``the first Nk words of the expanded key" as specified in Chapter 5.2 Key Expansion in \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197}.
+\item ``Column Bit" specifies the bytes of each word stored in w[0] \verb+~+ w[5].
+\end{enumerate}
+\end{tiplisting}
+
+
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{longtable}[c]
+{ |p{1.5cm}|p{1.5cm}|p{0.5cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|p{1.8cm}|}
+\caption{Key Endianness Types for AES-256 Encryption and Decryption}\label{table:AES256KeyEndian}\\
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit$^2$ &   w[0]    &   w[1]    &   w[2]    &   w[3]    &   w[4]    &   w[5]&   w[6]    &   w[7]$^1$    \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[1]    &   \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}[0]    &   Bit &   w[0]    &   w[1]    &   w[2]    &   w[3]    &   w[4]    &   w[5]&   w[6]    &   w[7]    \\\hline
+\endhead
+\endfoot
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\cline{3-11}
+&&  [23:16]     &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[23:16] &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-11}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[15:8]   &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-11}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[7:0]    &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{0}    &   \multirow{4}{4cm}{1}    &   [31:24]     & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[7:0]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]\\
+\cline{3-11}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[15:8]   &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]\\
+\cline{3-11}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[23:16]  &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16] &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]\\
+\cline{3-11}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[31:24]      &\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24] &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]      &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{0}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]& \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[31:24]\\
+\cline{3-11}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[23:16]\\
+\cline{3-11}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]
+&   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[15:8]\\
+\cline{3-11}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]&   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[7:0]\\
+\hline
+\multirow{4}{4cm}{1}    &   \multirow{4}{4cm}{1}    &   [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]
+&   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[7:0]\\
+\cline{3-11}
+&&  [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[15:8]\\
+\cline{3-11}
+&&  [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]& \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[23:16]\\
+\cline{3-11}
+&&  [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]& \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[31:24]\\
+\hline
+\end{longtable}
+
+\begin{tiplisting}
+\vspace{-2.5em}
+\begin{enumerate}
+\item w[0] \verb+~+ w[7] are ``the first Nk words of the expanded key" as specified in Chapter 5.2 Key Expansion in \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197}.
+\item ``Column Bit" specifies the bytes of each word stored in w[0] \verb+~+ w[7].
+\end{enumerate}
+\end{tiplisting}
+\end{tiny}
+\end{landscape}
+\restoregeometry
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Operation Process }
+
+\textbf{Single Operation}
+
+\begin{enumerate}
+    \item Write 0 to the \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} register.
+    \item Initialize registers \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}, \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}, \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}, and \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}.
+    \item Start operation by writing 1 to the \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} register.
+    \item Wait till the content of the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} register becomes 0, which indicates the operation is completed.
+    \item Read results from the \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} register.
+\end{enumerate}
+
+\textbf{Consecutive Operations}
+
+In consecutive operations, primarily the input \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} and output \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} registers are being written and read, while the content of \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG}, \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}, \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}, and \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} is kept unchanged. Therefore, the initialization can be simplified during the consecutive operation.
+
+\begin{enumerate}
+    \item Write 0 to the \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} register before starting the first operation.
+    \item Initialize registers \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}, \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}, and \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG} before starting the first operation.
+    \item Update the content of \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}. \label{update register in typical AES continuous calculation}
+    \item Start operation by writing 1 to the \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} register.
+    \item Wait till the content of the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} register becomes 0, which indicates the operation completes.
+    \item Read results from the \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} register, \label{read result in typical AES continuous calculation} and return to Step \ref{update register in typical AES continuous calculation} to continue the next operation.
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{DMA-AES Working Mode}\label{subsection:dma-aes}
+
+In the DMA-AES working mode, the AES accelerator supports six block operations including ECB/CBC/OFB/CTR/CFB8/CFB128 as well as GCM operation. Users can choose the operation type for AES accelerator working in the DMA-AES working mode by configuring the \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG} register according to Table \ref{table:AESBlockMode} below.
+
+\begin{longtable}[c]{ | c | l | }
+\caption{Operation Type under DMA-AES Working Mode}
+\label{table:AESBlockMode}
+\\\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG}[2:0]     & Operation Type\\
+    \hline
+    0                          & ECB (Electronic Codebook)    \\
+    \hline
+    1                          & CBC (Cipher Block Chaining)     \\
+    \hline
+    2                          & OFB (Output Feedback)    \\
+    \hline
+    3                          & CTR (Counter)    \\
+    \hline
+    4                          & CFB8 (8-bit Cipher Feedback)    \\
+    \hline
+    5                          & CFB128 (128-bit Cipher Feedback) \\
+    \hline
+    6                          & GCM (Galois/Counter Mode)     \\
+    \hline
+\end{longtable}
+
+Users can check the working status of the AES accelerator by inquiring the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} register and comparing the return value against the Table \ref{table:AESStateValue-dma} below.
+
+\begin{longtable}[c]{ | c | l | l | }
+\caption{Working Status under DMA-AES Working mode}
+\label{table:AESStateValue-dma}
+\\\hline
+\rowcolor{lightgray}
+\hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} & Status &  Description \\ \hline
+
+    0                   & IDLE      &   The AES accelerator is idle.\\ \hline
+    1                   & WORK      &   The AES accelerator is in the middle of an operation.     \\ \hline
+    2                   & DONE      &   The AES accelerator completed operations.     \\ \hline
+\end{longtable}
+
+When working in the DMA-AES working mode, the AES accelerator supports interrupt on the completion of computation. To enable this function, write 1 to the \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} register. By default, the interrupt function is enabled. Also, note that the interrupt should be cleared by software after use.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Key, Plaintext, and Ciphertext}
+
+\textbf{Block Operation}
+
+During the block operations, the AES Accelerator reads source data (in\_stream) from DMA, and write result data (out\_stream) to DMA after the computation.
+
+\begin{itemize}
+    \item For encryption, DMA reads plaintext from memory, then passes it to AES as source data. After computation, AES passes ciphertext as result data  back to DMA to write into memory.
+    \item For decryption, DMA reads ciphertext from memory, then passes it to AES as source data. After computation, AES passes plaintext as result data back to DMA to write into memory.
+\end{itemize}
+
+During block operations, the lengths of the source data and result data are the same. The total computation time is reduced because the DMA data operation and AES computation can happen concurrently.
+
+\label{api:testpadding}The length of source data for AES Accelerator under DMA-AES working mode must be 128 bits or the integral multiples of 128 bits. Otherwise, trailing zeros will be added to the original source data, so the length of source data equals to the nearest integral multiples of 128 bits. Please see details in Table \ref{table:DefineFunctionTextPadding} below.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{longtable}[c]{|p{15cm}|}
+\caption{TEXT-PADDING}
+\label{table:DefineFunctionTextPadding}\\
+\hline
+\rowcolor{lightgray}
+\multirow{1}{*}{%
+{\bfseries Function :} {\bfseries TEXT-PADDING}(\ ) } \\\hline
+{\bfseries Input\phantom{aaa} :} $X$, bit string.\\
+{\bfseries Output\phantom{a~} :} $Y$ = {\bfseries TEXT-PADDING}($X$), whose length is the nearest integral multiples of 128 bits. \\\hline
+{\bfseries Steps\phantom{aa~}  }\\
+\hspace{1.3cm} Let us assume that X is a data-stream that can be split into {\it{n}} parts as following: \\
+\phantom{aaaaaaaa}$X = X_{1} || X_{2} || \cdots || X_{n-1} || X_{n}$ \\
+\phantom{aaaaaaaa}Here, the lengths of $X_{1}, X_{2}, \cdots, X_{n-1}$ all equal to 128 bits, and the length of $X_{n}$ is {\it{t}} (0<={\it{t}}<=127).\\
+\phantom{aaaaaaaa}If ${\it{t}} = 0$, then\\
+\phantom{aaaaaaaa}\phantom{空空空空空} {\bfseries TEXT-PADDING}($X$) = $X$;\\
+\phantom{aaaaaaaa}If $0<{\it{t}} <= 127$, define a 128-bit block, $X_{n}^{*}$, and let $X_{n}^{*} = X_{n} || 0^{128-{\it{t}}}$, then\\
+\phantom{aaaaaaaa}\phantom{空空空空空} {\bfseries TEXT-PADDING}($X$) = $X_{1} || X_{2} || \cdots || X_{n-1} || X_{n}^{*}$  = $X || 0^{128-{\it{t}}}$\\
+\hline
+\end{longtable}
+
+
+
+\subsection{Endianness}
+
+Under the DMA-AES working mode, the transmission of source data and result data for AES Accelerator is solely controlled by DMA. Therefore, the AES Accelerator cannot control the Endianness of the source data and result data, but does have requirement on how these data should be stored in memory and on the length of the data.
+
+For example, let us assume DMA needs to write the following data into memory at address \hexprefix{}0280.
+
+\begin{itemize}
+    \item Data represented in hexadecimal:
+    \begin{itemize}
+    \item 0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20
+    \end{itemize}
+\item Data Length:
+    \begin{itemize}
+    \item Equals to 2 blocks.
+    \end{itemize}
+\end{itemize}
+
+Then, this data will be stored in memory as shown in Table \ref{table:DMAAESPlaintextCiphertextEndian} below.
+
+\begin{longtable}[c]
+{ | l | l |l | l | l | l | l | l |}
+\caption{Text Endianness for DMA-AES}
+\label{table:DMAAESPlaintextCiphertextEndian}\\
+\hline
+\rowcolor{lightgray}
+Address &  Byte  & Address &  Byte  & Address &  Byte  & Address &  Byte \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+Address &  Byte  & Address &  Byte  & Address &  Byte  & Address &  Byte \\\hline
+\endhead
+\endfoot
+\hexprefix{}0280 & \hexprefix{}01 & \hexprefix{}0281 & \hexprefix{}02 & \hexprefix{}0282 & \hexprefix{}03 & \hexprefix{}0283 & \hexprefix{}04 \\\hline
+\hexprefix{}0284 & \hexprefix{}05 & \hexprefix{}0285 & \hexprefix{}06 & \hexprefix{}0286 & \hexprefix{}07 & \hexprefix{}0287 & \hexprefix{}08 \\\hline
+\hexprefix{}0288 & \hexprefix{}09 & \hexprefix{}0289 & \hexprefix{}0A & \hexprefix{}028A & \hexprefix{}0B & \hexprefix{}028B & \hexprefix{}0C \\\hline
+\hexprefix{}028C & \hexprefix{}0D & \hexprefix{}028D & \hexprefix{}0E & \hexprefix{}028E & \hexprefix{}0F & \hexprefix{}028F & \hexprefix{}10 \\\hline
+\hexprefix{}0290 & \hexprefix{}11 & \hexprefix{}0291 & \hexprefix{}12 & \hexprefix{}0292 & \hexprefix{}13 & \hexprefix{}0293 & \hexprefix{}14 \\\hline
+\hexprefix{}0294 & \hexprefix{}15 & \hexprefix{}0295 & \hexprefix{}16 & \hexprefix{}0296 & \hexprefix{}17 & \hexprefix{}0297 & \hexprefix{}18 \\\hline
+\hexprefix{}0298 & \hexprefix{}19 & \hexprefix{}0299 & \hexprefix{}1A & \hexprefix{}029A & \hexprefix{}1B & \hexprefix{}029B & \hexprefix{}1C \\\hline
+\hexprefix{}029C & \hexprefix{}1D & \hexprefix{}029D & \hexprefix{}1E & \hexprefix{}029E & \hexprefix{}1F & \hexprefix{}029F & \hexprefix{}20 \\\hline
+\end{longtable}
+
+
+DMA can access both internal memory and PSRAM outside ESP32-S2. When you use DMA to access external PSRAM, please use base addresses that meet the requirements for DMA. When you use DMA to access internal memory,  base addresses do not have such requirements. Details can be found in Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Standard Incrementing Function}\label{Label Label Standard Incrementing Function}
+
+AES accelerator provides two Standard Incrementing Functions for the CTR block operation, which are INC$_{32}$ and INC$_{128}$ Standard Incrementing Functions. By setting the  \hyperref[regdesc:AESINCSELREG]{AES\_INC\_SEL\_REG} register to 0 or 1, users can choose the INC$_{32}$ or INC$_{128}$ functions respectively. For details on the Standard Incrementing Function, please see Chapter B.1 The Standard Incrementing Function in \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A}.
+
+\subsection{ Block Number}\label{Label Block Number}
+
+Register \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG} stores the Block Number of plaintext $P$ or ciphertext $C$. The length of this register equals to length({\bfseries TEXT-PADDING}($P$))/128 or length({\bfseries TEXT-PADDING}($C$))/128. The AES Accelerator only uses this register when working in the DMA-AES mode.
+
+\subsection{Initialization Vector}\label{Label IV}
+
+\label{memdesc:AESIVMEM}\hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} is a 16-byte memory, which is only available for AES Accelerator working in block operations. For CBC/OFB/CFB8/CFB128 operations, the \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} memory stores the Initialization Vector (IV). For the CTR operation, the \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} memory stores the Initial Counter Block (ICB).
+
+Both IV and ICB are 128-bit strings, which can be divided into Byte0, Byte1, Byte2 \begin{math}\cdots\end{math} Byte15 (from left to right). \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} stores data following the Endianness pattern presented in Table \ref{table:DMAAESPlaintextCiphertextEndian}, i.e. the most significant (i.e., left-most) byte Byte0 is stored at the lowest address while the least significant (i.e., right-most) byte Byte15 at the highest address.
+
+For more details on IV and ICB, please refer to \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A}.
+
+\subsection{ Block Operation Process}
+
+\begin{enumerate}
+    \item Write 0 to the \hyperref[regdesc:CRYPTODMAAESSHASELECTREG]{CRYPTO\_DMA\_AES\_SHA\_SELECT\_REG} register.
+    \item Configure Crypto DMA chained list and start DMA. For details, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \item Initialize the AES accelerator-related registers:
+    \begin{itemize}
+        \item Write 1 to the \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} register.
+        \item Configure the \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} register to enable or disable the interrupt function.
+        \item Initialize registers \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}, \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}, and \hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}.
+        \item Select operation type by configuring the \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG} register. For details, see Table \ref{table:AESBlockMode}.
+        \item Initialize the \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG} register. For details, see Section \ref{Label Block Number}.
+        \item Initialize the \hyperref[regdesc:AESINCSELREG]{AES\_INC\_SEL\_REG} register (only needed when AES Accelerator is working under CTR block operation).
+        \item Initialize the \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} memory (This is always needed except for ECB block operation).
+    \end{itemize}
+    \item Start operation by writing 1 to the \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} register.
+    \item \label{wait ECB/CBC/OFB/CTR/CFB8/CFB128 done}
+            Wait for the completion of computation, which happens when the content of \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} becomes 2 or the AES interrupt occurs.
+    \item Check if DMA completes data transmission from AES to memory. At this time, DMA had already written the result data in memory, which can be accessed directly. For details on DMA, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \item Clear interrupt by writing 1 to the \hyperref[regdesc:AESINTCLRREG]{AES\_INT\_CLR\_REG} register, if any AES interrupt occurred during the computation.
+    \item Release the AES Accelerator by writing 0 to the \hyperref[regdesc:AESDMAEXITREG]{AES\_DMA\_EXIT\_REG} register. After this, the content of the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} register becomes 0.
+    Note that, you can release DMA earlier, but only after Step \ref{wait ECB/CBC/OFB/CTR/CFB8/CFB128 done} is completed.
+\end{enumerate}
+
+\subsection{ GCM Operation Process }
+
+\begin{enumerate}
+    \item Write 0 to the \hyperref[regdesc:CRYPTODMAAESSHASELECTREG]{CRYPTO\_DMA\_AES\_SHA\_SELECT\_REG} register.
+    \item Configure Crypto DMA chained list and start DMA. For details on DMA, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \item Initialize the AES accelerator-related registers:
+    \begin{itemize}
+        \item Write 1 to the \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} register.
+        \item Configure the \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} register to enable or disable the interrupt function.
+        \item Initialize registers \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} and \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}、\hyperref[regdesc:AESENDIANREG]{AES\_ENDIAN\_REG}.
+        \item Write 6 to the \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG} register.
+        \item Initialize the \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG} register. Details about this register are described in Section \ref{Label Block Number}.
+        \item Initialize the \hyperref[regdesc:AESAADBLOCKNUMREG]{AES\_AAD\_BLOCK\_NUM\_REG} register. Details about this register are described in Section \ref{Label AAD Block Number}.
+        \item Initialize the \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} register. Details about this register is described in Section \ref{Label Remainder Bit Number}.
+    \end{itemize}
+    \item Start operation by writing 1 to the \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} register.
+    \item Wait for the completion of computation, which happens when the content of \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} becomes 2. For details on the working status of AES Accelerator, please refer to Table \ref{table:AESStateValue-dma}. At this step, no interrupt occurs.
+    \item Obtain the $H$ value from the \hyperref[memdesc:AESHMEM]{AES\_H\_MEM} memory.
+    \item Generate $J_0$ and write it to the \hyperref[memdesc:AESJ0MEM]{AES\_J0\_MEM} memory.
+    \item Continue operating by writing 1 to the \hyperref[regdesc:AESCONTINUEOPREG]{AES\_CONTINUE\_OP\_REG} register.
+    \item \label{wait GCM done}
+            Wait for the completion of computation, which happens when the content of \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} becomes 2 or the AES interrupt occurs. For details on the working status of AES Accelerator, please refer to Table  \ref{table:AESStateValue-dma}.
+    \item Obtain $T_0$ by reading \hyperref[memdesc:AEST0MEM]{AES\_T0\_MEM}, which is already ready at this step.
+    \item Check if DMA completes data transmission from AES to memory. At this time, DMA had already written the result data in memory, which can be accessed directly. For details on DMA, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+    \item Clear interrupt by writing 1 to the \hyperref[regdesc:AESINTCLRREG]{AES\_INT\_CLR\_REG} register, if any AES interrupt occurred during the computation.
+    \item Exit DMA by writing 1 to the \hyperref[regdesc:AESDMAEXITREG]{AES\_DMA\_EXIT\_REG} register. After this, the content of the \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} becomes 0. Note that, you can exit DMA earlier, but only after Step \ref{wait GCM done} is completed.
+\end{enumerate}
+
+
+\section{GCM Algorithm}\label{Label GCM algorithm}
+
+ESP32-S2's AES accelerator fully supports GCM Algorithm. In reality, the \begin{math}AAD\end{math}, \begin{math}C\end{math} and \begin{math}P\end{math} that are longer than \begin{math}2^{32}\end{math}-1 bits are seldom used. Therefore, we specify that the length of \begin{math}AAD\end{math}, \begin{math}C\end{math} and \begin{math}P\end{math} should be no longer than \begin{math}2^{32}\end{math}-1 here.
+Figure \ref{figure:GCMEncryptionOperation} below demonstrates how GCM encryption is implemented in the AES Accelerator of ESP32-S2.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/GCM_encryption.eps}
+    \caption{GCM Encryption Process}
+    \label{figure:GCMEncryptionOperation}
+\end{figure}
+
+GCM encryption is implemented as follows:
+
+\begin{enumerate}
+    \item \label{GCM operation : Hardware Calculate H}
+          Hardware executes the ECB Algorithm to obtain the Hash subkey \hyperref[Label Hash subkey]{$H$}, which is needed in the Hash computation.
+    \item \label{GCM operation : Hardware Calculate AAD hash}
+          Hardware executes the GHASH Algorithm to perform Hash computation with the \hyperref[api:testpadding]{padded} $AAD$.
+    \item \label{GCM operation : Hardware Calculate J0 inc32}
+          Hardware gets ready for CTR encryption by obtaining the result of applying Standard Incrementing Function INC$_{32}$ to \hyperref[Label J0]{$J_{0}$}.
+    \item \label{GCM operation : Hardware Calculate C hash}
+          Hardware executes the GCTR Algorithm to encrypt the padded plaintext $P$, then executes the GHASH Algorithm to perform Hash computation on the padded ciphertext $C$.
+    \item \label{GCM operation : Hardware Calculate padding block hash}
+          Hardware executes the GHASH Algorithm to perform Hash computation on AAD Blocks, obtaining a 128-bit Hash result.
+    \item \label{GCM operation : Hardware Calculate T0}
+          Hardware executes the GCTR Algorithm to encrypt $J_{0}$, obtaining $T_{0}$.
+    \item \label{GCM operation : Software Calculate T}
+          Software obtains the result $T_{0}$ from hardware, and execute MSB$_{t}$ Algorithm to obtain the final result Authenticated Tag $T$.
+\end{enumerate}
+
+The only difference between GCM decryption and GCM encryption lies in Step \ref{GCM operation : Hardware Calculate C hash} in Figure \ref{figure:GCMEncryptionOperation}. To be more specific, instead of executing GCTR Algorithm to encrypt the padded plaintext, the AES Accelerator executes the same Algorithm to decrypt the padded ciphertext in GCM decryption. For details, please see \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Hash Subkey}\label{Label Hash subkey}
+
+\label{memdesc:AESHMEM}During GCM operation, the Hash subkey $H$ is a 128-bit value computed by hardware, which is demonstrated in Step \ref{GCM operation : Hardware Calculate H} in Figure \ref{figure:GCMEncryptionOperation}. Also you can find more information about Hash subkey at ``Step 1. Let $H$ = CIPH$_K$({$0^{128}$})" in Chapter 7 GCM Specification of \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D}.\\
+Just like all other Endianness, the Hash subkey $H$ is stored in the \hyperref[memdesc:AESHMEM]{AES\_H\_MEM} memory with its most significant (i.e., left-most) byte Byte0 stored at the lowest address and least significant (i.e., right-most) byte Byte15 at the highest address. For details, see Table \ref{table:DMAAESPlaintextCiphertextEndian}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{\texorpdfstring{$J_0$}{J0}} \label{Label J0}
+ The $J_0$ is a 128-bit value computed by hardware, which is required during Step \ref{GCM operation : Hardware Calculate J0 inc32} and Step \ref{GCM operation : Hardware Calculate T0} of the GCM process in Figure \ref{figure:GCMEncryptionOperation}. For details on the generation of $J_0$, please see Chapter 7 GCM Specification in \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} Specification.\\
+
+ The $J_0$ is stored in the \hyperref[memdesc:AESJ0MEM]{AES\_J0\_MEM} memory as Endianness\label{memdesc:AESJ0MEM}. Just like all other Endianness, its most significant (i.e., left-most) byte Byte0 is stored at the lowest address in the memory while least significant (i.e., right-most) byte Byte15 at the highest address. For details, see Table \ref{table:DMAAESPlaintextCiphertextEndian}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Authenticated Tag}\label{Label Authenticated Tag}
+
+Authenticated Tag (Tag for short) is one of the key results of GCM computation, which is demonstrated in Step \ref{GCM operation : Software Calculate T} of Figure \ref{figure:GCMEncryptionOperation}. The value of Tag is determined by the length of Authenticated Tag $t$ ($1 <= t <= 128$):
+
+\begin{itemize}
+    \item When $t = 128$, the value of Tag equals to $T_0$, a 128-bit string that is stored in the AES\_T0\_MEM as Endianness\label{memdesc:AEST0MEM}. Just like all other Endianness, its most significant (i.e., left-most) byte Byte0 is stored at the lowest address in the memory while least significant (i.e., right-most) byte Byte15 at the highest address. For details, see Table \ref{table:DMAAESPlaintextCiphertextEndian}.
+
+    \item When $1 <= t < 128$, the value of Tag equals to the $t$ most significant (i.e., left-most) bits of $T_0$. In this case, Tag is represented as MSB$_t$($T_0$), which returns the $t$ most significant bits of $T_0$. For example, MSB$_4$(111011010) = 1110 and MSB$_5$(11010011010) = 11010. For details on the MSB$_t$(\ ) function, please refer to Chapter 6 Mathematical Components of GCM in the \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} specification.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{ AAD Block Number }\label{Label AAD Block Number}
+
+Register \hyperref[regdesc:AESAADBLOCKNUMREG]{AES\_AAD\_BLOCK\_NUM\_REG} stores the Block Number of Additional Authenticated Data (AAD). The length of this register equals to length({\bfseries TEXT-PADDING}($AAD$))/128. AES Accelerator only uses this register when working in the DMA-AES mode.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{ Remainder Bit Number}\label{Label Remainder Bit Number}
+
+Register \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} stores the Remainder Bit Number, which indicates the number of effective bits of incomplete blocks in plaintext/ciphertext. The value stored in this register equals to length($P$)\%128 or length($C$)\%128. AES Accelerator only uses this register when working in the DMA-AES mode.
+
+Register \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} does not affect the results of plaintext or ciphertext, but does impact the value of $T_{0}$, therefore the Tag value too.
+
+The GCM Algorithm can be viewed as the combination of GCTR operation and GHASH operation, among which, the GCTR performs the encryption and decryption, while the GHASH sloves the Tag.
+
+Note that the \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} register is only effective for GCM encryption. To be more specific:
+
+\begin{itemize}
+    \item For GCM encryption, the Hardware firstly computes $C$, then passes it in the form of {\bfseries TEXT-PADDING}($C$) as the input of GHASH operation. In this case, hardware determines how many trailing ``0" should be added based on the content of \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG}.
+    \item For GCM decrpytion, the padding is completed with the {\bfseries TEXT-PADDING}($C$) function. In this case, the \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} register is not effective.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{ Base Address } \label{Label AES MODULE ENTRY}
+
+Users can access AES with two base addresses, which can be seen in Table \ref{table:AESENTRY}. For more information about accessing peripherals from different buses please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.\\
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{AES Accelerator Base Address}\label{table:AESENTRY}
+\\\hline
+\rowcolor{lightgray}
+    Bus to Access Peripheral      & Base Address\\
+    \hline
+    PeriBUS1      & \hexprefix{}3F43A000      \\
+    \hline
+    PeriBUS2     & \hexprefix{}6003A000      \\
+    \hline
+\end{longtable}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Memory Summary}\label{aesMemorySummary}
+\subfile{\modulefiles/AES_Accelerator_Mem_Summary__EN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\hypertarget{aes-reg-summ}{}
+\section{ Register Summary }
+
+\subfile{\modulefiles/AES_Accelerator_Reg_Summary__EN}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{ Registers }
+\subfile{\modulefiles/AES_Accelerator_Reg__EN}
+\end{document}

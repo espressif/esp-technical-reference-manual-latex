@@ -1,0 +1,707 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./26-AES}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{aes}{}
+\chapter{AES 加速器 (AES)}\label{mod:aes}
+
+\section{概述}
+
+\chipname{} 内置 AES（高级加密标准）硬件加速器可使用 AES 算法，完成数据的加解密运算，具有 \hyperref[sec:aes-typical-modes]{Typical AES} 和 \hyperref[sec:aes-dma-aes]{DMA-AES} 两种工作模式。整体而言，相比基于纯软件的 AES 运算，AES 硬件加速器能够极大地提高运算速度。
+
+\section{主要特性}
+
+\chipname{} 支持以下特性：
+\begin{itemize}
+    \item Typical AES 工作模式
+        \begin{itemize}
+            \item AES-128/AES-256 加解密运算
+        \end{itemize}
+    \end{itemize}
+
+    \begin{itemize}
+    \item DMA-AES 工作模式
+        \begin{itemize}
+            \item AES-128/AES-256 加解密运算
+            \item 块（加密）模式
+                \begin{itemize}
+                    \item ECB (Electronic Codebook)
+                    \item CBC (Cipher Block Chaining)
+                    \item OFB (Output Feedback)
+                    \item CTR (Counter)
+                    \item CFB8 (8-bit Cipher Feedback)
+                    \item CFB128 (128-bit Cipher Feedback)
+                \end{itemize}
+            \item 伽罗瓦/计数器模式 (Galois/Counter Mode, GCM)
+            \item 中断发生
+        \end{itemize}
+    \end{itemize}
+
+\section{时钟和复位}
+
+AES 加速器的激活需使能 \hyperref[regdesc:HPSYSCLKRSTPERICLKCTRL25REG]{HP\_SYS\_CLKRST\_PERI\_CLK\_CTRL25\_REG} 寄存器中的 \hyperref[fielddesc:HPSYSCLKRSTCRYPTOAESCLKEN]{HP\_SYS\_CLKRST\_CRYPTO\_AES\_CLK\_EN} 位，并同时清零\hyperref[regdesc:HPSYSCLKRSTHPRSTEN2REG]{HP\_SYS\_CLKRST\_HP\_RST\_EN2\_REG} 寄存器中的 \hyperref[fielddesc:HPSYSCLKRSTRSTENAES]{HP\_SYS\_CLKRST\_RST\_EN\_AES} 位。此外，由于密码学加速器模块之间的资源复用，用户还需要额外清零 \hyperref[regdesc:HPSYSCLKRSTHPRSTEN2REG]{HP\_SYS\_CLKRST\_HP\_RST\_EN2\_REG} 寄存器中的 \hyperref[fielddesc:HPSYSCLKRSTRSTENDS]{HP\_SYS\_CLKRST\_RST\_EN\_DS} 位和 \hyperref[fielddesc:HPSYSCLKRSTRSTENKM]{HP\_SYS\_CLKRST\_RST\_EN\_KM} 位。
+
+
+
+\section{工作模式简介}
+
+\chipname{} 内置的 AES 加速器支持 \hyperref[sec:aes-typical-modes]{Typical AES} 和 \hyperref[sec:aes-dma-aes]{DMA-AES} 两种工作模式。
+
+\begin{itemize}
+    \item Typical AES 工作模式：
+    \begin{itemize}
+        \item 支持使用 128 位或 256 位密钥进行加密与解密运算，即 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197} 标准中的 AES-128 和 AES-256  加解密运算。
+    \end{itemize}
+    这种情况下，明文和密文的读写操作统一通过 CPU 访问完成。
+    \item DMA-AES 工作模式支持：
+    \begin{itemize}
+        \item 使用 128 位或 256 位密钥进行加密与解密运算，即 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197} 标准中的 AES-128 和 AES-256 加解密运算；
+        \item  \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A} 标准中的 ECB、CBC、OFB、CTR、CFB8、CFB128 块加密模式运算。
+        \item \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} 标准中的 GCM。
+    \end{itemize}
+    在这种情况下，明文和密文的传输通过硬件上的 DMA 完成，运算完成时会有中断发生。
+\end{itemize}
+
+用户可通过配置 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} 选择 AES 加速器的工作模式，具体参考表 \ref{tab:aes-dma-enable}。
+
+\begin{longtable}[c]{ |c|l| }
+\caption{工作模式}
+\label{tab:aes-dma-enable}
+\\\hline
+\rowcolor{lightgray}
+\textbf{\hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG}}       & \textbf{工作模式}\\
+    \hline
+    0           & Typical AES    \\
+    \hline
+    1           & DMA-AES        \\
+    \hline
+\end{longtable}
+
+用户可通过配置 \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} 寄存器选择密钥长度和加解密方向，具体可参考表 \ref{tab:aes-operation}。
+
+\begin{longtable}[c]{ | c | l | }
+\caption{密钥长度和加解密方向}
+\label{tab:aes-operation}
+\\\hline
+\rowcolor{lightgray}
+\textbf{\hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}[2:0]}     & \textbf{密钥长度和加解密方向}\\
+    \hline
+    0                   & AES-128 加密    \\
+    \hline
+    1                   & 保留    \\
+    \hline
+    2                   & AES-256 加密    \\
+    \hline
+    3                   & 保留    \\
+    \hline
+    4                   & AES-128 解密    \\
+    \hline
+    5                   & 保留    \\
+    \hline
+    6                   & AES-256 解密    \\
+    \hline
+    7                   & 保留    \\
+    \hline
+\end{longtable}
+
+有关 Typical AES 和 DMA-AES 两种工作模式的具体介绍，请见章节 \ref{sec:aes-typical-modes} 和 \ref{sec:aes-dma-aes}。
+
+\begin{importantlisting}
+\vspace{-0.5em}
+
+    \chipname{} 的\nameref{mod:digsig} 模块也会调用 AES 加速器。因此，在该模块工作时，用户无法正常访问 AES 加速器。
+\end{importantlisting}
+
+\section{Typical AES 工作模式}\label{sec:aes-typical-modes}
+
+在 Typical AES 工作模式下，
+AES 加速器的状态值可查看寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，具体见表 \ref{tab:aes-state-value-typical} 所示：
+
+\begin{longtable}[c]{ |c | l | l | }
+\caption{状态返回值}
+\label{tab:aes-state-value-typical}
+\\\hline
+\rowcolor{lightgray}
+\textbf{返回值} & \textbf{描述} &  \textbf{状态说明} \\ \hline
+
+    0                   & IDLE      &   加速器空闲或运算完成\\ \hline
+    1                   & WORK      &   加速器忙于运算     \\ \hline
+\end{longtable}
+
+\subsection{密钥、明文、密文}
+
+寄存器 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG} 用于存放密钥，由 8 个 32 位寄存器组成。
+
+\begin{itemize}
+    \item 如果为 AES-128 加解密运算，则 128 位密钥在寄存器 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG} \verb+~+ \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG} 中。
+    \item 如果为 AES-256 加解密运算，则 256 位密钥在寄存器 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG} \verb+~+ \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG} 中。
+\end{itemize}
+
+寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} 和 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} 用于存放明文和密文，各由 4 个 32 位寄存器组成。
+
+\begin{itemize}
+    \item 如果为 AES-128 或 AES-256 加密运算，则运算开始之前用明文初始化寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}。运算完成之后，AES 加速器将把密文更新入寄存器 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG}。
+    \item 如果为 AES-128 或 AES-256 解密运算，则运算开始之前用密文初始化寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}。运算完成之后，AES 加速器将把明文更新入寄存器 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG}。
+\end{itemize}
+
+\subsection{字节序}
+
+\textbf{文本字节序}
+
+在 Typical AES 工作模式下，AES 加速器可以使用密钥对 128 位的块进行加解密。在读写寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} 和 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} 中的数据时，用户应遵循表 \ref{tab:aes-endianness-type-typical-plaintext-ciphertext} 中定义的文本字节序。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{threeparttable}
+
+\begin{longtable}[c]
+{ |p{0.2cm}|p{0.3cm}|p{3.7cm}|p{3.7cm}|p{3.7cm}|p{3.7cm}|}
+\caption{Typical AES 文本字节序}
+\label{tab:aes-endianness-type-typical-plaintext-ciphertext}\\
+\hline
+\rowcolor{lightgray}
+\multicolumn{6}{|c|}{\textbf{明文/密文}} \\\hline
+\endhead
+\endfoot
+\multicolumn{2}{|c|}{\multirow{2}{*}{\textbf{State}$^1$}} &\multicolumn{4}{c|}{\textbf{c}$^2$}\\ \cline{3-6}
+\multicolumn{2}{|c|}{} & \textbf{0} &\textbf{1} &\textbf{2} &\textbf{3}\\ \cline{1-6}
+\multirow{4} {*}r & 0 &\small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[7:0]} &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[7:0]}  &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[7:0]}  &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[7:0]}\\
+\cline{2-6}
+&1       &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[15:8]} &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[15:8]}     &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[15:8]} &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[15:8]}\\
+\cline{2-6}
+&2   &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[23:16]}    &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[23:16]}    &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[23:16]}    &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[23:16]}\\
+\cline{2-6}
+&3   &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_0\_REG}[31:24]}    &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_1\_REG}[31:24]}    & \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_2\_REG}[31:24]}  &   \small{\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_\regindex{x}\_3\_REG}[31:24]}\\
+\hline
+\end{longtable}
+
+\begin{tablenotes}
+\item[1] 有关 ``State（以及 c 和 r）" 的详细定义，请参考 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197} 中 3.4 The State 章节。
+\item[2] 其中，\regindex{x} = IN 或 OUT。
+\end{tablenotes}
+
+\end{threeparttable}
+
+
+\textbf{密钥字节序}
+
+在 Typical AES 工作模式下，在向寄存器 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG} 中填入数据时，用户应遵循表 \ref{tab:aes-128-key-endian} 和表 \ref{tab:aes-256-key-endian} 中定义的文本字节序。
+\begin{table}[H]
+    \centering
+    \caption{AES-128 密钥字节序}
+    \label{tab:aes-128-key-endian}
+
+    \begin{threeparttable}
+    \begin{tabular}{ |l|l|l|l|l| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{Bit}\tnote{1} &  \textbf{w[0]}    &   \textbf{w[1]}    &   \textbf{w[2]}    &   \textbf{w[3]}\tnote{2}     \\\hline
+
+        % table contents
+        [31:24]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]\\ \hline
+        [23:16]     &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]\\ \hline
+        [15:8]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]\\ \hline
+        [7:0]   &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]\\ \hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[1] Bit 列代表 w[0] \verb+~+ w[3] 每个 word 中的各个字节。
+            \item[2] w[0] \verb+~+ w[3] 符合标准 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197} 中 5.2 Key Expansion 章节中对 ``the first Nk words of the expanded key" 的描述。
+        \end{tablenotes}
+     \end{threeparttable}
+\end{table}
+\newgeometry{left=1cm,right=1cm,top=2cm,bottom=2cm}
+\begin{landscape}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+\begin{threeparttable}
+
+\begin{longtable}[c]
+{ |l|l|l|l|l|l|l|l|l|}
+\caption{AES-256 密钥字节序}\label{tab:aes-256-key-endian}\\
+\hline
+\rowcolor{lightgray}
+\textbf{Bit}$^1$ &   \textbf{w[0]}    &  \textbf{ w[1]}    &   \textbf{w[2]}    &   \textbf{w[3]}    &  \textbf{ w[4]}    &   \textbf{w[5]}& \textbf{   w[6]}    &   \textbf{w[7]}$^2$    \\\hline
+[31:24]     &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[7:0]
+& \scriptsize  \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[7:0]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[7:0]\\ \hline
+[23:16]     &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[15:8]   &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[15:8]\\ \hline
+[15:8]  &  \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[23:16]& \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[23:16]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[23:16]\\ \hline
+[7:0]   &  \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_0\_REG}[31:24]  &    \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_1\_REG}[31:24]  & \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_2\_REG}[31:24]    &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_3\_REG}[31:24]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_4\_REG}[31:24]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_5\_REG}[31:24]& \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_6\_REG}[31:24]  &   \scriptsize \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_7\_REG}[31:24]\\ \hline
+\end{longtable}
+
+\begin{tablenotes}
+\item[1] Bit 列代表 w[0] \verb+~+ w[7] 每个 word 中的各个字节。
+\item[2] w[0] \verb+~+ w[7] 符合标准 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf}{NIST FIPS 197} 中 5.2 Key Expansion 章节中对 ``the first Nk words of the expanded key" 的描述。
+\end{tablenotes}
+\end{threeparttable}
+
+\end{landscape}
+\restoregeometry
+
+\subsection{Typical AES 工作流程 }
+
+\textbf{单次运算}
+
+\begin{enumerate}
+    \item 对寄存器 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} 写入 0。
+    \item 初始化寄存器 \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}、\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}、\hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}。
+    \item 启动运算。对寄存器 \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} 写入 1。
+    \item 等待运算完成。轮询寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，直到读到 0。
+    \item 从寄存器 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} 读取结果。
+\end{enumerate}
+
+\textbf{连续运算}
+
+在连续运算过程中，每次运算完成之后，只有寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG} 和 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} (\regindex{m}: 0-3) 会被 AES 加速器更新，
+而 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG}、\hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG}、\hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG} 等寄存器中的内容不会变化。
+所以进行连续运算时可以简化初始化操作。
+
+\begin{enumerate}
+    \item 第一次运算之前对寄存器 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} 写入 0。
+    \item 第一次运算之前初始化寄存器 \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} 和 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}。
+    \item 更新寄存器 \hyperref[regdesc:AESTEXTINnREG]{AES\_TEXT\_IN\_\regindex{m}\_REG}。 \label{others:aes-update-register-typical-continuous}
+    \item 启动运算。对寄存器 \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} 写入 1。
+    \item 等待运算完成。轮询寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，直到读到 0。
+    \item 从寄存器 \hyperref[regdesc:AESTEXTOUTnREG]{AES\_TEXT\_OUT\_\regindex{m}\_REG} 读取结果 \label{read result in typical AES continuous calculation}。 返回步骤 \ref{others:aes-update-register-typical-continuous}，进行下一轮运算。
+\end{enumerate}
+
+
+\section{DMA-AES 工作模式}\label{sec:aes-dma-aes}
+
+在 DMA-AES 工作模式下，AES 加速器可支持 ECB、CBC、OFB、CTR、CFB8、CFB128 六种块模式运算。
+用户可通过配置 \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG} 寄存器选择具体运算类型，具体可参考表 \ref{tab:aes-block-mode}。
+
+\begin{longtable}[c]{ | c | l | }
+\caption{块模式选择}
+\label{tab:aes-block-mode}
+\\\hline
+\rowcolor{lightgray}
+\textbf{\hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG}[2:0]}     & \textbf{块模式}\\
+    \hline
+    0                          & ECB (Electronic Code Book)    \\
+    \hline
+    1                          & CBC (Cipher Block Chaining)     \\
+    \hline
+    2                          & OFB (Output FeedBack)    \\
+    \hline
+    3                          & CTR (Counter)    \\
+    \hline
+    4                          & CFB8 (8-bit Cipher FeedBack)    \\
+    \hline
+    5                          & CFB128 (128-bit Cipher FeedBack) \\
+    \hline
+    6                          & GCM (Galois/Counter Mode)     \\
+    \hline
+    7                          & 保留     \\
+    \hline
+\end{longtable}
+
+\clearpage
+AES 加速器的状态值可查看寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，具体见表 \ref{tab:aes-state-value-dma} 所示：
+
+\begin{longtable}[c]{ | c | l | l | }
+\caption{状态返回值}
+\label{tab:aes-state-value-dma}
+\\\hline
+\rowcolor{lightgray}
+\textbf{返回值} & \textbf{描述} &  \textbf{状态说明} \\ \hline
+
+    0                   & IDLE      &   加速器空闲\\ \hline
+    1                   & WORK      &   加速器忙于运算     \\ \hline
+    2                   & DONE      &   加速器运算完成     \\ \hline
+\end{longtable}
+
+AES 加速器在 DMA-AES 工作模式下允许中断发生，软件清零。
+中断功能默认关闭，用户可通过将 \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} 寄存器配置为 1 开启中断。如开启中断功能，AES 加速器在完成运算时，中断发生。
+
+\subsection{密钥、明文、密文}
+
+\textbf{块运算模式}
+
+在块运算模式下，AES 加速器的源数据来自 DMA，结果数据也将被写入 DMA。
+\begin{itemize}
+    \item 如果为加密运算，则 DMA 从存储器中读取明文数据流并将其传给 AES。AES 运算出密文后将密文写入 DMA。DMA 再将密文写入存储器。
+    \item 如果为解密运算，则 DMA 从存储器中读取密文数据流并将其传给 AES。AES 运算出明文后将明文写入 DMA。DMA 再将明文写入存储器。
+\end{itemize}
+
+AES 加速器在进行块运算时，结果数据与源数据的大小保持一致。此时，DMA 的数据搬运过程和 AES 的运算过程有所交叠，因此总工作时间有所减少。
+
+\label{api:textpadding} 值得注意的是，AES 加速器在 DMA-AES 工作模式下要求源数据的大小必须是 128 位的整数倍，否则需要将原始明文封装为 128 位的整数倍，即在源数据末尾应尽可能少补 0，具体过程见表 \ref{tab:aes-define-func-text-padding} 所示。
+\begin{longtable}[c]{|p{15cm}|}
+\caption{TEXT-PADDING}
+\label{tab:aes-define-func-text-padding}\\
+\hline
+\rowcolor{lightgray}
+\multirow{1}{*}{%
+{\bfseries 函数：} {\bfseries TEXT-PADDING}(\ ) } \\\hline
+{\bfseries 输入：} $X$，比特串。\\
+{\bfseries 输出：} $Y$ = {\bfseries TEXT-PADDING}($X$)，长度为最接近 128 比特整数倍的值。 \\\hline
+{\bfseries 步骤：}\\
+\hspace{1.15cm} 假设 $X$ 是一个数据流，可以按如下方式分成 {\it{n}} 个部分：\\
+\phantom{aaaaaaa}$X = X_{1} || X_{2} || \cdots || X_{n-1} || X_{n}$ \\
+\phantom{aaaaaaa}此处，$X_{1}$、$X_{2}$、$\cdots$、$X_{n-1}$ 的长度均为 128 比特，而 $X_{n}$ 的长度为 {\it{t}} (0<=$t$<=127)。\\
+\phantom{aaaaaaa}如果 ${\it{t}} = 0$，则\\
+\phantom{aaaaaaa}\phantom{空空空空空} {\bfseries TEXT-PADDING}($X$) = $X$;\\
+\phantom{aaaaaaa}如果 $0<{\it{t}} <= 127$，定义 $X_{n}^{*}$ 块的长度为 128 比特，且 $X_{n}^{*} = X_{n} || 0^{128-{\it{t}}}$，则\\
+\phantom{aaaaaaa}\phantom{空空空空空} {\bfseries TEXT-PADDING}($X$) = $X_{1} || X_{2} || \cdots || X_{n-1} || X_{n}^{*}$  = $X || 0^{128-{\it{t}}}$\\
+\hline
+\end{longtable}
+
+
+\subsection{字节序}
+
+在 DMA-AES 工作模式下，源数据和结果数据的传输完全由 DMA 完成，因此不支持字节序的控制调节，但要求它们在存储器中以一定的方式来存放，且要求数据量必须是块的整数倍。
+
+举例说明，假设 DMA 需要搬运源数据：
+
+\begin{itemize}
+    \item 十六进制： 0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20
+    \item 数据大小：相当于 2 个块
+\end{itemize}
+
+假设起始地址为 0x0280，则源数据在存储器中的存放位置如表 \ref{tab:aes-dma-aes-plaintext-ciphertext-endian} 所示。结果数据也遵从相同的存放规则，在此不多做介绍。
+
+\begin{longtable}[c]
+{ |c|c|c|c|c|c|c|c|}
+\caption{DMA-AES 存储字节序}
+\label{tab:aes-dma-aes-plaintext-ciphertext-endian}\\
+\hline
+\rowcolor{lightgray}
+\textbf{地址} &  \textbf{字节}  & \textbf{地址} &  \textbf{字节}  & \textbf{地址} &  \textbf{字节}  & \textbf{地址} &  \textbf{字节} \\\hline
+0x0280 & 0x01 & 0x0281 & 0x02 & 0x0282 & 0x03 & 0x0283 & 0x04 \\\hline
+0x0284 & 0x05 & 0x0285 & 0x06 & 0x0286 & 0x07 & 0x0287 & 0x08 \\\hline
+0x0288 & 0x09 & 0x0289 & 0x0A & 0x028A & 0x0B & 0x028B & 0x0C \\\hline
+0x028C & 0x0D & 0x028D & 0x0E & 0x028E & 0x0F & 0x028F & 0x10 \\\hline
+0x0290 & 0x11 & 0x0291 & 0x12 & 0x0292 & 0x13 & 0x0293 & 0x14 \\\hline
+0x0294 & 0x15 & 0x0295 & 0x16 & 0x0296 & 0x17 & 0x0297 & 0x18 \\\hline
+0x0298 & 0x19 & 0x0299 & 0x1A & 0x029A & 0x1B & 0x029B & 0x1C \\\hline
+0x029C & 0x1D & 0x029D & 0x1E & 0x029E & 0x1F & 0x029F & 0x20 \\\hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{标准增量函数}\label{sec:aes-Standard-Incrementing-Function}
+
+AES 加速器在进行 CTR 块运算时，还可提供两种标准增量函数供用户选择：INC$_{32}$ 和 INC$_{128}$。用户可通过将寄存器 \hyperref[regdesc:AESINCSELREG]{AES\_INC\_SEL\_REG} 置为 0 或 1 选择 INC$_{32}$ 或 INC$_{128}$ 标准增量函数。更多有关标准增量函数的内容，请见 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A} 标准中的 B.1 The Standard Incrementing Function 章节。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{块个数}\label{sec:aes-block-number}
+
+寄存器 \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG} 存放明文或密文的块个数 (Block Number)，其值等于 length({\bfseries TEXT-PADDING}($P$))/128，也等于 length({\bfseries TEXT-PADDING}($C$))/128。这里的 $P$ 指明文 (plaintext)， $C$ 指密文 (ciphertext)。该寄存器仅在 DMA-AES 工作模式下有意义。
+
+\subsection{初始向量}\label{sec:aes-init-vector}
+
+\label{memdesc:AESIVMEM} 存储器 \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} 的空间大小为 16 字节，仅在块运算模式下有效。
+对于 CBC/OFB/CFB8/CFB128 操作，\hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} 用于存放初始向量 (Initialization Vector, IV) 的值。对于 CTR 操作， \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM}  存放初始计数器 (Initial Counter Block, ICB) 的值。
+
+IV 和 ICB 都是 128 位的比特串，从左向右被分割成 16 个字节 (Byte0, Byte1, Byte2, \begin{math}\cdots\end{math}, Byte15)， 构成一个字节序列，在 \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} 中存放时需要遵循表 \ref{tab:aes-dma-aes-plaintext-ciphertext-endian} 中的字节序规则，即 Byte0 存放在 \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} 中的最低地址中，Byte15 存放在 \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM} 中的最高地址中。
+
+更多有关 IV 和 ICB 的信息，请参考 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf}{NIST SP 800-38A} 标准。
+
+\subsection{块工作流程}
+
+\begin{enumerate}
+    \item 选择一条 DMA 通道与 AES 加速器连接，配置 DMA 链表，而后启动 DMA。详情请见章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+    \item 初始化与 AES 加速器相关的寄存器：
+    \begin{itemize}
+        \item 对寄存器 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} 写入 1。
+        \item 配置寄存器 \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} 以开启或禁用中断。
+        \item 初始化寄存器 \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} 和 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}。
+        \item 配置寄存器 \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG}，选择具体块加密模式。详见表 \ref{tab:aes-block-mode}。
+        \item 初始化寄存器 \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG}，请参照章节 \ref{sec:aes-block-number}。
+        \item 初始化寄存器 \hyperref[regdesc:AESINCSELREG]{AES\_INC\_SEL\_REG}（仅在 CTR 块模式下使用）。
+        \item 初始化存储器 \hyperref[memdesc:AESIVMEM]{AES\_IV\_MEM}（在 ECB 块模式下不使用）。
+    \end{itemize}
+    \item 对寄存器 \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} 写入 1，启动运算。
+    \item \label{other:aes-block-computation-done} 等待运算完成。轮询寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，直到读到 2。如果开启了中断功能，也可以等待 AES\_INT 中断产生。
+    \item 确认 DMA 完成从 AES 到内存的数据传输。此时，结果数据已经被 DMA 写入内存，可以直接读取。详情请参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+    \item 如果开启了中断，当处理中断程序完成后，请及时对寄存器 \hyperref[regdesc:AESINTCLRREG]{AES\_INT\_CLR\_REG} 写 1 以清除中断。
+    \item 对寄存器 \hyperref[regdesc:AESDMAEXITREG]{AES\_DMA\_EXIT\_REG} 写入 1 释放 AES 加速器，再读取寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} 将读到 0。
+    该步操作可以提前完成，但必须在步骤 \ref{other:aes-block-computation-done} 之后完成。
+\end{enumerate}
+
+
+\subsection{GCM 工作流程}
+
+\begin{enumerate}
+    \item 配置 DMA 链并启动 DMA。有关 DMA 的详细信息，请见章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+    \item 初始化与 AES 加速器相关的寄存器：
+    \begin{itemize}
+        \item 对寄存器 \hyperref[regdesc:AESDMAENABLEREG]{AES\_DMA\_ENABLE\_REG} 写入 1。
+        \item 配置寄存器 \hyperref[regdesc:AESINTENAREG]{AES\_INT\_ENA\_REG} 以开启或禁用中断。
+        \item 初始化寄存器  \hyperref[regdesc:AESMODEREG]{AES\_MODE\_REG} 和 \hyperref[regdesc:AESKEYnREG]{AES\_KEY\_\regindex{n}\_REG}。
+        \item 对寄存器 \hyperref[regdesc:AESBLOCKMODEREG]{AES\_BLOCK\_MODE\_REG} 写入 6。
+        \item 初始化寄存器 \hyperref[regdesc:AESBLOCKNUMREG]{AES\_BLOCK\_NUM\_REG}，详情请见章节 \ref{sec:aes-block-number} \textit{\nameref{sec:aes-block-number}}。
+        \item 初始化寄存器 \hyperref[regdesc:AESAADBLOCKNUMREG]{AES\_AAD\_BLOCK\_NUM\_REG}，详情请见章节 \ref{sec:aes-aad-block-number} \textit{\nameref{sec:aes-aad-block-number}}。
+        \item 初始化寄存器 \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} ，详情请见章节 \ref{sec:aes-remainder-bit-number} \textit{\nameref{sec:aes-remainder-bit-number}}。
+    \end{itemize}
+    \item 对寄存器 \hyperref[regdesc:AESTRIGGERREG]{AES\_TRIGGER\_REG} 写入 1，启动运算。
+    \item 等待运算完成。轮询寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，直到读到 2。有关 AES 加速器工作状态的详细信息，请参考表 \ref{tab:aes-state-value-dma} \textit{\nameref{tab:aes-state-value-dma}}。此步骤中不会产生中断。
+    \item 从存储器 \hyperref[memdesc:AESHMEM]{AES\_H\_MEM} 中读取 $H$。
+    \item 生成 $J_0$ 并将其写入存储器 \hyperref[memdesc:AESJ0MEM]{AES\_J0\_MEM}。
+    \item 对寄存器 \hyperref[regdesc:AESCONTINUEOPREG]{AES\_CONTINUE\_OP\_REG} 写入 1 以继续操作。
+    \item \label{other:aes-gcm-computation-done} 等待运算完成。轮询寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG}，直到读到 2。如果开启了中断功能，也可以等待 AES\_INT 中断产生。有关 AES 加速器工作状态的详细信息，请参考表 \ref{tab:aes-state-value-dma} \textit{\nameref{tab:aes-state-value-dma}}。
+    \item 从存储器 \hyperref[memdesc:AEST0MEM]{AES\_T0\_MEM} 中读取 $T_0$。
+    \item 确认 DMA 完成从 AES 到内存的数据传输。此时，结果数据已经被 DMA 写入内存，可以直接读取。详情请参考章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+    \item 如果开启了中断，当处理中断程序完成后，请及时对寄存器 \hyperref[regdesc:AESINTCLRREG]{AES\_INT\_CLR\_REG} 写 1 以清除中断。
+    \item 对寄存器 \hyperref[regdesc:AESDMAEXITREG]{AES\_DMA\_EXIT\_REG} 写入 1 退出 DMA，再读取寄存器 \hyperref[regdesc:AESSTATEREG]{AES\_STATE\_REG} 将读到 0。
+    该步操作可以提前完成，但必须在步骤 \ref{other:aes-gcm-computation-done} 之后完成。
+\end{enumerate}
+
+
+\section{GCM 算法}\label{sec:aes-gcm-algorithm}
+
+\chipname{} 的 AES 加速器支持 GCM 算法。通常情况下，很少会使用超过 \begin{math}2^{32}\end{math}-1 位长度的 \begin{math}AAD\end{math}、\begin{math}C\end{math} 和 \begin{math}P\end{math}。因此，本章节规定 \begin{math}AAD\end{math}、\begin{math}C\end{math} 和 \begin{math}P\end{math} 的长度不应超过 \begin{math}2^{32}\end{math}-1。下图 \ref{fig:aes-gcm-encryption} 为 \chipname{} AES 加速器中的 GCM 加密过程。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{./26-AES/figures/GCM_encryption.eps}
+    \caption{GCM 加密过程}
+    \label{fig:aes-gcm-encryption}
+\end{figure}
+
+GCM 加密过程如下：
+\begin{enumerate}
+    \item \label{GCM operation : Hardware Calculate H} 硬件执行 ECB 算法以获取哈希子密钥 \hyperref[Label Hash subkey]{$H$}，该子密钥将用于哈希运算。
+    \item \label{GCM operation : Hardware Calculate AAD hash} 硬件执行 GHASH 算法，使用 \hyperref[api:textpadding]{已填充的} $AAD$ 进行哈希运算。
+    \item \label{GCM operation : Hardware Calculate J0 inc32} 硬件以 \hyperref[Label J0]{$J_{0}$} 作为输入执行标准递增函数 INC$_{32}$，该结果将作为 CTR 加密的初始计数器值。
+    \item \label{GCM operation : Hardware Calculate C hash} 硬件执行 GCTR 算法加密已填充的明文 $P$，然后执行 GHASH 算法使用已填充的密文 $C$ 进行哈希运算。
+    \item \label{GCM operation : Hardware Calculate padding block hash} 硬件执行 GHASH 算法对 AAD 块进行哈希运算，得到 128 位的哈希结果。
+    \item \label{GCM operation : Hardware Calculate T0} 硬件执行 GCTR 算法加密 $J_{0}$，得到 $T_{0}$。
+    \item \label{GCM operation : Software Calculate T} 软件从硬件获取结果 $T_{0}$，执行 MSB$_{t}$ 算法，得到最终的认证标签 $T$。
+\end{enumerate}
+
+GCM 解密与 GCM 加密唯一的区别在于图 \ref{fig:aes-gcm-encryption} 中的步骤 \ref{GCM operation : Hardware Calculate C hash}。具体而言，在 GCM 解密中，AES 加速器不是执行 GCTR 算法加密已填充的明文，而是执行这一算法解密已填充的密文，详见 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D}。
+
+
+\subsection{哈希子密钥}\label{Label Hash subkey}
+
+\label{memdesc:AESHMEM} 在 GCM 操作中，哈希子密钥 $H$ 是硬件运算出的 128 位值，详见图 \ref{fig:aes-gcm-encryption} 中的步骤 \ref{GCM operation : Hardware Calculate H}。更多信息请参考 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} 的 7 GCM Specification 章节中关于 ``Step 1. Let $H$ = CIPH$_K$({$0^{128}$})" 的描述。
+
+哈希子密钥 $H$ 存放在存储器 \hyperref[memdesc:AESHMEM]{AES\_H\_MEM} 中。与其他字节序相同，其最高有效字节（即最左侧字节）Byte0 存放在存储器的最低地址中，而最低有效字节（即最右侧字节）Byte15 存放在最高地址中，详见表 \ref{tab:aes-endianness-type-typical-plaintext-ciphertext}。
+
+
+\subsection{\texorpdfstring{$J_0$}{J0}} \label{Label J0}
+
+$J_0$ 是硬件运算出的 128 位值，用于图 \ref{fig:aes-gcm-encryption} 的步骤 \ref{GCM operation : Hardware Calculate J0 inc32} 和步骤 \ref{GCM operation : Hardware Calculate T0}。有关生成 $J_0$ 的详细信息，请参考 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} 的 7 GCM Specification 章节。
+
+$J_0$ 存放在存储器 \label{memdesc:AESJ0MEM}\hyperref[memdesc:AESJ0MEM]{AES\_J0\_MEM} 中。与其他字节序相同，其最高有效字节（即最左侧字节）Byte0 存放在存储器的最低地址中，而最低有效字节（即最右侧字节）Byte15 存放在最高地址中，详见表 \ref{tab:aes-endianness-type-typical-plaintext-ciphertext}。
+
+
+\subsection{认证标签}\label{Label Authenticated Tag}
+
+认证标签（下文简称标签）是 GCM 的关键输出之一，详见图 \ref{fig:aes-gcm-encryption} 的步骤 \ref{GCM operation : Software Calculate T}。标签值由其长度 $t$
+($1 <= t <= 128$) 决定：
+
+\begin{itemize}
+    \item 当 $t = 128$ 时，标签值等于 128 位的字符串 $T_0$，存放在 \label{memdesc:AEST0MEM}\hyperref[memdesc:AEST0MEM]{AES\_T0\_MEM} 中。与其他字节序相同，其最高有效字节（即最左侧字节）Byte0 存放在存储器的最低地址中，而最低有效字节（即最右侧字节）Byte15 存放在最高地址中，详见表 \ref{tab:aes-endianness-type-typical-plaintext-ciphertext}。
+
+    \item 当 $1 <= t < 128$ 时，标签值等于 $T_0$ 的 $t$ 位最高有效位（即最左侧位）。在这种情况下的标签为 MSB$_t$($T_0$)，代表 $T_0$ 的 $t$ 位最高有效位。例如，MSB$_4$(111011010) = 1110，MSB$_5$(11010011010) = 11010。有关 MSB$_t$(\ ) 函数的详细信息，请参考 \href{https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf}{NIST SP 800-38D} 中的 6 Mathematical Components of GCM 章节。
+
+\end{itemize}
+
+
+\subsection{AAD 块个数}\label{sec:aes-aad-block-number}
+
+寄存器 \hyperref[regdesc:AESAADBLOCKNUMREG]{AES\_AAD\_BLOCK\_NUM\_REG} 存储附加认证数据 (AAD) 的块个数。该寄存器的长度等于 {\bfseries TEXT-PADDING}($AAD$)长度)/128。AES 加速器在 DMA-AES 模式下工作时才会使用此寄存器。
+
+
+\subsection{不完整块的有效位数}\label{sec:aes-remainder-bit-number}
+
+
+寄存器 \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} 表示明文或密文中不完整块的有效位数。该寄存器中存储的值等于 $P$ 长度/128 或 $C$ 长度/128。AES 加速器在 DMA-AES 模式下工作时才会使用此寄存器。
+
+\hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} 不影响明文或密文的相关运算结果，但会影响 $T_{0}$ 的值，因此也会影响认证标签的值。
+
+GCM 算法可以看作是 GCTR 操作和 GHASH 操作的结合，其中 GCTR 执行加密和解密，而 GHASH 运算认证标签的值。
+
+请注意，\hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} 寄存器仅对 GCM 加密有效。具体而言：
+
+\begin{itemize}
+    \item 对于 GCM 加密来说，硬件首先运算 $C$，然后将其以 {\bfseries TEXT-PADDING}($C$) 的形式传递给 GHASH 操作。此时，硬件根据 \hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} 的值确定在数据末尾应添加多少 0。
+    \item GCM 解密使用 {\bfseries TEXT-PADDING}($C$) 函数完成填充。此时，\hyperref[regdesc:AESREMAINDERBITNUMREG]{AES\_REMAINDER\_BIT\_NUM\_REG} 寄存器无效。
+\end{itemize}
+
+
+\tagged{ESP32-P4-latest}{
+\section{伪轮次抗 DPA 功能}
+
+\chipname{} AES 模块的伪轮次抗 DPA 功能可以增加芯片的抵御攻击的性能。当开启伪轮次功能时，AES 模块将在原始操作轮次之前和之后随机添加伪轮次。在一个伪轮次中，AES 将使用由硬件自动生成的伪密钥执行伪计算。伪轮次中的计算不会影响原始 AES 操作的结果。
+
+伪轮次抗 DPA 功能的主要配置参数包括：
+
+\textbf{伪轮次功能的开关}
+
+用户可通过配置 \hyperref[fielddesc:AESPSEUDOEN]{AES\_PSEUDO\_EN} 寄存器，选择是否开启伪轮次功能。
+\begin{itemize}
+    \item 0：计算过程中不增加伪轮次；
+    \item 1：计算过程中增加伪轮次。
+\end{itemize}
+
+\textbf{伪轮次的总数}
+
+在每次 AES 计算中随机插入伪轮次的具体数量可通过以下寄存器配置：
+\begin{itemize}
+    \item pseudo\_base：等于 \hyperref[fielddesc:AESPSEUDOBASE]{AES\_PSEUDO\_BASE} 中配置的值，该值配置伪轮次功能的基本轮数。
+    \item pseudo\_inc：等于 \hyperref[fielddesc:AESPSEUDOINC]{AES\_PSEUDO\_INC} 中配置的值，该值配置伪轮次功能的随机递增轮数。
+\end{itemize}
+伪轮次的总数将在 $$[pseudo\_base,pseudo\_base+(2^{pseudo\_inc}-1)]$$ 范围内随机生成。
+
+\textbf{随机数更新频率}
+
+用户可通过配置 \hyperref[fielddesc:AESPSEUDORNGCNT]{AES\_PSEUDO\_RNG\_CNT} 的值来确定伪轮次功能中随机密钥的更新频率。配置的值越大，代表更新频率越高。通常建议将此值配置为最大值 7。
+}
+
+
+%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname 的 AES 可以生成以下中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item AES\_INTR
+    \end{itemize}
+
+以上中断信号由 AES 的内部中断源生成。表 \ref{tab:aes-int-sources} 列出了 AES 的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{5cm} | L{6.5cm} | L{4cm} | }
+\caption{AES 的内部中断源} \label{tab:aes-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:AESDMADONEINT}AES\_DMA\_DONE\_INT  &  AES DMA 运算完成 &  AES\_INTR  \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+
+\section{存储器列表}
+
+本小节的所有地址均为相对于 AES 加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/26-AES-mem-summ__CN}
+
+\clearpage
+
+\hypertarget{aes-reg-summ}{}
+\section{寄存器列表}
+
+本小节的所有地址均为相对于 AES 加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/26-AES-reg-summ__CN.tex}
+
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 AES 加速器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/26-AES-reg__CN.tex}
+
+\end{document}

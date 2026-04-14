@@ -1,0 +1,994 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./39-CAMLCDCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{camlcdctrl}{}
+\chapter{LCD and Camera Controller (LCD\_CAM)}
+\label{mod:camlcdctrl}
+
+\section{Overview}
+
+The LCD and Camera controller (LCD\_CAM) on the \chipname{}, consisting of an independent LCD control module and a camera control module, is a versatile component designed to facilitate interfacing with both LCDs and cameras.
+
+The LCD module provides an LCD interface that can connect to RGB, Motorola 6800 (MOTO6800), and Intel 8080 (I8080) compatible LCD devices. The LCD module is responsible for sending video data to the display.
+
+The Camera module provides one parallel camera interface that can connect to external digital video port (DVP) cameras in 8/16-bit modes. It manages communication with the camera to capture images or video frames.
+
+The LCD\_CAM controller offers flexibility for projects that involve both displaying information on screens and working with cameras for image or video processing.
+
+\section{Features}
+
+LCD\_CAM has the following features:
+
+\begin{itemize}
+    \item Supports the following operation modes:
+    \begin{itemize}
+        \item LCD master TX mode
+        \item Camera slave RX mode
+        \item Camera master RX mode
+    \end{itemize}
+    \item Supports simultaneous connection to an external LCD and a camera
+    \item When interfacing with an external LCD, the following is supported:
+    \begin{itemize}
+        \item 8/16/24-bit parallel output modes
+        \item RGB, MOTO6800, and I8080 LCD formats
+        \item LCD data retrieved from internal memory or external memory via GDMA
+    \end{itemize}
+    \item When interfacing with an external camera (i.e., DVP image sensor), the following is supported:
+    \begin{itemize}
+        \item 8/16-bit parallel input modes
+        \item Camera data stored in internal or external memory via GDMA
+    \end{itemize}
+    \item Supports interrupts
+\end{itemize}
+
+\section{Functional Description}
+
+\subsection{Block Diagram}
+
+Figure \ref{Figure:lcdcam_arch} shows the structure of LCD\_CAM which includes:
+
+\begin{itemize}
+    \item One TX control unit (LCD\_Ctrl)
+    \item One RX control unit (Camera\_Ctrl)
+    \item One asynchronous TX FIFO (Async TX FIFO) for communicating with external devices, e.g., LCDs
+    \item One asynchronous RX FIFO (Async RX FIFO) for communicating with external devices, e.g., cameras
+    \item Two clock generators (LCD\_Clock Generator and CAM\_Clock Generator) for generating clocks for each module
+    \item Two format converters (RGB/YUV Converter) for converting video data into various formats
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/ESP32-P4_LCD_CAM.pdf}}
+     \textcolor{black}{\textbf{- ->}}: control signal
+     \textcolor{black}{\textbf{=>}}: data flow
+    \caption{LCD\_CAM Block Diagram}
+    \label{Figure:lcdcam_arch}
+\end{figure}
+
+\subsection{Signal Description}\label{sec:lcdcam-signal-description}
+
+Table \ref{tab:lcdcam-signal-description} shows the input and output signals required for the operation of the LCD and Camera controller.
+
+The definition of the three operation modes is as follows:
+
+\begin{itemize}
+    \item \textbf{Camera Slave RX Mode:} In this mode, the Camera module is the receiver of control signals.
+    \item \textbf{Camera Master RX Mode:} In this mode, the Camera module sends clock signals to the slave, which will transmit data to the master upon receiving the signals.
+    \item \textbf{LCD Master TX Mode:} In this mode, the LCD module initiates communication with the slave and sends control signals to the slave.
+\end{itemize}
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] All the signals must be mapped to the chip's pins via GPIO matrix. For more information, see Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+    \item[2] For the input signals with 8 or 16-bit width, \textcolor{red}{\it{N}} = 7 or 15 respectively. For the output signals with 8, 16, or 24-bit width, \textcolor{red}{\it{M}} = 7, 15, or 23 respectively.
+    \item [3] If \hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN} is set, i.e., VSYNC + HSYNC mode is selected, then VSYNC, HSYNC, and DE signals control the data. In this case, users need to wire the three signal lines. If \hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN} is cleared, i.e., DE mode is selected, then VSYNC and DE signals control the data. In this case, wiring HSYNC signal line is not a must. But in this case, the YUV-RGB conversion function of the Camera module is not available.
+\end{TableNotes}
+
+\begin{longtable}[c]{ | l | m{3cm} | m{1.5cm} | m{7cm} | }
+    \caption{LCD\_CAM Input and Output Signal Descriptions}
+    \label{tab:lcdcam-signal-description}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Operation Mode} & \textbf{Signal\tnote{1}} & \textbf{Direction} & \textbf{Function} \\\hline
+    \endfirsthead
+
+    \multicolumn{4}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Operation Mode} & \textbf{Signal\tnote{1}} & \textbf{Direction} & \textbf{Function} \\\hline
+    \endhead
+
+    \multicolumn{4}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+
+    \insertTableNotes
+    \endlastfoot
+
+    % table contents
+    \multirow{6}*{Camera Slave RX Mode} & CAM\_PCLK & Input & Camera pixel clock signal\\\cline{2-4}
+    & CAM\_VSYNC & Input& Vertical synchronization signal (VSYNC)\tnote{3}\\\cline{2-4}
+    & CAM\_HSYNC & Input & Horizontal synchronization signal (HSYNC)\tnote{3}\\\cline{2-4}
+    & CAM\_DE & Input & Horizontal enable signal (DE)\tnote{3} \\\cline{2-4}
+    & CAM\_Data\_in[\textcolor{red}{\it{N}}:0]\tnote{2} & Input & Camera parallel input data bus, 8/16-bit modes supported \\\hline
+    \multirow{7}*{Camera Master RX Mode} & CAM\_PCLK & Input  & Camera pixel clock input signal\\\cline{2-4}
+    & CAM\_CLK & Output& Camera master clock output signal \\\cline{2-4}
+    & CAM\_VSYNC & Input& Vertical synchronization signal\tnote{3}\\\cline{2-4}
+    & CAM\_HSYNC & Input & Horizontal synchronization signal\tnote{3}\\\cline{2-4}
+    & CAM\_DE & Input & Horizontal enable signal\tnote{3} \\\cline{2-4}
+    & CAM\_Data\_in[\textcolor{red}{\it{N}}:0]\tnote{2} & Input & Camera parallel input data bus, 8/16-bit modes supported\\\hline
+    \multirow{10}*{LCD Master TX Mode} & LCD\_PCLK & Output & LCD pixel clock signal \\\cline{2-4}
+    & LCD\_HSYNC & Output & Horizontal synchronization signal in RGB format \\\cline{2-4}
+    & LCD\_VSYNC & Output & Vertical synchronization signal in RGB format  \\\cline{2-4}
+    & LCD\_DE & Output & Horizontal enable signal in RGB format  \\\cline{2-4}
+    & LCD\_CD & Output & Command and data (CD) signal in I8080 format\\\cline{2-4}
+    & LCD\_CS & Output & Chip select (CS) signal in I8080/MOTO6800 format\\\cline{2-4}
+    & LCD\_Data\_out[\textcolor{red}{\it{M}}:0]\tnote{2} & Output & LCD parallel output data bus, 8/16/24-bit modes supported \\\hline
+\end{longtable}
+
+\end{ThreePartTable}
+
+\subsection{LCD\_CAM Module Clocks}\label{sec:lcdcam-module-clk}
+
+\subsubsection{LCD Clock}\label{sec:lcdcam-lcd-clock}
+
+The clocks used in the LCD module are generated from clock sources by the LCD\_Clock Generator, see Figure \ref{fig:lcd_clk}. The clocks include:
+\begin{itemize}
+    \item Master clock: LCD\_CLK, divided from the clock sources
+    \item Pixel clock: LCD\_PCLK, divided from LCD\_CLK
+\end{itemize}
+
+\hyperref[fielddesc:HPSYSCLKRSTLCDCLKEN]{HP\_SYS\_CLKRST\_LCD\_CLK\_EN} is used to enable LCD\_CLK\_SRC (the clock source), and \hyperref[fielddesc:HPSYSCLKRSTLCDCLKSRCSEL]{HP\_SYS\_CLKRST\_LCD\_CLK\_SRC\_SEL} is used to select LCD\_CLK\_SRC from one of the following clock sources:
+\begin{itemize}
+    \item 0: XTAL\_CLK
+    \item 1: PLL\_F160M\_CLK
+    \item 2: APLL\_CLK
+    \item 3: Disable LCD clock source
+\end{itemize}
+
+\begin{figure}[H]
+    \centering   \fbox{\includegraphics[width=0.8\textwidth]{39-CAMLCDCTRL/figures/lcd_clock.pdf}}
+    \caption{LCD Clock}
+    \label{fig:lcd_clk}
+\end{figure}
+
+The following formula shows the relation between the frequency of LCD\_CLK ($f_{\textrm{LCD\_CLK}}$) and LCD\_CLK\_SRC ($f_{\textrm{LCD\_CLK\_SRC}}$):
+$$f_{\textrm{LCD\_CLK}}=\frac{f_{\textrm{LCD\_CLK\_SRC}}}{N + \frac{b}{a}}$$
+
+The values of \textit{N}, \textit{a}, and \textit{b} are related to \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM}, \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR}, and \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR}. Specifically,
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} = 0, \textit{N} = 1. The values of \textit{a} and \textit{b} do not take effect. The divider is always 1.
+    \item When \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} >=1, \textit{N} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUM]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUM} + 1.
+    \begin{itemize}
+        \item For integer divider, please clear \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR} and \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR}.
+        \item For fractional divider, \textit{b} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR}, \textit{a} = \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR}. The value of \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_NUMERATOR} should be smaller than the value of  \hyperref[fielddesc:HPSYSCLKRSTLCDCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_LCD\_CLK\_DIV\_DENOMINATOR}.
+    \end{itemize}
+\end{itemize}
+
+The following formula shows the relation between the frequencies of LCD\_PCLK ($f_{\textrm{LCD\_PCLK}}$ ) and LCD\_CLK ($f_{\textrm{LCD\_CLK}}$ ):
+
+$$f_{\textrm{LCD\_PCLK}} = \frac{f_{\textrm{LCD\_CLK}}}{\textrm{MO}}$$
+
+
+MO is determined by  \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} and  \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N}, specifically:
+
+\begin{itemize}
+    \item When  \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} = 1, MO = 1.
+    \item When  \hyperref[fielddesc:LCDCAMLCDCLKEQUSYSCLK]{LCD\_CAM\_LCD\_CLK\_EQU\_SYSCLK} = 0, MO = \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N} + 1.
+\end{itemize}
+
+{\bfseries Notes: }
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDCLKCNTN]{LCD\_CAM\_LCD\_CLKCNT\_N} must not be configured as 0.
+    \item Using fractional divider may introduce clock jitters. In case LCD\_CLK and LCD\_PCLK can not be generated from PLL\_F160M\_CLK by integer divider, APLL\_CLK can be used as the clock source. For more information, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+\end{itemize}
+
+\subsubsection{Camera Clock}
+
+The clocks used in the Camera module are generated from clock sources by the CAM\_Clock Generator, see Figure \ref{Figure:camera_clk}. The clocks include:
+\begin{itemize}
+    \item Master clock: CAM\_CLK, master clock output from the Camera module, divided from the clock sources.
+    \item Pixel clock: CAM\_PCLK, clock input from camera slave.
+\end{itemize}
+
+\hyperref[fielddesc:HPSYSCLKRSTCAMCLKEN]{HP\_SYS\_CLKRST\_CAM\_CLK\_EN} is used to enable the CAM\_CLK\_SRC (the clock source), and \hyperref[fielddesc:HPSYSCLKRSTCAMCLKSRCSEL]{HP\_SYS\_CLKRST\_CAM\_CLK\_SRC\_SEL} is used to select CAM\_CLK\_SRC from one of the following clock sources:
+\begin{itemize}
+    \item 0: XTAL\_CLK
+    \item 1: PLL\_F160M\_CLK
+    \item 2: APLL\_CLK
+    \item 3: Disable camera clock source
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{39-CAMLCDCTRL/figures/cam_clock.pdf}}
+    \caption{Camera Clock}
+    \label{Figure:camera_clk}
+\end{figure}
+
+The following formula shows the relation between the frequencies of CAM\_CLK ($f_{\textrm{CAM\_CLK}}$ ) and the divider's clock source ($f_{\textrm{CAM\_CLK\_SRC}}$ ):
+$$f_{\textrm{CAM\_CLK}}=\frac{f_{\textrm{CAM\_CLK\_SRC}}}{N + \frac{b}{a}}$$
+
+\textit{N} is an integer value between 2 and 256. The value of \textit{N} corresponds to the value of  \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} as follows:
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} = 0, \textit{N} = 256.
+    \item When \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} = 1, \textit{N} = 2.
+    \item When \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM} = other value, \textit{N} = \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUM]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUM}.
+\end{itemize}
+
+\textit{b} corresponds to the value of \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR}, and \textit{a} to the value of  \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_DENOMINATOR}.
+\begin{itemize}
+    \item For integer divider, please clear \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} and \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_DENOMINATOR}.
+    \item For fractional divider, the value of \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVNUMERATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_NUMERATOR} should be smaller than the value of \hyperref[fielddesc:HPSYSCLKRSTCAMCLKDIVDENOMINATOR]{HP\_SYS\_CLKRST\_CAM\_CLK\_DIV\_DENOMINATOR}.
+\end{itemize}
+
+\subsection{LCD\_CAM Reset} \label{sec:lcdcam_reset}
+
+LCD\_CAM module has the following reset registers that can reset different parts of the module:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM}: Setting this register will reset the whole LCD\_CAM module.
+    \item \hyperref[fielddesc:LCDCAMLCDRESET]{LCD\_CAM\_LCD\_RESET}: Setting this register will reset the whole LCD module, including the LCD control unit (LCD\_Ctrl), the RGB/YUV Converter, and Async TX FIFO. Configuring this register will not affect the Camera module.
+    \item \hyperref[fielddesc:LCDCAMCAMRESET]{LCD\_CAM\_CAM\_RESET}: Setting this register will reset the whole Camera module, including the Camera control unit (Camera\_Ctrl), the RGB/YUV Converter, and Async RX FIFO. Configuring this register will not affect the LCD module.
+    \item \hyperref[fielddesc:LCDCAMLCDAFIFORESET]{LCD\_CAM\_LCD\_AFIFO\_RESET}: Setting this register will reset the Async TX FIFO without affecting other parts in the module. For example, setting this reset register every time the LCD finishes sending a frame can prevent transmission errors of the previous frame from affecting the transmission of the next frame.
+    \item \hyperref[fielddesc:LCDCAMCAMAFIFORESET]{LCD\_CAM\_CAM\_AFIFO\_RESET}: Setting this register will reset the Async RX FIFO without affecting other parts in the module. For example, setting this reset register every time the Camera finishes receiving a frame can prevent transmission errors of the previous frame from affecting the receiving of the next frame.
+\end{itemize}
+
+{\bfseries Notes: }
+\begin{itemize}
+    \item The reset register \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM} is not self-clearing, meaning writing 1 enables the reset, and writing 0 releases the reset.
+    \item All the above reset registers, except for \hyperref[fielddesc:HPSYSCLKRSTRSTENLCDCAM]{HP\_SYS\_CLKRST\_RST\_EN\_LCDCAM}, are self-clearing, meaning that after writing 1, the hardware will generate a reset pulse and automatically clear the register.
+    \item The module clocks LCD\_CLK and CAM\_CLK must be configured first before the module and FIFO are reset.
+\end{itemize}
+
+\subsection{LCD\_CAM Data Format Control}
+\subsubsection{LCD Data Format Control} \label{lcd_data_control}
+
+When the data is transmitted by the LCD module, it undergoes three stages of processing:
+
+\begin{enumerate}
+    \item Stage One: Data preprocessing\\
+   The LCD module processes the input data from GDMA and sends it to the YUV-RGB converter.
+    \item Stage Two: Data color space conversion\\
+    The YUV-RGB converter processes the data. If the YUV-RGB converter is disabled, the data remains unchanged at this stage.
+    \item Stage Three: Data post-processing\\
+    The LCD module gets data from the YUV-RGB converter for post-processing and then transmits the data to GPIO.
+\end{enumerate}
+
+\begin{tiplisting}
+    The output data from the previous stage is the input data for the subsequent stage.
+\end{tiplisting}
+
+The detailed configuration of each stage is described below.
+
+\textbf{Stage One: Data Preprocessing}
+
+At this stage, configure the following registers to adjust the bit width, bit order, and byte order of the data from GDMA.
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBYTEMODE]{LCD\_CAM\_LCD\_BYTE\_MODE}
+    \begin{itemize}
+        \item 0: The data width of the LCD input from GDMA is 8 bits.
+        \item 1: The data width of the LCD input from GDMA is 16 bits.
+        \item 2: The data width of the LCD input from GDMA is 24 bits.
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBITORDER]{LCD\_CAM\_LCD\_BIT\_ORDER}
+    \begin{itemize}
+        \item 0: Do not invert.
+        \item 1: Invert the input data bit order.
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDBYTEORDER]{LCD\_CAM\_LCD\_BYTE\_ORDER}
+    \begin{itemize}
+        \item 0: Do not invert.
+        \item 1: Invert data byte order, only valid in 16/24-bit modes.
+    \end{itemize}
+\end{itemize}
+
+For the detailed configuration, see Table \ref{tab:bit-byte-order-control-of-lcd-data}.
+\begin{table}[H]
+    \centering
+    \caption{LCD Data Format Control – Stage One}
+    \label{tab:bit-byte-order-control-of-lcd-data}
+    \begin{threeparttable}
+    \begin{tabular}{|p{3cm}|p{2.4cm}|p{2.5cm}|p{2.5cm}|p{4.6cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{GDMA Data Order\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMLCDBYTEMODE]{LCD\_CAM\_LCD\newline\_BYTE\_MODE}}  & \textbf{\hyperref[fielddesc:LCDCAMLCDBITORDER]{LCD\_CAM\_LCD\newline\_BIT\_ORDER}}  & \textbf{\hyperref[fielddesc:LCDCAMLCDBYTEORDER]{LCD\_CAM\_LCD\newline\_BYTE\_ORDER}\tnote{2}} & \textbf{Output Data Order\tnote{3,4}}
+    \\ \hline
+    \multirow{10}*{B0,B1,B2,B3,B4,B5} & \multirow{2}*{0} & \multirow{1}*{0} & 0 & \{B0\}\{B1\}\{B2\}\{B3\}\{B4\}\{B5\}       \\\cline{3-5}
+    &                  & \multirow{1}*{1} & 0 & \{B0'\}\{B1'\}\{B2'\}\{B3'\}\{B4'\}\{B5'\} \\\cline{2-5}
+     & \multirow{4}*{1} & \multirow{2}*{0} & 0 & \{B1,B0\}\{B3,B2\}\{B5,B4\}                \\\cline{4-5}
+     &                  &                  & 1 & \{B0,B1\}\{B2,B3\}\{B4,B5\}                \\\cline{3-5}
+     &                  & \multirow{2}*{1} & 0 & \{B1',B0'\}\{B3',B2'\}\{B5',B4'\}          \\\cline{4-5}
+     &                  &                  & 1 & \{B0',B1'\}\{B2',B3'\}\{B4',B5'\}          \\\cline{2-5}
+     & \multirow{4}*{2} & \multirow{2}*{0} & 0 & \{B2,B1,B0\}\{B5,B4,B3\}                   \\\cline{4-5}
+     &                  &                  & 1 & \{B0,B1,B2\}\{B3,B4,B5\}                   \\\cline{3-5}
+     &                  & \multirow{2}*{1} & 0 & \{B2',B1',B0'\}\{B5',B4',B3'\}             \\\cline{4-5}
+     &                  &                  & 1 & \{B0',B1',B2'\}\{B3',B4',B5'\}             \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] B0 \verb+~+ B5 represent the bytes of the data from GDMA, from low address to high address.
+        \item[2] Only the configuration listed in the table is valid. Other configurations may cause unexpected data errors.
+        \item[3] In output data, the bits in \{\} are in big-endian, and are in parallel with each other, while the data of \{\} is in serial with the data of other \{\}. Data is sent out from left to right. Take \{B0\}\{B1\}\{B2\}\{B3\} as an example. The bits in \{B0\} are in parallel with each other, but are in serial with the bits in \{B1\}\{B2\}\{B3\}. \{B0\} is sent out first.
+        \item[4] In output data, B{\textcolor{red}{n}}'[7:0] = B{\textcolor{red}{n}}[0:7] (n = 0,1,2,3,4,5).
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\textbf{Stage Two: Data Color Space Conversion}\\
+At this stage, the data undergoes color space conversion. For detailed configurations, please refer to Section \ref{sec:yuvrgb_config}.
+
+\begin{tiplisting}
+Users can skip Stage Two by configuring \hyperref[fielddesc:LCDCAMLCDCONVENABLE]{LCD\_CAM\_LCD\_CONV\_ENABLE} as 0, in which case the output of Stage One will directly become the input of Stage Three.
+\end{tiplisting}
+
+\textbf{Stage Three: Data Post-processing}\\
+At this stage, configure the following registers to adjust the bit and byte order of the output data.
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDWIREMODE]{LCD\_CAM\_LCD\_WIRE\_MODE}
+    \begin{itemize}
+        \item 0: The bit width of the data transmitted to GPIO is 8 bits.
+        \item 1: The bit width of the data transmitted to GPIO 16 bits.
+        \item 2: The bit width of the data transmitted to GPIO is 24 bits.
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDDOUTBITORDER]{LCD\_CAM\_LCD\_DOUT\_BIT\_ORDER}
+    \begin{itemize}
+        \item 0: Do not invert.
+        \item 1: Invert the output data bit order.
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEENABLE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_ENABLE}
+    \begin{itemize}
+        \item 0: Disable LCD output data byte reordering.
+        \item 1: Enable LCD output data byte reordering by configuring \hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEMODE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_MODE}. For the reordering results see Table \ref{tab:lcd-byte-swizzle-mode}.
+    \end{itemize}
+\end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{LCD Output Data Reordering}
+    \label{tab:lcd-byte-swizzle-mode}
+    \begin{threeparttable}
+    \begin{tabular}{|p{4cm}|p{8cm}|p{3.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Stage Three Input Data Byte Order\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMLCDDOUTBYTESWIZZLEMODE]{LCD\_CAM\_LCD\_DOUT\_BYTE\_SWIZZLE\_MODE}\tnote{2}} & \textbf{Stage Three Output Data Byte Order\tnote{3}}
+    \\ \hline
+    \multirow{6}*{B0,B1,B2,B3,B4,B5} & 0 & B1,B0,B3,B2,B5,B4       \\\cline{2-3}
+     & 1 & B0,B2,B1,B3,B5,B4       \\\cline{2-3}
+     & 2 & B1,B0,B2,B4,B3,B5       \\\cline{2-3}
+     & 3 & B1,B2,B0,B4,B5,B3       \\\cline{2-3}
+     & 4 & B2,B0,B1,B5,B3,B4       \\\cline{2-3}
+     & 5 & B2,B1,B0,B5,B4,B3       \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] B0 \verb+~+ B5 represent the bytes of the input data in stage three, i.e., the input data is arranged in a little-endian byte sequence. For example, when the valid data width of the input data is 16 bits, the original input data sequence {B1,B0}{B3,B2}{B5,B4} is converted to {B0,B1,B2,B3,B4,B5}.
+
+        \item[2] Only the values listed in the table are valid. Other values may cause unexpected data errors.
+
+        \item[3] The byte order of data that is ultimately transmitted to GPIO is determined by the ``Stage Three Output Data Byte Order" and the bit width. For example, if the ``Stage Three Output Data Byte Order" is B1,B0,B2,B4,B3,B5 and the transmitted data width is 16 bits, then the transmitted data byte order would be \{B0,B1\}\{B4,B2\}\{B5,B3\}. In this sequence, the data within each \{\} is in big-endian parallel format, and the data in each \{\} is in serial with the data in other \{\}. Data is transmitted from left to right. In this particular example, the data in \{B0,B1\} are in parallel with each other, while the data in \{B0,B1\} is in serial with the data in \{B4,B2\} and \{B5,B3\}. \{B0,B1\} is transmitted first.
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\subsubsection{Camera Data Format Control} \label{sec:cam_data_control}
+When the Camera module receives data, configure the following registers to adjust the bit/byte order of the data sent to GDMA.
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAM2BYTEEN]{LCD\_CAM\_CAM\_2BYTE\_EN}
+    \begin{itemize}
+        \item 0: The data width of the Camera input is 8 bits.
+        \item 1: The data width of the Camera input is 16 bits.
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAMBITORDER]{LCD\_CAM\_CAM\_BIT\_ORDER}
+        \begin{itemize}
+        \item 0: Do not invert.
+        \item 1: Invert data bit order.
+        \begin{itemize}
+            \item Invert CAM\_DATA\_in[7:0] to CAM\_DATA\_in[0:7] in 8-bit mode.
+            \item Invert CAM\_DATA\_in[15:0] to CAM\_DATA\_in[0:15] in 16-bit mode.
+        \end{itemize}
+    \end{itemize}
+    \item \hyperref[fielddesc:LCDCAMCAMBYTEORDER]{LCD\_CAM\_CAM\_BYTE\_ORDER}
+    \begin{itemize}
+        \item 0: Do not invert.
+        \item 1: Invert data byte order, only valid in 16-bit mode.
+    \end{itemize}
+\end{itemize}
+
+For the detailed configuration, see Table \ref{tab:bit-byte-order-control-of-cam-data}.
+
+\begin{table}[H]
+    \centering
+    \caption{Camera Data Format Control}
+    \label{tab:bit-byte-order-control-of-cam-data}
+    \begin{threeparttable}
+    \begin{tabular}{|p{2.7cm}|p{2.6cm}|p{2.6cm}|p{2.6cm}|p{2.7cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{RX Data Order\tnote{1}} & \textbf{\hyperref[fielddesc:LCDCAMCAM2BYTEEN]{LCD\_CAM\_CAM\newline\_2BYTE\_EN}}  & \textbf{\hyperref[fielddesc:LCDCAMCAMBITORDER]{LCD\_CAM\_CAM\newline\_BIT\_ORDER}\tnote{2}}  & \textbf{\hyperref[fielddesc:LCDCAMCAMBYTEORDER]{LCD\_CAM\_CAM\newline\_BYTE\_ORDER}\tnote{2}} & \textbf{GDMA Data Order\tnote{3,4}}
+    \\ \hline
+    \multirow{2}*{\{B0\}\{B1\}\{B2\}\{B3\}} & \multirow{2}*{0} &        0         & 0 & B0,B1,B2,B3     \\\cline{3-5}
+    &                  &        1         & 0 & B0',B1',B2',B3' \\\hline
+    \multirow{4}*{\{B1,B0\}\{B3,B2\}}       & \multirow{4}*{1} & \multirow{2}*{0} & 0 & B0,B1,B2,B3     \\\cline{4-5}
+    &                  &                  & 1 & B1,B0,B3,B2     \\\cline{3-5}
+    &                  & \multirow{2}*{1} & 0 & B0',B1',B2',B3' \\\cline{4-5}
+    &                  &                  & 1 & B1',B0',B3',B2' \\\hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[1] In RX data, the bits in \{\} are in big-endian, and are in parallel with each other, while the data in \{\} is in serial with the data in other \{\}. Data is received from left to right. Take \{B0\}\{B1\}\{B2\}\{B3\} as an example. The bits in \{B0\} are in parallel with each other, but are in serial with the bits in \{B1\}\{B2\}\{B3\}. \{B0\} is received first.
+        \item[2] Only the configuration listed in the table is valid. Other configurations may cause unexpected data errors.
+        \item[3] B0 \verb+~+ B3 represent the bytes of the data to GDMA, from low address to high address.
+        \item[4] In the data to GDMA, B{\textcolor{red}{n}}'[7:0] = B{\textcolor{red}{n}}[0:7] (n = 0,1,2,3).
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+\begin{tiplisting}
+If only one byte is received each time, CAM\_Data\_in[7:0] is valid data. For such case, users must connect CAM\_Data\_in[7:0] with the master.
+\end{tiplisting}
+
+\subsection{YUV-RGB Data Format Conversion}\label{sec:yuvrgb_config}
+
+LCD\_CAM is capable of converting data formats between YUV and RGB. The LCD module and Camera module each have a data format converter. The converters support format conversion:
+\begin{itemize}
+    \item under BT601 and BT709 standards
+    \untagged{ESP32-P4-latest}{\item between RGB565 (full/limited range) and YUV422/420/411 (full/limited range) formats}
+    \tagged{ESP32-P4-latest}{\item from RGB565 to YUV422/420/411 (full/limited range)}
+    \untagged{ESP32-P4-latest}{\item between YUV422/420/411 (full/limited range) formats}
+    \tagged{ESP32-P4-latest}{\item from YUV422/YUV411 (full/limited range) to RGB565}
+    \tagged{ESP32-P4-latest}{\item between YUV422/411 (full/limited range) formats}
+\end{itemize}    
+
+The converter in the LCD module also supports conversion:
+        \begin{itemize}
+        \item from YUV422/\untagged{ESP32-P4-latest}{420/}411 (full/limited range) to RGB888 (full/limited range)
+        \item from RGB565 \untagged{ESP32-P4-latest}{(full/limited range)} to YUV444 (full/limited range)
+        \tagged{ESP32-P4-latest}{\item between RGB888 (full/limited range) and RGB565}
+        \item from YUV422/\untagged{ESP32-P4-latest}{420/}411 (full/limited range) to YUV444 (full/limited range)
+        \end{itemize}
+
+\subsubsection{YUV Formats}
+
+In LCD\_CAM module, assume that there are 8 pixels to be transmitted, corresponding to YUV data [$Y_i$, $U_i$, $V_i$] (i = 1 \verb+~+ 8). Then:
+\begin{itemize}
+    \item In YUV422 mode, the LCD sends (or the camera receives) the data as follows:
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $V_2$ & $Y_3$ & $U_3$ & $Y_4$ & $V_4$ & $Y_5$ & $U_5$ & $Y_6$ & $V_6$ & $Y_7$ & $U_7$ & $Y_8$ & $V_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+        \untagged{ESP32-P4-latest}{
+        \item In YUV420 mode, the LCD sends (or the camera receives) the data as follows:
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $Y_3$ & $U_3$ & $Y_4$ & $Y_5$ & $V_5$ & $Y_6$ & $Y_7$ & $V_7$ & $Y_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+        }
+        \tagged{ESP32-P4-latest}{
+            \item In YUV420 mode, the LCD and the camera do not participate in format conversion.
+        }
+    \item In YUV411 mode, the LCD sends (or the camera receives) the data as follows:
+        \begin{table}[H]
+            \centering
+            \begin{tabular}{|c|c|c|c|c|c|c|c|c|c|c|c|}
+            \hline
+            $Y_1$ & $U_1$ & $Y_2$ & $Y_3$ & $V_3$ & $Y_4$ & $Y_5$ & $U_5$ & $Y_6$ & $Y_7$ & $V_7$ & $Y_8$ \\ \hline
+            \end{tabular}
+        \end{table}
+\end{itemize}
+
+\subsubsection{Format Conversion Configuration}
+The configuration process for the format conversion in the Camera module is almost identical to that in the LCD module. Therefore, we will illustrate the process using the example of format conversion in the LCD module.
+
+\begin{enumerate}
+    \item Enable YUV-RGB format converter by setting  \hyperref[fielddesc:LCDCAMLCDCONVENABLE]{LCD\_CAM\_LCD\_CONV\_ENABLE}.
+    \item Configure the valid bit width of the input data by configuring \hyperref[fielddesc:LCDCAMLCDCONVMODE8BITSON]{LCD\_CAM\_LCD\_CONV\_MODE\_8BITS\_ON}:
+    \begin{itemize}
+        \item 0: The valid bit width is 16 bits.
+        \item 1: The valid bit width is 8 bits.
+    \end{itemize}
+    \item Configure the valid bit width of the output data:
+        \begin{itemize}
+            \item For the format conversion in the Camera module, the valid bit width of the output data is equal to that of the input data.
+            \item For the format conversion in the LCD module, when \hyperref[fielddesc:LCDCAMLCDWIREMODE]{LCD\_CAM\_LCD\_WIRE\_MODE} is:
+            \begin{itemize}
+                \item 2: The valid bit width of the format converter's output data is 24 bits.
+                \item Other value: The valid bit width of the format converter's output data is equal to that of the input data.
+            \end{itemize}
+        \end{itemize}
+
+    \item Select the standard by configuring \hyperref[fielddesc:LCDCAMLCDCONVPROTOCOLMODE]{LCD\_CAM\_LCD\_CONV\_PROTOCOL\_MODE}:
+    \begin{itemize}
+        \item 0: BT601 standard
+        \item 1: BT709 standard
+    \end{itemize}
+    \item Configure the conversion mode:
+    \begin{itemize}
+        \item In 24-bit output mode:
+          \untagged{ESP32-P4-latest}{
+            \begin{table}[H]
+            \caption{Conversion Mode Control in 24-bit Mode}
+            \centering
+            \begin{threeparttable}
+            \begin{tabular}{|l|c|c|c|}
+            \hline
+            \rowcolor{lightgray}
+            \textbf{Conversion Mode} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} \\ \hline
+            RGB565 -> YUV444 & 1 & - & 3 \\ \hline
+            YUV422 -> RGB888 & 0 & 0 & 3 \\ \hline
+            YUV420 -> RGB888 & 0 & 1 & 3 \\ \hline
+            YUV411 -> RGB888 & 0 & 2 & 3 \\ \hline
+            YUV422 -> YUV444 & 1 & 0 & 0/1/2 \\ \hline
+            YUV420 -> YUV444 & 1 & 1 & 0/1/2 \\ \hline
+            YUV411 -> YUV444 & 1 & 2 & 0/1/2 \\ \hline
+            \end{tabular}
+          }
+          \tagged{ESP32-P4-latest}{
+            \begin{table}[H]
+                \caption{Conversion Mode Control in 24-bit Mode}
+                \centering
+                \begin{threeparttable}
+                \begin{tabular}{|l|c|c|c|c|}
+                \hline
+                \rowcolor{lightgray}
+                \textbf{Conversion Mode} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} & 
+                \textbf{\hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{RGB2RGB\_MODE}}\tnote{4} \\ \hline
+                RGB565 -> YUV444 & 1 & - & 3 & - \\ \hline
+                RGB565 -> RGB888 & 0 & - & - & 1 \\ \hline
+                YUV422 -> RGB888 & 0 & 0 & 3 & - \\ \hline
+                YUV411 -> RGB888 & 0 & 2 & 3 & - \\ \hline
+                YUV422 -> YUV444 & 1 & 0 & 0/1/2 & - \\ \hline
+                YUV411 -> YUV444 & 1 & 2 & 0/1/2 & - \\ \hline
+                \end{tabular}
+            }
+            \begin{tablenotes}
+                \item[1] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_TRANS\_MODE}
+                \item[2] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV\_MODE}
+                \item[3] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV2YUV\_MODE}
+                \tagged{ESP32-P4-latest}{
+                \item[4] The value of \hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{LCD\_CAM\_LCD\_CONV\_RGB2RGB\_MODE}
+                }
+            \end{tablenotes}
+            \end{threeparttable}
+            \end{table}
+
+    \item In other output modes:
+      \untagged{ESP32-P4-latest}{
+        \begin{table}[H]
+            \caption{Conversion Mode Control in Other Modes}
+            \centering
+            \begin{threeparttable}
+            \begin{tabular}{|l|c|c|c|}
+            \hline
+            \rowcolor{lightgray}
+            \textbf{Conversion Mode} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} \\ \hline
+            RGB565 -> YUV422 & 1 & 0 & 3 \\ \hline
+            RGB565 -> YUV420 & 1 & 1 & 3 \\ \hline
+            RGB565 -> YUV411 & 1 & 2 & 3 \\ \hline
+            YUV422 -> RGB565 & 0 & 0 & 3 \\ \hline
+            YUV420 -> RGB565 & 0 & 1 & 3 \\ \hline
+            YUV411 -> RGB565 & 0 & 2 & 3 \\ \hline
+            YUV422 -> YUV420 & 1 & 0 & 1 \\ \hline
+            YUV422 -> YUV411 & 1 & 0 & 2 \\ \hline
+            YUV420 -> YUV422 & 1 & 1 & 0 \\ \hline
+            YUV420 -> YUV411 & 1 & 1 & 2 \\ \hline
+            YUV411 -> YUV422 & 1 & 2 & 0 \\ \hline
+            YUV411 -> YUV420 & 1 & 2 & 1 \\ \hline
+            \end{tabular}
+       }
+       \tagged{ESP32-P4-latest}{
+        \begin{table}[H]
+            \caption{Conversion Mode Control in Other Modes}
+            \centering
+            \begin{threeparttable}
+            \begin{tabular}{|l|c|c|c|c|}
+            \hline
+            \rowcolor{lightgray}
+            \textbf{Conversion Mode} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{TRANS\_MODE}}\tnote{1} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUVMODE]{YUV\_MODE}}\tnote{2} & \textbf{\hyperref[fielddesc:LCDCAMLCDCONVYUV2YUVMODE]{YUV2YUV\_MODE}}\tnote{3} &
+            \textbf{\hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{RGB2RGB\_MODE}}\tnote{4} \\ \hline            
+            RGB565 -> YUV422 & 1 & 0 & 3 & - \\ \hline
+            RGB565 -> YUV420 & 1 & 1 & 3 & - \\ \hline
+            RGB565 -> YUV411 & 1 & 2 & 3 & - \\ \hline
+            RGB888 -> RGB565 & 0 & - & - & 1 \\ \hline
+            YUV422 -> RGB565 & 0 & 0 & 3 & - \\ \hline
+            YUV411 -> RGB565 & 0 & 2 & 3 & - \\ \hline
+            YUV422 -> YUV420 & 1 & 0 & 1 & - \\ \hline
+            YUV422 -> YUV411 & 1 & 0 & 2 & - \\ \hline
+            YUV411 -> YUV422 & 1 & 2 & 0 & - \\ \hline
+            YUV411 -> YUV420 & 1 & 2 & 1 & - \\ \hline
+            \end{tabular}
+        }
+        \begin{tablenotes}
+            \item[1] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_TRANS\_MODE}
+            \item[2] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV\_MODE}
+            \item[3] The value of \hyperref[fielddesc:LCDCAMLCDCONVTRANSMODE]{LCD\_CAM\_LCD\_CONV\_YUV2YUV\_MODE}
+            \tagged{ESP32-P4-latest}{
+            \item[4] The value of \hyperref[fielddesc:LCDCAMLCDCONVRGB2RGBMODE]{LCD\_CAM\_LCD\_CONV\_RGB2RGB\_MODE}
+            }
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+    \end{itemize}
+    \item Configure the color range for the input data by configuring \hyperref[fielddesc:LCDCAMLCDCONVDATAINMODE]{LCD\_CAM\_LCD\_CONV\_DATA\_IN\_MODE}:
+    \begin{itemize}
+        \item 0: limited color range\hyperref[limited-color-range-note]{$^1$}
+        \item 1: full color range\hyperref[full-color-range-note]{$^2$}
+    \end{itemize}
+    \item Configure the color range for the output data by configuring \hyperref[fielddesc:LCDCAMLCDCONVDATAOUTMODE]{LCD\_CAM\_LCD\_CONV\_DATA\_OUT\_MODE}:
+    \begin{itemize}
+        \item 0: limited color range\hyperref[limited-color-range-note]{$^1$}
+        \item 1: full color range\hyperref[full-color-range-note]{$^2$}
+    \end{itemize}
+\end{enumerate}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item \label{limited-color-range-note} If the limited color range is selected,
+        \begin{itemize}
+        \item the color range of RGB is: 16 \verb+~+ 240.
+        \item the color range of YUV is:
+        \begin{itemize}
+            \item Y: 16 \verb+~+ 240.
+            \item U-V: 16 \verb+~+ 235.
+        \end{itemize}
+        \end{itemize}
+    \item \label{full-color-range-note} If the full color range is selected, the color range of RGB or YUV is 0 \verb+~+ 255.
+
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{LCD\_CAM Timing}
+
+\subsubsection{LCD Timing (RGB Format)}\label{sec:lcd_timing}
+
+Figure \ref{fig:lcd_frame} shows the LCD frame structure.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{39-CAMLCDCTRL/figures/lcd_frame_structure}
+    \caption{LCD Frame Structure}
+    \label{fig:lcd_frame}
+\end{figure}
+
+As depicted in the figure, the frame structure can be set up with the following registers:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_VT\_HEIGHT}
+    \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_VA\_HEIGHT}
+    \item \hyperref[fielddesc:LCDCAMLCDVTHEIGHT]{LCD\_CAM\_LCD\_HB\_FRONT}
+    \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_LCD\_HT\_WIDTH}
+    \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_LCD\_HA\_WIDTH}
+    \item \hyperref[fielddesc:LCDCAMLCDHTWIDTH]{LCD\_CAM\_VB\_FRONT}
+\end{itemize}
+
+Figure \ref{fig:lcd_timing} shows the timing of an LCD full frame.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/lcd_timing}}
+    \caption{LCD Timing (RGB Format)}
+    \label{fig:lcd_timing}
+\end{figure}
+
+    \begin{tiplisting}
+    When configuring the parameters shown in the figures above, please note that the parameter is equal to the register value + 1. For example, if the expected VSYNC width is 1, then please configure \hyperref[fielddesc:LCDCAMLCDVSYNCWIDTH]{LCD\_CAM\_LCD\_VSYNC\_WIDTH} to 0. For more information, see the register description.
+    \end{tiplisting}
+
+\subsubsection{LCD Timing (I8080/MOTO6800 Format)}
+
+Figure \ref{fig:lcd_i8080_timing} shows the LCD timing sequence in I8080/MOTO6800 format.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{39-CAMLCDCTRL/figures/LCD_I8080_Timg}}
+    \caption{LCD Timing (I8080/MOTO6800 Format)}
+    \label{fig:lcd_i8080_timing}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}\label{sec:lcdcam-interrupts}
+
+\chipname{}'s LCD\_CAM can generate the following interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item LCD\_CAM\_INTR
+    \end{itemize}
+
+The following internal interrupt sources from LCD\_CAM can generate LCD\_CAM\_INTR:
+
+\begin{itemize}
+    \item \label{int:LCDCAMCAMHSINT}LCD\_CAM\_CAM\_HS\_INT: Triggered when the Camera module receives lines more than or equal to the value of \hyperref[fielddesc:LCDCAMCAMLINEINTNUM] {LCD\_CAM\_CAM\_LINE\_INT\_NUM} + 1.
+
+    \item \label{int:LCDCAMCAMVSYNCINT}LCD\_CAM\_CAM\_VSYNC\_INT: Triggered when the Camera module receives a whole frame.
+    \item \label{int:LCDCAMLCDTRANSDONEINT}LCD\_CAM\_LCD\_TRANS\_DONE\_INT: Triggered when the LCD module finishes the transmission.
+    \item \label{int:LCDCAMLCDVSYNCINT}LCD\_CAM\_LCD\_VSYNC\_INT: Triggered when the LCD module transmits a whole frame.
+\end{itemize}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+\vspace{-1em}
+\section{Software Configuration Process}
+\begin{tiplisting}
+Updating the configurations of the LCD module or the Camera module requires setting the LCD\_CAM\_LCD\_UPDATE and LCD\_CAM\_CAM\_UPDATE respectively to synchronize registers from the APB clock domain to the LCD/camera clock domain. Check the configuration examples below for more details.
+\end{tiplisting}
+\vspace{-1em}
+\subsection{Configure LCD (RGB Format) as TX Mode}
+
+Follow the steps below to configure LCD (RGB format) as TX mode via software:
+
+\begin{enumerate}
+    \item Configure clock according to Section \ref{sec:lcdcam-module-clk}.
+
+    \item Configure signal pins according to Table \ref{tab:lcdcam-signal-description} and Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+    \item \label{LCDCAM-TX-INTERRUPT1}Enable corresponding interrupts, see Section \ref{sec:lcdcam-interrupts}.
+
+    \item Enable RGB format by setting \hyperref[fielddesc:LCDCAMLCDRGBMODEEN]{LCD\_CAM\_LCD\_RGB\_MODE\_EN}.
+
+    \item Configure frame structure according to Section \ref{sec:lcd_timing}.
+
+    \item Set \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} so that the configurations take effect.
+
+    \item Reset TX control unit (LCD\_Ctrl) and Async TX FIFO as described in Section \ref{sec:lcdcam_reset}.
+
+    \item Configure GDMA outlink, see Chapter \ref{mod:vdma} \textit{\nameref{mod:vdma}}.
+
+    \item Start transmitting data:
+    \begin{itemize}
+        \item Wait till LCD slave gets ready.
+        \item Set \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} to start transmitting data.
+    \end{itemize}
+
+    \item Wait for the interrupt signals set in Step \ref{LCDCAM-TX-INTERRUPT1}.
+
+    \item In frame intervals during data transmission, check if \hyperref[fielddesc:LCDCAMLCDNEXTFRAMEEN]{LCD\_CAM\_LCD\_NEXT\_FRAME\_EN} is set:
+    \begin{itemize}
+        \item If yes, set \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} (repeating the steps above) to continue transmitting next frame.
+        \item If not, LCD stops transmitting data.
+    \end{itemize}
+    \item Clear \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} if data transmission is done.
+\end{enumerate}
+
+\subsection{Configure LCD (I8080/MOTO6800 Format) as TX Mode}
+
+Follow the steps below to configure LCD (I8080/MOTO6800 format) as TX mode via software:
+
+\begin{enumerate}
+    \item Configure clock according to Section \ref{sec:lcdcam-module-clk}.
+
+    \item Configure signal pins according to Table \ref{tab:lcdcam-signal-description} and Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+    \item Enable corresponding interrupts, see Section \ref{sec:lcdcam-interrupts}.
+
+    \item Clear \hyperref[fielddesc:LCDCAMLCDRGBMODEEN]{LCD\_CAM\_LCD\_RGB\_MODE\_EN} to disable RGB format.
+    \item Configure CMD phase with \hyperref[fielddesc:LCDCAMLCDCMD]{LCD\_CAM\_LCD\_CMD}, \hyperref[fielddesc:LCDCAMLCDCMD2CYCLEEN]{LCD\_CAM\_LCD\_CMD\_2\_CYCLE\_EN}, and \hyperref[fielddesc:LCDCAMLCDLATTERCMDVALUE]{LCD\_CAM\_LCD\_LATTER\_CMD\_VALUE}.
+    \item Configure DUMMY phase with \hyperref[fielddesc:LCDCAMLCDDUMMY]{LCD\_CAM\_LCD\_DUMMY} and \hyperref[fielddesc:LCDCAMLCDDUMMYCYCLELEN]{LCD\_CAM\_LCD\_DUMMY\_CYCLELEN}.
+    \item Configure DOUT phase with \hyperref[fielddesc:LCDCAMLCDDOUT]{LCD\_CAM\_LCD\_DOUT}, depending on the output mode:
+    \begin{itemize}
+        \item In a fixed-length output\hyperref[i2s-note-1]{$^1$}, configure data length in \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN}.
+        \item In a continuous output\hyperref[i2s-note-2]{$^2$}, set \hyperref[fielddesc:LCDCAMLCDALWAYSOUTEN]{LCD\_CAM\_LCD\_ALWAYS\_OUT\_EN}. Users do not need to configure \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN}.
+    \begin{tiplisting}
+    \vspace{-2em}
+    \begin{enumerate}
+        \item \label{camlcdctrl-note-1} In a fixed-length output, the LCD module stops sending data once the data length reaches the value set in \hyperref[fielddesc:LCDCAMLCDDOUTCYCLELEN]{LCD\_CAM\_LCD\_DOUT\_CYCLELEN}.
+        \item \label{camlcdctrl-note-2} In a continuous output, LCD module keeps sending data till:
+            \begin{itemize}
+                \item \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} is cleared;
+                \item or \hyperref[fielddesc:LCDCAMLCDRESET]{LCD\_CAM\_LCD\_RESET} is set;
+                \item or all the data in GDMA is sent out.
+            \end{itemize}
+    \end{enumerate}
+    \end{tiplisting}
+    \end{itemize}
+
+    \item Configure the CD signal mode, including the default value of the CD signal and the values at each phase, see the description of \hyperref[regdesc:LCDCAMLCDMISCREG]{LCD\_CAM\_LCD\_MISC\_REG}.
+
+    \item Set \hyperref[fielddesc:LCDCAMLCDUPDATE]{LCD\_CAM\_LCD\_UPDATE} so that the configurations take effect.
+
+    \item Reset TX control unit (LCD\_Ctrl) and Async TX FIFO as described in Section \ref{sec:lcdcam_reset}.
+
+    \item Configure GDMA outlink, see Chapter \ref{mod:vdma} \textit{\nameref{mod:vdma}}.
+
+    \item Start transmitting data:
+    \begin{itemize}
+        \item Wait till LCD slave gets ready.
+        \item Set \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} to start transmitting data.
+    \end{itemize}
+
+    \item Wait for the interrupt signals set in Step 2.
+
+    \item Clear \hyperref[fielddesc:LCDCAMLCDSTART]{LCD\_CAM\_LCD\_START} if data transmission is done.
+\end{enumerate}
+
+\textbf{Notes:}\\
+No matter in which format, RGB or I8080/MOTO6800, the rules below must be followed when accessing internal and external memory via GDMA:
+
+\begin{itemize}
+    \item If LCD data bus is configured to 8-bit parallel output mode, then
+    \begin{itemize}
+        \item The pixel clock frequency must be less than 80 MHz.
+        \item If YUV-RGB format conversion is being used at the same time, the pixel clock frequency must be less than 60 MHz.
+    \end{itemize}
+    \item If LCD data bus is configured to 16-bit parallel output mode, then
+    \begin{itemize}
+        \item The pixel clock frequency must be less than 40 MHz.
+        \item If YUV-RGB format conversion is being used at the same time, the pixel clock frequency must be less than 30 MHz.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Configure Camera as RX Mode}
+
+Follow the steps below to configure the Camera as RX mode via software:
+
+\begin{enumerate}
+    \item Configure clock according to Section \ref{sec:lcdcam-module-clk}. Note that in slave mode, the module clock frequency should be twice as fast as the PCLK frequency of the image sensor.
+
+    \item Configure signal pins according to Table \ref{tab:lcdcam-signal-description} and Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+    \item Set or clear  \hyperref[fielddesc:LCDCAMCAMVHDEMODEEN]{LCD\_CAM\_CAM\_VH\_DE\_MODE\_EN} according to the control signal HSYNC.
+
+    \item Set needed RX data format according to Section \ref{sec:cam_data_control}.
+    \item Set \hyperref[fielddesc:LCDCAMCAMUPDATE]{LCD\_CAM\_CAM\_UPDATE} so that the configurations take effect.
+
+    \item Reset RX control unit (Camera\_Ctrl) and Async RX FIFO as described in Section \ref{sec:lcdcam_reset}.
+    \item Enable corresponding interrupts, see Section  \ref{sec:lcdcam-interrupts}.\label{LCDCAM-RX-INTERRUPT}
+
+    \item Configure GDMA inlink, and set the length of RX data in \hyperref[fielddesc:LCDCAMCAMRECDATABYTELEN]{LCD\_CAM\_CAM\_REC\_DATA\_BYTELEN}.
+
+    \item Start receiving data:
+    \begin{itemize}
+        \item In master mode, when the slave is ready, set \hyperref[fielddesc:LCDCAMCAMSTART]{LCD\_CAM\_CAM\_START} to start receiving data.
+        \item In slave mode, set \hyperref[fielddesc:LCDCAMCAMSTART]{LCD\_CAM\_CAM\_START}. Receiving data starts after the master provides clock signal and control signal.
+    \end{itemize}
+    \item Receive data and store the data to GDMA. Then corresponding interrupts set in Step \ref{LCDCAM-RX-INTERRUPT} will be generated.
+
+\end{enumerate}
+
+\textbf{Notes:}
+\begin{itemize}
+    \item No matter in which operation mode, camera master RX mode or camera slave RX mode, the rules below must be followed when accessing internal memory via GDMA:
+\begin{itemize}
+
+    \item If 8-bit parallel data input mode is selected, then
+        \begin{itemize}
+        \item The pixel clock frequency must be less than 80 MHz.
+        \item If YUV-RGB format is being used at the same time, the pixel clock frequency must be less than 60 MHz.
+    \end{itemize}
+    \item If 16-bit parallel data input mode is selected, then
+        \begin{itemize}
+        \item The pixel clock frequency must be less than 40 MHz.
+        \item If YUV-RGB format conversion is being used at the same time, the pixel clock frequency must be less than 30 MHz.
+    \end{itemize}
+\end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+   If both LCD and camera are connected externally at the same time, it is necessary to ensure that the maximum data throughput on the interface is less than the total data bandwidth of GDMA when accessing internal/external storage. The default frequency of APB\_CLK is 80 MHz in this scenario. For more information about APB\_CLK, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+\end{tiplisting}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{camlcdctrl-reg-summ}{}
+\section{Register Summary}
+\label{sec:camlcdctrl-reg-summ}
+
+The addresses in this section are relative to LCD\_CAM base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/39-CAMLCDCTRL-reg-summ__EN.tex}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to LCD\_CAM base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/39-CAMLCDCTRL-reg__EN}
+
+
+\end{document}

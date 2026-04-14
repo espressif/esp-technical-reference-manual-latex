@@ -1,0 +1,1131 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./29-TWAI}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{twai}{}
+\chapter{双线汽车接口 (TWAI)}
+\label{mod:twai}
+
+双线汽车接口 (Two-wire Automotive Interface, TWAI$^\circledR$) 协议是一种多主机、多播的通信协议，具有检测错误、发送错误信号以及内置报文优先仲裁等功能。TWAI 协议适用于汽车和工业应用（可参见 \hyperref[subsec:protocol-description]{TWAI 协议描述}）。
+
+ESP32-S2 包含一个 TWAI 控制器，可通过外部收发器连接到 TWAI 总线。TWAI 控制器包含一系列先进的功能，用途广泛，可用于如汽车产品、工业自动化控制、楼宇自动化等。
+
+\section{主要特性}
+ESP32-S2 TWAI 控制器具有以下特性：
+\begin{itemize}
+    \item 兼容 ISO 11898-1 协议（CAN 规范 2.0）
+    \item 支持标准格式（11-bit 标识符）和扩展格式（29-bit 标识符）
+    \item 支持 1 Kbit/s \verb+~+ 1 Mbit/s 位速率
+    \item 支持多种操作模式
+    \begin{itemize}
+        \item 正常模式
+        \item 只听模式（不影响总线）
+        \item 自测模式（发送数据时不需应答）
+    \end{itemize}
+    \item 64-byte 接收 FIFO
+    \item 特殊发送
+    \begin{itemize}
+        \item 单次发送（发生错误时不会自动重新发送）
+        \item 自发自收（TWAI 控制器同时发送和接收报文）
+    \end{itemize}
+    \item 接收滤波器（支持单滤波器和双滤波器模式）
+    \item 错误检测与处理
+    \begin{itemize}
+        \item 错误计数
+        \item 错误报警限制可配置
+        \item 错误代码捕捉
+        \item 仲裁丢失捕捉
+    \end{itemize}
+\end{itemize}
+
+\section{功能性协议}
+\label{subsec:protocol-description}
+\subsection{TWAI 性能}
+TWAI 协议连接总线网络中的两个或多个节点，并允许各节点以延迟限制的形式进行报文交互。TWAI 总线具有以下性能：
+
+{\bfseries 单通道通信与不归零编码：} TWAI 总线由承载着位的单通道组成，因此为半双工通信。同步调整也在单通道中进行，因此不需其他通道（如时钟通道和使能通道）。TWAI 上报文的位流采用不归零编码 (NRZ) 方式。
+
+{\bfseries 位值：} 单通道可处于显性状态或隐性状态，显性状态的逻辑值为 0，隐性状态的逻辑值为 1。发送显性状态数据的节点总是比发送隐性状态数据的节点优先级高。总线上的其他物理功能（如，差分电平）由其各自应用实现。
+
+{\bfseries 位填充：} TWAI 报文的某些域已经过位填充。每发送某个相同值（如显性数值或隐性数值）的连续五个位后，需自动插入一个互补位。同理，接收到 5 个连续位的接收器应将下一个位视为填充位。位填充应用于以下域：SOF、仲裁域、控制域、数据域和 CRC 序列（可参见第 \ref{subsubsec:twai-messages} 章）。
+
+{\bfseries 多播：} 当各节点连接到同个总线上时，这些节点将接收相同的位。各节点上的数据将保持一致，除非发生总线错误（可参见第 \ref{subsubsec:twai-errors} 章）。
+
+{\bfseries 多主机：} 任意节点都可发起数据传输。如果当前已有正在进行的数据传输，则节点将等待当前传输结束后再发起其数据传输。
+
+{\bfseries 报文优先级与仲裁：} 若两个或多个节点同时发起数据传输，则 TWAI 协议将确保其中一个节点获得总线的优先仲裁权。各节点所发送报文的仲裁域决定哪个节点可以获得优先仲裁。
+
+{\bfseries 错误检测与通报：} 各节点将积极检测总线上的错误，并通过发送错误帧来通报检测到的错误。
+
+{\bfseries 故障限制：} 若一组错误计数依据规定增加/减少时，各节点将维护该组错误计数。当错误计数超过一定阈值时，对应节点将自动关闭以退出网络。
+
+{\bfseries 可配置位速率：} 单个 TWAI 总线的位速率是可配置的。但是，同个总线中的所有节点须以相同位速率工作。
+
+{\bfseries 发送器与接收器：} 不论何时，任意 TWAI 节点都可作为发送器和接收器。
+\begin{itemize}
+    \item 产生报文的节点为发送器。且该节点将一直作为发送器，直到总线空闲或该节点失去仲裁。请注意，未丢失仲裁的多个节点都可作为发送器。
+    \item 所有非发送器的节点都将作为接收器。
+\end{itemize}
+
+\subsection{TWAI 报文}
+\label{subsubsec:twai-messages}
+TWAI 节点使用报文发送数据，并在监测到总线上存在错误时向其他节点发送错误信号。报文分为不同的帧类型，某些帧类型将具有不同的帧格式。
+
+TWAI 协议有以下帧类型：
+
+\begin{itemize}
+    \item 数据帧
+    \item 远程帧
+    \item 错误帧
+    \item 过载帧
+    \item 帧间距
+\end{itemize}
+
+TWAI 协议有以下帧格式：
+
+\begin{itemize}
+    \item 标准格式 (SFF) 由 11-bit 标识符组成
+    \item 扩展格式 (EFF) 由 29-bit 标识符组成
+\end{itemize}
+
+\subsubsection{数据帧和远程帧}
+节点使用数据帧向其他节点发送数据，可负载 0 \verb+~+ 8 字节数据。节点使用远程帧向其他节点请求具有相同标识符的数据帧，因此远程帧中不包含任何数据字节。但是，数据帧和远程帧中包含许多相同域。下图 \ref{Figure:Bit Fields} 所示为不同帧类型和不同帧格式中包含的域和子域。
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/Bit_Fields__CN}}
+    \caption{数据帧和远程帧中的位域}
+    \label{Figure:Bit Fields}
+\end{figure}
+
+{\bfseries 仲裁域}\\
+当两个或多个节点同时发送数据帧和远程帧时，将根据仲裁域的位信息来决定总线上获得优先仲裁的节点。在仲裁域作用时，如果一个节点在发送隐性位的同时检测到了一个显性位，这表示有其他节点优先于了这个隐性位。那么，这个发送隐性位的节点已丢失总线仲裁，应立即转为接收器。
+
+仲裁域主要由帧标识符组成。根据显性位代表的逻辑值为 0，隐性位代表的逻辑值为 1，有以下规律:
+
+\begin{itemize}
+    \item ID 值最小的帧将总是获得仲裁。
+    \item 如果 ID 和格式相同，由于数据帧的 RTR 位为显性位，数据帧将优先于远程帧。
+    \item 如果 ID 的前 11 位相同，由于扩展帧的 SRR 位是隐性，因而标准格式帧将总优先于扩展格式帧。
+\end{itemize}
+
+{\bfseries 控制域}\\
+控制域主要由数据长度代码 (DLC) 组成，DLC 表示一个数据帧中的负载的数据字节数量，或一个远程帧请求的数据字节数量。DLC 优先发送最高有效位。
+
+{\bfseries 数据域}\\
+数据域中包含一个数据帧真实负载的数据字节。远程帧中不包含数据域。
+
+{\bfseries CRC 域}\\
+CRC 域主要由 CRC 序列组成。CRC 序列是一个 15-bit 的循环冗余校验编码，根据数据帧或远程帧中的未填充内容（从 SOF 到数据域末尾的所有内容）中计算而来。
+
+{\bfseries 确认域}\\
+确认 (ACK) 域由确认槽和确认分界符组成，主要功能为：接收器向发送器报告已正确接收到有效报文。
+
+\begin{longtable}[c]{|p{3.5cm}|p{12cm}|}
+
+  \caption{SFF 和 EFF 中的数据帧和远程帧}
+  \label{table:Data Frames and Remote Frames}
+  \\\hline
+  \rowcolor{lightgray}
+  {数据/远程帧} & {描述}
+  \\\hline
+  \endfirsthead
+
+  \hline
+  \rowcolor{lightgray}
+   {数据/远程帧} & {描述}
+   \\\hline
+  \endhead
+  \endfoot
+  \hline
+  \endlastfoot
+    SOF & 帧起始 (SOF) 是一个用于同步总线上节点的单个显性位。
+          \\\hline
+    Base ID & 基标识符 (ID.28 \verb+~+ ID.18) 是 SFF 的 11-bit 标识符，或者是 EFF 中 29-bit 标识符的前 11-bit。
+          \\\hline
+    RTR & 远程发送请求位 (RTR) 显示当前报文是数据帧（显性）还是远程帧（隐性）。这意味着，当某个数据帧和一个远程帧有相同标识符时，数据帧始终优先于远程帧仲裁。                                                    \\\hline
+    SRR & 在 EFF 中发送替代远程请求位 (SRR)，以替代 SFF 中相同位置的 RTR 位。
+           \\\hline
+    IDE & 标识符扩展位 (IED) 显示当前报文是 SFF （显性）还是 EFF（隐性）。这意味着，当某 SFF 帧和 EFF 帧有相同基标识符时，SFF 帧将始终优先于 EFF 帧仲裁。              \\\hline
+    Extd ID & 扩展标识符 (ID.17 \verb+~+ ID.0) 是 EFF 中 29-bit 标识符的剩余 18-bit。                                     \\\hline
+    r1 & r1（保留位 1）始终是显性位。
+             \\\hline
+    r0 & r0（保留位 0）始终是显性位。
+             \\\hline
+    DLC & 数据长度代码 (DLC) 为 4-bits，且应包含 0 \verb+~+ 8 中任一数值。数据帧使用 DLC 表示自身包含的数据字节数量。远程帧使用 DLC 表示从其他节点请求的数据字节数量。
+             \\\hline
+    数据字节 & 表示数据帧的数据负载量。该字节数量应与 DLC 的值匹配。首先发送数据字节 0，各数据字节优先发送最高有效位。
+             \\\hline
+    CRC 序列 & CRC 序列是一个 15-bit 的循环冗余校验编码。
+             \\\hline
+    CRC 分界符 & CRC 分界符是遵循 CRC 序列的单一隐性位。
+              \\\hline
+    确认槽 & 确认槽用于接收器节点，表示是否已成功接收数据帧或远程帧。发送器节点将在确认槽中发送一个隐性位，如果接收到的帧没有错误，则接收器节点应用一个显性位替代确认槽。
+              \\\hline
+    确认分界符 & 确认分界符是一个单一的隐性位。
+              \\\hline
+    EOF & 帧结束 (EOF) 标志着数据帧或远程帧的结束，由七个隐性位组成。
+              \\\hline
+\end{longtable}
+
+\subsubsection{错误帧和过载帧}
+
+{\bfseries 错误帧}
+
+当某节点检测到总线错误时，将发送一个错误帧。错误帧由一个特殊的错误标志构成，该标志由某相同值的六个连续位组成，因而违反了位填充的规则。所以，当某节点检测到总线错误并发送错误帧时，其余节点也将相应地检测到一个填充错误并各自发送错误帧。也就是说，当发生总线错误时，通过上述过程可将该报文传递至总线上的所有节点。
+
+当某节点检测到总线错误时，该节点将于下一个位发送错误帧。特例：如果总线错误类型为 CRC 错误，那么错误帧将从确认分界符的下一个位开始（可参见第 \ref{subsubsec:twai-errors} 章）。下图 \ref{Figure:Fields of an Error Frame} 所示为一个错误帧所包含的不同域：
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/Fields_of_an_Error_Frame__CN}}
+    \caption{错误帧中的位域}
+    \label{Figure:Fields of an Error Frame}
+\end{figure}
+
+\begin{longtable}[c]{|p{2.5cm}|p{13cm}|}
+
+  \caption{错误帧}
+  \label{table:Error_Frame}
+  \\\hline
+  \rowcolor{lightgray}
+  {错误帧} & {描述}
+  \\\hline
+  \endfirsthead
+
+  \hline
+  \rowcolor{lightgray}
+   {错误帧} & {描述}
+   \\\hline
+  \endhead
+  \endfoot
+  \hline
+  \endlastfoot
+
+    错误标志 & 错误标志包括两种形式:主动错误标志和被动错误标志，主动错误标志由 6 个显性位组成，被动错误标志由 6 个隐性位组成（被其他节点的显性位优先仲裁时除外）。主动错误节点发送主动错误标志，被动错误节点发送被动错误标志。
+          \\\hline
+    错误标志叠加 & 错误标志叠加域的主要目的是允许总线上的其他节点发送各自的主动错误标志。叠加域的范围可以是 0 \verb+~+ 6 位，在检测到第一个隐性位时结束（如检测到分界符上的第一个位时）。
+           \\\hline
+    错误分界符 & 分界符域标志着错误/过载帧结束，由 8 个隐性位构成。                                                   \\\hline
+\end{longtable}
+
+{\bfseries 过载帧}\\
+
+过载帧与包含主动错误标志的错误帧有着相同的位域。二者主要区别在于触发发送过载帧的条件。下图 \ref{Figure:Bit Fields of an Overload Frame} 所示为过载帧中包含的位域：
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.85\textwidth]{\modulefiles/figures/Overload_frames__CN}}
+    \caption{过载帧中的位域}
+    \label{Figure:Bit Fields of an Overload Frame}
+\end{figure}
+
+\begin{longtable}[c]{|p{2.5cm}|p{13cm}|}
+
+  \caption{过载帧}
+  \label{table:Overload_Frames}
+  \\\hline
+  \rowcolor{lightgray}
+  过载帧 & 描述
+  \\\hline
+  \endfirsthead
+
+  \hline
+  \rowcolor{lightgray}
+   过载帧 & 描述
+   \\\hline
+  \endhead
+  \endfoot
+  \hline
+  \endlastfoot
+
+    过载标志 & 由 6 个显性位构成。与主动错误标志相同。
+          \\\hline
+    过载标志叠加 & 允许其他节点发送过载标志的叠加，与错误标志叠加相似。
+           \\\hline
+    过载分界符 & 由 8 个隐性位构成。与错误分界符相同。              \\\hline
+\end{longtable}
+
+下列情况将触发发送过载帧：
+\begin{enumerate}
+    \item 接收器内部要求延迟发送下一个数据帧或远程帧。
+    \item 在间歇域后的首个和第二个位上检测到显性位。
+    \item 如果在错误分界符的第八个（最后一个）位上检测到显性位。请注意，在这种情况下 TEC 和 REC 的值将不会增加（可参见第 \ref{subsubsec:twai-errors} 章）。
+\end{enumerate}
+
+由于上述情况发送过载帧时，须满足以下规定：
+\begin{itemize}
+        \item 第 1 条情况下发送的过载帧只能从间歇域后的第一个位开始。
+        \item 第 2、3 条情况下发送的过载帧须从检测到显性位的后一个位开始。
+        \item 要延迟发送下一个数据帧或远程帧，最多可生成两个过载帧。
+\end{itemize}
+
+
+\subsubsection{帧间距}
+
+帧间距充当各帧之间的分隔符。数据帧和远程帧必须与前一帧用一个帧间距分隔开，不论前面的帧是何类型（数据帧、远程帧、错误帧、过载帧）。但是，错误帧和过载帧则无需与前一个帧分隔开。
+
+下图 \ref{Figure:The Fields within an Interframe Space} 所示为帧间距中包含的域：
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{\modulefiles/figures/Fields_within_an_Interframe_Space__CN}}
+    \caption{帧间距中的域}
+    \label{Figure:The Fields within an Interframe Space}
+\end{figure}
+
+\begin{longtable}[c]{|p{2.5cm}|p{13cm}|}
+  \caption{帧间距}
+  \label{table:Interframe_space}
+  \\\hline
+  \rowcolor{lightgray}
+  帧间距 & 描述
+  \\\hline
+  \endfirsthead
+
+  \hline
+  \rowcolor{lightgray}
+   帧间距 & 描述
+   \\\hline
+  \endhead
+  \endfoot
+  \hline
+  \endlastfoot
+
+    间歇域 & 间歇域由 3 个隐性位构成。
+           \\\hline
+    挂起传送 & 被动错误节点发送报文后，节点中须包含一个挂起传送域，由 8 个隐性位构成。主动错误节点中不含这个域。
+            \\\hline
+    总线空闲 & 总线空闲域长度任意。发送 SOF 时，总线空闲结束。若节点中有挂起传送，则 SOF 应在间歇域后的第一位发送。
+            \\\hline
+
+\end{longtable}
+
+\subsection{TWAI 错误}
+\label{subsubsec:twai-errors}
+\subsubsection{错误类型}
+
+TWAI 中的总线错误包括以下类型：
+
+{\bfseries 位错误}\\
+当节点发送一个位值（显性位或隐性位）但检测到相反的位时（如，发送显性位时检测到了隐性位），就会发生位错误。但是，如果发送的位是隐性位，且位于仲裁域或确认槽或被动错误标志中，那么此时检测到显性位的话也不会认定为位错误。
+
+{\bfseries 填充错误}\\
+当检测到相同值的 6 个连续位时（违反位填充的编码规则），发生填充错误。
+
+{\bfseries CRC 错误}\\
+数据帧和远程帧的接收器将根据接收到的位计算 CRC 值。当接收器计算的值与接收到的数据帧和远程帧中的 CRC 序列不匹配时，会发生 CRC 错误。
+
+{\bfseries 格式错误}\\
+当某个报文中的固定格式位中包含非法位时，可检测到格式错误。比如，r1 和 r0 域必须固定为显性。
+
+{\bfseries 确认错误}\\
+当发送器无法在确认槽中检测到显性位时，将发生确认错误。
+
+\subsubsection{错误状态}
+TWAI 通过每个节点维护两个错误计数来实现故障界定，计数数值决定错误状态。这两个错误计数分别为：发送错误计数 (TEC) 和接收错误计数 (REC)。TWAI 包含以下错误状态。
+
+{\bfseries 主动错误}\\
+主动错误节点可参与到总线交互中，且在检测到错误时可以发送主动错误标志。
+
+{\bfseries 被动错误}\\
+被动错误节点可参与到总线交互中，但在检测到错误时只能发送一次被动错误标志。被动错误节点发送数据帧或远程帧后，须在后续的帧间距中设置挂起传送域。
+
+{\bfseries 离线}\\
+禁止离线节点以任意方式干扰总线（如，不允许其进行数据传输）。
+
+\subsubsection{错误计数}
+
+TEC 和 REC 根据以下规则递增/递减。\textbf{请注意，一条报文传输中可应用多个规则。}
+
+\begin{enumerate}
+    \item 当接收器检测到错误时，REC 数值将增加 1。当检测到的错误为发送主动错误标志或过载标志期间的位错误除外。
+    \item 发送错误标志后，当接收器第一个检测到的位是显性位时，REC 数值将增加 8。
+    \item 当发送器发送错误标志时，TEC 数值增加 8。但是，以下情况不适用于该规则：
+    \begin{itemize}
+        \item 发送器为被动错误状态，因为在应答槽未检测到显性位而产生应答错误，且在发送被动错误标志时检测到显性位时，则 TEC 数值不应增加。
+        \item 发送器在仲裁期间因填充错误而发送错误标志，且填充位本该是隐性位但是检测到显性位，则 TEC 数值不应增加。
+    \end{itemize}
+    \item 若发送器在发送主动错误标志和过载标志时检测到位错误，则 TEC 数值增加 8。
+    \item 若接收器在发送主动错误标志和过载标志时检测到位错误，则 REC 数值增加 8。
+    \item 任意节点在发送主动/被动错误标志或过载标志后，节点仅能承载最多 7 个连续显性位。在（发送主动错误标志或过载标志时）检测到第 14 个连续显性位，或在被动错误标志后检测到第 8 个连续显性位后，发送器将使其 TEC 数值增加 8，而接收器将使其 REC 数值增加 8。每增加 8 个连续显性位的同时，（发送器的）TEC 和（接收器的）REC 数值也将增加 8。
+    \item 每当发送器成功发送报文后（接收到 ACK，且直到 EOF 完成未发生错误），TEC 数值将减小 1，除非 TEC 的数值已经为 0。
+    \item 当接收器成功接收报文后（确认槽前未检测到错误，且成功发送 ACK），则 REC 数值将相应减小。
+    \begin{itemize}
+        \item 若 REC 数值位于 1 \verb+~+ 127 之间，则其值减小 1。
+        \item 若 REC 数值大于 127，则其值减小到 127。
+        \item 若 REC 数值为 0，则仍保持为 0。
+    \end{itemize}
+    \item 当一个节点的 TEC 和/或 REC 数值大于等于 128 时，该节点变为被动错误节点。导致节点发生上述状态切换的错误，该节点仍发送主动错误标志。请注意，一旦 REC 数值到达 128，后续任何增加该值的动作都是无效的，直到 REC 数值返回到 128 以下。
+    \item 当某节点的 TEC 数值大于等于 256 时，该节点将变为离线节点。
+    \item 当某被动错误节点的 TEC 和 REC 数值都小于等于 127，则该节点将变为主动错误节点。
+    \item 当离线节点在总线上检测到 128 次 11 个连续隐性位后，该节点可变为主动错误节点（TEC 和 REC 数值都重设为 0）。
+\end{enumerate}
+
+\subsection{TWAI 位时序}
+\subsubsection{名义位}
+
+TWAI 协议允许 TWAI 总线以特定的位速率运行。但是，总线内的所有节点必须以统一位速率运行。
+
+\begin{itemize}
+    \item \textbf{名义位速率} 为每秒发送比特数量。
+    \item \textbf{名义位时间} 为 \textbf{1/名义位速率}。
+\end{itemize}
+
+每个名义位时间中含多个段，每段由多个时间定额 (Time Quanta) 组成。\textbf{时间定额} 为最小时间单位，作为一种预分频时钟信号应用于各个节点中。下图 \ref{Figure:TWAI_BIT_TIMING} 所示为一个名义位时间内所包含的段。
+
+TWAI 控制器将在一个时间定额的时间步长中进行操作，每个时间定额中都会分析 TWAI 的总线状态。如果两个连续的时间定额中总线状态不同（隐性-显性，或反之），意味着有边沿产生。PBS1 和 PBS2 的交点将被视为采样点，且采样的总线数值即为这个位的数值。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.55\textwidth]{\modulefiles/figures/TWAI_BIT_TIMING_20190625__CN}}
+    \caption{位时序构成}
+    \label{Figure:TWAI_BIT_TIMING}
+\end{figure}
+
+\begin{longtable}[c]{|p{2.5cm}|p{13cm}|}
+
+  \caption{名义位时序中包含的段}
+  \label{table:Segments of a Nominal Bit Time}
+  \\\hline
+  \rowcolor{lightgray}
+  {段} & {描述}
+  \\\hline
+  \endfirsthead
+
+  \hline
+  \rowcolor{lightgray}
+   {段} & {描述}
+   \\\hline
+  \endhead
+  \endfoot
+  \hline
+  \endlastfoot
+
+    同步段 (SS) & SS（同步段）的长度为 1 个时间定额。若所有节点都同步正常，则位边沿应位于该段内。
+            \\\hline
+    缓冲时期段 1 (PBS1) & PBS1 的长度可为 1 \verb+~+ 16 个时间定额，用于补偿网络中的物理延迟时间。可增加 PBS1 的长度，从而更好地实现同步。
+            \\\hline
+    缓冲时期段 2 (PBS2) & PBS2 的长度可为 1 \verb+~+ 8 个时间定额，用于补偿节点中的信息处理时间。可缩短 PBS2 的长度，从而更好地实现同步。
+            \\\hline
+
+\end{longtable}
+
+\subsubsection{硬同步与再同步}
+
+由于时钟偏移和抖动，同一总线上节点的位时序可能会脱离相位段。因而，位边沿可能会偏移到同步段的前后。针对上述位边沿偏移的问题 TWAI 提供多种同步方式。设位边沿偏移的 TQ（时间定额）数量为\textbf{相位错误 “e”}，该值与 SS 相关。
+
+\begin{itemize}
+    \item 主动相位错误 (e > 0)：位边沿位于同步段之后采样点之前（即，边沿向后偏移）。
+    \item 被动相位错误 (e < 0)：位边沿位于前个位的采样点之后同步段之前（即，边沿向前偏移）。
+\end{itemize}
+
+为解决相位错误，可进行两种同步方式，即\textbf{硬同步}与\textbf{再同步}。\textbf{硬同步}与\textbf{再同步}遵守以下规则：
+
+\begin{itemize}
+    \item 单个位时序中仅可发生一次同步。
+    \item 同步仅可发生在隐性位到显性位的边沿上。
+\end{itemize}
+
+{\bfseries 硬同步}\\
+总线空闲期间，硬同步发生在隐性位到显性位的变化边沿上（如 SOF 位上）。此时，所有节点都将重启其内部位时序，从而使该变化边沿位于重启位时序的同步段内。
+
+{\bfseries 再同步}\\
+非总线空闲期间，再同步发生在隐性位到显性位的变化边沿上。如果边沿上有主动相位错误 (e > 0)，则 PBS1 长度将增加。如果边沿上有被动相位错误 (e < 0)，则 PBS2 长度将减小。
+
+PBS1/PBS2 具体增加和减小的时间定额取决于相位错误的绝对值，同时也受可配置的同步跳宽 (SJW) 数值限制。
+
+\begin{itemize}
+    \item 当相位错误的绝对值小于等于 SJW 数值时，PBS1/PBS2 将增加/减小 \textbf{e} 个时间定额。该过程与硬同步具有相同效果。
+    \item 当相位错误的绝对值大于 SJW 数值时，PBS1/PBS2 将增加/减小与 SJW 相同数值的时间定额。这意味着，在完全解决相位错误之前，可能需要多个同步位。
+\end{itemize}
+
+\section{结构概述}
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/TWAI_Overview_Diagram_20190628__CN}}
+    \caption{TWAI 概略图}
+    \label{Figure:TWAI Overview Diagram}
+\end{figure}
+
+ESP32-S2 中包含一个 TWAI 控制器。图 \ref{Figure:TWAI Overview Diagram} 所示为 TWAI 控制器的主要功能模块。
+
+\newpage
+\subsection{寄存器模块}
+ESP32-S2 的 CPU 使用 32-bit 对齐字访问外设。但是，TWAI 控制器中的大部分寄存器仅存储最低有效字节 (bits [7:0]) 上的有用数据。因此在这些寄存器中，bits [31:8] 在写入时被忽略，在读取时返回 0。
+
+{\bfseries 配置寄存器}\\
+配置寄存器存储 TWAI 控制器的各配置项，如位速率、操作模式、接收滤波器等。只有在 TWAI 控制器处于复位模式时，才可修改配置寄存器（可参见第 \ref{subsubsec:modes} 章）。
+
+{\bfseries 指令寄存器}\\
+CPU 通过指令寄存器驱动 TWAI 控制器执行任务，如发送报文或清除接收缓冲器。只有在 TWAI 控制器处于操作模式时，才可修改指令寄存器（可参见第 \ref{subsubsec:modes} 章）。
+
+{\bfseries 中断 \verb+&+ 状态寄存器}\\
+中断寄存器显示 TWAI 控制器中发生的事件（每个事件由一个单独的位表示）。状态寄存器显示 TWAI 控制器的当前状态。
+
+{\bfseries 错误管理寄存器}\\
+错误管理寄存器包括错误计数和捕捉寄存器。错误计数寄存器表示 TEC 和 REC 的数值。捕捉寄存器负责记录相关信息，如 TWAI 控制器在何处检测到总线错误，或何时丢失仲裁。
+
+{\bfseries 发送缓冲寄存器}\\
+发送缓冲器大小为 13 字节，用于存储 TWAI 的待发送报文。
+
+{\bfseries 接收缓冲寄存器}\\
+接收缓冲器大小为 13 字节，用于存储单个报文。接收缓冲器是进入接收 FIFO 的窗口，接收FIFO中的第一个报文将被映射到接收缓冲器中。
+
+请注意，发送缓冲寄存器、接收缓冲寄存器和接收滤波寄存器的地址范围相同（地址偏移包含 \hexprefix{}0040 \verb+~+ \hexprefix{}0070）。这些寄存器的访问权限遵循以下规则：
+
+\begin{itemize}
+    \item 当 TWAI 控制器处于复位模式时，该地址范围被映射到接收滤波寄存器中。
+    \item TWAI 控制器处于操作模式时：
+    \begin{itemize}
+        \item 对地址范围的所有读取都映射于接收缓冲寄存器中。
+        \item 对地址范围的所有写入都映射于发送缓冲寄存器中。
+    \end{itemize}
+\end{itemize}
+
+\subsection{位流处理器}
+位流处理 (BSP) 模块负责对发送缓冲器的数据进行帧处理 (如，位填充和附加 CRC 域) 并为位时序逻辑 (BTL) 模块生成位流。同时，BSP 模块还负责处理从 BTL 模块中接收的位流（如，去填充和验证 CRC），并将处理报文置于接收 FIFO。BSP 还负责检测 TWAI 总线上的错误并将此类错误报告给错误管理逻辑 (EML)。
+
+\subsection{错误管理逻辑}
+错误管理逻辑 (EML) 模块负责更新 TEC 和 REC 数值，记录错误信息（如，错误类型和错误位置），更新控制器的错误状态，确保 BSP 模块发送正确的错误标志。此外，该模块还负责记录 TWAI 控制器丢失仲裁时的 bit 位置。
+
+\subsection{位时序逻辑}
+位时序逻辑 (BTL) 模块负责以预先配置的位速率发送和接受报文。BTL 模块还负责同步位时序，确保数据传输的稳定性。位速率由多个可编程的段组成，且用户可设置每个段的 TQ（时间定额）长度，来调整报文传输速率。
+
+\subsection{接收滤波器}
+接收滤波器是一个可编程的报文过滤单元，允许 TWAI 控制器根据报文的标识符域接收或拒绝该报文。通过接
+收滤波器的报文才能被存储到接收 FIFO 中。用户可配置接收滤波器的模式：单滤波器、双滤波器。
+
+\subsection{接收 FIFO}
+接收 FIFO 是大小为 64-byte 的缓冲器（位于 TWAI 控制器内部），负责存储通过接收滤波器的接收报文。接收 FIFO 中存储的报文大小可以不同（3 \verb+~+ 13 byte 范围之间）。当接收 FIFO 为满时（或剩余的空间不足以完全存储下一个接收报文），将触发溢出中断，后续的接收报文将丢失，直到接收 FIFO 中清除出足够的存储空间。接收 FIFO 中的第一条报文将被映射到 13-byte 的接收缓冲器中，直到该报文被清除（通过释放接收缓冲器指令）。清除后，接收缓冲器将继续映射接收 FIFO 中的下一条报文，接收 FIFO 中上一条已清除报文的空间将被释放。
+
+\section{功能描述}
+
+\subsection{模式}
+\label{subsubsec:modes}
+ESP32-S2 TWAI 控制器有两种工作模式：复位模式和操作模式。将 \hyperref[fielddesc:TWAIRESETMODE]{TWAI\_RESET\_MODE} 位置 1，进入复位模式；置 0，进入操作模式。
+
+\subsubsection{复位模式}
+要修改 TWAI 控制器的各种配置寄存器，需进入复位模式。进入复位模式时，TWAI 控制器彻底与 TWAI 总线断开连接。复位模式下，TWAI 控制器将无法发送任何报文（包括错误信号）。任何正在进行的报文传输将立即被终止。同样的，TWAI 控制器在该模式下也将无法接收任何报文。
+
+\subsubsection{操作模式}
+进入操作模式后，TWAI 控制器与总线相连，并且写保护各配置寄存器，以确保控制器的配置在运行期间保持一致。操作模式下，TWAI 控制器可以发送和接收报文（包括错误信号），但具体取决于 TWAI 控制器配置于哪种运行子模式。TWAI 控制器支持以下三种子模式：
+
+\begin{itemize}
+    \item {\bfseries 正常模式：} TWAI 控制器可以发送和接收包含错误信号在内的报文（如，错误帧和过载帧）。
+    \item {\bfseries 自测模式：} 与正常模式相同，但在该模式下，TWAI 控制器发送报文时，即使在 CRC 域之后没有接收到应答信号，也不会产生应答错误。通常在 TWAI 控制器自测时使用该模式。
+    \item {\bfseries 只听模式：} TWAI 控制器可以接收报文，但在 TWAI 总线上保持完全被动。因此，TWAI 控制器将无法发送任何报文、应答或错误信号。错误计数将保持冻结状态。该模式用于 TWAI 总线监控。
+\end{itemize}
+
+请注意，退出复位模式后（如，进入操作模式时），TWAI 控制器需等待 11 个连续隐性位出现，才能完全连接上 TWAI 总线（即，可以发送或接收报文）。
+
+\subsection{位时序}
+TWAI 控制器的工作位速率必须在控制器处于复位模式时进行配置。在寄存器 \\\hyperref[regdesc:TWAIBUSTIMING0REG]{TWAI\_BUS\_TIMING\_0\_REG} 和 \hyperref[regdesc:TWAIBUSTIMING1REG]{TWAI\_BUS\_TIMING\_1\_REG} 中配置位速率，这两个寄存器包含以下域：
+
+下表 \ref{table:Bit_timing_0} 所示为 \hyperref[regdesc:TWAIBUSTIMING0REG]{TWAI\_BUS\_TIMING\_0\_REG} 包含的位域。
+
+\begin{longtable}[c]{|p{2cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|p{1.5cm}|}
+\caption{\hyperref[regdesc:TWAICLOCKDIVIDERREG]{TWAI\_CLOCK\_DIVIDER\_REG} 的 bit 信息; TWAI 地址 \hexprefix{}18}
+\label{table:Bit_timing_0}\\\hline
+\rowcolor{lightgray}
+  Bit 31-16 & Bit 15 & Bit 14 & Bit 13 & Bit 12 & ...... & Bit 1 & Bit 0\\\hline
+  保留& SJW.1 & SJW.0 & BRP.13 & BRP.12 & ...... & BRP.1 & BRP.0\\\hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item 预分频值 (BRP)：TWAI 时间定额时钟由 APB 时钟分频得到，APB 时钟通常为 80 MHz。可通过以下公式计算分频数值，其中 t$_{Tq}$ 为时间定额的时钟周期，t$_{CLK}$ 为 APB 时钟周期：\\
+
+t$_{Tq}$ = 2 × t$_{CLK}$ × (2$^{13}$ × BRP.13 + 2$^{12}$ × BRP.12 + ... + 2$^1$ × BRP.1 + 2$^0$ × BRP.0 + 1)
+    \item 同步跳宽 (SJW)：SJW 数值在 SJW.0 和 SJW.1 中配置，计算公式为：SJW = (2 x SJW.1 + SJW.0 + 1)。
+\end{itemize}
+
+下表 \ref{table:Bit_timing_1} 所示为 \hyperref[regdesc:TWAIBUSTIMING1REG]{TWAI\_BUS\_TIMING\_1\_REG} 包含的位域。
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{\hyperref[regdesc:TWAIBUSTIMING1REG]{TWAI\_BUS\_TIMING\_1\_REG} 的 bit 信息; TWAI 地址 \hexprefix{}1c}
+    \label{table:Bit_timing_1}\\
+    \hline
+       \rowcolor{lightgray}
+   Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\\hline
+   保留 & SAM & PBS2.2 & PBS2.1 & PBS2.0 & PBS1.3 &PBS1.2 & PBS1.1 & PBS1.0\\
+    \hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item PBS1: 根据以下公式计算缓冲时期段 1 中的时间定额数量：(8 x PBS1.3 + 4 x PBS1.2 + 2 x PBS1.1 + PBS1.0 + 1)。
+    \item PBS2: 根据以下公式计算缓冲时期段 2 中的时间定额数量：(4 x PBS2.2 + 2 x PBS2.1 + PBS2.0 + 1)。
+    \item SAM: 该值置 1 启动三点采样。用于低/中速总线，有利于过滤总线上的尖峰信号。
+\end{itemize}
+
+\subsection{中断管理}
+\label{subsubsec:interrupt-management}
+ESP32-S2 TWAI 控制器提供了七种中断，每种中断由寄存器 \hyperref[regdesc:TWAIINTRAWREG]{TWAI\_INT\_RAW\_REG} 中的一个位表示。要触发某个特定的中断，须设置 \hyperref[regdesc:TWAIINT ENAREG]{TWAI\_INT ENA\_REG} 中相应的使能位。
+
+TWAI 控制器提供了以下七种中断：
+
+\begin{itemize}
+    \item 接收中断
+    \item 发送中断
+    \item 错误报警中断
+    \item 数据溢出中断
+    \item 被动错误中断
+    \item 仲裁丢失中断
+    \item 总线错误中断
+\end{itemize}
+
+只要在 \hyperref[regdesc:TWAIINTRAWREG]{TWAI\_INT\_RAW\_REG} 一个或多个中断位为 1，TWAI 控制器中的中断信号即为有效，当 \hyperref[regdesc:TWAIINTRAWREG]{TWAI\_INT\_RAW\_REG} 中的所有位都被清除时，TWAI 控制器中的中断信号则失效。寄存器 \hyperref[regdesc:TWAIINTRAWREG]{TWAI\_INT\_RAW\_REG} 被读取后，其中的大多数中断位将自动清除。但是，接收中断不包括在内，直到通过 \hyperref[fielddesc:TWAIRELEASEBUF]{TWAI\_RELEASE\_BUF} 指令位清除所有接收报文后，接收中断位才能被清除。
+
+\subsubsection{接收中断 (RXI)}
+当 TWAI 接收 FIFO 中有待读取报文时（\hyperref[regdesc:TWAIRXMESSAGECNTREG]{TWAI\_RX\_MESSAGE\_CNT\_REG} > 0），都会触发 RXI。\hyperref[regdesc:TWAIRXMESSAGECNTREG]{TWAI\_RX\_MESSAGE\_CNT\_REG} 中记录的报文数量包括接收 FIFO 中的有效报文和溢出报文。直到通过 \hyperref[fielddesc:TWAIRELEASEBUF]{TWAI\_RELEASE\_BUF} 指令位清除所有挂起接收报文后，RXI 才会失效。
+
+\subsubsection{发送中断 (TXI)}
+每当发送缓冲器空闲，将其他报文加载到发送缓冲器中等待发送时，都会触发 TXI。以下情况下，发送缓冲器将变为空闲，同时 TXI 将失效：
+
+\begin{itemize}
+    \item 报文发送已成功完成（如，应答未发现错误）。任何发送失败将自动重发。
+    \item 单次发送已完成（\hyperref[fielddesc:TWAITXCOMPLETE]{TWAI\_TX\_COMPLETE} 位指示发送成功与否）。
+    \item 使用 \hyperref[fielddesc:TWAIABORTTX]{TWAI\_ABORT\_TX} 指令位终止报文发送。
+\end{itemize}
+
+\subsubsection{错误报警中断 (EWI)}
+每当寄存器 \hyperref[regdesc:TWAISTATUSREG]{TWAI\_STATUS\_REG} 中 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} 的位值改变时（如，从 0 变为 1 或反之），都会触发 EWI。根据 EWI 触发时 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} 的值分成以下几种情况：
+
+\begin{itemize}
+    \item 如果 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} = 0 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} = 0：
+    \begin{itemize}
+        \item 如果 TWAI 控制器处于主动错误状态，则表示 TEC 和 REC 的值都返回到了 \\\hyperref[regdesc:TWAIERRWARNINGLIMITREG]{TWAI\_ERR\_WARNING\_LIMIT\_REG} 所设的阈值之下。
+        \item 如果 TWAI 控制器此前正处于总线恢复状态，则表示此时总线恢复已成功完成。
+    \end{itemize}
+    \item 如果 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} = 1 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} = 0：表示 TEC 或 REC 数值已超过 \\\hyperref[regdesc:TWAIERRWARNINGLIMITREG]{TWAI\_ERR\_WARNING\_LIMIT\_REG} 所设的阈值。
+    \item 如果 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} = 1 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} = 1：表示 TWAI 控制器已进入 BUS\_OFF 状态（因 TEC >= 256）。
+    \item 如果 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} = 0 或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} = 1：表示 BUS\_OFF 恢复期间，TWAI 控制器的 TEC 数值已低于 \hyperref[regdesc:TWAIERRWARNINGLIMITREG]{TWAI\_ERR\_WARNING\_LIMIT\_REG} 所设的阈值。
+\end{itemize}
+
+\subsubsection{数据溢出中断 (DOI)}
+每当接收 FIFO 中有溢出发生时，都会触发 DOI。DOI 表示接收 FIFO 已满且应立即进行读取，以防出现更多溢出报文。
+
+只有导致接收 FIFO 溢出的第一条报文可触发 DOI（如，当接收 FIFO 从未满变为开始溢出时）。任意后续的溢出报文将不会再次重复触发 DOI。只有当所有接收的（有效报文或溢出）报文都被读取后，才能再次触发 DOI。
+
+\subsubsection{被动错误中断 (TXI)}
+每当 TWAI 控制器从主动错误变为被动错误，或反之时，都会触发 EPI。
+
+\subsubsection{仲裁丢失中断 (ALI)}
+每当 TWAI 控制器尝试发送报文且丢失仲裁时，都会触发 ALI。TWAI 控制器丢失仲裁的 bit 位置将自动记录在仲裁丢失捕捉寄存器 (\hyperref[regdesc:TWAIARB LOST CAPREG]{TWAI\_ARB LOST CAP\_REG}) 中。仲裁丢失捕捉寄存器被清除（通过 CPU 读取该寄存器）之前，将不会再记录新发生的仲裁失败时的 bit 位置。
+
+\subsubsection{总线错误中断 (BEI)}
+每当 TWAI 控制器在 TWAI 总线上检测到错误时，都会触发 BEI。发生总线错误时，总线错误的类型和发生错误时的 bit 位置都将自动记录在错误捕捉寄存器 (\hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG}) 中。错误捕捉寄存器被清除（通过 CPU 的读取）之前，将不会再记录新的总线错误信息。
+
+\subsection{发送缓冲器与接收缓冲器}
+\subsubsection{缓冲器概述}
+
+\begin{longtable}[c]{|p{2.5cm}|p{4cm}|p{2.5cm}|p{4cm}|}
+\caption{SFF 与 EFF 的缓冲器布局}\label{Figure:TWAI_memory_box}
+\\\hline
+\rowcolor{lightgray}
+\multicolumn{2}{|l|}{标准格式 (SFF)}&\multicolumn{2}{|l|}{扩展格式 (EFF)}\\\hline
+\rowcolor{gray!25}
+TWAI 地址 & 内容 & TWAI 地址 & 内容\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\multicolumn{2}{|l|}{标准格式 (SFF)}&\multicolumn{2}{|l|}{扩展格式 (EFF)}\\\hline
+\rowcolor{gray!25}
+TWAI 地址 & 内容 & TWAI 地址 & 内容\\\hline
+\endhead
+\endfoot
+\hexprefix{}40&TX/RX 帧信息 &\hexprefix{}40&TX/RX 帧信息\\\hline
+\hexprefix{}44&\cellcolor{mycyan}{TX/RX identifier 1}&\hexprefix{}44&\cellcolor{mycyan}{TX/RX identifier 1}\\\hline
+\hexprefix{}48&\cellcolor{mycyan}{TX/RX identifier 2}&\hexprefix{}48&\cellcolor{mycyan}{TX/RX identifier 2}\\\hline
+\hexprefix{}4c&TX/RX data byte 1&\hexprefix{}4c&\cellcolor{mycyan}{TX/RX identifier 3}\\\hline
+\hexprefix{}50&TX/RX data byte 2&\hexprefix{}50&\cellcolor{mycyan}{TX/RX identifier 4}\\\hline
+\hexprefix{}54&TX/RX data byte 3&\hexprefix{}54&TX/RX data byte 1\\\hline
+\hexprefix{}58&TX/RX data byte 4&\hexprefix{}58&TX/RX data byte 2\\\hline
+\hexprefix{}5c&TX/RX data byte 5&\hexprefix{}5c&TX/RX data byte 3\\\hline
+\hexprefix{}60&TX/RX data byte 6&\hexprefix{}60&TX/RX data byte 4\\\hline
+\hexprefix{}64&TX/RX data byte 7&\hexprefix{}64&TX/RX data byte 5\\\hline
+\hexprefix{}68&TX/RX data byte 8&\hexprefix{}68&TX/RX data byte 6\\\hline
+\hexprefix{}6c&\cellcolor{yellow}{保留}&\hexprefix{}6c&TX/RX data byte 7\\\hline
+\hexprefix{}70&\cellcolor{yellow}{保留}&\hexprefix{}70&TX/RX data byte 8\\\hline
+\end{longtable}
+
+表 \ref{Figure:TWAI_memory_box} 所示为发送缓冲器和接收缓冲器的寄存器布局。发送和接收缓冲寄存器的访问地址范围相同，且只有当 TWAI 控制器处于操作模式时才可访问。CPU 的写入操作将访问发送缓冲寄存器，CPU 的读取操作将访问接收缓冲寄存器。
+
+发送缓冲寄存器用于配置 TWAI 的待发送报文。CPU 会在发送缓冲寄存器进行写入操作，指定报文的帧类型、帧格式、帧 ID 和帧数据（有效载荷）。一旦发送缓冲器配置完成后，CPU 会将 \hyperref[regdesc:TWAICMDREG]{TWAI\_CMD\_REG} 中的 \hyperref[fielddesc:TWAITXREQ]{TWAI\_TX\_REQ} 位置 1，以开始报文发送。
+
+\begin{itemize}
+    \item 若是自发自收请求，变更为将 \hyperref[fielddesc:TWAISELFRXREQ]{TWAI\_SELF\_RX\_REQ} 置 1。
+    \item 若是单次发送，需要同时将 \hyperref[fielddesc:TWAITXREQ]{TWAI\_TX\_REQ} 和 \hyperref[fielddesc:TWAIABORTTX]{TWAI\_ABORT\_TX} 置 1。
+\end{itemize}
+
+接收缓冲寄存器映射到接收 FIFO 中的第一条报文。CPU 会在接收缓冲寄存器中进行读取操作，获取第一条报文的帧类型、帧格式、帧 ID 和帧数据（有效载荷）。读取完接收缓冲寄存器中的报文后，CPU 通过将 \hyperref[regdesc:TWAICMDREG]{TWAI\_CMD\_REG} 中的 \hyperref[fielddesc:TWAIRELEASEBUF]{TWAI\_RELEASE\_BUF} 位置 1 来来清除接收缓冲寄存器，若接收 FIFO 中仍有待处理的报文，按照接收报文的先后次序将最早接收到的报文映射到接收缓冲寄存器。
+
+\subsubsection{帧信息}
+帧信息的长度为 1-byte，主要用于明确报文的帧类型、帧格式以及数据长度。下表 \ref{table:frame_info} 所示为帧信息域。
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 帧信息 (SFF/EFF)；TWAI 地址 \hexprefix{}40}
+    \label{table:frame_info}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & FF & RTR  & X  & X  & XDLC.3 & DLC.2 & DLC.1 & DLC.0\\
+    \hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item FF: 主要明确某报文属于 EFF 还是 SFF。当 FF 位为 1 时，该报文为 EFF，当 FF 位为 0 时，该报文为 SFF。
+    \item RTR: 主要明确某报文是数据帧还是远程帧。当 RTR 位为 1 时，该报文为远程帧，当 RTR 位为 0 时，该报文为数据帧。
+    \item DLC: 主要明确数据帧中的数据字节数量，或从远程帧中请求的数据字节数量。TWAI 数据帧的最大载荷为 8 个数据字节，因此 DLC 的数值范围应是 0 \verb+~+ 8。
+    \item X: 无关 bit，可以是任意值。
+\end{itemize}
+
+\subsubsection{帧标识符}
+若报文为 SFF，则对应的帧标识符域为 2-bytes (11-bits)；若报文为 EFF，则对应的帧标识符域为 4-bytes (29-bits)。
+
+下表 Table \ref{table:tx_id1_sff}-\ref{table:tx_id2_sff} 所示为 SFF (11-bits) 报文的帧标识符域。
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 1 (SFF); TWAI 地址 \hexprefix{}44}
+    \label{table:tx_id1_sff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.28 & ID.27 & ID.26 & ID.25 & ID.24 & ID.23 & ID.22 & ID.21\\
+    \hline
+\end{longtable}
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 2 (SFF); TWAI 地址 \hexprefix{}48}
+    \label{table:tx_id2_sff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.20 & ID.19 & ID.18 & X$^1$ & X$^2$ & X$^2$ & X$^2$ & X$^2$\\
+    \hline
+\end{longtable}
+
+下表 \ref{table:tx_id1_eff}-\ref{table:tx_id4_eff} 所示为 EFF (29-bits) 报文的帧标识符域。
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 1 (EFF); TWAI 地址 \hexprefix{}44}
+    \label{table:tx_id1_eff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.28 & ID.27 & ID.26 & ID.25 & ID.24 & ID.23 & ID.22 & ID.21\\
+    \hline
+\end{longtable}
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 2 (EFF); TWAI 地址 \hexprefix{}48}
+    \label{table:tx_id2_eff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.20 & ID.19 & ID.18 & ID.17 & ID.16 & ID.15 & ID.14 & ID.13\\
+    \hline
+\end{longtable}
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 3 (EFF); TWAI 地址 \hexprefix{}4c}
+    \label{table:tx_id3_eff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.12 & ID.11 & ID.10 & ID.9 & ID.8 & ID.7 & ID.6 & ID.5\\
+    \hline
+\end{longtable}
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{TX/RX 标识符 4 (EFF); TWAI 地址 \hexprefix{}50}
+    \label{table:tx_id4_eff}\\
+    \hline
+       \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\
+    \hline
+    保留 & ID.4 & ID.3 & ID.2 & ID.1 & ID.0 & X$^1$ & X$^2$ & X$^2$\\
+    \hline
+\end{longtable}
+
+\subsubsection{帧数据}
+帧数据域包含发送或接收的数据帧，范围为 0 \verb+~+ 8 bytes。其中的有效字节数应与 DLC 相同。但是，如果 DLC 数值大于 8，则帧数据域的有效字节数仍为 8。远程帧中不包含数据载荷，因此不存在帧数据域。
+
+比如，当发送 5 个数据字节的数据帧时，CPU 应在 DLC 域中写入数值 5，并将数据写入数据域 1 \verb+~+ 5 字节对应的寄存器。同样，当接收 DLC 为 5 的数据帧时，只有 1 \verb+~+ 5 数据字节中包含 CPU 可以读取的有效载荷数据。
+
+\subsection{接收 FIFO 和数据溢出}
+
+接收 FIFO 是一个 64-bytes 的内部缓冲器，用于以先进先出的原则存储接收到的报文。一条接收报文可在接收 FIFO 中占 3 \verb+~+ 13 bytes 空间，且其中字节序与接收缓冲器的寄存器地址顺序相同。接收缓冲寄存器将被映射到接收 FIFO 中第一条报文。
+
+当 TWAI 控制器接收到一条报文时，\hyperref[fielddesc:TWAIRXMESSAGECOUNTER]{TWAI\_RX\_MESSAGE\_COUNTER} 的值将增加 1，最大值为 64。如果接收 FIFO 中有足够的剩余空间，报文内容将被写入到接收 FIFO 中。读取接收缓冲器中的消息后，通过将 \hyperref[fielddesc:TWAIRELEASEBUF]{TWAI\_RELEASE\_BUF} 的位置 1，释放接收 FIFO 第一条报文所占的空间，\hyperref[fielddesc:TWAIRXMESSAGECOUNTER]{TWAI\_RX\_MESSAGE\_COUNTER} 的值也将减小 1。然后，接收缓冲器将映射接收 FIFO 中的下一条报文。
+
+当 TWAI 控制器接收到一条报文，但接收 FIFO 没有足够空间完整地存储这条接收报文时（不论是因为报文内容大小大于接收 FIFO 中的空闲空间，还是因为接收 FIFO 已满），便会发生数据溢出。
+
+数据溢出发生时：
+\begin{itemize}
+    \item 接收 FIFO 中剩余的空间将填满溢出报文的内容。如果接收 FIFO 已满，则无法存储溢出报文的任何内容。
+    \item 接收 FIFO 首次发生数据溢出时，将触发数据溢出中断。
+    \item 溢出报文仍将增加 \hyperref[fielddesc:TWAIRXMESSAGECOUNTER]{TWAI\_RX\_MESSAGE\_COUNTER} 的值到最大值 64。
+    \item 接收 FIFO 将在内部将溢出报文标记为无效。可使用 \hyperref[fielddesc:TWAIMISSST]{TWAI\_MISS\_ST} 位，确认目前接收缓冲器映射的报文是有效报文还是溢出报文。
+\end{itemize}
+
+为了清除接收 FIFO 中的溢出报文，应重复调用 \hyperref[fielddesc:TWAIRELEASEBUF]{TWAI\_RELEASE\_BUF}，直到 \hyperref[fielddesc:TWAIRXMESSAGECOUNTER]{TWAI\_RX\_MESSAGE\_COUNTER} 为 0。这样可以读取接收 FIFO 中的所有有效报文，并清除所有溢出报文。
+
+\subsection{接收滤波器}
+
+接收滤波器允许 TWAI 控制器根据报文 ID 过滤接收报文（有时可以过滤报文的第一个数据字节和帧类型）。只有通过过滤的报文才能存储到接收 FIFO 中。接收滤波器的使用可以一定程度地减轻 TWAI 控制器的运行负荷（如，可减少使用接收 FIFO 和发生接收中断的次数），因为 TWAI 控制器将只需要操作一小部分过滤后的报文。
+
+只有当 TWAI 控制器处于复位模式时，才可以访问接收滤波器的配置寄存器，因为这些配置寄存器和发送/接收缓冲寄存器的地址空间相同。
+
+接收滤波器的配置寄存器由 32-bit 的 Code 值和 32-bit 的 Mask 值组成。Code 值将指定一种位排列模式，每条过滤报文中的位都必须匹配该模式，才能使该报文通过过滤。Mask 值可屏蔽 Code 值中的某些位（将屏蔽位设置为“不相关”的位）。如图 \ref{Figure:Acceptance filter} 所示，为了使报文通过过滤，每条过滤报文的 ID 都必须匹配 Code 值所设模式或者被 Mask 值屏蔽。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/Acceptance filter__CN}}
+    \caption{接收滤波器}
+    \label{Figure:Acceptance filter}
+\end{figure}
+
+TWAI 控制器的接收滤波器允许 32-bit 的 Code 值和 Mask 值定义单个滤波器（单滤波模式），或两个滤波器（双滤波模式）。接收滤波器如何解析 32-bit 的 code 值和 mask 值，取决于滤波模式以及接收报文的格式（如，SFF 还是 EFF）。
+
+\subsubsection{单滤波模式}
+
+将 \hyperref[fielddesc:TWAIRXFILTERMODE]{TWAI\_RX\_FILTER\_MODE} 的位置 1，可启动单滤波模式。此后，32-bit code/mask 的值将定义单个滤波器。
+
+单个滤波器可过滤数据帧和远程帧中的以下位：
+
+\begin{itemize}
+    \item SFF
+    \begin{itemize}
+        \item 11-bit ID 整体
+        \item RTR bit
+        \item 数据字节 1 和数据字节 2
+    \end{itemize}
+    \item EFF
+    \begin{itemize}
+        \item 29-bit ID 整体
+        \item RTR bit
+    \end{itemize}
+\end{itemize}
+
+下图 \ref{Figure:Single Filter Mode} 所示为单滤波模式下如何解析 32-bit code/mask 的值。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/Single Filter Mode__CN}}
+    \caption{单滤波模式}
+    \label{Figure:Single Filter Mode}
+\end{figure}
+
+\subsubsection{双滤波模式}
+
+将 \hyperref[fielddesc:TWAIRXFILTERMODE]{TWAI\_RX\_FILTER\_MODE} 的位置 0，可启动双滤波模式。此后，32-bit code/mask 的值将定义两个滤波器之一，即滤波器 1 或滤波器 2。双滤波模式下，如果报文通过这两个滤波器中的至少一个，则表示该报文已成功通过过滤。
+
+这两个滤波器可以过滤数据帧和远程帧中的以下位：
+
+\begin{itemize}
+    \item SFF
+    \begin{itemize}
+        \item 11-bit ID 整体
+        \item RTR bit
+        \item 数据字节 1 (仅适用于滤波器 1)
+    \end{itemize}
+    \item EFF
+    \begin{itemize}
+        \item 29-bit ID 的前 16-bit
+    \end{itemize}
+\end{itemize}
+
+下图 \ref{Figure:Dual Filter Mode} 所示为双滤波模式下如何解析 32-bit code/mask 的值。
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{\modulefiles/figures/Dual Filter Mode__CN}}
+    \caption{双滤波模式}
+    \label{Figure:Dual Filter Mode}
+\end{figure}
+
+
+\subsection{错误管理}
+
+TWAI 协议要求每个 TWAI 节点中都包含发送错误计数 (TEC) 和接收错误计数 (REC)。这两个错误计数的数值决定了 TWAI 控制器当前的错误状态（如，主动错误、被动错误、离线）。TWAI 控制器将 TEC 和 REC 的数值分别存储在 \hyperref[regdesc:TWAITXERRCNTREG]{TWAI\_TX\_ERR\_CNT\_REG} 和 \hyperref[regdesc:TWAIRXERRCNTREG]{TWAI\_RX\_ERR\_CNT\_REG} 中，CPU 可随时进行读取。除了错误状态之外，TWAI 控制器还提供错误报警限制 (EWL) 的功能，这个功能可在 TWAI 控制器进入被动错误状态之前，提醒用户当前发生的严重总线错误。
+
+TWAI 控制器的当前错误状态通过以下各数值和状态位体现，即：TEC、REC、\hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 和 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST}。这些数值和状态位的变化也将触发中断，从而提醒用户当前的错误状态变化（可参见第 \ref{subsubsec:interrupt-management} 章）。下图 \ref{Figure:Error_State_Transtion} 所示为错误状态、上述数值和状态位以及错误状态相关中断之间的关系。
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/Error_State_Transition_20190625__CN}}
+    \caption{错误状态变化}
+    \label{Figure:Error_State_Transtion}
+\end{figure}
+
+
+\subsubsection{错误报警限制}
+
+错误报警限制 (EWL) 为 TEC 和 REC 的可配置阈值，若错误计数数值超过该阈值，将触发 EWI 中断。EWL 将作为一个报警功能提示当前发生的严重 TWAI 总线错误，且在 TWAI 控制器进入被动错误状态之前被触发。EWL 数值应在寄存器 \hyperref[regdesc:TWAIERRWARNINGLIMITREG]{TWAI\_ERR\_WARNING\_LIMIT\_REG} 中进行配置，配置同时 TWAI 控制器必须处于复位模式下。\hyperref[regdesc:TWAIERRWARNINGLIMITREG]{TWAI\_ERR\_WARNING\_LIMIT\_REG} 默认数值为 96。
+
+当 TEC 和/或 REC 数值大于等于 EWL 数值时，\hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 位将立即被置 1。同理，当 TEC 和 REC 数值都小于 EWL 数值时，\hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 位将立即复位为 0。只要 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST}（或 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST}）位值发生变化，便会触发错误报警中断。
+
+\subsubsection{被动错误}
+
+当 TEC 或 REC 数值大于 127 时，TWAI 控制器处于被动错误状态。同理，当 TEC 和 REC 数值都小于等于 127 时，TWAI 控制器进入主动错误状态。每当 TWAI 控制器从主动错误状态变为被动错误状态，或反之时，都将触发被动错误中断。
+
+\subsubsection{离线状态与离线恢复}
+
+当 TEC 数值大于 255 时，TWAI 控制器将进入离线状态。进入离线状态后，TWAI 控制器将自动进行以下动作：
+
+\begin{itemize}
+    \item REC 数值置为 0
+    \item TEC 数值置为 127
+    \item \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} 位置 1
+    \item 进入复位模式
+\end{itemize}
+
+每当 \hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} 位（或 \hyperref[fielddesc:TWAIERRST]{TWAI\_ERR\_ST} 位）数值发生变化时，都将触发错误报警中断。
+
+为了返回主动错误状态，TWAI 控制器必须进行离线恢复。要启动离线恢复，首先需要退出复位模式，进入操作模式。然后要求 TWAI 控制器在总线上检测到 128 次 11 个连续隐性位。
+
+每一次 TWAI 控制器检测到 11 个连续隐性位时，TEC 数值都将减小，以追踪离线恢复进程。当离线恢复完成后（TEC 数值从 127 减小到 0），\hyperref[fielddesc:TWAIBUSOFFST]{TWAI\_BUS\_OFF\_ST} 位将自动复位为 0，从而触发错误报警中断。
+
+\subsection{错误捕捉}
+
+错误捕捉 (ECC) 功能允许 TWAI 控制器以错误代码的形式记录 TWAI 总线错误的错误类型和 bit 位置。当检测到一个 TWAI 总线错误时，总线错误中断将被触发，相应的错误代码将记录在 \hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 中。寄存器 \hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 中存储的当前错误代码被读取之前，后续的总线错误中断触发时，将不会再记录错误代码。
+
+下表 \ref{table:ECC_REG1} 所示为寄存器 \hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 中的域：
+
+\begin{longtable}[c]{|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|p{1.4cm}|}
+    \caption{\hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 的 bit 信息; TWAI 地址 \hexprefix{}30}
+    \label{table:ECC_REG1}\\
+    \hline
+    \rowcolor{lightgray}
+    Bit 31-8 & Bit 7 & Bit 6 & Bit 5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\\hline
+    保留 & ERRC.1 & ERRC.0 & DIR & SEG.4 & SEG.3 & SEG.2 & SEG.1 & SEG.0\\
+    \hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item 错误代码 (ERRC)：表示总线错误的类型。00 代表位错误，01 代表格式错误，10 代表填充错误，11 代表其他错误类型。
+    \item 传输方向 (DIR)：表示总线错误发生时，TWAI 控制器处于发送器状态还是接收器状态。0 代表发送器，1 代表接收器。
+    \item 错误段 (SEG)：表示总线错误发生在 TWAI 报文的哪个段。
+\end{itemize}
+
+下表 \ref{table:Bit_information} 所示为 SEG.0 \verb+~+ SEG.4 的位信息。
+
+\begin{longtable}[c]{|p{2cm}<{\centering}|p{2cm}<{\centering}|p{2cm}<{\centering}|p{2cm}<{\centering}|p{2cm}<{\centering}|p{4cm}|}
+    \caption{SEG.4 - SEG.0 的位信息}
+    \label{table:Bit_information}\\
+    \hline
+    \rowcolor{lightgray}
+   Bit SEG.4 & Bit SEG.3 & Bit SEG.2 & Bit SEG.1 & Bit SEG.0 & 描述
+   \\\hline
+   \endfirsthead
+
+   \hline
+   \rowcolor{lightgray}
+   Bit SEG.4 & Bit SEG.3 & Bit SEG.2 & Bit SEG.1 & Bit SEG.0 & 描述
+   \\\hline
+   \endhead
+   \endfoot
+   \hline
+   \endlastfoot
+
+    0 & 0 & 0 & 1 & 1 & 帧起始
+    \\\hline
+    0 & 0 & 0 & 1 & 0 & ID.28 \verb+~+ ID.21
+    \\\hline
+    0 & 0 & 1 & 1 & 0 & ID.20 \verb+~+ ID.18
+    \\\hline
+    0 & 0 & 1 & 0 & 0 & bit SRTR
+    \\\hline
+    0 & 0 & 1 & 0 & 1 & bit IDE
+    \\\hline
+    0 & 0 & 1 & 1 & 1 & ID.17 \verb+~+ ID.13
+    \\\hline
+    0 & 1 & 1 & 1 & 1 & ID.12 \verb+~+ ID.5
+    \\\hline
+    0 & 1 & 1 & 1 & 0 & ID.4 \verb+~+ ID.0
+    \\\hline
+    0 & 1 & 1 & 0 & 0 & bit RTR
+    \\\hline
+    0 & 1 & 1 & 0 & 1 & 保留位 1
+    \\\hline
+    0 & 1 & 0 & 0 & 1 & 保留位 0
+    \\\hline
+    0 & 1 & 0 & 1 & 1 & 数据长度代码
+    \\\hline
+    0 & 1 & 0 & 1 & 0 & 数据域
+    \\\hline
+    0 & 1 & 0 & 0 & 0 & CRC 序列
+    \\\hline
+    1 & 1 & 0 & 0 & 0 & CRC 分界符
+    \\\hline
+    1 & 1 & 0 & 0 & 1 & 确认槽
+    \\\hline
+    1 & 1 & 0 & 1 & 1 & 确认分界符
+    \\\hline
+    1 & 1 & 0 & 1 & 0 & 帧结束
+    \\\hline
+    1 & 0 & 0 & 1 & 0 & 间歇域
+    \\\hline
+    1 & 0 & 0 & 0 & 1 & 主动错误标志
+    \\\hline
+    1 & 0 & 1 & 1 & 0 & 被动错误标志
+    \\\hline
+    1 & 0 & 0 & 1 & 1 & 兼容显性位
+    \\\hline
+    1 & 0 & 1 & 1 & 1 & 错误分界符
+    \\\hline
+    1 & 1 & 1 & 0 & 0 & 过载标志
+    \\\hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item Bit SRTR: 标准格式 RTR bit。
+    \item Bit IDE: 标识符扩展位。0 表示标准格式。
+\end{itemize}
+
+\subsection{仲裁丢失捕捉}
+
+仲裁丢失捕捉 (ALC) 功能允许 TWAI 控制器记录丢失仲裁的 bit 位置。当 TWAI 控制器丢失仲裁时，bit 位置将被记录在寄存器 \hyperref[regdesc:TWAIARB LOST CAPREG]{TWAI\_ARB LOST CAP\_REG} 中，同时触发仲裁丢失中断。
+
+后续的仲裁丢失中断触发时，bit 位置将不会被记录在 \hyperref[regdesc:TWAIARB LOST CAPREG]{TWAI\_ARB LOST CAP\_REG} 中，直到 \hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 中的当前仲裁丢失捕捉被读取。
+
+下表 \ref{table:ALC_REG} 所示为 \hyperref[regdesc:TWAIERRCODECAPREG]{TWAI\_ERR\_CODE\_CAP\_REG} 中的位域；下图 \ref{Figure:TWAI_arbitration_lost_capture} 所示为一条 TWAI 报文的 bit 位置。
+
+\begin{longtable}[c]{|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|}
+    \caption{\hyperref[regdesc:TWAIARB LOST CAPREG]{TWAI\_ARB LOST CAP\_REG} 中的位信息; TWAI 地址 \hexprefix{}2c}
+    \label{table:ALC_REG}
+    \\\hline
+    \rowcolor{lightgray}
+  Bit 31-5 & Bit 4 & Bit 3 & Bit 2 & Bit 1 & Bit 0\\ \hline
+   保留 & BITNO.4 & BITNO.3 & BITNO.2 & BITNO.1 & BITNO.0\\\hline
+\end{longtable}
+\vspace{-1.5em}
+{\bfseries 说明：}\\
+\begin{itemize}
+    \item 位号 (BITNO)：表示丢失仲裁的 TWAI 报文的第 n 个位。
+\end{itemize}
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/Positions_of_Arbitration_Lost_Bits_20190625__CN}}
+    \caption{丢失仲裁的 bit 位置}
+    \label{Figure:TWAI_arbitration_lost_capture}
+\end{figure}
+
+\section{基地址}
+\label{TWAI-Base-Addresses}
+
+用户可以通过两个不同的寄存器基地址访问 TWAI，如表 \ref{table:TWAI-Base-Addresses} 所示。更多信息，请访问 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 章节。
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{TWAI 基地址} \label{table:TWAI-Base-Addresses}
+\\ \hline
+\rowcolor{lightgray}
+访问总线 & 基地址 \\
+    \hline
+PeriBUS1 & \hexprefix{}6002B000 \\
+    \hline
+PeriBUS2 & \hexprefix{}3FC2B000 \\
+    \hline
+\end{longtable}
+
+\hypertarget{twai-reg-summ}{}
+\section{寄存器列表}
+\label{chapter:Register_Summary}
+
+\subfile{\modulefiles/twai-reg-summ__CN}
+\section{寄存器}
+\label{chapter:Register_Description}
+\subfile{\modulefiles/twai-reg__CN}
+\end{document}

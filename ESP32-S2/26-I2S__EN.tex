@@ -1,0 +1,916 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./26-I2S}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{i2s}{}
+\chapter{I2S Controller (I2S)}
+\label{mod:i2s}
+
+\section{Overview}
+I2S bus provides a flexible communication interface for streaming digital data in multimedia applications, especially in digital audio applications. ESP32-S2 has a built-in I2S interface, i.e. I2S\textcolor{red}{\it{0}}.
+
+I2S standard bus defines three signals: a bit clock signal (BCK), a channel/word select signal (WS), and a serial data signal (SD). A basic I2S data bus has one master and one slave. The roles remain unchanged throughout the communication. The I2S module on ESP32-S2 provides separate transmit (TX) and receive (RX) units for high performance.
+
+In addition to standard I2S, the I2S module supports LCD and camera operation modes which transfer data over a parallel bus.
+
+\section{System Diagram}
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/ESP723_I2S_block_diagram}}
+    \caption{ ESP32-S2 I2S System Diagram}
+    \label{Figure:i2s_arch}
+\end{figure}
+
+Figure \ref{Figure:i2s_arch} shows the structure of ESP32-S2 I2S module, consisting of a TX unit (TX control), an RX unit (RX control), an input and output timing unit (I/O Timing), a clock divider (Clock Generator), a TX FIFO, and an RX FIFO. Both the TX unit and the RX unit have a 64 x 32-bit FIFO. I2S module supports direct access (DMA) to internal memory and external RAM, see Chapter DMA Controller. Please ensure the consistency between cache and DMA when accessing external RAM. I2S module can work in multiple modes: I2S master/slave transmitter and receiver, LCD master transmitter, and camera slave receiver.
+
+
+In I2S mode, both the TX unit and the RX unit have a three-line interface, including a bit clock line (BCK), a word select line (WS), and a serial data line (SD). The SD line of TX unit is fixed as output, and the SD line of RX unit as input. BCK and WS signal lines for TX unit and RX unit can be configured as master output mode and slave input mode.
+
+In LCD master transmitting mode, I2S\textcolor{red}{\it{0}}O\_BCK\_out works as LCD pixel clock output, and I2S\textcolor{red}{\it{0}}O\_Data\_out [23:0] as LCD parallel output data bus. A wide variety of LCD formats and bit widths are supported in this mode.
+
+In camera slave receiving mode, the lines perform the following roles:
+
+\begin{itemize}
+    \item I2S\textcolor{red}{\it{0}}I\_V\_SYNC: camera frame rate input
+    \item I2S\textcolor{red}{\it{0}}I\_H\_SYNC: horizontal scanning frequency input
+    \item I2S\textcolor{red}{\it{0}}I\_H\_ENABLE: horizontal scanning enable line
+    \item I2S\textcolor{red}{\it{0}}I\_WS\_in: pixel clock input
+    \item I2S\textcolor{red}{\it{0}}I\_Data\_in[15:0]: camera parallel input data bus
+\end{itemize}
+
+The signal bus of I2S module is shown at the right part of Figure \ref{Figure:i2s_arch}. The naming of these signals in RX and TX units follows the pattern: I2S\textcolor{red}{\it{0}}A\_B\_C, such as I2S\textcolor{red}{\it{0}}I\_BCK\_in.
+
+\begin{itemize}
+    \item ``A'': direction of data bus signal
+        \begin{itemize}
+            \item ``I'': input, receiving
+            \item  ``O'': output, transmitting
+        \end{itemize}
+    \item ``B'': signal function
+     \begin{itemize}
+            \item BCK
+            \item WS
+            \item SD
+        \end{itemize}
+    \item ``C'': signal direction
+        \begin{itemize}
+            \item ``in'': input signal into I2S module
+            \item ``out'': output signal from I2S module
+        \end{itemize}
+\end{itemize}
+
+For a detailed description of I2S signal bus, please refer to Table \ref{table:I2S 信号总线描述}.
+
+\begin{longtable}{|p{2.6cm}|p{1.5cm}|p{11.5cm}|}
+\caption{I2S Signal Description} \label{table:I2S 信号总线描述} \\
+\hline
+\rowcolor{lightgray}
+Signal & Direction & Function \\
+\hline
+\endfirsthead
+
+\hline
+\rowcolor{lightgray}
+Signal & Direction & Function \\
+\hline
+\endhead
+
+I2S\textcolor{red}{\it{0}}I\_BCK\_in  & Input  & In I2S slave mode, input BCK signal for RX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_BCK\_out & Output & In I2S master mode, output BCK signal for RX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_WS\_in   & Input  & In I2S slave mode, input WS signal for RX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}I\_WS\_out  & Output & In I2S master mode, output WS signal for RX unit. \\
+\hline
+\vspace{0.6em}I2S\textcolor{red}{\it{0}}I\_Data\_in & \vspace{0.6em}Input  & In I2S mode, I2S\textcolor{red}{\it{0}}I\_Data\_in works as the serial input bus. In camera mode, I2S\textcolor{red}{\it{0}}I\_Data\_in works as the parallel input bus, and the bit width (up to 16) of data line is configurable according to its data transfer format. \\
+\hline
+\vspace{0.6em}I2S\textcolor{red}{\it{0}}O\_Data\_out & \vspace{0.6em}Output & In I2S mode, I2S\textcolor{red}{\it{0}}O\_Data\_out is the serial output line for I2S. In LCD mode, works as a parallel output data line. Its bit width (up to 24) is configurable according to the data transfer format. \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_BCK\_in   & Input  & In I2S slave mode, input BCK signal for TX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_BCK\_out  & Output & In I2S master mode, output BCK signal for TX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_WS\_in    & Input  & In I2S slave mode, input WS signal for TX unit. \\
+\hline
+I2S\textcolor{red}{\it{0}}O\_WS\_out   & Output & In I2S master mode, output WS signal for TX unit. \\
+\hline
+\vspace{-0.4em}I2S\textcolor{red}{\it{0}}\_CLK       & \vspace{-0.4em}Output & Work as a clock source for peripherals. Note: this signal corresponds to \texttt{clk\_i2s\_mux} in Table GPIO Matrix. \\
+\hline
+\hline
+I2S\textcolor{red}{\it{0}}I\_H\_SYNC   & \multirow{3}{*}{Input} & \multirow{3}{=}{In camera mode, input HSYNC, VSYNC, and HREF signals, see Figure \ref{Figure:i2s_camera}.} \\
+\cline{1-1}
+I2S\textcolor{red}{\it{0}}I\_V\_SYNC   &                        &  \\
+\cline{1-1}
+I2S\textcolor{red}{\it{0}}I\_H\_ENABLE &                        &  \\
+\hline
+\end{longtable}
+
+
+\begin{tiplisting}
+1. All I2S signals must be mapped to the chip's pad via GPIO matrix, see Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+2. For input/output signal with a bit width of \textcolor{red}{\it{N}} in LCD/Camera mode, I2S\textcolor{red}{\it{0}}I\_Data\_in[\textcolor{red}{\it{N}}-1:0] is used as input signal, and I2S\textcolor{red}{\it{0}}O\_Data\_out[23:23-\textcolor{red}{\it{N}}+1] as output signal. Generally, \textcolor{red}{\it{N}} is 8 $ \sim $ 16 for input signals and 8 $ \sim $ 24 for output signals.
+\end{tiplisting}
+
+\section{Features}
+
+\textbf{In I2S mode:}
+
+\begin{itemize}
+    \item Support for master mode and slave mode.
+    \item Support for full-duplex and half-duplex communications.
+    \item TX unit and RX unit are independent of each other and can work independently or simultaneously.
+    \item Support for a variety of audio standards:
+    \begin{itemize}
+        \item Philips I2S standard
+        \item PCM standard
+        \item MSB alignment standard
+    \end{itemize}
+    \item High-precision sample clock supports the following frequencies: 8 kHz, 16 kHz, 32 kHz, 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz, 128 kHz, and 192 kHz. Note that 192 kHz is not supported in 32-bit slave mode.
+    \item Support for 8-/16-/24-/32-bit data communication.
+
+\end{itemize}
+
+\textbf{In LCD and camera modes:}
+\begin{itemize}
+    \item Support to connect to external LCD, and configured as 8- \verb+~+ 24-bit parallel output mode.
+    \begin{itemize}
+        \item I2S LCD accesses internal memory via DMA.
+            \begin{itemize}
+            \item Clock frequency should be less than 40 MHz when LCD data bus is configured as 8- \verb+~+ 16-bit parallel output.
+            \item Clock frequency should be less than 26.7 MHz when LCD data bus is configured as 17- \verb+~+ 24-bit parallel output.
+            \end{itemize}
+
+        \item I2S LCD accesses external RAM via EDMA.
+            \begin{itemize}
+            \item Clock frequency should be less than 25 MHz when LCD data bus is configured as 8-bit parallel output.
+            \item Clock frequency should be less than 12.5 MHz when LCD data bus is configured as 9- \verb+~+ 16-bit parallel output.
+            \item Clock frequency should be less than 6.25 MHz when LCD data bus is configured as 17- \verb+~+ 24-bit parallel output.
+            \end{itemize}
+        \item Support for a variety of LCD modes, including MOTO6800, I8080, and etc.
+    \end{itemize}
+
+    \item Support to connect to external camera (i.e. DVP image sensor), and configured as 8- \verb+~+ 16-bit parallel input mode.
+    \begin{itemize}
+        \item I2S camera accesses internal memory via DMA. Clock frequency should be less than 40 MHz when I2S camera is configured as 8- \verb+~+ 16-bit parallel input mode.
+
+        \item I2S camera accesses external RAM via EDMA.
+            \begin{itemize}
+            \item Clock frequency should be less than 25 MHz when I2S camera is configured as 8-bit parallel input mode.
+            \item Clock frequency should be less than 12.5 MHz when I2S camera is configured as 9- \verb+~+ 16-bit parallel input mode.
+            \end{itemize}
+    \end{itemize}
+
+    \item Support to connect to external LCD and camera simultaneously.
+    \begin{itemize}
+        \item When accessing internal memory, ensure that the maximum data throughput on the interface is less than DMA total data bandwidth of 80 megabytes per second.
+        \item When accessing external RAM, ensure that the maximum data throughput on the interface is less than EDMA total data bandwidth of 25 megabytes per second.
+    \end{itemize}
+\end{itemize}
+
+
+\textbf{I2S interrupts:}
+\begin{itemize}
+    \item Support for standard I2S interface interrupts.
+    \item Support for I2S DMA interface interrupts.
+\end{itemize}
+
+\section{Supported Audio Standards} \label{I2S_supported_protocal}
+
+
+ESP32-S2 I2S supports multiple audio standards.
+
+\subsection{Philips Standard}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_phillips_standard}}
+    \caption{Philips Standard}
+    \label{Figure:i2s_phillips_standard}
+\end{figure}
+
+As shown in Figure \ref{Figure:i2s_phillips_standard}, Philips specifications require that WS signal changes one BCK clock cycle earlier than SD signal on BCK falling edge, which means that WS signal keeps valid from a clock cycle earlier before transmitting the first bit of current channel and changes a clock earlier before the end of data transfer in current channel. SD signal line transmits the most significant bit of audio data first. Users can set the bits \hyperref[fielddesc:I2SRXMSBSHIFT]{I2S\_RX\_MSB\_SHIFT} and \hyperref[fielddesc:I2STXMSBSHIFT]{I2S\_TX\_MSB\_SHIFT} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}, respectively, to enable Philips standard when receiving and transmitting data.
+
+
+\subsection{MSB Alignment Standard}
+
+\begin{figure}[!ht]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_MSB_32_mode}}
+    \caption{MSB Alignment Standard}
+    \label{Figure:i2s_MSB_32_mode}
+\end{figure}
+As shown in Figure \ref{Figure:i2s_MSB_32_mode}, MSB alignment specifications require WS and SD signals change simultaneously on the falling edge of BCK. The WS signal keeps valid till the end of data transfer in current channel. The SD signal line transmits the most significant bit of audio data first. Users can clear the bits \hyperref[fielddesc:I2SRXMSBSHIFT]{I2S\_RX\_MSB\_SHIFT} and \hyperref[fielddesc:I2STXMSBSHIFT]{I2S\_TX\_MSB\_SHIFT} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}, respectively, to enable MSB alignment standard when receiving and transmitting data.
+
+\subsection{PCM Standard}
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_pcm_mode}}
+    \caption{ PCM Standard}
+    \label{Figure:i2s_pcm_mode}
+\end{figure}
+
+As shown in Figure \ref{Figure:i2s_pcm_mode}, short frame synchronization under PCM standard requires WS signal changes one BCK clock cycle earlier than SD signal on the falling edge of BCK, which means that the WS signal comes valid from a clock cycle earlier before transferring the first bit of current channel and remains unchanged in this BCK clock cycle. The SD signal line transmits the most significant bit of audio data first. Users can set the bits \hyperref[fielddesc:I2SRXSHORTSYNC]{I2S\_RX\_SHORT\_SYNC} and \hyperref[fielddesc:I2STXSHORTSYNC]{I2S\_TX\_SHORT\_SYNC} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} to 1, to enable short frame synchronization mode when receiving and transmitting data.
+
+\section{I2S Clock}\label{The Clock of I2S Module}
+
+The master clock of I2S module: I2S\textcolor{red}{\it{0}}\_CLK is derived from the 160 MHz PLL\_F160M\_CLK or the configurable analog PLL output clock: APLL\_CLK. The serial clock (BCK) of I2S module is derived from I2S\textcolor{red}{\it{0}}\_CLK, as shown in Figure \ref{Figure:i2s_clk}. \hyperref[fielddesc:I2SCLKSEL]{I2S\_CLK\_SEL}[1:0] in register \hyperref[regdesc:I2SCLKMCONFREG]{I2S\_CLKM\_CONF\_REG} is used to select either PLL\_F160M\_CLK or APLL\_CLK as the clock source for I2S\textcolor{red}{\it{0}}, or to disable the clock source of I2S module.
+
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_clk}}
+    \caption{ I2S Clock }
+    \label{Figure:i2s_clk}
+\end{figure}
+
+The following formula shows the relation between I2S\textcolor{red}{\it{0}}\_CLK frequency $f_{\textrm{i2s}}$ and the divider clock source frequency $f_{\textrm{I2S\_CLK\_S}}$:
+$$f_{\textrm{i2s}}=\frac{f_{\textrm{I2S\_CLK\_S}}}{\textrm{N} + \frac{\textrm{b}}{\textrm{a}}}$$
+
+N is an integer value between 2 and 256. The value of N corresponds to the value of \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] in register \hyperref[regdesc:I2SCLKMCONFREG]{I2S\_CLKM\_CONF\_REG} as follows:
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] = 0, N = 256.
+
+    \item When \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] = 1, N = 2.
+
+    \item When \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0] has any other value, N = \hyperref[fielddesc:I2SCLKMDIVNUM]{I2S\_CLKM\_DIV\_NUM}[7:0].
+
+\end{itemize}
+
+``b'' corresponds to the value of \hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0], and ``a'' to the value of \hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0]. For integer divider, \hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0] and \hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0] are cleared. For fractional divider, the value of \hyperref[fielddesc:I2SCLKMDIVB]{I2S\_CLKM\_DIV\_B}[5:0] should be less than that of \hyperref[fielddesc:I2SCLKMDIVA]{I2S\_CLKM\_DIV\_A}[5:0].
+
+
+In master transmitting mode, the serial clock BCK for I2S module is I2S\textcolor{red}{0}O\_BCK\_out, derived from I2S\textcolor{red}{0}\_CLK. That is:
+
+$$f_{\textrm{I2S0O\_BCK\_out}} = \frac{f_{\textrm{i2s}}}{\textrm{MO}}$$
+
+
+``MO'' is an integer value between 2 and 128. The value of ``MO'' corresponds to the value of \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] in register \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} as follows:
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] = 0, MO = 128.
+
+    \item When \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] is between 2 and 63, MO = \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0].
+
+\end{itemize}
+
+Note that \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] must not be configured as 1.
+
+In master receiving mode, the serial clock BCK for I2S module is I2S\textcolor{red}{0}I\_BCK\_out, derived from I2S\textcolor{red}{0}\_CLK. That is:
+
+$$f_{\textrm{I2S0I\_BCK\_out}} = \frac{f_{\textrm{i2s}}}{\textrm{MI}}$$
+
+``MI''  is an integer value between 2 and 128. ``MI'' corresponds to the value of \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] in register \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} as follows:
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] = 0, MI = 128.
+    \item When \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] is between 2 and 63, MI = \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0].
+\end{itemize}
+
+{\bfseries Note: }
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}[5:0] must not be configured as 1.
+    \item Using fractional divider may bring clock jitter. In case that I2S\textcolor{red}{\it{0}}\_CLK  and BCK can not be generated from PLL\_F160M\_CLK by integer divider, APLL\_CLK can be used as clock source. For more information, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+    \item In I2S slave mode, make sure $f_{\textrm{i2s}}$ >= 8 * $f_{\textrm{BCK}}$.
+    \item I2S module can output I2S\textcolor{red}{\it{0}}\_CLK as the main clock for peripherals.
+
+\end{itemize}
+
+\section{I2S Reset} \label{module_reset}
+
+The units in I2S module are reset by different bits in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}.
+
+\begin{itemize}
+    \item I2S TX/RX units: reset by the bits \hyperref[fielddesc:I2STXRESET]{I2S\_TX\_RESET} and \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET}.
+    \item I2S TX/RX FIFO: reset by the bits \hyperref[fielddesc:I2STXFIFORESET]{I2S\_TX\_FIFO\_RESET} and \hyperref[fielddesc:I2SRXFIFORESET]{I2S\_RX\_FIFO\_RESET}.
+\end{itemize}
+
+Their reset status are indicated by the status bits: \hyperref[fielddesc:I2STXRESETST]{I2S\_TX\_RESET\_ST}, \hyperref[fielddesc:I2SRXRESETST]{I2S\_RX\_RESET\_ST}, \hyperref[fielddesc:I2STXFIFORESETST]{I2S\_TX\_FIFO\_RESET\_ST}, and \hyperref[fielddesc:I2SRXFIFORESETST]{I2S\_RX\_FIFO\_RESET\_ST}, respectively. Users can read from these status bits to check reset status: 0: reset is completed; 1: reset is not completed.
+
+Reset process is shown as follows:
+\begin{itemize}
+    \item Set the bits \hyperref[fielddesc:I2STXRESET]{I2S\_TX\_RESET}, \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET}, \hyperref[fielddesc:I2STXFIFORESET]{I2S\_TX\_FIFO\_RESET}, or \hyperref[fielddesc:I2SRXFIFORESET]{I2S\_RX\_FIFO\_RESET} as needed.
+    \item Wait for \hyperref[fielddesc:I2STXRESETST]{I2S\_TX\_RESET\_ST}, \hyperref[fielddesc:I2SRXRESETST]{I2S\_RX\_RESET\_ST}, \hyperref[fielddesc:I2STXFIFORESETST]{I2S\_TX\_FIFO\_RESET\_ST}, or \hyperref[fielddesc:I2SRXFIFORESETST]{I2S\_RX\_FIFO\_RESET\_ST} to be cleared.
+\end{itemize}
+
+{\bfseries Note: }
+I2S module clock must be configured first before the module and FIFO are reset.
+
+\section{I2S Master/Slave Mode}
+
+ESP32-S2 I2S module can operate as a master or a slave in half-duplex and full-duplex communications, depending on the configuration of the bits \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} and \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}.
+
+\begin{itemize}
+    \item Configure transmitting mode via \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD}:
+    \begin{itemize}
+        \item 0: master transmitting mode
+        \item 1: slave transmitting mode
+    \end{itemize}
+    \item Configure receiving mode via \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD}:
+    \begin{itemize}
+        \item 0: master receiving mode
+        \item 1: slave receiving mode
+    \end{itemize}
+\end{itemize}
+
+\subsection{Master/Slave Transmitting Mode} \label{subsubsection:master/slave_transmitting_mode}
+
+\begin{itemize}
+    \item I2S works as master transmitter:
+        \begin{itemize}
+            \item Set the bit \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} to start transmitting data.
+            \item I2S keeps driving the clock signal and serial data.
+            \item If \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} is set, and all the data in FIFO is transmitted, the master will stop transmitting data.
+            \item If \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} is cleared, and all the data in FIFO is transmitted, meanwhile no new data is filled in, the TX unit will keep sending the last data frame.
+            \item Master stops sending data when the bit \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} is cleared.
+        \end{itemize}
+    \item I2S works as slave transmitter:
+        \begin{itemize}
+            \item Set the bit \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}.
+            \item Wait for the master BCK clock to enable a transmit operation.
+            \item If \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} is set, and all the data in FIFO is transmitted, the slave will keep sending 0, till the master stops providing BCK signal.
+            \item If \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} is cleared, TX unit will keep sending the last frame when all the data in FIFO is sent and no new data is filled in.
+            \item Slave stops sending data when the bit \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} is cleared or there is no BCK clock in.
+
+        \end{itemize}
+\end{itemize}
+
+\subsection{Master/Slave Receiving Mode}
+
+\begin{itemize}
+    \item I2S works as master receiver:
+    \begin{itemize}
+        \item Set the bit \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} to start receiving data.
+        \item RX unit keeps outputting clock signal and sampling input data.
+        \item Clear the bit \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} to stop receiving data.
+    \end{itemize}
+    \item  I2S works as slave receiver:
+    \begin{itemize}
+        \item Set the bit \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}.
+        \item Wait for master BCK signal to start receiving data.
+    \end{itemize}
+\end{itemize}
+
+\section{Transmitting Data}\label{TXCHAN}
+
+I2S module applies the same way to control TX data format for various audio standards described in Section \ref{I2S_supported_protocal}. The following part uses MSB alignment standard as an example to illustrate how I2S works in TX mode. I2S transfers data with internal memory via DMA, and with external RAM via EDMA.
+
+I2S module transmits data in three steps:
+
+\begin{itemize}
+    \item Read data from internal memory and write it to TX FIFO.
+    \item Read data to send from TX FIFO and align the data to 64 bits to get prepared for the data transfer in left and right channels.
+    \item Adjust output data pattern:
+    \begin{itemize}
+        \item In I2S mode, clock out the data serially.
+        \item In LCD mode, convert the data to a bit-width fixed stream, and clock out the stream parallelly.
+    \end{itemize}
+\end{itemize}
+
+
+Users can configure TX data format via \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0], \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}, \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT}, \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}, \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0], and \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST}.
+
+TX unit transmits data from left channel by default when WS = 0, and from right channel when WS = 1. For subsequent description, suppose that the first four data to send are D0 (indicating low addresses or low bits), D1, D2, and D3 (indicating high addresses or high bits). The left channel data is stored at low addresses or low bits (e.g. D0, D2), and the right channel data at high addresses or high bits (e.g. D1, D3).
+
+
+\subsection{Data Transmitting When I2S\_TX\_DMA\_EQUAL = 0}
+
+When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0, data in left channel is different from that in right channel as shown in Figure \ref{Figure:ESP723_I2S_TX}. In this Figure, $D^{'}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) is the result of D\textcolor{red}{\it{n}} (\textcolor{red}{\it{n}}: 0$ \sim $3) after processed by \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}. $D^{''}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) is the result of $D^{'}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) after processed by \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0], corresponding to TX Data2 in the dashed box. ``Single” here represents the value of \hyperref[regdesc:I2SCONFSIGLEDATAREG]{I2S\_CONF\_SIGLE\_DATA\_REG} [31:0], equal to the low 8, 16, 24, or 32 bits of the register, when \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] is set to 8, 16, 24, or 32.
+
+\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} is used to set the internal endianness of the data to send. Assume the bit width of the TX data in Figure \ref{Figure:ESP723_I2S_TX} is 32/24/16/8 bits, and their corresponding \textcolor{red}{D0} is \{B3, B2, B1, B0\}, \{B2, B1, B0\}, \{B1, B0\}, and B0. ``B" here means byte. The relation between $D^{'}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) and D\textcolor{red}{\it{n}} (\textcolor{red}{\it{n}}: 0$ \sim $3) is shown in Table \ref{table:TX_BIG_ENDIAN}.
+
+\begin{table}[H]
+    \centering
+    \caption{ Endianness Mode of TX Data }
+    \label{table:TX_BIG_ENDIAN}
+    \begin{tabular}{|p{4cm}|p{3.3cm}|p{3cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] & \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} & $D^{'}_{\textcolor{red}{\it{n}}}$ \\ \hline
+    \multirow{2}*{32} & 0 & \{B3、B2、B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1、B2、B3\} \\\hline
+
+    \multirow{2}*{24} & 0 & \{B2、B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1、B2\} \\\hline
+
+    \multirow{2}*{16} & 0 & \{B1、B0\} \\\cline{2-3}
+                      & 1 & \{B0、B1\} \\\hline
+
+                8     & - & B0 \\\hline
+    \end{tabular}
+\end{table}
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_TX}}
+    \caption{ESP32-S2 I2S Data Transmitting Flow When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0}
+    \label{Figure:ESP723_I2S_TX}
+\end{figure}
+
+\newpage
+Users can configure \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} to decide data of which channel will be stored in MSB of TX FIFO. \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} together with \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] can configure multiple data formats for right and left channels. \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST} is used to configure data of which channel, right channel or left channel, should be sent first.
+
+
+When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0, all supported TX channel mode are listed in Table \ref{table:TX_CHAN_MOD0}. If \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] = 0 and \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0, the output data format is shown in Figure \ref{Figure:ESP723_I2S_TX_sequence}.
+
+
+\begin{table}[H]
+    \centering
+    \caption{TX Channel Mode When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0 }
+    \label{table:TX_CHAN_MOD0}
+    \begin{tabular}{|p{4cm}|p{2cm}|p{10cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] & Channel Mode & Description\\ \hline
+
+    \multirow{4}*{0} & Dual channel mode
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0, left channel transmits high addresses/bits data. Right channel transmits low addresses/bits data. \\
+        && \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1, left channel transmits low addresses/bits data. Right channel transmits high addresses/bits data. \\
+        \hline
+
+    \multirow{4}*{1} & Mono mode
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0, both the left and right channels transmit low addresses/bits data. \\
+        && \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1, both the left and right channels transmit high addresses/bits data. \\
+        \hline
+
+    \multirow{4}*{2} & Mono mode
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0, both the left and right channels transmit high addresses/bits data. \\
+        && \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1, both the left and right channels transmit low addresses/bits data. \\
+        \hline
+
+    \multirow{4}*{3} & Mono mode
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0, left channel transmits the constant: single[31:0]. Right channel transmits low addresses/bits data. \\
+        && \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1, left channel transmits the constant: single[31:0]. Right channel transmits high addresses/bits data. \\
+    \hline
+
+    \multirow{4}*{4} & Mono mode
+        & \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 0, left channel transmits high addresses/bits data. Right channel transmits the constant: single[31:0]. \\
+        && \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} = 1, left channel transmits low addresses/bits data. Right channel transmits the constant: single[31:0]. \\
+    \hline
+    \end{tabular}
+\end{table}
+
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_TX_sequence}}
+    \caption{ I2S Output Format When \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] = 0 and \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 0}
+    \label{Figure:ESP723_I2S_TX_sequence}
+\end{figure}
+
+\subsection{Data Transmitting When I2S\_TX\_DMA\_EQUAL = 1}
+
+When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1, data in left channel is equal to that in right channel. In such situation, TX unit only transmits mono data. \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT} can not control data structure. Users can configure \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] to output the constant: \hyperref[regdesc:I2SCONFSIGLEDATAREG]{I2S\_CONF\_SIGLE\_DATA\_REG}[31:0]. The TX data format is shown in Figure \ref{Figure:ESP723_I2S_TX_equal_sequence} and in Table \ref{table:TX_CHAN_MOD2}.
+
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_TX_equal_sequence}}    \caption{I2S TX Data When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1}
+    \label{Figure:ESP723_I2S_TX_equal_sequence}
+\end{figure}
+
+\begin{table}[H]
+    \centering
+    \caption{TX Channel Mode When \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL} = 1}
+    \label{table:TX_CHAN_MOD2}
+    \begin{tabular}{|p{4cm}|p{2cm}|p{8cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0] & Channel Mode & Description\\ \hline
+    {0/1/2} & Mono mode & Both the left channel and the right channel transmit the same valid data. \\ \hline
+
+    {3} & Mono mode  & The right channel transmits valid data, and the left channel transmits the constant: single[31:0]. \\\hline
+
+    {4} & Mono mode  & The left channel transmits valid data, and the right channel transmits the constant: single[31:0].\\\hline
+
+    \end{tabular}
+\end{table}
+
+\subsection{Configuring I2S as TX Mode}\label{sec:i2s-conf-tx-mode}
+
+Follow the steps below to configure I2S as TX mode via software:
+
+\begin{enumerate}
+    \item Configure clock as described in Section \ref{The Clock of I2S Module}.
+
+    \item Configure signal pins according to Table \ref{table:I2S 信号总线描述}.
+
+    \item Clear the bit \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} in register \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG}, to enable I2S mode.
+
+    \item Configure the bit \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}, to select the mode needed.
+
+    \begin{itemize}
+        \item 0: master transmitting mode
+        \item 1: slave transmitting mode
+    \end{itemize}
+
+    \item Configure \hyperref[fielddesc:I2STXFIFOMOD]{I2S\_TX\_FIFO\_MOD}, \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0], \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}, \hyperref[fielddesc:I2STXMSBRIGHT]{I2S\_TX\_MSB\_RIGHT}, \\\hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}, \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0], and \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST} as described in Section \ref{TXCHAN}, to set TX data mode correctly.
+
+    \item Set the bit \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} in register \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG}, to enable I2S DMA.
+    \item Reset TX unit and TX FIFO as described in Section \ref{module_reset}.
+    \item Enable corresponding interrupts, see Section \ref{I2S_INT}. \label{step8}
+    \item Configure DMA outlink, and set \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} to start DMA.
+    \item Set \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} bit if needed. For more information, please refer to Section \ref{subsubsection:master/slave_transmitting_mode}.
+    \item Start transmitting data:
+    \begin{itemize}
+        \item In master mode, wait till I2S slave gets ready, then set \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} to start transmitting data.
+        \item In slave mode, set the bit \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}. When the I2S master supplies BCK and WS signals, start transmitting data.
+    \end{itemize}
+
+    \item Wait for the interrupt signals set in Step \ref{step8}, or check whether the transfer is completed by querying the register \hyperref[fielddesc:I2STXIDLE]{I2S\_TX\_IDLE}:
+    \begin{itemize}
+        \item 0: transmitter is working.
+        \item 1: transmitter is in idle.
+    \end{itemize}
+
+    \item Clear \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} to stop data transfer.
+\end{enumerate}
+
+
+\section{Receiving Data}\label{RXCHAN}
+
+I2S module applies the same way to control RX data format for various audio standards described in Section \ref{I2S_supported_protocal}. The following part uses MSB alignment standard as an example to illustrate how I2S works in RX mode.
+
+Suppose that the first four received data are D0 (low addresses or bits), D1, D2, and D3 (high addresses or bits). RX unit receives data according to WS signal:
+\begin{itemize}
+    \item WS = 0, receive left channel data.
+    \item WS = 1, receive right channel data.
+\end{itemize}
+
+RX data format is controlled by \hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0], \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}, \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}, \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}, \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[1:0], and \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST}.
+
+\subsection{Data Receiving When I2S\_RX\_DMA\_EQUAL = 0}
+
+When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0, data in left channel is different from that in right channel. In such situation, I2S RX module enables dual-channel receiving mode. RX data format is shown in Figure \ref{Figure:ESP723_I2S_RX}, which is not controlled by \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[1:0].
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX}}
+    \caption{I2S RX Data When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0}
+    \label{Figure:ESP723_I2S_RX}
+\end{figure}
+
+In Figure \ref{Figure:ESP723_I2S_RX}, $D^{''}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0 $ \sim $3) is the result of $D^{'}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) after processed by \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}. $D^{}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0 $ \sim $3) is the result of $D^{''}_{\textcolor{red}{\it{n}}}$ (\textcolor{red}{\it{n}}: 0$ \sim $3) after processed by \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}. \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN} is used to modify the endianness of the RX data, see Table \ref{table:TX_BIG_ENDIAN}.
+
+According to Figure \ref{Figure:ESP723_I2S_RX}, when \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} is cleared, the waveform of I2S RX data is shown in Figure \ref{Figure:ESP723_I2S_RX_4_sequence}. For the specific control rules, please see Table \ref{table:RX_CHAN_MOD1}.
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX_4_sequence}}
+    \caption{ I2S RX Data When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0}
+    \label{Figure:ESP723_I2S_RX_4_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{RX Channel Mode When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 0}
+    \label{table:RX_CHAN_MOD1}
+    \begin{tabular}{|p{3cm}|p{3cm}|p{9.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT} & Channel Mode & Description\\ \hline
+
+    0 & Dual channel mode  & \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} sets data receiving order in frames. Right channel data is stored to the low address of ESP32-S2 memory, and the left channel data to the high address. \\ \hline
+
+    1 & Dual channel mode  & \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} sets data receiving order in frames. Left channel data is stored to the low address of ESP32-S2 memory, and the right channel data to the high address. \\ \hline
+
+    \end{tabular}
+\end{table}
+
+\subsection{Data Receiving When I2S\_RX\_DMA\_EQUAL = 1}
+
+Set \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} to 1, data in left channel is equal to that in right channel. In such situation, RX unit enables single channel mode (mono mode) to receive data. The RX data format is shown in Figure \ref{Figure:ESP723_I2S_RX_equal_sequence} and in Table \ref{table:RX_CHAN_MOD2}.
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.7 \textwidth]{\modulefiles/figures/ESP723_I2S_RX_equal_sequence}}    \caption{ ESP32-S2 I2S RX Data When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 1}
+    \label{Figure:ESP723_I2S_RX_equal_sequence}
+\end{figure}
+
+
+\begin{table}[H]
+    \centering
+    \caption{ RX Channel Mode When \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL} = 1}
+    \label{table:RX_CHAN_MOD2}
+    \begin{tabular}{|p{3cm}|p{4cm}|p{2.5cm}|p{4.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT} & \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0] & Channel Mode & Description\\ \hline
+
+    \multirow{3}*{0} & 0/3 & Mono mode & Not used \\ \cline{2-4}
+
+                    & 1 & Mono mode & Only store right channel data \\ \cline{2-4}
+
+                    & 2 & Mono mode & Only store left channel data \\
+    \hline
+
+    \multirow{3}*{1} & 0/3 & Mono mode & Not used \\ \cline{2-4}
+
+                    & 1 & Mono mode  & Only store left channel data \\ \cline{2-4}
+
+                    & 2 & Mono mode & Only store right channel data \\
+    \hline
+
+    \end{tabular}
+\end{table}
+
+\subsection{Configuring I2S as RX Mode}\label{sec:i2s-conf-rx-mode}
+
+Follow the steps below to configure I2S as RX mode via software:
+
+\begin{enumerate}
+    \item Configure clock as described in Section \ref{The Clock of I2S Module}.
+
+    \item Configure signal pins according to Table \ref{table:I2S 信号总线描述}.
+
+    \item Clear the bits \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} and \hyperref[fielddesc:I2SCAMERAEN]{I2S\_CAMERA\_EN} in register \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG}, to enable I2S mode.
+
+
+    \item Configure the bit \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG} to select mode needed:
+    \begin{itemize}
+        \item 0: master receiving mode
+        \item 1: slave receiving mode
+    \end{itemize}
+
+    \item Configure \hyperref[fielddesc:I2SRXFIFOMOD]{I2S\_RX\_FIFO\_MOD}, \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}, \hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0], \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}, \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}, \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0], and \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} to select desired RX data mode as described in Section \ref{RXCHAN}.
+
+    \item Set the bit \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} in register \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG}, to enable I2S DMA.
+
+    \item Reset RX unit and its FIFO as described in Section \ref{module_reset}.
+    \item Enable corresponding interrupts as described in Section \ref{I2S_INT}. \label{i2s-rx-step8}
+
+    \item Configure DMA inlink, and set the length of RX data in register \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG}. Then set \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} to start DMA.
+
+    \item Start receiving data:
+    \begin{itemize}
+        \item In master mode, when the slave is ready, set \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} to start receiving data.
+        \item In slave mode, set \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} to start receiving data when get BCK and WS signals from the master.
+    \end{itemize}
+
+
+    \item Receive data and store the data to the specified address of ESP32-S2 memory. Then corresponding interrupts set in Step \ref{i2s-rx-step8} will be generated.
+\end{enumerate}
+
+
+\section{LCD Master Transmitting Mode}\label{LCDMODE}
+
+\subsection{Overview}\label{subsubsection:overview}
+
+As shown in Figure \ref{Figure:i2s_LCD}, LCD WR signal is connected to I2S WS signal. The data width can be set to 8/16/24 bits (parallel), depending on the configuration of \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0].
+
+In LCD mode, WS clock frequency is:
+
+$$f_{\textrm{WS}}=\frac{f_{\textrm{i2s}}}{\textrm{W} * \textrm{2}}$$
+
+W is an integer in the range 1 to 64. W corresponds to the value of \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] in register \hyperref[regdesc:I2SSAMPLERATECONFREG]{I2S\_SAMPLE\_RATE\_CONF\_REG} as follows.
+
+\begin{itemize}
+    \item When \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] = 0, W = 64.
+
+    \item When \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0] is set to other values,  W = \hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}[5:0].
+\end{itemize}
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/i2s_LCD}
+    \caption{LCD Master Transmitting Mode }
+    \label{Figure:i2s_LCD}
+\end{figure}
+
+
+
+\subsection{Configure I2S as LCD Master Transmitting Mode}
+
+In LCD master transmitting mode, I2S supports the data frame format as shown in \ref{Figure:i2s_lcd_frame_b}.
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_lcd_frame_b}}
+    \caption{ Data Frame Format 1 in LCD Master Transmitting Mode}
+    \label{Figure:i2s_lcd_frame_b}
+\end{figure}
+Follow the steps below to configure I2S module as LCD master transmitter via software:
+
+\begin{enumerate}
+
+    \item Configure clock as described in Section \ref{subsubsection:overview}.
+
+    \item Configure signal pins according to Table \ref{table:I2S 信号总线描述} and Figure  \ref{Figure:i2s_LCD}.
+
+    \item Set the bit \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} in register \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG}, and clear the bit \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}, to enable LCD master transmitting mode.
+
+    \item Set \hyperref[fielddesc:I2STXDMAEQUAL]{I2S\_TX\_DMA\_EQUAL}, then clear \hyperref[fielddesc:I2STXRIGHTFIRST]{I2S\_TX\_RIGHT\_FIRST}, \hyperref[fielddesc:I2SLCDTXWRX2EN]{I2S\_LCD\_TX\_WRX2\_EN}, \hyperref[fielddesc:I2SLCDTXSDX2EN]{I2S\_LCD\_TX\_SDX2\_EN}, and \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}[2:0].
+
+    \item Configure \hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}[5:0] and \hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} as described in Section \ref{TXCHAN} to select desired TX data mode.
+
+    \item Set the bit \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} in register \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG}, to enable I2S DMA.
+
+    \item Reset TX unit and TX FIFO according to Section \ref{module_reset}.
+
+    \item Enable corresponding interrupts, see Section \ref{I2S_INT}. \label{lcd-step8}
+
+    \item Configure DMA outlink, and set \hyperref[fielddesc:I2SOUTLINKSTART]{I2S\_OUTLINK\_START} to start DMA.
+    \item Set \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} bit.
+    \item Wait till LCD slave gets ready, then set \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} to start transmitting data.
+    \item Wait for the interrupt signals set in Step \ref{lcd-step8}, or check whether the transfer is completed by querying the register \hyperref[fielddesc:I2STXIDLE]{I2S\_TX\_IDLE}:
+    \begin{itemize}
+        \item 0: transmitter is working.
+        \item 1: transmitter is in idle.
+    \end{itemize}
+    \item Clear \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}, to stop transmitting data.
+
+\end{enumerate}
+
+In LCD master transmitting mode, the data frame format shown in \ref{Figure:i2s_lcd_frame_a} is also supported. The only difference in software configuration with the format as shown in Figure \ref{Figure:i2s_lcd_frame_b} is that \hyperref[fielddesc:I2SLCDTXSDX2EN]{I2S\_LCD\_TX\_SDX2\_EN} is set.
+
+\begin{figure}[!ht ]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_lcd_frame_a}}
+    \caption{ Data Frame Format 2 in LCD Master Transmitting Mode}
+    \label{Figure:i2s_lcd_frame_a}
+\end{figure}
+
+\newpage
+\section{Camera Slave Receiving Mode } \label{Camera_MODE}
+
+\subsection{Overview}
+ESP32-S2 I2S can be configured as camera slave receiving mode for high-speed data transfer with external camera modules. In this mode, I2S module works as slave receiver with a 16-channel data signal bus I2S\textcolor{red}{\it{0}}I\_Data\_in[15:0], and three more signals: I2S\textcolor{red}{\it{0}}I\_H\_SYNC, I2S\textcolor{red}{\it{0}}I\_V\_SYNC, and I2S\textcolor{red}{\it{0}}I\_H\_ENABLE, see Figure \ref{Figure:i2s_camera}.
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=0.5\textwidth]{\modulefiles/figures/i2s_camera}
+    \caption{Camera Slave Receiving Mode }
+    \label{Figure:i2s_camera}
+\end{figure}
+
+\begin{tiplisting}
+The bit width of input data is \textcolor{red}{N}, which can be 8 \verb+~+ 16 bits.
+\end{tiplisting}
+
+\subsection{Configure I2S as Camera Slave Receiving Mode}
+
+Follow the steps below to configure I2S as camera slave receiver via software:
+
+\begin{enumerate}
+    \item Configure clock as described in Section \ref{The Clock of I2S Module}. Note that the clock frequency of I2S module: $f_{\textrm{i2s}}$ should be equal to or larger than twice of the frequency of PCLK clock (input from I2S\textcolor{red}{\it{0}}I\_WS\_in pin).
+
+    \item Configure signal pins according to Table \ref{table:I2S 信号总线描述} and Figure \ref{Figure:i2s_camera}.
+
+    \item Set the bits \hyperref[fielddesc:I2SLCDEN]{I2S\_LCD\_EN} and \hyperref[fielddesc:I2SCAMERAEN]{I2S\_CAMERA\_EN} in register \hyperref[regdesc:I2SCONF2REG]{I2S\_CONF2\_REG}, to enable camera mode.
+
+    \item Set the bit \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} in register \hyperref[regdesc:I2SCONFREG]{I2S\_CONF\_REG}, to enable slave mode.
+
+    \item Set the bit \hyperref[fielddesc:I2SRXDMAEQUAL]{I2S\_RX\_DMA\_EQUAL}, then configure \hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}[5:0], \hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}, \hyperref[fielddesc:I2SRXMSBRIGHT]{I2S\_RX\_MSB\_RIGHT}, \hyperref[fielddesc:I2SRXCHANMOD]{I2S\_RX\_CHAN\_MOD}[2:0], and \hyperref[fielddesc:I2SRXRIGHTFIRST]{I2S\_RX\_RIGHT\_FIRST} according to Section \ref{RXCHAN}, to select desired RX data format.
+
+    \item Set the bit \hyperref[fielddesc:I2SDSCREN]{I2S\_DSCR\_EN} in register \hyperref[regdesc:I2SFIFOCONFREG]{I2S\_FIFO\_CONF\_REG}.
+    \item Reset RX unit and its FIFO according to Section \ref{module_reset}. Set \hyperref[fielddesc:I2SCAMSYNCFIFORESET]{I2S\_CAM\_SYNC\_FIFO\_RESET} bit and then clear it.
+    \item Enable corresponding interrupt as described in Section \ref{I2S_INT}. \label{camera-step8}
+
+    \item Configure DMA inlink, and set the length of RX data in register \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG}. Then set \hyperref[fielddesc:I2SINLINKSTART]{I2S\_INLINK\_START} to start DMA.
+
+    \item Set \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}, and wait for \hyperref[start-signal]{\begin{math}{transmission\_start} \end{math}} signal.
+
+    \item Receive data and store the data to the specified address of ESP32-S2 memory. Then corresponding interrupts set in Step \ref{camera-step8} will be generated.
+\end{enumerate}
+When I2S\textcolor{red}{\it{0}}I\_V\_SYNC is detected on rising edge, I2S\textcolor{red}{\it{0}}I\_H\_SYNC, I2S\textcolor{red}{\it{0}}I\_H\_ENABLE are held high, and I2S\textcolor{red}{\it{0}}I\_V\_SYNC is held low, I2S module starts receiving data:
+$$transmission\_start= (  (  I2S\textcolor{red}{\it{0}}I\_V\_SYNC==0 ) \&\& (I2S\textcolor{red}{\it{0}}I\_H\_SYNC==1) \&\& ( I2S\textcolor{red}{\it{0}}I\_H\_ENABLE==1 ) $$ \label{start-signal}
+
+In case that the signals do not satisfy the requirements defined above, users may reverse the signals through GPIO matrix. For more information, please refer to \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+
+To avoid noise on I2S\textcolor{red}{\it{0}}I\_V\_SYNC signal, set \hyperref[fielddesc:I2SVSYNCFILTEREN]{I2S\_VSYNC\_FILTER\_EN} to enable filter for I2S\textcolor{red}{\it{0}}I\_V\_SYNC signal. The filter samples input signals continuously, and will detect the signals which remain unchanged for a continuous \hyperref[fielddesc:I2SVSYNCFILTERTHRES]{I2S\_VSYNC\_FILTER\_THRES} PCLK clock cycles as valid, otherwise the signals will be detected as invalid. Only the valid signals can pass through this filter. Therefore, the filter will remove pulses with a length of less than \hyperref[fielddesc:I2SVSYNCFILTERTHRES]{I2S\_VSYNC\_FILTER\_THRES} PCLK cycles from I2S\textcolor{red}{\it{0}}I\_V\_SYNC signal line.
+
+Camera module provides at least 8 PCLK rising-edge clock signals when I2S\textcolor{red}{\it{0}}I\_V\_SYNC is held high, to ensure that I2S samples the rising-edge of I2S\textcolor{red}{\it{0}}I\_V\_SYNC signal correctly.
+
+\section{I2S Interrupts} \label{I2S_INT}
+\subsection{FIFO Interrupts}
+
+\begin{itemize}
+\item \label{int:I2STXHUNGINT}I2S\_TX\_HUNG\_INT: Triggered when transmitting data is timed out.
+\item \label{int:I2SRXHUNGINT}I2S\_RX\_HUNG\_INT: Triggered when receiving data is timed out.
+\item \label{int:I2STXREMPTYINT}I2S\_TX\_REMPTY\_INT: Triggered when TX FIFO is empty.
+\item \label{int:I2STXWFULLINT}I2S\_TX\_WFULL\_INT: Triggered when TX FIFO is full.
+\item \label{int:I2SRXREMPTYINT}I2S\_RX\_REMPTY\_INT: Triggered when RX FIFO is empty.
+\item \label{int:I2SRXWFULLINT}I2S\_RX\_WFULL\_INT: Triggered when RX FIFO is full.
+\item \label{int:I2STXPUTDATAINT}I2S\_TX\_PUT\_DATA\_INT: Triggered when the left and right channel data number in TX FIFO is smaller than the value of \hyperref[fielddesc:I2STXDATANUM]{I2S\_TX\_DATA\_NUM}[5:0]. (TX FIFO is almost empty.)
+\item \label{int:I2SRXTAKEDATAINT}I2S\_RX\_TAKE\_DATA\_INT: Triggered when the left and right channel data number in RX FIFO is larger than the value of \hyperref[fielddesc:I2SRXDATANUM]{I2S\_RX\_DATA\_NUM}[5:0]. (RX FIFO is almost full.)
+
+\item \label{int:I2SVSYNCINT}I2S\_V\_SYNC\_INT: Triggered when I2S camera transmission\_start is valid and a new rising edge of I2S\textcolor{red}{\it{0}}I\_V\_SYNC is detected.
+\end{itemize}
+
+\subsection{DMA Interrupts}\label{section:DMA interrupts}
+\begin{itemize}
+\item \label{int:I2SOUTTOTALEOFINT}I2S\_OUT\_TOTAL\_EOF\_INT: Triggered when all outlinks are used up.
+\item \label{int:I2SINDSCREMPTYINT}I2S\_IN\_DSCR\_EMPTY\_INT: Triggered when there are no valid inlinks left.
+\item \label{int:I2SOUTDSCRERRINT}I2S\_OUT\_DSCR\_ERR\_INT: Triggered when encounter invalid outlink descriptors.
+\item \label{int:I2SINDSCRERRINT}I2S\_IN\_DSCR\_ERR\_INT: Triggered when encounter invalid inlink descriptors.
+\item \label{int:I2SOUTEOFINT}I2S\_OUT\_EOF\_INT: Triggered when outlink has finished sending a packet.
+\item \label{int:I2SOUTDONEINT}I2S\_OUT\_DONE\_INT: Triggered when all transmitted and buffered data have been read.
+\item \label{int:I2SINSUCEOFINT}I2S\_IN\_SUC\_EOF\_INT: Triggered when all data have been received.
+\item \label{int:I2SINDONEINT}I2S\_IN\_DONE\_INT: Triggered when current inlink descriptor is handled.
+\end{itemize}
+
+
+\section{Base Address}\label{Section:Register Base Address}
+
+Users can access I2S with two base addresses, which can be seen in Table \ref{table:clock_pol_slave}. For more information about accessing peripherals from different buses please see Chapter System and Memory.
+
+\begin{longtable}[c]{ | l | C{3cm} | }
+\caption{I2S Register Base Address} \label{table:clock_pol_slave}
+\\ \hline
+\rowcolor{lightgray}
+Bus to Access Peripheral & Base Address \\
+    \hline
+PeriBUS1 & \hexprefix{}3F40F000 \\
+    \hline
+PeriBUS2 & \hexprefix{}6000F000 \\
+    \hline
+\end{longtable}
+
+\hypertarget{i2s-reg-summ}{}
+\section{Register Summary }
+
+\subfile{\modulefiles/i2s_reg-summary.tex}
+
+\section{Registers }\label{I2SRegisters}
+\subfile{\modulefiles/i2s_reg.tex}
+\end{document}

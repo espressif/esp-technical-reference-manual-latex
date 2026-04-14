@@ -1,0 +1,446 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./05-EFUSE}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{efuse}{}
+\chapter{eFuse 控制器 (EFUSE)}
+\label{mod:efuse}
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+\section{概述}
+
+\chipname{} 系统中有一块 4096 位的 eFuse 存储器用于存储参数内容和用户数据，参数内容包括一些硬件模块的控制参数、系统数据参数以及加解密模块使用的密钥等。eFuse 存储器的各个位一旦被烧写为 1，则不能再恢复为 0。eFuse 控制器按照用户配置完成对 eFuse 存储器中各参数中的各个位的烧写。从芯片外部，eFuse 数据只能通过 eFuse 控制器读取。对于某些数据，例如存储在 eFuse 中供硬件加密模块（例如数字签名、HMAC 等）在内部使用的某些密钥，如果未启用读保护，则可以从芯片外部读取该数据；如果启用了读保护，则无法从芯片外部读取该数据。
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+
+\begin{itemize}
+    \item 4096 位一次性可编程存储，有 1792 个保留位供用户使用。
+    \item 烧写保护可配置
+    \item 读取保护可配置
+    \item 使用多种硬件编码方式保护参数内容
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+
+eFuse 控制器和 eFuse 存储器共同组成了 eFuse 系统。其内部的数据通路如图 \ref{fig:efuse-data-flow} 所示。
+
+用户可以通过将待烧写的数据填入烧写寄存器中并执行烧写指令通过 eFuse 控制器完成对 eFuse 存储器内部各个位的烧写。详细烧写步骤可以参考章节 \ref{sec:efuse-software-programming-para}。
+
+用户不能直接读取 eFuse 存储器中烧写的信息内容，因此需要通过 eFuse 控制器将烧写的数据信息读取到对应的地址段的读寄存器内。如果数据在读取过程中出现了和 eFuse 存储器不一致的错误，eFuse 控制器还可以通过硬件编码机制对数据进行自动校正（详见章节 \ref{sec:efuse-data-storage} ），并将错误信息自动更新至错误报告寄存器中。详细的读取参数步骤可以参考章节 \ref{sec:efuse-software-read-para}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.5\textwidth]{\modulefiles/figures/eFuse-data-flow}}
+    \caption{eFuse 系统数据通路}
+    \label{fig:efuse-data-flow}
+\end{figure}
+
+eFuse 存储器从结构上分成 11 个块 (BLOCK0 \verb+~+ BLOCK10)。
+
+BLOCK0 存储了大部分供软硬件使用的控制参数。
+
+表 \ref{tab:efuse-block0-para} 列出了用户可访问（可读并可用）的所有 BLOCK0 中的参数名称、位宽、是否可供硬件使用、烧写保护位、以及简要的功能描述，若需了解更多有关该参数的描述，请点击表格中对应参数的链接。
+
+在这些参数中，{\bfseries \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}} 用于使能其他参数的烧写保护状态，{\bfseries \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS}} 用于使能 BLOCK4 \verb+~+ BLOCK10 的读取保护状态。更多关于这两个参数的信息请见章节 \ref{sec:efuse-wr-dis}、\ref{sec:efuse-rd-dis}。
+
+\clearpage
+\begin{landscape}
+
+\input{\modulefiles/tables/eFuse-block0-para__CN}
+
+\end{landscape}
+\restoregeometry
+\clearpage
+
+表 \ref{tab:efuse-key-purpose} 为密钥用途各个数值对应的含义。通过配置参数 EFUSE\_KEY\_PURPOSE\_\textcolor{myred}{\it{n}} 来声明 KEY\textcolor{myred}{\it{n}} 用途 (\textcolor{myred}{\it{n}}: 0 \verb+~+ 5)。
+
+\input{\modulefiles/tables/eFuse-key-purpose__CN}
+
+表 \ref{tab:efuse-block-1-10-para} 列出了 BLOCK1 \verb+~+ BLOCK10 中存储的参数的信息。
+
+
+\input{\modulefiles/tables/eFuse-block-1-10-para__CN}
+
+
+
+
+
+其中，BLOCK4 \verb+~+ 9 可用于存储 KEY0 \verb+~+ 5，表示 eFuse 中至多可以烧写 6 个 256 位的密钥。每烧写一个密钥，还需要烧写该密钥用途的数值（见表 \ref{tab:efuse-key-purpose}）。例如，用户将用于 HMAC Downstream 模式下的 JTAG 功能的密钥烧写到 KEY\textcolor{myred}{3}（即 BLOCK7），还需要将密钥用途的数值 6 烧写到 EFUSE\_KEY\_PURPOSE\_\textcolor{myred}{3}。
+
+BLOCK1 \verb+~+ BLOCK10 均采用 RS 编码方式，因此参数烧写受到一定的限制，具体请参考章节 \ref{sec:efuse-data-storage} 和章节 \ref{sec:efuse-software-programming-para}。
+
+\subsection{\hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS}}
+\label{sec:efuse-wr-dis}
+
+参数 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 决定了 eFuse 存储器中所有的参数是否处于烧写保护状态。烧写完 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 参数后，需要更新 eFuse 控制器的读寄存器以保证烧写保护状态生效。
+
+表 \ref{tab:efuse-block0-para} 以及表 \ref{tab:efuse-block-1-10-para} 中的 “\hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 烧写保护位”列描述了各参数的烧写保护状态具体由 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 的哪个位决定。
+
+当某个参数对应的烧写保护位为 0 时，表示此参数未处于烧写保护状态，可以烧写该参数，但已经被烧写的参数不能被重复烧写。
+
+当某个参数对应的烧写保护位为 1 时，表示此参数处于烧写保护状态，此参数的每一个位都无法被更改，未被烧写的位永远为 0，已经被烧写的位永远为 1。因此如果某个参数已经处于烧写保护状态了，则会一直处在该状态，无法再更改。
+
+\subsection{\hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS}}
+\label{sec:efuse-rd-dis}
+
+所有参数中，只有 BLOCK4 \verb+~+ BLOCK10 的参数可以被配置为用户读取保护状态，即表 \ref{tab:efuse-block-1-10-para} 中 “\hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} 读取保护”列非 “N/A” 的参数。烧写完 \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} 参数后，需要更新 eFuse 控制器的读寄存器以保证读取保护状态生效。
+
+参数 \hyperref[fielddesc:EFUSERDDIS]{EFUSE\_RD\_DIS} 中的某个位为 0，表示此位管理的参数未处于用户读取保护状态；某个位为 1，表示此位管理的参数处于用户读取保护状态。
+
+除 BLOCK4 \verb+~+ BLOCK10 之外，其他参数不受读取保护状态的约束，均可被用户读取。
+
+BLOCK4 \verb+~+ BLOCK10 即使被配置处于读取保护状态，仍然可以通过设置 EFUSE\_KEY\_PURPOSE\_\textcolor{myred}{\it{n}} 供硬件加密模块在内部使用。
+
+\subsection{数据存储方式}
+\label{sec:efuse-data-storage}
+
+eFuse 使用硬件编码机制保护数据，对用户不可见。
+
+BLOCK0 使用 4 备份方式存储参数，即 BLOCK0 中的所有参数（除了 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} ）均在 eFuse 存储器中存储了 4 份。4 备份机制对用户不可见。
+
+BLOCK0 中 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 为 32 比特，其余参数为 152 比特，因此 BLOCK0 在 eFuse 存储器中共占据了 32 + 152 * 4 = 640 比特的存储空间。
+
+BLOCK1 \verb+~+ BLOCK10 使用 RS (44, 32) 编码方式，最多支持自动校正 6 个字节。本文 RS (44, 32) 使用的本源多项式为 \(p(x)=x^8+x^4+x^3+x^2+1\)。
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/eFuse-shift-reg-cir-1}}
+    \caption{移位寄存器电路图（前 32 字节）}
+    \label{fig:efuse-lfsr-circuit-1}
+\end{figure}
+
+\begin{figure}[ht!]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/eFuse-shift-reg-cir-2}}
+    \caption{移位寄存器电路图（后 12 字节）}
+    \label{fig:efuse-lfsr-circuit-2}
+\end{figure}
+
+如图 \ref{fig:efuse-lfsr-circuit-1} 和 \ref{fig:efuse-lfsr-circuit-2} 所示，移位寄存器电路对 32 字节参数进行 RS (44, 32) 编码处理，将 32 字节数据处理为 44 字节，其中：
+
+\begin{itemize}
+    \item 字节 [0:31] 为数据本身
+    \item 字节 [32:43] 为储存在 8 位触发器 DFF1, DFF2, ..., DFF12 中的奇偶校验字节（gf\_mul\_n 为 \(GF(2^8)\) 域中某一字节数据与元素 \(\alpha^n\) 相乘的结果，n 为整数）
+\end{itemize}
+
+然后，硬件将这 44 字节数据一起烧入 eFuse。eFuse 控制器会在读 eFuse 的过程中自动完成解码和自动校正。
+
+由于 RS 校验码是在整个 32 字节的 eFuse 块上生成的，因此每个块只能写入一次。
+
+BLOCK1 由于数据不足 32 字节，因此不足 32 字节的部分在 RS (44，32) 编码时硬件会将其视为 0，不会影响最终的编码结果。
+
+使用 RS (44，32) 编码方式的块中，BLOCK1 数据参数为 24 字节，RS 校验码为 12 字节，因此 BLOCK1 在 eFuse 存储器中共占据了 24 + 12 = 36 字节的存储空间。
+
+其余块 (Block2 \verb+~+ 10) 的数据参数均为 32 字节，RS 校验码为 12 字节，因此在 eFuse 存储器中共占据了 (32 + 12) * 9 = 396 字节的存储空间。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:efuse-func-descr}
+
+\subsection{烧写参数}
+\label{sec:efuse-software-programming-para}
+
+烧写 eFuse 参数时，需要按块烧写。BLOCK0 \verb+~+ BLOCK10 共用同一段地址来存储即将烧写的参数。通过配置 \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} 参数表明当前需要烧写的是哪一个块。
+
+由于读取数据的寄存器和烧写数据的寄存器在位置上存在一一对应的关系（详见表 \ref{tab:efuse-softw-read-para}），因此用户可以通过查找读取寄存器的参数描述和位置确定待烧写数据在烧写寄存器中的具体位置。
+
+例如，用户想将 BLOCK0 中的 \hyperref[fielddesc:EFUSEDISICACHE]{EFUSE\_DIS\_ICACHE} 烧写成 1，可以先查找 BLOCK0 读取数据的寄存器 EFUSE\_RD\_REPEAT\_DATA0 \verb+~+ 4\_REG，定位到 \hyperref[fielddesc:EFUSEDISICACHE]{EFUSE\_DIS\_ICACHE} 参数位于 \hyperref[regdesc:EFUSERDREPEATDATA0REG]{EFUSE\_RD\_REPEAT\_DATA0\_REG} 寄存器的第 8 个比特，因此用户可以将 \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA1\_REG} 待烧写数据的第 8 个比特写成 1，并执行烧写步骤，待烧写步骤完成后，eFuse 存储器中的对应位将被成功烧写为 1。
+
+{\bfseries 烧写准备}
+
+\begin{itemize}
+    \item {\bfseries 烧写 BLOCK0}
+    \begin{enumerate}
+        \item 将寄存器域 \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} 配置为 0。
+        \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA5\_REG} 配置 BLOCK0 即将烧写的参数。\\
+        \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA6\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} 以及\\ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} 中的数据不影响 BLOCK0 的烧写。
+    \end{enumerate}
+    \item {\bfseries 烧写 BLOCK1}
+    \begin{enumerate}
+        \item 将寄存器域 \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} 配置为 1。
+        \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA5\_REG} 配置 BLOCK1 即将烧写的参数，\hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} 配置对应的 RS 校验码。\\
+        \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA6\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} 中的数据不影响BLOCK1 的烧写。软件计算 BLOCK1 的 RS 校验码时，应当视这 8 个字节的数据为 0。
+    \end{enumerate}
+    \item {\bfseries 烧写 BLOCK2 \verb+~+ 10}
+    \begin{enumerate}
+        \item 将寄存器域 \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} 配置为烧写的块数值。
+        \item \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} 配置即将烧写的参数，\hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} 中配置对应的 RS 校验码。
+    \end{enumerate}
+\end{itemize}
+
+{\bfseries 烧写流程}
+
+烧写参数的流程如下：
+
+\begin{enumerate}
+\item 配置 \hyperref[fielddesc:EFUSEBLKNUM]{EFUSE\_BLK\_NUM} 参数，决定烧写哪一个块。
+
+\item 将需要烧写的参数填写到寄存器 \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} 和\\ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+  \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} 中。
+
+\item 确保 eFuse 烧写电压 VDDQ 的配置正确，具体请参考章节 \ref{sec:efuse-vddq-timing}。
+
+\item 配置寄存器 \hyperref[regdesc:EFUSECONFREG]{EFUSE\_CONF\_REG} 的 \hyperref[fielddesc:EFUSEOPCODE]{EFUSE\_OP\_CODE} 位域为 0x5A5A。
+
+\item 配置寄存器 \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} 的 \hyperref[fielddesc:EFUSEPGMCMD]{EFUSE\_PGM\_CMD} 位域为 1。
+
+\item 轮询寄存器 \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} 直到其为 0x0，或者等待 PGM\_DONE（烧写完成）中断产生。识别 PGM\_DONE 或 READ\_DONE （读取完成）中断产生的方法详见章节 \ref{sec:efuse-software-read-para} 最后的说明。
+
+\item 将 \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA0\_REG} \verb+~+ \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA7\_REG} 和\\ \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE0\_REG} \verb+~+  \hyperref[regdesc:EFUSEPGMCHECKVALUENREG]{EFUSE\_PGM\_CHECK\_VALUE2\_REG} 中写入的参数清零。
+
+\item 执行更新 eFuse 控制器读寄存器操作使写入的新值生效，具体请参考章节 \ref{sec:efuse-software-read-para}。
+\item 检查错误寄存器内容。若读取错误寄存器内数值不为 0，需要再次执行上述步骤 1 \verb+~+ 7 重新烧写一次。通过该方式可以解决由于烧写不充分导致错误寄存器内数值不为 0 的问题。对于不同的 eFuse 块，需要检查的错误寄存器如下。
+
+
+\begin{itemize}
+    \item BLOCK0：\hyperref[regdesc:EFUSERDREPEATDATAERR0REG]{EFUSE\_RD\_REPEAT\_DATA\_ERR0\_REG} \verb+~+ \hyperref[regdesc:EFUSERDREPEATDATAERR4REG]{EFUSE\_RD\_REPEAT\_DATA\_ERR4\_REG}
+    \item BLOCK1：\hyperref[fielddesc:EFUSERDMACSYSERRNUM] {EFUSE\_RD\_MAC\_SYS\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDMACSYSFAIL] {EFUSE\_RD\_MAC\_SYS\_FAIL}
+    \item BLOCK2：\hyperref[fielddesc:EFUSERDSYSPART1DATAERRNUM] {EFUSE\_RD\_SYS\_PART1\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDSYSPART1DATAFAIL] {EFUSE\_RD\_SYS\_PART1\_DATA\_FAIL}
+    \item BLOCK3：\hyperref[fielddesc:EFUSERDUSRDATAERRNUM] {EFUSE\_RD\_USR\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDUSRDATAFAIL] {EFUSE\_RD\_USR\_DATA\_FAIL}
+    \item BLOCK4：\hyperref[fielddesc:EFUSERDKEY0DATAERRNUM] {EFUSE\_RD\_KEY0\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY0DATAFAIL] {EFUSE\_RD\_KEY0\_DATA\_FAIL}
+    \item BLOCK5：\hyperref[fielddesc:EFUSERDKEY1DATAERRNUM] {EFUSE\_RD\_KEY1\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY1DATAFAIL] {EFUSE\_RD\_KEY1\_DATA\_FAIL}
+    \item BLOCK6：\hyperref[fielddesc:EFUSERDKEY2DATAERRNUM] {EFUSE\_RD\_KEY2\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY2DATAFAIL] {EFUSE\_RD\_KEY2\_DATA\_FAIL}
+    \item BLOCK7：\hyperref[fielddesc:EFUSERDKEY3DATAERRNUM] {EFUSE\_RD\_KEY3\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY3DATAFAIL] {EFUSE\_RD\_KEY3\_DATA\_FAIL}
+    \item BLOCK8：\hyperref[fielddesc:EFUSERDKEY4DATAERRNUM] {EFUSE\_RD\_KEY4\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY4DATAFAIL] {EFUSE\_RD\_KEY4\_DATA\_FAIL}
+    \item BLOCK9：\hyperref[fielddesc:EFUSERDKEY5DATAERRNUM] {EFUSE\_RD\_KEY5\_DATA\_ERR\_NUM}、\hyperref[fielddesc:EFUSERDKEY5DATAFAIL] {EFUSE\_RD\_KEY5\_DATA\_FAIL}
+    \item BLOCK10：\hyperref[fielddesc:EFUSERDSYSPART2DATAERRNUM] {EFUSE\_RD\_SYS\_PART2\_DATA\_ERR\_NUM}, \hyperref[fielddesc:EFUSERDSYSPART2DATAFAIL] {EFUSE\_RD\_SYS\_PART2\_DATA\_FAIL}
+\end{itemize}
+\end{enumerate}
+
+{\bfseries 限制}
+
+BLOCK0 中不同的参数，甚至对于同一个参数中的不同位可以在多次烧写中分别完成。但是并不推荐这样做，而是建议尽量减少烧写次数。我们建议对于某个参数中的所有需要烧写的位都在一次烧写中完成。并且当 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 的某个位管理的所有参数都烧写之后，就立即烧写 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 的这个位。甚至可以在同一次烧写中既烧写 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 的某个位管理的所有参数，
+同时也烧写 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 的这个位。
+
+BLOCK1 中数据信息在出厂时已经烧写完毕，不允许再次烧写。
+
+BLOCK2 \verb+~+ 10 中每一个 BLOCK 都只能烧写一次，不允许重复烧写。
+
+\subsection{用户读取参数}
+\label{sec:efuse-software-read-para}
+
+用户不能直接读取 eFuse 存储器中烧写的信息内容。eFuse 控制器能够将烧写的数据信息读取到对应的地址段的寄存器内，用户再通过读取以 EFUSE\_RD\_ 开始的寄存器来获取 eFuse 存储器信息。下表 \ref{tab:efuse-softw-read-para} 列出了读取数据的寄存器名称以及对应烧写时的烧写寄存器名称。
+
+\input{\modulefiles/tables/eFuse-software-read-para__CN}
+
+{\bfseries 更新 eFuse 控制器的读寄存器}
+\label{sec:efuse-update-reg}
+
+eFuse 控制器通过读取 eFuse 存储器来更新相应寄存器的数据。读取操作在系统复位时进行，也可以根据需要由用户手动触发（例如在需要读取新烧写 eFuse 存储器中的数据内容时）。用户触发 eFuse 存储器读取操作的流程如下：
+
+\begin{enumerate}
+    \item 配置寄存器 \hyperref[regdesc:EFUSECONFREG]{EFUSE\_CONF\_REG} 的 \hyperref[fielddesc:EFUSEOPCODE]{EFUSE\_OP\_CODE} 位域为 0x5AA5。
+    \item 配置寄存器 \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} 的 \hyperref[fielddesc:EFUSEREADCMD]{EFUSE\_READ\_CMD} 位域为 1。
+    \item 轮询寄存器 \hyperref[regdesc:EFUSECMDREG]{EFUSE\_CMD\_REG} 直到其为 0x0，或者等待 READ\_DONE 中断产生，识别 PGM\_DONE 或 READ\_DONE 中断产生的方法详见下方说明。
+    \item 用户从 eFuse 存储器中读取参数的值。
+\end{enumerate}
+
+eFuse 控制器的读寄存器中的数值将一直保持到下一次执行更新 eFuse 存储器读取操作。
+
+{\bfseries 烧写错误检测}
+
+烧写错误记录寄存器允许用户检测 eFuse 存储器中的参数和 eFuse 控制器读取的参数是否存在不一致的错误。
+
+EFUSE\_RD\_REPEAT\_ERR0 \verb+~+ 3\_REG 寄存器用于指示 BLOCK0 中除了 \hyperref[fielddesc:EFUSEWRDIS]{EFUSE\_WR\_DIS} 外的其他参数的烧写是否出错（对应位为 1 代表烧写出错；为 0 代表烧写正确）。
+
+EFUSE\_RD\_RS\_ERR0 \verb+~+ 1\_REG 寄存器记录 eFuse 控制器读 BLOCK1 \verb+~+ BLOCK10 过程中，纠错的字节数目以及 RS 解码是否失败的信息。
+
+每次更新 eFuse 控制器读寄存器操作完成之后，上述寄存器内的数值都会被更新。
+
+{\bfseries 识别烧写/读取操作完成}
+
+识别烧写/读取操作完成的方法如下。位 1 对应烧写操作，位 0 对应读取操作。
+
+\begin{itemize}
+    \item 方法 1：轮询寄存器 \hyperref[regdesc:EFUSEINTRAWREG]{EFUSE\_INT\_RAW\_REG} 的位 1/0 ，直到这两个比特为 1。
+    \item 方法2:
+        \begin{enumerate}
+            \item 将寄存器 \hyperref[regdesc:EFUSEINTENAREG]{EFUSE\_INT\_ENA\_REG} 的位 1/0 置 1，使 eFuse 控制器能够产生 PGM\_DONE 或 READ\_DONE 中断。
+            \item 配置中断矩阵使 CPU 能够响应 eFuse 的中断信号，可参见 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}}。
+            \item 等待 PGM\_DONE 或 READ\_DONE 中断产生。
+            \item 对寄存器 \hyperref[regdesc:EFUSEINTCLRREG]{EFUSE\_INT\_CLR\_REG} 的位 1/0 置 1 以清除 PGM\_DONE 或 READ\_DONE 中断。
+    \end{enumerate}
+\end{itemize}
+
+{\bfseries 注意事项}
+
+在 eFuse 控制器执行寄存器更新操作过程中，会复用 \hyperref[regdesc:EFUSEPGMDATANREG]{EFUSE\_PGM\_DATA\textcolor{red}{\it{n}}\_REG} (n = 0, 1, ..., 7) 寄存器的存储空间，所以在启动 eFuse 控制器更新寄存器之前，不要将有意义的数据写入上述寄存器中。\\
+芯片启动过程中，eFuse 控制器会自动更新 eFuse 存储器数据到用户可访问的寄存器。用户可以通过读取相应的寄存器获取 eFuse 存储器内烧写的数据。因此，用户无需再驱动 eFuse 控制器执行读更新操作。
+
+\subsection{eFuse VDDQ 时序}
+\label{sec:efuse-vddq-timing}
+
+eFuse 控制器工作在 20 MHz 时钟频率下，其烧写电压 VDDQ 的配置参数需要满足以下条件：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:EFUSEDACNUM]{EFUSE\_DAC\_NUM}（烧写电压上升周期数），默认烧写电压为 2.5 V，每个上升周期增加 0.01 V，该参数对应的默认值为 255；
+    \item \hyperref[fielddesc:EFUSEDACCLKDIV]{EFUSE\_DAC\_CLK\_DIV}（烧写电压时钟分频系数），要求烧写电压时钟周期大于 1 $\mu$s；
+    \item \hyperref[fielddesc:EFUSEPWRONNUM]{EFUSE\_PWR\_ON\_NUM} （eFuse 烧写电压上电等待时间），要求该等待时间结束后烧写电压已稳定，即要求配置数值大于 \hyperref[fielddesc:EFUSEDACCLKDIV]{EFUSE\_DAC\_CLK\_DIV} * \hyperref[fielddesc:EFUSEDACNUM]{EFUSE\_DAC\_NUM}；
+    \item \hyperref[fielddesc:EFUSEPWROFFNUM]{EFUSE\_PWR\_OFF\_NUM}（烧写电压掉电等待时间），要求该时间大于 10 $\mu$s；
+\end{itemize}
+
+\input{\modulefiles/tables/eFuse-vddq-tim-config__CN}
+
+\subsection{硬件模块使用参数}
+
+硬件模块使用参数是通过电路连接实现的，用户无法干预这个过程。硬件使用的参数为表 \ref{tab:efuse-block0-para} 和 \ref{tab:efuse-block-1-10-para}“硬件使用”一栏中标记为 “Y” 的参数。
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\begin{itemize}
+\item PGM\_DONE 中断：当 eFuse 烧写完成后，此中断被触发。如果要启动该中断信号，需将寄存器 \hyperref[regdesc:EFUSEINTENAREG]{EFUSE\_INT\_ENA\_REG} 的 \hyperref[fielddesc:EFUSEPGMDONEINTENA]{EFUSE\_PGM\_DONE\_INT\_ENA} 域置 1。
+\item READ\_DONE 中断：当 eFuse 读取完成后，此中断被触发。如果要启动该中断信号，需将寄存器 \hyperref[regdesc:EFUSEINTENAREG]{EFUSE\_INT\_ENA\_REG} 的 \hyperref[fielddesc:EFUSEREADDONEINTENA]{EFUSE\_READ\_DONE\_INT\_ENA} 域置 1。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{寄存器列表}
+\label{sec:efuse-reg-summ}
+\hypertarget{efuse-reg-summ}{}
+
+本小节的所有地址均为相对于 eFuse 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/05-eFuse-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 eFuse 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/05-eFuse-reg__CN}
+
+\end{document}

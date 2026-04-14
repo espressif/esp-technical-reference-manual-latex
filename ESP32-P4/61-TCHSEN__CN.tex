@@ -1,0 +1,656 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./61-TCHSEN}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{tchsen}{}
+\chapter{触摸传感器 (TOUCH)}
+\label{mod:tchsen}
+
+\chipname{} 搭载了 14 个电容式触摸传感器单元，每个单元可通过一个触摸管脚外接触摸板，构成触摸传感器系统。\chipname{} 触摸传感器系统主要应用于人机交互场景中，检测手指触碰或接近，此外还支持防潮功能和遇水保护功能。
+
+\section{术语}
+\label{sec:tchsen-term}
+
+为了更好地对电容式触摸传感器进行说明，本章及后续小节使用了以下术语。 
+
+\begin{longtable}[c]{ R{7cm} p{9cm} }
+\textbf{触摸传感器 (Touch Sensor)}  & 实现触摸传感功能的内部电路。 \\
+\textbf{触摸管脚 (Touch Pin)}    & 具有触摸传感功能的芯片管脚。 \\
+\textbf{触摸板 (Touch Panel)}  & 芯片外部连接的用于接收触摸动作的设备。\\
+\textbf{触摸传感器系统 (Touch Sensor System)}  & 触摸管脚、触摸传感器、触摸板、以及连接各部分的电路共同构成触摸传感器系统。 \\
+\end{longtable}
+
+\vspace{-1em}
+\begin{tiplisting}
+为方便描述，对触摸板进行采样、扫描、测量、充放电等操作，即表示对触摸管脚进行采样、扫描、测量、充放电等操作。
+\end{tiplisting}
+\vspace{-2em}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{特性}
+\label{sec:tchsen-features}
+
+\chipname{} 的触摸传感器模块具有以下特性：
+
+\begin{itemize}
+    \item 支持 14 个电容触摸管脚的检测
+    \item 可由软件或专用硬件定时器触发采样操作
+    \item 支持两种采样方式：
+        \begin{itemize}
+            \item 将来自触摸管脚的脉冲序列信号作为时钟信号处理，利用该时钟来计数采样周期
+            \item 将来自触摸管脚的脉冲序列信号作为数字信号处理，利用系统时钟采样该数字信号的上升沿来计数采样周期
+        \end{itemize}
+    \item 支持扫描模式，可配置 Touch FSM 按照固定顺序对多个触摸管脚进行采样
+    \item 支持超时机制，监测通道异常
+    \item 支持跳频采样，增加检测的抗干扰性
+    \item 支持接近感应模式，最多可配置三个通道
+    \item 支持配置单个触摸传感器在休眠模式时正常工作
+    \item 支持触摸传感器用作唤醒源
+    \item 支持防潮功能
+    \item 支持遇水保护功能
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{系统架构}
+\label{sec:tchsen-arch-overview}
+
+\subsection{触摸板}
+
+\chipname{} 触摸传感器的触摸板主要由三部分组成：
+
+\begin{itemize}
+    \item 电极 (Electrode)：手指触碰时，电极电容发生变化。
+    \item 基片 (Substrate)：基础材料，承载平面保护层、电极及接入相应通道需要的连接部件。
+    \item 平面保护层 (Protective cover)：将其余部件与外界环境隔开。
+\end{itemize}
+
+用户需自行设计触摸板，确定触摸板用材及排列方式等，具体信息可参考 \href{https://github.com/espressif/esp-iot-solution/blob/release/v1.1/documents/touch_pad_solution/touch_sensor_design_cn.md}{触摸传感器应用方案简介}。触摸板经触摸管脚（通道）连接至 \chipname{} 提供的触摸传感器，如下图 \ref{fig:touch-sensor} 所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/touch-sensor-structure.pdf}}
+    \caption{触摸传感器系统}
+    \label{fig:touch-sensor}
+\end{figure}
+
+用户触碰保护层时，电极电容增加。如果该电极通过通道已连接至 \chipname{} 触摸传感器，则传感器将检测到电极的电容变化。电容变化超过阈值（可配置），传感器将触发中断。
+
+\subsection{电容触摸管脚}
+
+\chipname{} 搭载 14 个电容触摸管脚 (T1 \verb+~+ T14)，通过芯片电容触摸管脚与外部触摸板连接，用于检测外部的触摸情况。对应的连接关系见表 \ref{tab:touch-pads}。
+
+\begin{longtable}[c]{|p{3.5cm}|p{4.5cm}| }
+    \caption{\chipname{} 电容式触摸传感器的管脚}
+    \label{tab:touch-pads}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{电容触摸管脚} & \textbf{对应 GPIO 管脚}\\ 
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{电容触摸管脚} & \textbf{对应 GPIO 管脚}\\  
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    T1  &  GPIO2 \\\hline
+    T2  &  GPIO3 \\\hline
+    T3  &  GPIO4  \\\hline
+    T4  &  GPIO5  \\\hline
+    T5  &  GPIO6  \\\hline
+    T6  &  GPIO7  \\\hline
+    T7  &  GPIO8 \\\hline
+    T8  &  GPIO9 \\\hline
+    T9  &  GPIO10 \\\hline
+    T10  &  GPIO11 \\\hline
+    T11 &  GPIO12 \\\hline
+    T12 &  GPIO13 \\\hline
+    T13 &  GPIO14 \\\hline
+    T14 &  GPIO15 \\\hline
+\end{longtable}
+
+\subsection{触摸传感器}
+
+触摸传感器使用固定电源对触摸管脚进行充放电，每次充放电会生成一个脉冲信号，即 TOUCH\_OUT 信号。触摸传感器可检测到触摸管脚上的电容变化，当手指触碰或靠近触摸管脚时，管脚电容增大，充放电变慢，因而产生脉冲信号的频率变慢。通过测量产生固定次数个脉冲信号所需的时间变化，即可判断管脚是否被触碰。
+
+图 \ref{fig:touch-sensor-internal-structure} 展示了触摸传感器的内部结构。每个触摸传感器均有一组输入输出信号，其中一些信号连接至 Touch FSM，见小节 \ref{sec:touch-fsm}。表 \ref{tab:tchsen-output-signal} 展示了触摸传感器的各个输出信号及其功能。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/tchsen-internal-structure}
+    \caption{触摸传感器内部结构}
+    \label{fig:touch-sensor-internal-structure}
+\end{figure}
+
+\begin{longtable}[c]{|p{3cm}|p{2cm}|p{11cm}| }
+    \caption{电容式触摸传感器输出信号}
+    \label{tab:tchsen-output-signal}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{信号} & \textbf{信号源}& \textbf{功能}\\ 
+    \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{信号} & \textbf{信号源}& \textbf{功能}\\ 
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    TOUCH\_XPD & Touch FSM & 控制触摸传感器的上下电\\\hline
+    TOUCH\_START & Touch FSM & 控制触摸传感器发起一次测量。Touch FSM 拉低 TOUCH\_START 信号，测量结束 \\\hline
+    DBIAS & Touch FSM & FSM 会根据不同频率模式选择不同的 DBIAS 参数，用于调节触摸传感器内部 LDO 的电压，从而影响触摸传感器的充放电速度 \\\hline
+    DRV\_HS & Touch FSM & FSM 会根据不同频率模式选择不同的 DRV\_HS 参数，用于调节触摸传感器的高速驱动能力 \\\hline
+    DRV\_LS & Touch FSM & FSM 会根据不同频率模式选择不同的 DRV\_LS 参数，用于调节触摸传感器的低速驱动能力 \\\hline
+    DRES\_LPF & Touch FSM & FSM 会根据不同频率模式选择不同的 DRES\_LPF 参数，用于调节 RC 低通滤波器，调节档位分为 0 k$\Omega$、3 k$\Omega$、4.5 k$\Omega$ 和 7.5 k$\Omega$。 \\\hline 
+    DCAP\_LPF & Touch FSM & FSM 会根据不同频率模式选择不同的 DCAP\_LPF 参数，用于调节 RC 低通滤波器，调节范围为 0 \verb+~+ 2.54 pF，调节精度为 20 fF \\\hline
+    DCAP\_DRV & Touch FSM & 用于在测量模式下调节连接触摸通道的内部电容值，通常设置为 0    \\\hline 
+    EN\_CAL & Touch FSM & 用于断开和触摸管脚的连接，可以测试触摸传感器内部的电容（需要关闭触摸板）\\\hline
+    BUF\_DRV & Touch FSM & 调节 TOUCH BUFF 的驱动能力\\\hline
+    EN\_BUF & Touch FSM & 使能 TOUCH BUFF（软件可配置的一块触摸板）用于防潮模式，缓和小水滴对传感器的影响\\\hline
+    TOUCH\_OUT & 触摸传感器 & Touch FSM 对 TOUCH\_OUT 信号中的脉冲进行计数，测量产生 N 个脉冲需要的时间\\\hline
+\end{longtable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:tchsen-func-descr}
+
+\subsection{Touch FSM}
+\label{sec:touch-fsm}
+
+触摸传感器的 Touch FSM 负责执行测量操作，包括选择要测量的触摸传感器、为触摸传感器生成需要的信号、以及处理触摸传感器输出的信号等。Touch FSM 的内部结构及工作原理见图 \ref{fig:touch-fsm}，时钟源为 LP\_DYN\_FAST\_CLK。关于 LP\_DYN\_FAST\_CLK 更多信息，请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/touch_fsm.pdf}}
+    \caption{Touch FSM 内部结构和工作原理}
+    \label{fig:touch-fsm}
+\end{figure}
+
+Touch FSM 各个模块的功能如下：
+
+\begin{itemize}
+    \item SCAN\_CTRL 模块：扫描模式下，选择要测量的触摸传感器以及跳频等参数，控制每个触摸传感器的测量启动和结束。
+    \item WORK\_UNIT 模块：测量过程中，负责采样已选择的触摸传感器。
+    \item Filter 模块：使能此模块，则触摸传感器在测量时将使用 IIR 滤波器，返回的滤波值即为采样值。详细信息见小节 \ref{para:sampled-value}。
+    \item SCAN\_CUR 模块：测量过程中，用于缓存不同触摸传感器在不同频率模式下的参数，用于下一次测量时的计算。
+\end{itemize}
+
+\subsection{采样信号预处理}
+\label{sec:sample-mode}
+
+触摸传感器的核心是通过检测触摸板上的电容变化，输出对应的脉冲序列（TOUCH\_OUT 信号），通过计算触摸和非触摸状态下 TOUCH\_OUT 信号的变化，来反映触摸板是否被触摸，因此，对 TOUCH\_OUT 信号的采样十分关键。图 \ref{fig:touch-out-sample} 展示了对 TOUCH\_OUT 信号预处理的过程。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/touch_data_div.pdf}}
+    \caption{TOUCH\_OUT 信号预处理}\label{fig:touch-out-sample}
+\end{figure}
+
+当 TOUCH\_OUT 信号的频率远高于采样频率时，为了提高信号采样的准确性，可以通过配置 \hyperref[fielddesc:LPANADIVNUM0]{LP\_ANA\_DIV\_NUM\regindex{n}} 对 TOUCH\_OUT 信号进行分频处理。\regindex{n} 代表在跳频模式（参考小节 \ref{sec:touch-freq-hop}）下的不同频率模式，取值为 0 \verb+~+ 2。该寄存器的最低位为是否开启分频的标志位，若最低位配置为 0，则表示不对 TOUCH\_OUT 信号进行分频处理，若最低位配置为 1，则表示需要对 TOUCH\_OUT 信号进行分频处理。该寄存器的高两位表示分频系数，取值范围为 0、1、2、3，对应的分频范围为 0、2、4、6 分频。
+
+若分频处理后，频率依然高于采样频率的两倍，可以配置 \hyperref[fielddesc:LPANATOUCHOUTSEL]{LP\_ANA\_TOUCH\_OUT\_SEL} 为 1，将分频处理后的 TOUCH\_OUT 信号直接当作时钟使用。配置 \hyperref[fielddesc:LPANATOUCHOUTGATE]{LP\_ANA\_TOUCH\_OUT\_GATE} 可控制开启或关闭该时钟。
+
+\subsubsection{测量过程}
+\label{para:measurement-process}
+
+根据是否开启跳频，触摸传感器的一次测量操作可以分为以下两种流程：
+
+\begin{itemize}
+    \item 非跳频采样：
+        \begin{enumerate}
+            \item Touch FSM 选择需要测量的触摸传感器，将相关配置信号发送到该传感器。
+            \item Touch FSM 发送 START 信号到触摸传感器，初始化测量操作。Touch FSM 启动内部触摸计数器 (touch counter) 记录测量持续时长。
+            \item Touch FSM 内部的脉冲计数器 (pulse counter) 开始对 TOUCH\_OUT 信号的脉冲数量进行计数。
+            \item 脉冲计数器达到 \hyperref[fielddesc:LPANATOUCHMEASNUM0]{LP\_ANA\_TOUCH\_MEAS\_NUM0} 中设定的计数阈值，则测量结束。START 信号拉低，触摸计数器停止计数。触摸计数器的值 x LP\_DYN\_SLOW\_CLK 周期即为对触摸管脚进行 \hyperref[fielddesc:LPANATOUCHMEASNUM0]{LP\_ANA\_TOUCH\_MEAS\_NUM0} 次充放电所需的时间。
+        \end{enumerate}
+    \item 跳频采样：
+        \begin{enumerate}
+            \item Touch FSM 选择需要测量的触摸传感器，将相关配置信号发送到该传感器。
+            \item 置位 \hyperref[fielddesc:LPANAFREQSCANEN]{LP\_ANA\_FREQ\_SCAN\_EN} 开启跳频模式，配置 \hyperref[fielddesc:LPANAFREQSCANCNTLIMIT]{LP\_ANA\_FREQ\_SCAN\_CNT\_LIMIT} 选择所支持跳频的频率模式个数，最大支持三种采样频率模式，并配置各频率模式所需的触摸传感器参数以及采样 TOUCH\_OUT 信号的脉冲次数。
+            \item Touch FSM 发送 START 信号到触摸传感器，初始化测量操作。Touch FSM 启动内部触摸计数器 (touch counter) 记录测量持续时长。
+            \item Touch FSM 内部的脉冲计数器 (pulse counter) 开始对 TOUCH\_OUT 信号的脉冲数量进行计数。
+            \item 脉冲计数器达到对应频率模式 \hyperref[fielddesc:LPANATOUCHMEASNUM0]{LP\_ANA\_TOUCH\_MEAS\_NUM\regindex{n}} 中设定的计数阈值，则当前频率测量结束，触摸计数器的值即为当前频率模式下对触摸管脚进行 \hyperref[fielddesc:LPANATOUCHMEASNUM0]{LP\_ANA\_TOUCH\_MEAS\_NUM\regindex{n}} 次充放电所需时间。
+            \item 采样频率计数器加 1，触摸计数器清零，等待一小段延时后开始下一频率模式的采样。当所有频率模式采样结束后，START 信号拉低，触摸计数器清零。
+        \end{enumerate}
+\end{itemize}
+
+采样值（测量值）为触摸计数器的值，表示为原始触摸数据 (touch\_raw\_data)。用户可从 \hyperref[fielddesc:RTCTOUCHPAD0DATA]{RTC\_TOUCH\_PAD\regindex{n}\_DATA} 中读取原始触摸数据的值。注意，\hyperref[fielddesc:RTCTOUCHPAD0DATA]{RTC\_TOUCH\_PAD\regindex{n}\_DATA} 返回的值也可能是滤波后的原始触摸数据，即平滑触摸数据 (touch\_smooth\_data) 和基准数据 (benchmark)。用户可配置 \hyperref[fielddesc:LPANATOUCHDATASEL]{LP\_ANA\_TOUCH\_DATA\_SEL} 和 \hyperref[fielddesc:LPANATOUCHFREQSEL]{LP\_ANA\_TOUCH\_FREQ\_SEL} 选择具体的返回值类型。有关采样值返回类型的详细信息，以及如何使用这些数据来判断触摸动作，请参考小节 \ref{para:sampled-value}。
+
+\begin{tiplisting}
+注意，如果脉冲计数器长时间未达到设置的计数阈值，而触摸计数器已达到 \hyperref[fielddesc:LPANATOUCHTIMEOUTNUM]{LP\_ANA\_TOUCH\_TIMEOUT\_NUM} 中设定的超时阈值，且触摸计数器超时中断使能寄存器 \hyperref[fielddesc:LPANATOUCHTIMEOUTEN]{LP\_ANA\_TOUCH\_TIMEOUT\_EN} 置位，则会触发 \\ \hyperref[fielddesc:RTCTOUCHTIMEOUTINTRAW]{RTC\_TOUCH\_TIMEOUT\_INT\_RAW} 超时中断，提示电路异常。
+\end{tiplisting}
+
+\subsubsection{测量操作的触发源}
+
+Touch FSM 通过发送 START 信号发起一次测量操作。START 信号可由软件触发，或由触摸定时器 (touch timer) 触发。使用触摸定时器可发起周期性测量，而无需软件介入。
+
+触摸定时器的时钟源为 LP\_DYN\_SLOW\_CLK，时长可设置为若干个 LP\_DYN\_SLOW\_CLK 周期。定时器到期则生成 START 信号。测量操作执行完毕后，定时器计数复位，开始重新计数，直至下次过期。
+
+\begin{itemize}
+    \item 配置 START 信号由软件触发：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:LPANATOUCHSTARTFORCE]{LP\_ANA\_TOUCH\_START\_FORCE}，选择 START 信号由软件触发。
+        \item 软件置位 \hyperref[fielddesc:LPANATOUCHSTARTEN]{LP\_ANA\_TOUCH\_START\_EN}，产生 START 信号，初始化一次测量操作。
+    \end{itemize}
+    \item 配置 START 信号由触摸定时器触发：
+    \begin{itemize}
+        \item 清零 \hyperref[fielddesc:LPANATOUCHSTARTFORCE]{LP\_ANA\_TOUCH\_START\_FORCE}。
+        \item 通过 \hyperref[fielddesc:PMUTOUCHWAITCYCLES]{PMU\_TOUCH\_WAIT\_CYCLES} 配置定时器发送 START 信号前的等待时间（单位：LP\_DYN\_SLOW\_CLK 周期）。
+        \item 通过 \hyperref[fielddesc:PMUTOUCHSLEEPCYCLES]{PMU\_TOUCH\_SLEEP\_CYCLES} 配置定时器接收到触摸传感器采样计算完成的 DONE 信号后的等待时间（单位：LP\_DYN\_SLOW\_CLK 周期）。
+        \item 置位 \hyperref[fielddesc:PMUTOUCHSLEEPTIMEREN]{PMU\_TOUCH\_SLEEP\_TIMER\_EN} 使能定时器。
+    \end{itemize}
+    \item 软件配置强制退出触摸定时器当前测量周期，可以采用两种配置方式：
+    \begin{enumerate}
+        \item 采用软件产生触摸传感器的测量结束信号，进而退出触摸定时器当前测量周期。
+        \begin{itemize}
+            \item 置位 \hyperref[fielddesc:LPANATOUCHDONEFORCE]{LP\_ANA\_TOUCH\_DONE\_FORCE}，选择 DONE 信号由软件触发。
+            \item 软件置位 \hyperref[fielddesc:LPANATOUCHDONEEN]{LP\_ANA\_TOUCH\_DONE\_EN}，产生 DONE 信号，结束一次测量操作。
+        \end{itemize}
+        \item 采用软件直接强制退出触摸定时器当前测量周期。
+        \begin{itemize}
+            \item 置位 \hyperref[fielddesc:PMUTOUCHFORCEDONE]{PMU\_TOUCH\_FORCE\_DONE}，产生 DONE 强制退出触摸定时器当前测量周期。
+        \end{itemize}
+    \end{enumerate}
+
+\begin{tiplisting}
+触摸定时器在产生 START 信号之前和接收到 DONE 信号之后都会等待一段时间，因此连续测量两个触摸传感器之间的间隔时间为 (\hyperref[fielddesc:PMUTOUCHWAITCYCLES]{PMU\_TOUCH\_WAIT\_CYCLES} + \hyperref[fielddesc:PMUTOUCHSLEEPCYCLES]{PMU\_TOUCH\_SLEEP\_CYCLES})，计时时钟为\\ LP\_DYN\_SLOW\_CLK。
+\end{tiplisting}
+\end{itemize}
+
+\subsubsection{扫描模式}
+
+在扫描模式下，Touch FSM 对多个触摸传感器按照一定顺序进行测量。每生成一个 START 信号，就选择一个触摸传感器进行测量。因此，利用多个 START 信号即可测量多个触摸传感器。具体的扫描过程见图 \ref{fig:touch-scan}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/touch-scan.pdf}
+    \caption{扫描模式时序图}
+    \label{fig:touch-scan}
+\end{figure}
+
+如需使能扫描模式，请在 \hyperref[fielddesc:LPANATOUCHSCANPADMAP]{LP\_ANA\_TOUCH\_SCAN\_PAD\_MAP} 中指定已使能触摸传感器的位图。对于每个 START 信号，Touch FSM 将从位图中依次选择一个触摸传感器进行测量。一个 START 信号仅执行一次测量操作。经过多个 START 信号，Touch FSM 按照顺序依次对使能的触摸传感器进行测量。
+
+对不同触摸传感器进行测量时，两次测量之间的休眠时间间隔为 \hyperref[fielddesc:PMUTOUCHWAITCYCLES]{PMU\_TOUCH\_WAIT\_CYCLES} + \hyperref[fielddesc:PMUTOUCHSLEEPCYCLES]{PMU\_TOUCH\_SLEEP\_CYCLES}，时钟周期为 LP\_DYN\_SLOW\_CLK。
+
+\begin{tiplisting}
+    \vspace{-2em}
+    \begin{itemize}
+        \item 触摸传感器在接收到来自触摸定时器的 START 信号后，为了保证采样信号的稳定，还会再等待一小段时间才开始测试，等待时间可通过 \hyperref[fielddesc:LPANATOUCHXPDWAIT]{LP\_ANA\_TOUCH\_XPD\_WAIT} 配置，计时时钟为 AON\_FAST\_CLK。
+        \item 如果使用触摸定时器生成 START 信号，整个扫描过程无需软件介入。     
+    \end{itemize}
+\end{tiplisting}
+
+\subsubsection{跳频模式}
+\label{sec:touch-freq-hop}
+
+在跳频模式下，Touch FSM 可以在不同频率模式下对触摸传感器进行测量。跳频模式最多支持三种频率模式，每种频率模式都分别对应一套参数配置。每生成一个 START 信号，即会按照频率模式依次进行测量，当所有频率模式都测量结束时，才生成 DONE 信号。跳频模式和扫描模式可以一起使用，因此利用多个 START 信号即可监测多个触摸传感器在不同频率模式下的触摸情况。具体的扫描过程见图 \ref{fig:touch-freq-hop}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\modulefiles/figures/touch_freq_scan.pdf}
+    \caption{触摸传感器跳频时序图}
+    \label{fig:touch-freq-hop}
+\end{figure}
+
+置位 \hyperref[fielddesc:LPANAFREQSCANEN]{LP\_ANA\_FREQ\_SCAN\_EN} 可开启跳频模式，配置 \hyperref[fielddesc:LPANAFREQSCANCNTLIMIT]{LP\_ANA\_FREQ\_SCAN\_CNT\_LIMIT} 选择所支持的最大跳频数量，另外还需配置不同频率模式下调节触摸传感器采样性能的模拟参数寄存器组，具体如下：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:LPANATOUCHFREQ0DBIAS]{LP\_ANA\_TOUCH\_FREQ\regindex{n}\_DBIAS} (\regindex{n} = 0 \verb+~+ 2)
+    \item \hyperref[fielddesc:LPANATOUCHFREQ0DRVHS]{LP\_ANA\_TOUCH\_FREQ\regindex{n}\_DRV\_HS} (\regindex{n} = 0 \verb+~+ 2)
+    \item \hyperref[fielddesc:LPANATOUCHFREQ0DRVLS]{LP\_ANA\_TOUCH\_FREQ\regindex{n}\_DRV\_LS} (\regindex{n} = 0 \verb+~+ 2)
+    \item \hyperref[fielddesc:LPANATOUCHFREQ0DRESLPF]{LP\_ANA\_TOUCH\_FREQ\regindex{n}\_DRES\_LPF} (\regindex{n} = 0 \verb+~+ 2)
+    \item \hyperref[fielddesc:LPANATOUCHFREQ0DCAPLPF]{LP\_ANA\_TOUCH\_FREQ\regindex{n}\_DCAP\_LPF} (\regindex{n} = 0 \verb+~+ 2)
+\end{itemize}
+
+对于每个 START 信号，Touch FSM 将按照频率模式 0、1、2 的顺序依次进行测量。一个 START 信号最多触发三次测量操作。当所有频率模式都测量结束，START 信号拉低，等待下一个触摸传感器的测量。经过多个 START 信号，Touch FSM 依次对使能的触摸传感器进行测量。\tagged{ESP32-P4-latest}{同一触摸传感器只有在大于等于 \hyperref[fielddesc:LPANAFREQSCANCNTRISE]{LP\_ANA\_FREQ\_SCAN\_CNT\_RISE} 个频点均被触发时，才能判定为触摸。}
+
+\begin{tiplisting}
+    \vspace{-2em}
+    \begin{itemize}
+        \item 同一个触摸传感器在不同频率模式下测量时，两次测量之间的等待时间可通过 \hyperref[fielddesc:LPANATOUCHXPDWAIT]{LP\_ANA\_TOUCH\_XPD\_WAIT} 配置，计数时钟是 AON\_FAST\_CLK。
+        \item 触摸传感器在接收到来自触摸定时器的 START 信号后，为了保证采样信号的稳定，会等待一小段时间才开始测量，等待时间可通过 \hyperref[fielddesc:LPANATOUCHXPDWAIT]{LP\_ANA\_TOUCH\_XPD\_WAIT} 配置，计数时钟为 AON\_FAST\_CLK。
+        \item 如果使用触摸定时器生成 START 信号，整个扫描过程无需软件介入。
+    \end{itemize}
+\end{tiplisting}
+
+\subsection{触摸检测}
+
+\subsubsection{采样值}
+\label{para:sampled-value}
+
+如小节 \ref{para:measurement-process} 所述，用户可从
+\hyperref[fielddesc:RTCTOUCHPAD0DATA]{RTC\_TOUCH\_PAD\regindex{n}\_DATA} 中读取测量所得采样值。但 \hyperref[fielddesc:RTCTOUCHPAD0DATA]{RTC\_TOUCH\_PAD\regindex{n}\_DATA} 中所存储的具体采样值类型由 \hyperref[fielddesc:LPANATOUCHDATASEL]{LP\_ANA\_TOUCH\_DATA\_SEL} 和 \hyperref[fielddesc:LPANATOUCHFREQSEL]{LP\_ANA\_TOUCH\_FREQ\_SEL} 共同决定。支持以下三种类型的采样值： 
+
+\begin{enumerate}
+    \item \textbf{原始触摸数据} (touch\_raw\_data)：测量结束时，触摸计数器的计数值表示对触摸传感器进行固定次数的充放电所需的时间，单位为 LP\_DYN\_SLOW\_CLK 周期。开启 IIR 滤波器后，该数据为滤波后的数据。
+    \item \textbf{平滑触摸数据} (touch\_smooth\_data)：一系列来自某个触摸传感器的原始触摸数据经 IIR 滤波生成的移动平均线。
+
+    平滑触摸数据不易被噪声或采样异常值干扰，因此常用于硬件触摸检测。若开启跳频模式，每个触摸管脚在不同频率模式下分别对应一套平滑触摸数据，各自维护，互不影响。生成平滑触摸数据的 IIR 滤波设置可在 \hyperref[fielddesc:LPANATOUCHSMOOTHLVL]{LP\_ANA\_TOUCH\_SMOOTH\_LVL} 中配置。具体信息见表 \ref{tab:smooth-cal}。
+
+    \begin{longtable}[c]{|p{5.5 cm}|p{1.5cm}|p{8.5cm}|}
+        \caption{平滑触摸数据计算}
+        \label{tab:smooth-cal}\\
+        \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:LPANATOUCHSMOOTHLVL]{LP\_ANA\_TOUCH\_SMOOTH\_LVL}} & \textbf{类型} & \textbf{公式}\\ 
+        \hline
+        \endhead
+        \endfoot
+        \endlastfoot
+        0  & --- & touch\_raw\_data  \\\hline
+        1  & IIR 1/2 & 1/2 touch\_raw\_data + 1/2 touch\_smooth\_data \\\hline
+        2  & IIR 1/4 & 1/4 touch\_raw\_data + 3/4 touch\_smooth\_data \\\hline
+        3  & IIR 1/8 & 1/8 touch\_raw\_data + 7/8 touch\_smooth\_data \\\hline
+    \end{longtable}
+
+    \item \textbf{基准数据} (benchmark)：同样由原始触摸数据经 IIR 滤波处理而生成，但其移动平均线窗口更广。
+    
+    基准数据常用于表示触摸传感器的稳定读数，不受触摸动作的影响。触摸检测的判断基于基准数据进行。每个触摸传感器在不同频率模式下都有一套独立的基准数据，其初始默认值为 0xFFFF。生成基准数据的 IIR 滤波可通过 \hyperref[fielddesc:LPANATOUCHFILTERMODE]{LP\_ANA\_TOUCH\_FILTER\_MODE} 配置，具体信息见表 \ref{tab:benchmark-cal}。
+
+    \iftagged{ESP32-P4-latest}{
+    除了通过 IIR 滤波的方式更新基准数据以外，还可以通过软件的方式直接更新。软件更新基准数据的步骤如下：
+    \begin{itemize}
+      \item 通过 \hyperref[fielddesc:LPANATOUCHUPDATEBENCHMARKFREQSEL]{LP\_ANA\_TOUCH\_UPDATE\_BENCHMARK\_FREQ\_SEL} 配置需要更新基准数据的目标频点。
+      \item 通过 \hyperref[fielddesc:LPANATOUCHUPDATEBENCHMARKPADSEL]{LP\_ANA\_TOUCH\_UPDATE\_BENCHMARK\_PAD\_SEL} 配置需要更新基准数据的目标通道。
+      \item 通过 \hyperref[fielddesc:LPANATOUCHBENCHMARKSW]{LP\_ANA\_TOUCH\_BENCHMARK\_SW} 配置基准数据值。
+      \item 配置 \hyperref[fielddesc:LPANATOUCHUPDATEBENCHMARKSW]{LP\_ANA\_TOUCH\_UPDATE\_BENCHMARK\_SW}，即可通过软件触发基准数据更新。
+    \end{itemize}
+    该方式一般用于软件调试。当目标频点和通道的基准数据完成更新后，会产生中断 \hyperref[int:TOUCHBENCHMARKUPDATEINT]{TOUCH\_BENCHMARK\_UPDATE\_INT}。
+    }
+    {除了通过 IIR 滤波的方式更新基准数据以外，还可以通过软件的方式直接更新。先配置 \hyperref[fielddesc:LPANATOUCHBENCHMARKSW]{LP\_ANA\_TOUCH\_BENCHMARK\_SW}，再配置 \hyperref[fielddesc:LPANATOUCHUPDATEBENCHMARKSW]{LP\_ANA\_TOUCH\_UPDATE\_BENCHMARK\_SW}，即可通过软件更新基准数据，一般用于软件调试。}
+
+\end{enumerate}
+
+\begin{longtable}[c]{|p{5.5 cm}|p{1.5cm}|p{8.5cm}|}
+    \caption{基准数据算法}\label{tab:benchmark-cal}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:LPANATOUCHFILTERMODE]{LP\_ANA\_TOUCH\_FILTER\_MODE}} & \textbf{类型} & \textbf{公式}\\ 
+    \hline
+    \endhead
+    \endfoot
+    \endlastfoot
+    0  &  IIR 1/4 & 1/4 touch\_raw\_data + 3/4 benchmark \\\hline
+    1  &  IIR 1/8 & 1/8 touch\_raw\_data + 7/8 benchmark \\\hline
+    2  &  IIR 1/16 & 1/16 touch\_raw\_data + 15/16 benchmark \\\hline
+    3  &  IIR 1/32 & 1/32 touch\_raw\_data + 31/32 benchmark \\\hline
+    4  &  IIR 1/64 & 1/64 touch\_raw\_data + 63/64 benchmark \\\hline
+    5  &  IIR 1/128 & 1/128 touch\_raw\_data + 127/128 benchmark \\\hline
+    6  &  IIR 1/256 & 1/256 touch\_raw\_data + 255/256 benchmark \\\hline
+    7  &  JITTER & touch\_raw\_data +/$–$ \hyperref[fielddesc:LPANATOUCHJITTERSTEP]{LP\_ANA\_TOUCH\_JITTER\_STEP} \\\hline
+\end{longtable}
+
+\subsubsection{硬件触摸检测}
+
+硬件触摸检测可检测到触摸动作或触摸释放动作，然后触发中断。使用硬件触摸检测，需定义如下几个关键参数：
+
+\begin{itemize}
+    \item \textbf{触碰阈值} (finger\_threshold)：用于判定触摸或触摸中断的比较值。触碰阈值由寄存器 \hyperref[fielddesc:LPANATOUCHPAD0TH0]{LP\_ANA\_TOUCH\_PAD\regindex{x}\_TH\regindex{y}} 配置，\regindex{x} 代表触摸管脚编号，取值为 1 \verb+~+ 14，\regindex{y} 代表跳频频率模式，取值为 0 \verb+~+ 2。
+    \item \textbf{噪声阈值} (noise\_threshold)：用于表示平滑触摸数据上下波动的最大值。噪声阈值由 \hyperref[fielddesc:LPANATOUCHNOISETHRES]{LP\_ANA\_TOUCH\_NOISE\_THRES} 配置。
+    \item \textbf{迟滞} (hysteresis)：用于避免平滑触摸数据在触碰阈值附近来回波动导致的触摸误判。迟滞由 \hyperref[fielddesc:LPANATOUCHHYSTERESIS]{LP\_ANA\_TOUCH\_HYSTERESIS} 配置。
+\end{itemize}
+
+触碰阈值和噪声阈值均为基准数据的偏移，而不是绝对阈值，迟滞为触碰阈值的偏移。采用这种方法可以避免将原始触摸数据的渐变（缓慢变化）误测为触摸。多种环境因素，比如温度、电源、噪声，均有可能造成原始触摸数据的渐变。
+
+触摸传感器基于上述参数进行一系列计算和比较之后，最终会将触摸管脚上检测到的触碰结果通过中断的方式输出。每个触摸传感器都对应一个控制寄存器 \hyperref[fielddesc:LPANATOUCHOUTEN]{LP\_ANA\_TOUCH\_OUTEN} 来配置是否输出检测结果。
+
+\subsection{接近模式}
+
+物体靠近，但未接触触摸管脚时，触摸管脚电容将发生轻微变动，远小于物理触摸引起的电容变化。接近模式可用于检测电容轻微变动。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.2\textwidth]{\modulefiles/figures/touch_approach.eps}
+    \caption{感测面积示意图}
+    \label{fig:touch-approach}
+\end{figure}
+
+\begin{itemize}
+    \item 检测距离 ``d" 最大为 16 cm，感应面积 ``S" 为 20 cm$^{2}$，``d" 与 ``S" 正相关，如图 \ref{fig:touch-approach} 所示。
+    \item 最多可以同时将三个触摸管脚配置为接近模式。
+    \item 接近模式同样支持跳频检测。
+\end{itemize}
+
+在接近模式下，触摸传感器进行固定次数的采样并累计采样值。如果最终累计采样值超出设定的阈值，则认为检测到了物体靠近，并触发中断。注意，接近模式会对采样值进行累计，所以触摸传感器不会生成小节 \ref{para:sampled-value} 所述的数值，即原始触摸数据、平滑触摸数据和基准数据。
+
+接近模式操作流程如下：
+
+\begin{itemize}
+    \item 通过配置 \hyperref[fielddesc:LPANATOUCHAPPROACHPAD0]{LP\_ANA\_TOUCH\_APPROACH\_PAD0}、\hyperref[fielddesc:LPANATOUCHAPPROACHPAD1]{LP\_ANA\_TOUCH\_APPROACH\_PAD1} 或 \hyperref[fielddesc:LPANATOUCHAPPROACHPAD2]{LP\_ANA\_TOUCH\_APPROACH\_PAD2}，配置触摸传感器为接近模式。
+    \item 通过配置 \hyperref[fielddesc:LPANATOUCHAPPROACHLIMIT]{LP\_ANA\_TOUCH\_APPROACH\_LIMIT} 设置采样次数，用于生成累计值。触摸传感器内置采样计数器，用于记录采样次数。
+    \item 配置 \hyperref[fielddesc:LPANATOUCHPAD0TH0]{LP\_ANA\_TOUCH\_PAD\regindex{x}\_TH\regindex{y}} 设置阈值，\regindex{x} 代表触摸管脚编号，取值为 1 \verb+~+ 14，\regindex{y} 代表跳频频率模式，取值为 0 \verb+~+ 2。
+    \item 采样计数器达到 \hyperref[fielddesc:LPANATOUCHAPPROACHMEASNUM0]{LP\_ANA\_TOUCH\_APPROACH\_MEAS\_NUM\regindex{n}} 设置的采样次数：
+    \begin{itemize}
+        \item 如果累计值大于设定的阈值，则触发中断。
+        \item 采样计数器和累计值复位归零。触摸传感器重新开始累计采样值。
+    \end{itemize}
+\end{itemize}
+
+\subsection{休眠模式}
+
+为了降低功耗，触摸传感器支持休眠模式。在休眠状态下，可以指定一个触摸传感器处于活跃状态（以下简称为休眠触摸传感器），实时监测是否有触摸发生，其余 13 个触摸传感器全部掉电并处于休眠状态。休眠触摸传感器一旦检测到触摸或触摸释放，会立即产生对应中断，唤醒其余 13 个触摸传感器。休眠触摸传感器和正常模式下的触摸传感器一样，支持跳频模式和接近感应模式。休眠触摸传感器对应一套独立的阈值参数，其配置流程如下：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:LPANATOUCHSLPPAD]{LP\_ANA\_TOUCH\_SLP\_PAD} 选择某一个触摸传感器作为休眠触摸传感器。
+    \item 配置 \hyperref[fielddesc:LPANATOUCHSLPTH0]{LP\_ANA\_TOUCH\_SLP\_TH0}、\hyperref[fielddesc:LPANATOUCHSLPTH0]{LP\_ANA\_TOUCH\_SLP\_TH1}、\hyperref[fielddesc:LPANATOUCHSLPTH0]{LP\_ANA\_TOUCH\_SLP\_TH2}，设置休眠触摸传感器在不同频率模式下的触碰阈值。
+    \item 配置 \hyperref[fielddesc:LPANATOUCHSLPAPPROACHEN]{LP\_ANA\_TOUCH\_SLP\_APPROACH\_EN}，设置休眠触摸传感器开启接近模式。
+    \item 配置 \hyperref[fielddesc:LPANATOUCHSLPCHANNELCLR]{LP\_ANA\_TOUCH\_SLP\_CHANNEL\_CLR}，清零休眠触摸传感器的基准数据、平滑触摸数据以及采样次数等中间数据。
+\end{itemize}
+
+\begin{tiplisting}
+休眠模式下，休眠触摸传感器的噪声阈值、迟滞、平滑触摸数据、基准数据与正常模式下的配置相同。
+\end{tiplisting}
+
+\subsection{防潮功能}
+
+如果触摸板上有小水珠，且面积大到足以连通两个或更多触摸板，则可能导致临近触摸板出现电耦合现象。耦合现象会导致电容变化，此时触摸板可能会误测触摸动作。当小水珠跨接在触摸板和接地之间时也会引入较大的寄生电容，导致误触发。防潮设计可缓和小水珠带来的影响。
+
+用户可配置使用防潮功能。具体步骤如下：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:LPANATOUCHSHIELDPADEN]{LP\_ANA\_TOUCH\_SHIELD\_PAD\_EN} 开启防潮功能；
+    \item 配置 \hyperref[fielddesc:LPANATOUCHBUFSEL]{LP\_ANA\_TOUCH\_BUFSEL} 选择用于防潮功能的触摸管脚。
+\end{itemize}
+
+\begin{tiplisting}
+防潮功能仅在频率低于 10 MHz 时有效。因此，当频率高于 10 MHz 时，请禁用防潮功能。
+\end{tiplisting}
+
+\subsection{遇水保护功能}
+\label{sec:tchsen-water-reject}
+
+如果传感器触摸板阵列变潮，即大部分触摸板已浸水，全部或大部分触摸管脚因存在误测触摸动作的可能，触摸传感器将无法继续检测触摸动作。因此，\chipname{} 触摸传感器支持遇水保护功能，该设计可检测到阵列已浸水，可关停传感器阵列。
+
+用户可配置 \hyperref[fielddesc:LPANATOUCHOUTRING]{LP\_ANA\_TOUCH\_OUT\_RING} 选择用于遇水保护功能的触摸管脚。
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的触摸传感器可以生成 LP\_TOUCH\_INTR 中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+LP\_TOUCH\_INTR 中断信号由触摸传感器的内部中断源生成。表 \ref{tab:tchsen-int-sources} 列出了触摸传感器的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{6.2cm} | L{6.5cm} | L{3cm} | }
+\caption{触摸传感器的内部中断源} \label{tab:tchsen-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:TOUCHAPPROACHLOOPDONEINT}TOUCH\_APPROACH\_LOOP\_DONE\_INT  &  接近模式累计采样结束 &  \multirow{6}*{LP\_TOUCH\_INTR}  \\ \cline{1-2}
+\label{int:TOUCHTIMEOUTINT}TOUCH\_TIMEOUT\_INT &  对 TOUCH\_OUT 信号采样超时 & \\ \cline{1-2}
+\label{int:TOUCHINACTIVEINT}TOUCH\_INACTIVE\_INT &  检测到触摸释放 & \\ \cline{1-2}
+\label{int:TOUCHACTIVEINT}TOUCH\_ACTIVE\_INT &  检测到触摸 & \\ \cline{1-2}
+\label{int:TOUCHDONEINT}TOUCH\_DONE\_INT & 对单个触摸管脚在某个频率模式下的采样比较完成 & \\ \cline{1-2}
+\iftagged{ESP32-P4-latest}{
+\label{int:TOUCHSCANDONEINT}TOUCH\_SCAN\_DONE\_INT &  对所有选中的触摸管脚在所有频率模式下都采样比较完成 & \\ \cline{1-2}
+\label{int:TOUCHBENCHMARKUPDATEINT}TOUCH\_BENCHMARK\_UPDATE\_INT &  软件更新基准数据完成  & \\ \hline}
+{\label{int:TOUCHSCANDONEINT}TOUCH\_SCAN\_DONE\_INT &  对所有选中的触摸管脚在所有频率模式下都采样比较完成 & \\ \hline}
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:tchsen-reg-summ} \textit{\nameref{sec:tchsen-reg-summ}}。
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\begin{landscape}
+\hypertarget{tchsen-reg-summ}{}
+\section{寄存器列表}
+\label{sec:tchsen-reg-summ}
+
+\subsection{中断与状态寄存器列表}
+\label{sec:tchsen-status-reg-summ}
+
+本小节的所有地址均为相对于触摸传感器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/61-TCHSEN-reg-summ__CN}
+
+\subsection{配置寄存器列表}
+\label{sec:tchsen-config-reg-summ}
+
+本小节的所有地址均为相对于 LP 模拟外设基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/61-TCHSEN-LP-reg-summ__CN}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+\subsection{中断与状态寄存器}
+\label{sec:tchsen-status-reg}
+
+本小节的所有地址均为相对于触摸传感器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/61-TCHSEN-reg__CN}
+
+\subsection{配置寄存器}
+\label{sec:tchsen-config-reg}
+
+本小节的所有地址均为相对于LP 模拟外设器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/61-TCHSEN-LP-reg__CN}
+
+\end{document}

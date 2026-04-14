@@ -1,0 +1,148 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./31-XTWDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{xtwdt}{}
+\chapter{XTAL32K 看门狗定时器 (XTWDT)}
+\label{mod:xtwdt}
+
+
+
+\section{概述}
+
+ESP32-C3 的 XTAL32K 看门狗定时器是用于检测 XTAL32K\_CLK 时钟的工作状态，有 XTAL32K\_CLK 停振监测，切换 RTC 时钟源等功能。当外部晶振 XTAL32K\_CLK 作为 RTC\_SLOW\_CLK 源（时钟描述详见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}} ），若 XTAL32K\_CLK 时钟停振，XTAL32K 看门狗定时器会将 XTAL32K\_CLK 替换为 RC\_SLOW\_CLK 的分频时钟 BACKUP32K\_CLK 并发送中断(若芯片处于 Light-sleep 和 Deep-sleep 状态则唤醒 CPU)，由软件重启 XTAL32K\_CLK，并切回。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/xtal32k_watchdog}}
+    \caption{XTAL32K 看门狗定时器}
+    \label{fig:xtwdt}
+\end{figure}
+
+\section{主要特性}
+
+\subsection{XTAL32K 看门狗定时器的中断及唤醒}
+
+XTAL32K 看门狗定时器监控到 XTAL32K\_CLK 停振时，将发起停振中断  RTC\_XTAL32K\_DEAD\_INT（中断描述详见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}），如果 CPU 处于 Light-sleep 和 Deep-sleep 状态，将唤醒 CPU。
+
+\subsection{BACKUP32K\_CLK}
+
+XTAL32K 看门狗定时器监控到 XTAL32K\_CLK 停振后，将使用 RC\_SLOW\_CLK 的分频时钟
+BACKUP32K\_CLK (频率约为 32 kHz )替代 XTAL32K\_CLK 作为 RTC\_SLOW\_CLK 维持系统继续正常工作。
+
+\section{功能描述}
+
+\subsection{工作流程}
+
+\begin{enumerate}
+    \item 使能 \hyperref[fielddesc:RTCCNTLXTAL32KWDTEN]{RTC\_CNTL\_XTAL32K\_WDT\_EN}，XTAL32K 看门狗定时器将由空闲状态转入计数状态，看门狗的计数器（工作时钟为RC\_SLOW\_CLK）在检测到XTAL\_32K的时钟上升沿时将被清零，否则将持续计数；当计数器的值达到 \hyperref[fielddesc:RTCCNTLXTAL32KWDTTIMEOUT]{RTC\_CNTL\_XTAL32K\_WDT\_TIMEOUT} 时，发出中断/唤醒信号，随后计数器复位。
+    \item 如果 \hyperref[fielddesc:RTCCNTLXTAL32KAUTOBACKUP]{RTC\_CNTL\_XTAL32K\_AUTO\_BACKUP} 已置 1 且步骤 1 已完成，XTAL32K 看门狗定时器会自动开启 BACKUP32K\_CLK，替换 RTC 的慢速时钟源 RTC\_SLOW\_CLK，保证系统能够正常运行，以及工作在 RTC 慢速时钟 RTC\_SLOW\_CLK的定时器(如 RTC\_TIMER 等)能够保持计时准确性。时钟频率的配置参见 \ref{sec:xtwdt-divisor-config}。
+    \item 软件通过 RTC\_CNTL\_XPD\_XTAL\_32K 位开关 XTAL32K\_CLK 的 XPD （no power-down 的缩写，意为不要关闭电源）信号来重启 XTAL32K\_CLK，然后通过将 \hyperref[fielddesc:RTCCNTLXTAL32KWDTEN]{RTC\_CNTL\_XTAL32K\_WDT\_EN} 位设置为 0（BACKUP32K\_CLK\_EN 会随之自动清零）， RTC\_SLOW\_CLK 时钟源将从 BACKUP32K\_CLK 切回到 XTAL32K\_CLK。若是芯片处于 Light-sleep 和 Deep-sleep 状态，则 XTAL32K 看门狗定时器将唤醒 CPU，完成上述操作。
+\end{enumerate}
+
+
+\subsection{BACKUP32K\_CLK 实现原理}\label{sec:xtwdt-divisor-config}
+由于 RC\_SLOW\_CLK 的时钟频率存在芯片差异，所以为保证 BACKUP32K\_CLK 生效期间，RTC\_TIMER 等使用 RTC\_SLOW\_CLK 工作的定时器依然能够准确计时，需要根据 RC\_SLOW\_CLK（详见章节 \ref{mod:lowpowm}
+     \textit{\nameref{mod:lowpowm}}）的实际频率，可通过配置 RTC\_CNTL\_XTAL32K\_CLK\_FACTOR\_REG 调整 BACKUP32K\_CLK 的分频系数。该寄存器的每个字节对应一个分频因子(\begin{math}x_0\end{math} \textasciitilde \begin{math}x_7\end{math})。
+BACKUP32K\_CLK 的分频器是一个分母恒为 4 的小数分频器，算法如下:\\
+
+\begin{gather*}
+f\_back\_clk / 4 = f\_rc\_slow\_clk/S \\
+S = x_0 + x_1 + ... + x_7
+\end{gather*}
+
+其中 f\_back\_clk 为分频后的 BACKUP32K\_CLK 目标频率为32.768 kHz；f\_rc\_slow\_clk 为当前 RC\_SLOW\_CLK 的实际频率；\begin{math}x_0\end{math} \textasciitilde \begin{math}x_7\end{math} 分别对应四个BACKUP32K 时钟信号的高低电平的脉宽，单位为 RC\_SLOW\_CLK 的周期.
+
+\subsection{BACKUP32K\_CLK 分频因子配置方法}
+
+根据 \ref{sec:xtwdt-divisor-config} 小节的分频原理描述，可以通过以下步骤计算并完成分频因子的配置：
+\begin{itemize}
+    \item 根据 RC\_SLOW\_CLK 的频率以及 BACKUP32K 的目标分频频率计算出 分频因子的总和 S；
+    \item 计算出分频器的整数部分，\begin{math}N = f\_rc\_slow\_clk / f\_back\_clk\end{math}；
+    \item 因为BACKUP32K的分频因子是单个脉宽(高或低电平)，所以需要将分频系数的整数部分分成两份，计算分频因子的整数部分，\begin{math}M = N / 2\end{math}；
+    \item 根据M 和 S 确定xn = M 以及 xn = M + 1 的个数，M + 1 即为分频因子的小数部分。
+    \end{itemize}
+    
+    例如，RC\_SLOW\_CLK的时钟频率为 163 kHz，则 \begin{math} f\_rc\_slow\_clk = 163000\end{math}，\begin{math}f\_back\_clk = 32768\end{math}，\begin{math}S = 20\end{math}，\begin{math}M = 2\end{math}，所以满足条件的 \begin{math}\left\{x_0, x_1, x_2, x_3, x_4, x_5, x_6, x_7\right\} = \left\{2, 3, 2, 3, 2, 3, 2, 3\right\}\end{math}，BACKUP32K\_CLK的时钟频率为32.6 kHz。
+
+
+\end{document}

@@ -1,0 +1,774 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./06-VDMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{vdma}{}
+\chapter{VDMA 控制器 (VDMA)}
+\label{mod:vdma}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+DMA（直接内存访问）是指不依赖 CPU，在存储器和外设之间完成数据搬运。\chipname{} 上的 VDMA 控制器是一种通用 DMA，支持存储器到存储器、存储器到外设、外设到存储器的高速数据传输。VDMA 控制器以 AXI 作为总线接口，采用 AXI3 标准协议，带有两个 AXI 主机接口，支持用户动态地选择主机接口进行数据传输。
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{术语}
+
+下列术语是在本章节的语境下定义的。
+
+\begin{itemize}
+    \item \textbf{AXI}：全称为 Advanced eXtensible Interface（高级可扩展接口），是 AMBA 3（Advanced Microcontroller Bus Architecture，高级微控制器总线架构）协议的一部分，为存储器和外设之间、存储器和存储器之间提供了高宽带、低延迟的数据传输。
+
+    \item \textbf{外设}：指的是与 VDMA 之间有握手接口的系统模块，即表 \ref{tab:VDMA-hw-hs} 列出的外设。
+
+    \item \textbf{存储器}：存储器总是为 DMA 传输做好准备，与 VDMA 之间没有握手接口。VDMA 支持的存储器包括 HP L2MEM、外部 flash 和外部 RAM。
+
+    \item \textbf{源}：指的是源外设或源存储器，VDMA 通过 AXI 接口从源中读取数据，然后将数据存储在通道 FIFO 中。
+
+    \item \textbf{源传输}：指的是源到 VDMA 的传输。
+
+    \item \textbf{目标}：指的是目标外设或目标存储器，VDMA 将存储在通道 FIFO 中的数据写入目标。
+
+    \item \textbf{目标传输}：指的是 VDMA 到目标的传输。
+
+    \item \textbf{通道}：指的是源和目标之间的数据通路。
+
+    \item \textbf{主机接口}：指的是 VDMA 的两个 AXI 主机接口。
+
+    \item \textbf{从机接口}：指的是用于配置寄存器的 APB3 接口。
+
+    \item \textbf{握手接口}：握手接口用于在 VDMA 和源或目标外设之间执行握手。握手接口用于请求、确认和控制 VDMA 传输。
+    \item \textbf{流控制器}：决定 DMA 块传输的长度并终止传输的设备，可以是 VDMA、源或目标外设。存储器不能用作流控制器。
+
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{特性}
+
+VDMA 具有以下特性：
+
+\begin{itemize}
+    \item 4 个通道，每个通道都是单向的，支持源到目标的数据传输
+    \item 2 个 AXI 主机接口
+    \item 支持与 MIPI DSI（显示串行接口）和 ISP（图像信号处理器）的握手
+    \item 支持存储器与存储器之间、ISP 与存储器之间、MIPI DSI 与存储器之间的 DMA 传输
+    \item DMA 传输层次有多个级别
+    \item 每个通道的传输类型、传输长度、传输大小可配置
+    \item 支持单块传输
+    \item 支持基于连续地址、自动重新加载、影子寄存器和链表的多块传输
+    \item 支持源传输和目标传输独立配置多块传输类型
+    \item 通道禁用而不丢失数据
+    \item 通道暂停、恢复和中止
+    \item 可配置的通道优先级仲裁
+    \item 支持使用 VDMA 或外设作为流控制器
+    \item 外设的握手接口和通道之间的映射可配置
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:vdma-arch-overview}
+
+图 \ref{fig:VDMA-arch} 所示为 VDMA 的架构，以及 VDMA 与其他系统模块的连接。
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=0.9\linewidth]{\modulefiles/figures/VDMA-diagram.pdf}
+     \caption{VDMA 架构}
+     \label{fig:VDMA-arch}
+ \end{figure}
+
+从图中可以看出：
+
+\begin{itemize}
+    \item CPU 通过 APB3 从机接口 (APB3 Slave Interface) 访问 VDMA 的寄存器。
+    \item VDMA 有 4 个通道（Channel 1 到 Channel 4）。每个通道对应一个 FIFO，深度为 64，宽度为 64 位。
+    \item VDMA 有 2 个 AXI 主机接口（Master 1 和 Master 2）。
+        \begin{itemize}
+            \item Master 1 可以访问 ISP、MIPI DSI 和存储器，如图中蓝色箭头所示。
+            \item Master 2 只能访问存储器，如图中红色箭头所示。
+            \item Master 1 和 Master 2 各有一个仲裁器，对通道上的读请求和写请求进行仲裁。
+        \end{itemize}
+    \item VDMA 有 3 个握手接口。表 \ref{tab:VDMA-hw-hs} 为握手接口和外设之间的映射。
+\end{itemize}
+
+\begin{longtable}{ | p{6.8cm} | p{5.2cm} | }
+\caption{握手接口与外设映射表}
+\label{tab:VDMA-hw-hs} \\
+\hline
+\rowcolor{lightgray}
+\textbf{握手接口编号} & \textbf{外设} \\ \hline
+0 & MIPI DSI  \\ \hline
+1 & ISP（ISP 到存储器） \\ \hline
+2 & ISP（存储器到 ISP） \\ \hline
+\end{longtable}
+
+更多关于 ISP 和 MIPI DSI 的信息请参考章节 \ref{mod:isp} \textit{\nameref{mod:isp}}、\ref{mod:mipidsi} \textit{\nameref{mod:mipidsi}}。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{功能描述}
+
+\subsection{传输层次}
+
+传输最多分为 4 个级别：DMA 传输级别、块传输级别、transaction（事务传输）级别和 AXI 传输级别。
+
+图 \ref{fig:VDMA-hier-non-mem} 所示为 VDMA 与外设之间传输的 4 个传输级别的层次结构。
+
+图 \ref{fig:VDMA-hier-mem} 所示为 VDMA 与存储器之间传输的 3 个传输级别结构：DMA 传输、块传输和 AXI 传输。VDMA 与存储器之间的传输没有 transaction 级别，因为存储器始终假定为准备好进行数据传输。
+
+以下关于 DMA 传输、块传输和 AXI 传输的描述均适用于存储器和外设。\textbf{transaction 级别的描述只适用于 VDMA 与外设之间的传输。}
+
+\begin{itemize}
+    \item \textbf{DMA 传输}：软件决定 DMA 传输中的块数。DMA 传输完成后，VDMA 会禁用通道并产生中断。然后可以对通道重新配置用以进行新的 DMA 传输。DMA 传输可能是单块传输，也可能是多块传输。
+
+    \item \textbf{块传输}：块传输传输的是一个 VDMA 数据块，其数量由块长度表示，由流控制器决定。块传输有两种类型：单块传输和多块传输。由图 \ref{fig:VDMA-hier-non-mem} 可知，一个块传输可能由多个 transaction（事务传输）组成。
+
+    \item \textbf{transaction（事务传输）}：一次外设请求是单次 transaction 或突发 transaction，表示需要一个 AXI 单次传输或多个 AXI 突发传输。
+
+        \begin{itemize}
+            \item 单次 transaction：长度始终为 1，单位为 \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH}。
+            \item 突发 transaction：长度通过源的 \hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE} 或目标的 \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE} 被写到 VDMA 中，通常与源或目标外设中的 FIFO 大小有某种关系。具体请参考各外设章节。
+        \end{itemize}
+    \item \textbf{AXI 传输}：指的是 AXI 协议的传输，分为 AXI 单次传输和 AXI 突发传输。
+    \end{itemize}
+
+\begin{figure}[H]
+     \centering   \includegraphics[width=\linewidth]{\modulefiles/figures/VDMA-Hier-Non-Mem-cn.pdf}
+     \caption{外设的传输层次结构}
+     \label{fig:VDMA-hier-non-mem}
+ \end{figure}
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=0.9\linewidth]{\modulefiles/figures/VDMA-Hier-Mem-cn.pdf}
+     \caption{存储器的传输层次结构}
+     \label{fig:VDMA-hier-mem}
+ \end{figure}
+
+\subsection{仲裁机制}
+
+仲裁机制对所有通道的读请求和写请求进行仲裁。
+
+VDMA 采用优先级和公平平等 (fair-among-equals) 的仲裁机制。每个通道的优先级可在通道配置寄存器 \hyperref[regdesc:DMACCHNCFG1REG]{DMAC\_CH\regindex{n}\_CFG1\_REG} 中定义。
+
+优先级的范围是 0（最低）到 3（最高），多个通道可以被赋予相同的优先级。
+
+优先级和公平平等仲裁的仲裁机制工作原理如下：
+
+\begin{itemize}
+    \item 根据请求的优先级决定向哪个请求客户端发出授权信号。具有最高优先级的请求将被授予访问通道的权限。
+
+    \item 两个或多个请求具有相同的优先级时，具有相同优先级的请求客户端将随机地获得权限。
+\end{itemize}
+
+\subsubsection{读仲裁器}
+
+读仲裁器仲裁的是读请求，包括：
+
+\begin{itemize}
+    \item VDMA 获取源的数据或状态的读请求 (Source Data/Status Read Request)
+    \item VDMA 获取目标的状态的读请求 (Destination Status Read Request)
+    \item VDMA 获取链表描述符的读请求 (LLI Descriptor Read Request)
+\end{itemize}
+
+读仲裁器的示意图如图 \ref{fig:VDMA-read-arb} 所示。
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=1.0\linewidth]{\modulefiles/figures/VDMA-Read-Arb.pdf}
+     \caption{VDMA 读仲裁器}
+     \label{fig:VDMA-read-arb}
+ \end{figure}
+
+无论通道是否配置为最大优先级，获取链表描述符的读请求都将优先获得仲裁权限。
+
+\subsubsection{写仲裁器}
+
+写仲裁器仲裁的是写请求，包括：
+
+\begin{itemize}
+    \item 目标数据写请求 (Destination Data Write Request)
+    \item 链表描述符回写请求 (LLI Descriptor Write-Back Request)
+\end{itemize}
+
+写仲裁器的示意图如图 \ref{fig:VDMA-write-arb} 所示。
+
+\begin{figure}[H]
+     \centering
+     \includegraphics[width=1.0\linewidth]{\modulefiles/figures/VDMA-Write-Arb.pdf}
+     \caption{VDMA 写仲裁器}
+     \label{fig:VDMA-write-arb}
+\end{figure}
+
+在相同的通道中，目标数据写请求优先级高于链表描述符回写的优先级；如果不同通道具有相同的优先级，则目标数据写请求具有最高优先级。
+
+\subsection{握手接口}
+
+外设使用握手接口向 VDMA 表明它已准备好通过 AXI 总线来传输或接收数据。握手接口的操作取决于流控制器是外设还是 VDMA。
+
+VDMA 在每次握手时执行一次单次 transaction 或突发 transaction。在某些情况下，仅使用突发 transaction 无法完成块传输。这种情况通常发生在块大小不是突发 transaction 长度的整数倍时。在这种情况下，块传输使用突发 transaction，直到块的剩余大小小于突发 transaction 中的数据量为止。此时，使用单次 transaction 完成块传输。
+
+源的突发 transaction 大小由 \hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE} 决定，目标的突发 transaction 大小由 \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE} 决定，这也是用于每次握手的突发 transaction 的大小。\hyperref[fielddesc:DMACCHNSRCMSIZE]{DMAC\_CH\regindex{n}\_SRC\_MSIZE} 或 \hyperref[fielddesc:DMACCHNDSTMSIZE]{DMAC\_CH\regindex{n}\_DST\_MSIZE} 的值应与外设的配置一致。更多信息，请参考相关外设章节。
+
+VDMA 与 MIPI DSI、ISP （ISP 到存储器）和 ISP（存储器到 ISP）之间有 3 个握手接口。表 \ref{tab:VDMA-hw-hs} 说明了握手接口和外设之间的映射关系。
+
+\subsection{传输控制}
+
+传输控制方便将数据从源搬运到目标。来自源的数据在被发送到目标之前暂时存储在通道的 FIFO 中。如果源和目标使用不同的传输大小进行数据传输，VDMA 将数据进行打包和解包，以适应 FIFO 的配置。
+
+对于特定的 DMA 传输，传输类型和流控制配置由 \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC} 决定。
+
+\subsubsection{单块传输}
+
+如果一个 DMA 传输仅由单个块组成，软件可以将 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 设置为 0，将 VDMA 配置为连续地址的单块传输。此时，VDMA 在完成 \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS} 定义的块长度传输时，将禁用通道。
+
+\begin{tiplisting}
+    单块传输其实只是多块传输的一种特例，两者并无严格区分。在本文档中，单块传输指的是只有一个块，多块传输至少包含两个块。
+\end{tiplisting}
+
+\subsubsection{多块传输}
+
+如果一个 DMA 传输包含多个块，软件可以配置 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 来选择多块传输类型。根据控制传输的寄存器（\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、 \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、 \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0/1\_REG}）的更新方式不同，共有以下四种多块传输类型：
+\begin{enumerate}
+    \item 连续地址
+    \item 自动重新加载，寄存器的值从初始值重新加载
+    \item 影子寄存器，寄存器的值从影子寄存器加载
+    \item 链表，寄存器的值从下一个链表加载
+\end{enumerate}
+表 \ref{tab:VDMA-reg-upd-methd} 列出了寄存器更新方法的所有可能组合。
+
+\begin{small}
+\begin{longtable}{ | L{2.3cm} |L{2.3cm}| L{1.8cm} | L{1.8cm} | L{2.2cm} | L{1.8cm} | L{2cm} | }
+
+\caption{多块传输寄存器更新方法}
+
+\label{tab:VDMA-reg-upd-methd} \\
+\hline
+\rowcolor{lightgray}
+
+\multicolumn{2}{|c|}{\textbf{\hyperref[regdesc:DMACCHNCFG0REG]{DMAC\_CH\regindex{n}\_CFG0\_REG}}} & \multicolumn{4}{|c|}{\textbf{寄存器更新方法}} & \\ \cline{1-6}
+\rowcolor{lightgray}
+
+\textbf{\hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{\makecell[l]{DMAC\_CH\regindex{n}\_\\SRC\_MULTBLK\_\\TYPE}}} & \textbf{\hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{\makecell[l]{DMAC\_CH\regindex{n}\_\\DST\_MULTBLK\_\\TYPE}}} & \textbf{\hyperref[regdesc:DMACCHNSAR0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\SAR0\_REG}}} & \textbf{\hyperref[regdesc:DMACCHNDAR0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\DAR0\_REG}}} & \textbf{\hyperref[regdesc:DMACCHNCTL0REG]{\makecell[l]{DMAC\_CH\regindex{n}\_\\CTL0\_REG}}/\hyperref[regdesc:DMACCHNCTL1REG]{CTL1\_REG}} & \textbf{\hyperref[fielddesc:DMACCHNBLOCKTS]{\makecell[l]{DMAC\_CH\regindex{n}\_\\BLOCK\_TS}}} & \textbf{说明} \\ \hline
+00 & 00 & 连续地址 & 连续地址 & 不更新 & 不更新 & 单块或多块的最后一块  \\ \hline
+00 & 01 & 连续地址 & 从初始值重新加载 & 从初始值重新加载 & 从初始值重新加载 & -  \\ \hline
+00 & 10 & 连续地址 & 从影子寄存器加载 & 从影子寄存器加载 & 从影子寄存器加载 & -  \\ \hline
+01 & 00 & 从初始值重新加载 & 连续地址 & 从初始值重新加载 & 从初始值重新加载 & -  \\ \hline
+01 & 01 & 从初始值重新加载 & 从初始值重新加载 & 从初始值重新加载 & 从初始值重新加载 & -  \\ \hline
+01 & 10 & 从初始值重新加载 & 从影子寄存器加载 & 从影子寄存器加载 & 从影子寄存器加载 & -  \\ \hline
+10 & 00 & 从影子寄存器加载 & 连续地址 & 从影子寄存器加载 & 从影子寄存器加载 & -  \\ \hline
+10 & 01 & 从影子寄存器加载 & 从初始值重新加载 & 从影子寄存器加载 & 从影子寄存器加载 & -  \\ \hline
+10 & 10 & 从影子寄存器加载 & 从影子寄存器加载 & 从影子寄存器加载 & 从影子寄存器加载 & -  \\ \hline
+00 & 11 & 连续地址 & 从下一个链表加载 & 从下一个链表加载 & 从下一个链表加载 & -  \\ \hline
+01 & 11 & 从初始值重新加载 & 从下一个链表加载 & 从下一个链表加载 & 从下一个链表加载 & -  \\ \hline
+11 & 00 & 从下一个链表加载 & 连续地址 & 从下一个链表加载 & 从下一个链表加载 & -  \\ \hline
+11 & 01 & 从下一个链表加载 & 从初始值重新加载 & 从下一个链表加载 & 从下一个链表加载 & -  \\ \hline
+11 & 11 & 从下一个链表加载 & 从下一个链表加载 & 从下一个链表加载 & 从下一个链表加载 & -  \\ \hline
+10 & 11 & - & - & - & - & 无效。生成中断* \\ \hline
+11 & 10 & - & - & - & - & 无效。生成中断*\\ \hline
+
+\end{longtable}
+\end{small}
+\vspace{-1em}
+*说明：生成的中断为 \hyperref[int:DMACCHNSLVIFMULTIBLKTYPEERRINT]{DMAC\_CH\regindex{n}\_SLVIF\_MULTIBLKTYPE\_ERR\_INT}。
+
+\subparagraph{连续地址}
+
+在这种情况下，每个连续块的地址从前一个块的结束地址开始。配置 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 或 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 为 0 使源地址或目标地址在块之间连续。
+
+在多块传输的情况下，\hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 的值不能同时被选择为连续地址，即不能同时为 0。若某一块传输过程中 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 都被配置成了 0，那么当前传输就会被认为是最后一个块。
+
+在多块传输中，如果需要 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG} 在块之间地址连续，可以通过使用链表或影子寄存器间接实现此功能。
+
+\begin{tiplisting}
+如果启用了基于连续地址的多块传输（即 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 或 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 为 0），则在完整的 DMA 传输中必须至少有两个块，否则会导致不可预测的行为。
+
+\end{tiplisting}
+
+\subparagraph{从初始值重新加载}
+
+在这种情况下，\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG} 通道寄存器在新的块传输开始时从它们的初始值重新加载。
+VDMA 不会进行下一个块传输，直到软件清除相应通道的块传输完成中断，即将 \hyperref[fielddesc:DMACCHNCLEARSRCTRANSCOMPINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_SRC\_TRANSCOMP\_INTSTAT} 和 \hyperref[fielddesc:DMACCHNCLEARDSTTRANSCOMPINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_DST\_TRANSCOMP\_INTSTAT} 置为 1。
+
+\begin{tiplisting}
+    如果启用了基于自动重新加载的多块传输，则在完整的 DMA 传输中必须至少有两个块，否则会导致不可预测的行为。
+\end{tiplisting}
+
+\subparagraph{从影子寄存器加载}
+
+在这种情况下，\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 在每个块完成时与它们对应的影子寄存器进行同步。影子寄存器的值将用于后续的块。
+
+软件将对应块的配置写到相应的影子寄存器。在完成上一个块传输时，VDMA 将影子寄存器的内容复制到 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 然后再开始新的块传输。
+
+对 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 的读操作总是返回与当前块传输对应的数据，而不是对应下一个块的影子寄存器的内容。
+
+\hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 指示影子寄存器的内容是否有效（1 为有效，0 为无效）。如果在影子寄存器获取阶段，此位的值为 0，VDMA 将忽略影子寄存器的内容并生成 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断。VDMA 等待软件将 1 写入 \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} 以指示影子寄存器可用，然后再尝试读取影子寄存器以继续下一个块传输。
+\begin{tiplisting}
+    在从影子寄存器加载的多块传输下，\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\\\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}、\hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 寄存器里的实际值是当前传输对应的配置。软件写这些寄存器其实是写到对应的影子寄存器里面。
+\end{tiplisting}
+
+\subparagraph{链表}
+
+在这种情况下，VDMA 会从存储器中获取某个块的块描述符，用来更新 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}、\hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}，然后再发起块传输。这个过程被称为 LLI（链表项）更新。VDMA 的块链 (block chaining) 特性使用链表指针寄存器 \hyperref[fielddesc:DMACCHNLOC0]{DMAC\_CH\regindex{n}\_LOC0} 来存储下一个链表项在存储器中的地址，以此实现数据传输的无缝连续。
+图 \ref{fig:VDMA-lli} 显示了 VDMA 链表项。
+
+\begin{figure}[H]
+    \centering
+    \begin{bytefield}[bitwidth=1.2em, boxformatting={\centering\small}, leftcurly=., leftcurlyspace=0pt]{32}
+        \bitheader[bitformatting={\scriptsize}]{0,31} \\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_LLP\_STATUS[63:32]}\\
+        \bitbox{32}{CHn\_LLP\_STATUS[31:0]}\\
+        \bitbox{32}{Write Back for CHn\_DSTAT}\\
+        \bitbox{32}{Write Back for CHn\_SSTAT}\\
+        \bitbox{32}{CHn\_CTL1[31:0]}\\
+        \bitbox{32}{CHn\_CTL0[31:0]}\\
+        \bitbox{32}{Reserved}\\
+            \bitbox{26}{CHn\_LLP0[31:6]} & \bitbox{6}{Reserved[5:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_BLOCK\_TS[31:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_DAR[31:0]}\\
+        \bitbox{32}{Reserved}\\
+        \bitbox{32}{CHn\_SAR[31:0]}
+    \end{bytefield}
+    \caption{VDMA 链表项}
+    \label{fig:VDMA-lli}
+\end{figure}
+
+VDMA 具有动态扩展链表的特性，不需要提前在系统内存中创建整个链表。要实现此功能，可以将 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 配置为 1，如果链表项是最后一个则 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 也应配置为 1。
+
+对于基于链表的多块传输，\hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 用来指示从存储器中获取的链表项是否有效（1 为有效，0 为无效）。如果 LLI 无效，VDMA 将丢弃 LLI 并生成 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断。此中断会导致 VDMA 停止相应的通道，等待软件将 \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} 写为 1 以指示 LLI 可用，然后再尝试读取 LLI。
+
+\begin{tiplisting}
+    对于预取的 LLI，如果 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 为 0，则不会生成\\ \hyperref[fielddesc:DMACCHNSHADOWREGORLLIINVALIDERRINTSTAT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} 中断。VDMA 在完成当前块传输后，再次尝试获取 LLI，只有当 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 仍然为 0 时，才会生成\\ \hyperref[fielddesc:DMACCHNSHADOWREGORLLIINVALIDERRINTSTAT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} 中断。
+\end{tiplisting}
+
+下列 LLI 字段由软件准备：
+
+\begin{itemize}
+    \item CH\regindex{n}\_SAR：字段描述同 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG}
+    \item CH\regindex{n}\_DAR：字段描述同 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}
+    \item CH\regindex{n}\_BLOCK\_TS：字段描述同 \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}
+    \item CH\regindex{n}\_LLP0[31:6]：字段描述同 \hyperref[regdesc:DMACCHNLLP0REG]{DMAC\_CH\regindex{n}\_LLP0\_REG}[31:6]
+    \item CH\regindex{n}\_CTL0：字段描述同 \hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}
+    \item CH\regindex{n}\_CTL1：字段描述同 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}
+\end{itemize}
+
+如果启用了状态回写选项，VDMA 将 CH\regindex{n}\_CTL0、CH\regindex{n}\_CTL1、CH\regindex{n}\_LLP\_STATUS、CH\regindex{n}\_SSTAT 和 CH\regindex{n}\_DSTAT 信息回写到为该字段定义的位置，即从地址[CH\regindex{n}\_LLP] + 0x20 到 [CH\regindex{n}\_LLP] + 0x34。CH\regindex{n}\_SSTAT 和 CH\regindex{n}\_DSTAT 的回写可以通过配置 \hyperref[fielddesc:DMACCHNSRCSTATEN]{DMAC\_CH\regindex{n}\_SRC\_STAT\_EN} 和 \hyperref[fielddesc:DMACCHNDSTSTATEN]{DMAC\_CH\regindex{n}\_DST\_STAT\_EN} 单独启用或禁用。
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 如果 CH\regindex{n}\_SSTAT 和 CH\regindex{n}\_DSTAT 回写没有启用，不要使用 PSRAM 来存储 LLI。
+    \item LLI 回写操作后，\hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 将为 0。
+\end{itemize}
+
+\end{tiplisting}
+
+图 \ref{fig:VDMA-llp} 显示了 CH\regindex{n}\_LLP\_STATUS 回写字段：
+
+\begin{figure}[H]
+
+    \begin{bytefield}[bitwidth=0.75em, bitheight=3em, boxformatting={\centering\small}, leftcurly=., leftcurlyspace=0pt]{64}
+        \bitheader[bitformatting={\scriptsize}]{0,63} \\
+        \bitbox{2}{\textbf{*}} & \bitbox{15}{Reserved[61:47]} & \bitbox{15}{Data Left in Channel FIFO (CHn\_Status[46:32])} & \bitbox{10}{Reserved[31:22]} & \bitbox{22}{Completed Block Transfer Size (CHn\_Status[21:0])}
+    \end{bytefield}
+说明：\textbf{*} 代表 Status Indication (CHn\_IntStatus[1:0])
+    \caption{CH\regindex{n}\_LLP\_STATUS 回写字段}
+    \label{fig:VDMA-llp}
+\end{figure}
+
+CH\regindex{n}\_LLP\_STATUS[63] 和 CH\regindex{n}\_LLP\_STATUS[62] 分别表示 DMA\_TFR\_DONE 和 BLOCK\_TFR\_DONE 状态。这两个字段是 LLI 回写过程中最后更新的字段。软件应该确保 BLOCK\_TFR\_DONE 为 1 再使用 CH\regindex{n}\_SSTAT 和 CH\regindex{n}\_DSTAT 信息。 DMA\_TFR\_DONE 和 BLOCK\_TFR\_DONE 在传输最后一个块后会被置为 1。
+
+CH\regindex{n}\_STATUS[21:0] 对应 \hyperref[regdesc:DMACCHNSTATUS0REG]{DMAC\_CH\regindex{n}\_CMPLTD\_BLK\_TFR\_SIZE}。CH\regindex{n}\_STATUS[46:32] 对应 \hyperref[regdesc:DMACCHNSTATUS1REG]{DMAC\_CH\regindex{n}\_DATA\_LEFT\_IN\_FIFO[14:0]}。
+\subparagraph{块间传输暂停}
+
+在每个块传输结束时，如果满足以下条件，则产生块传输完成中断 \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT}：
+\begin{itemize}
+    \item 使能全局中断（\hyperref[fielddesc:DMACINTEN]{DMAC\_INT\_EN} 置 1）
+    \item 使能通道块传输完成中断（\hyperref[fielddesc:DMACCHNENABLEBLOCKTFRDONEINTSTAT] {DMAC\_CH\regindex{n}\_ENABLE\_BLOCK\_TFR\_DONE\_INTSTAT} 置 1，\hyperref[fielddesc:DMACCHNENABLEBLOCKTFRDONEINTSIGNAL]{DMAC\_CH\regindex{n}\_ENABLE\_BLOCK\_TFR\_DONE\_INTSIGNAL} 置 1，\hyperref[fielddesc:DMACCHNIOCBLKTFR]{DMAC\_CH\regindex{n}\_IOC\_BLKTFR} 置 1）
+\end{itemize}
+
+对于基于连续地址和自动重新加载的多块传输（源和目标外设都不使用基于影子寄存器或链表的多块传输），DMA 传输会在中断  \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} 置 1 后自动停止。VDMA 不会继续进行下一个块传输，直到软件将 \hyperref[fielddesc:DMACCHNCLEARBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_CLEAR\_BLOCK\_TFR\_DONE\_INTSTAT} 置 1 清除中断。
+
+块之间的通道暂停用于确保倒数第二个块的块传输完成 ISR（中断服务例程）在最后一个块传输开始之前得到响应。这确保 ISR 在最后一个块传输完成之前清零 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE}。
+
+\subparagraph{多块传输结束}
+
+如果源外设或目标外设使用基于影子寄存器或链表的多块传输，则指示位 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 表明当前块是否是最后一个。如果 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 为 1，VDMA 认为当前块是最后一块，并在当前块传输结束时完成 DMA 传输操作。
+
+对于基于连续地址和自动重新加载的多块传输（源和目标外设都不使用基于影子寄存器或链表的多块传输），如果对应的多块类型寄存器 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和/或 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 在块传输结束时为 0，VDMA 认为前一个块为最后一个块，并完成 DMA 传输操作。
+
+\subsection{流控制器}
+
+DMA 块传输的长度由流控制器决定。流控制器可以是 VDMA、源或目标外设，存储器不能用作流控制器。
+
+如果在启用通道之前知道块的长度，那么应该将 VDMA 配置为流控制器。如果在启用通道之前不知道块的长度，源或目标外设应该被配置为流控制器，并由其决定何时终止 DMA 块传输。
+
+\subsection{通道挂起和恢复}
+
+软件可以在 DMA 传输时挂起和恢复通道。挂起通道的操作如下：
+\begin{enumerate}
+    \item 软件将 \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} 置为 1。
+    \item VDMA 在完成源已发起的所有 AXI 传输后，暂停来自源的所有传输。
+    \item VDMA 将 \hyperref[int:DMACCHNCHSRCSUSPENDEDINT]{DMAC\_CH\regindex{n}\_CH\_SRC\_SUSPENDED\_INT} 置为 1 表示源传输被挂起并产生一个挂起中断。
+
+    \item VDMA 将通道 FIFO 里的数据全部传输给目标。当 \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 并且 \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} 为 1 时，通道 FIFO 中可能还有数据，但不足以形成一次 \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 宽度的单次传输。当通道恢复后，FIFO 中剩余的数据会被传输到目标。
+
+    \item VDMA 将 \hyperref[int:DMACCHNCHSUSPENDEDINT]{DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INT} 置为 1 表示通道被挂起，并产生中断。
+
+\end{enumerate}
+
+通道被挂起后，软件可以将 \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} 置 0，退出通道挂起模式。然后 VDMA 将恢复 DMA 传输。
+
+\subsection{通道禁用}
+
+在正常情况下，软件通过将 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 置为 1 来启用一个通道，VDMA 在通道传输结束时清零 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN}。软件可以在传输完成之前禁用通道。
+
+\subsubsection{传输完成前禁用被挂起的通道}
+
+要在传输完成前禁用被挂起的通道：
+
+\begin{itemize}
+    \item 在 VDMA 将 \hyperref[int:DMACCHNCHSUSPENDEDINT]{DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INT} 置 1 后将 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 置为 0。当 \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 并且 \hyperref[fielddesc:DMACCH1SUSP]{DMAC\_CH\regindex{n}\_SUSP} 为 1 时，通道 FIFO 中可能还有数据，但不足以形成一次 \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 宽度的单次传输。在这种情况下，FIFO 中剩余的数据不会被传输到目标，会丢失。
+
+    \item VDMA 将 \hyperref[int:DMACCHNCHDISABLEDINT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT} 置为 1 表示通道被禁用，并产生中断。
+
+\end{itemize}
+
+\subsubsection{传输完成前禁用未被挂起的通道}
+
+要在传输完成前禁用未被挂起的通道：
+
+\begin{itemize}
+    \item 软件在 DMA 传输时将 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 置 0。
+    \item VDMA 在完成源已发起的所有 AXI 传输后，停止来自源的所有传输。
+    \item VDMA 将通道 FIFO 里的数据全部传输给目标。当 \hyperref[fielddesc:DMACCHNSRCTRWIDTH]{DMAC\_CH\regindex{n}\_SRC\_TR\_WIDTH} < \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 并且 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 为 0 时，通道 FIFO 中可能还有数据，但不足以形成一次 \hyperref[fielddesc:DMACCHNDSTTRWIDTH]{DMAC\_CH\regindex{n}\_DST\_TR\_WIDTH} 宽度的单次传输。在这种情况下，FIFO 中剩余的数据不会被传输到目标，会丢失。
+    \item VDMA 将 \hyperref[int:DMACCHNCHDISABLEDINT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT} 置为 1 表示通道被禁用，并产生中断。
+
+\end{itemize}
+
+\begin{tiplisting}
+    一旦软件将 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 置 0，发起了通道禁用程序，用户无法在 \hyperref[int:DMACCHNCHDISABLEDINT]{DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT} 置 1 之前将 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 置 1 来重新使能通道。VDMA 会忽略这个写操作。
+\end{tiplisting}
+
+\subsection{低功耗技术}
+
+VDMA 支持低功耗技术，这是一种智能低功耗逻辑，可以在各种场景下自动感知多个 DMA 通道、从机总线接口和 AXI 主机接口通道上的空闲时间，然后切断这些模块的时钟，从而降低总体功耗。低功耗逻辑反应迅速，可以在监测到任何活动时向这些模块提供时钟，而不会影响性能。
+
+\hyperref[regdesc:DMACLOWPOWERCFG0REG]{DMAC\_LOWPOWER\_CFG0\_REG} 可以用来启用低功耗并控制低功耗计数器。
+
+\subsubsection{DMA 通道低功耗技术}
+
+DMA 通道占用了 VDMA 上的大部分面积，比其他模块消耗更多的功耗，因此更加需要优化其功耗。
+
+DMA 通道低功耗技术使用 DMA 通道低功耗状态机监测通道上的活动。每当监测到 DMA 通道的低功耗条件时，DMA 通道低功耗延迟计数器就开始启动。状态机等待直到计数器到期，然后 DMA 通道通过关闭 VDMA 的时钟 AXI\_DMAC\_CORE\_CLK 进入低功耗状态。DMA 通道一直保持这个状态，直到在通道上检测到任何活动。在某些情况下，如果在延迟计数器运行时监测到活动，则计数器将重置并停止计数，直到再次检测到低功耗条件。
+\subsubsection{从机总线接口上的低功耗技术}
+
+从机总线接口单元 (SBIU) 通过 APB3 从机接口访问 VDMA 的内部寄存器。低功耗技术可以优化 SBIU 的功耗。
+
+从机总线接口上的低功耗技术使用 SBIU 状态机监测从机总线接口上的活动。一旦检测到低功耗条件（即没有 APB 读写传输正在进行并且 SBIU 状态机处于空闲状态），SBIU 低功耗延迟计数器将开始计数。当延迟计数器到期时，SBIU 通过关闭 PCLK 或 AXI\_DMAC\_CORE\_CLK（根据时钟模式配置）进入低功耗状态。SBIU 一直保持这种状态，直到在从机总线接口上检测到读或写传输。在某些情况下，如果在延迟计数器运行时监测到传输，则计数器将重置并停止计数，直到再次检测到低功耗条件。
+
+如果在 SBIU 处于低功耗状态时检测到读或写传输，则低功耗逻辑会立即响应，打开 PCLK 或 AXI\_DMAC\_CORE\_CLK 从而退出低功耗状态。
+
+\subsubsection{AXI 主机接口通道上的低功耗技术}
+
+AXI 主机接口通过 AXI 总线在存储器和外设之间传输数据。
+
+每当检测到 AXI 主机接口通道上的低功耗条件时，AXI 主机接口通道低功耗延迟计数器开始计时。AXI 低功耗逻辑等待直到延迟计数器到期，然后 AXI 主机接口通道关闭 AXI 主机接口的时钟和 AXI\_DMAC\_CORE\_CLK 进入低功耗状态。AXI 主机接口通道一直保持这个状态，直到在通道上检测到任何活动。在某些情况下，如果在延迟计数器运行时监测到活动，则计数器将重置并停止计数，直到再次检测到低功耗条件。
+
+\subsubsection{全局低功耗技术}
+
+全局低功耗技术根据 DMA 通道、从机总线接口和 AXI 主机接口通道的空闲状态实现低功耗选项。如果上述模块都指示 VDMA 处于空闲状态，则全局低功耗延迟计数器将启动。
+
+全局低功耗逻辑等待直到低功耗延迟计数器到期，然后 VDMA 关闭所有模块的时钟来进入低功耗状态。VDMA 一致保持这个状态，直到在任意模块上检测到任何活动。在某些情况下，如果在延迟计数器运行时监测到活动，则计数器将重置并停止计数，直到再次检测到低功耗条件。
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的 VDMA 可以生成 AXI\_DMAC\_INTR 中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+中断信号由 VDMA 的内部中断源生成。
+\begin{itemize}
+    \item 一般中断：
+    \begin{itemize}
+        \item \label{int:DMACSLVIFUNDEFINEDREGDECERRINT}DMAC\_SLVIF\_UNDEFINEDREG\_DEC\_ERR\_INT：从机接口未定义寄存器解码错误中断
+        \item \label{int:DMACSLVIFCOMMONREGRD2WOERRINT}DMAC\_SLVIF\_COMMONREG\_RD2WO\_ERR\_INT：从机接口一般寄存器读入只写错误中断
+        \item \label{int:DMACSLVIFCOMMONREGWR2ROERRINT}DMAC\_SLVIF\_COMMONREG\_WR2RO\_ERR\_INT：从机接口一般寄存器写到只读错误中断
+        \item \label{int:DMACSLVIFCOMMONREGDECERRINT}DMAC\_SLVIF\_COMMONREG\_DEC\_ERR\_INT：从机接口一般寄存器解码错误中断
+    \end{itemize}
+
+    \item 通道中断 (\regindex{n} = 1 \verb+~+ 4)：
+
+    \begin{itemize}
+        \item \label{int:DMACCHNCHABORTEDINT}DMAC\_CH\regindex{n}\_CH\_ABORTED\_INT：通道中止中断
+        \item \label{int:DMACCHNCHDISABLEDINT}DMAC\_CH\regindex{n}\_CH\_DISABLED\_INT：通道禁用中断
+        \item \label{int:DMACCHNCHSUSPENDEDINT}DMAC\_CH\regindex{n}\_CH\_SUSPENDED\_INT：通道挂起中断
+        \item \label{int:DMACCHNCHSRCSUSPENDEDINT}DMAC\_CH\regindex{n}\_CH\_SRC\_SUSPENDED\_INT：通道源挂起中断
+        \item \label{int:DMACCHNSLVIFSHADOWREGWRONVALIDERRINT}DMAC\_CH\regindex{n}\_SLVIF\_SHADOWREG\_WRON\_VALID\_ERR\_INT：影子寄存器写有效错误中断
+        \item \label{int:DMACCHNSLVIFWRONCHENERRINT}DMAC\_CH\regindex{n}\_SLVIF\_WRONCHEN\_ERR\_INT：从机接口写启用通道错误中断
+        \item \label{int:DMACCHNSLVIFRD2RWOERRINT}DMAC\_CH\regindex{n}\_SLVIF\_RD2RWO\_ERR\_INT：从机接口读到只写错误中断
+        \item \label{int:DMACCHNSLVIFWR2ROERRINT}DMAC\_CH\regindex{n}\_SLVIF\_WR2RO\_ERR\_INT：从机接口写入只读错误中断
+        \item \label{int:DMACCHNSLVIFDECERRINT}DMAC\_CH\regindex{n}\_SLVIF\_DEC\_ERR\_INT：从机接口解码错误中断
+        \item \label{int:DMACCHNSLVIFMULTIBLKTYPEERRINT}DMAC\_CH\regindex{n}\_SLVIF\_MULTIBLKTYPE\_ERR\_INT：从机接口多块类型错误中断
+        \item \label{int:DMACCHNSHADOWREGORLLIINVALIDERRINT}DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT：影子寄存器或 LLI 无效错误中断
+        \item \label{int:DMACCHNLLIWRSLVERRINT}DMAC\_CH\regindex{n}\_LLI\_WR\_SLV\_ERR\_INT：LLI 写从机错误中断
+        \item \label{int:DMACCHNLLIRDSLVERRINT}DMAC\_CH\regindex{n}\_LLI\_RD\_SLV\_ERR\_INT：LLI 读从机错误中断
+        \item \label{int:DMACCHNLLIWRDECERRINT}DMAC\_CH\regindex{n}\_LLI\_WR\_DEC\_ERR\_INT：LLI 写解码错误中断
+        \item \label{int:DMACCHNLLIRDDECERRINT}DMAC\_CH\regindex{n}\_LLI\_RD\_DEC\_ERR\_INT：LLI 读解码错误中断
+        \item \label{int:DMACCHNDSTSLVERRINT}DMAC\_CH\regindex{n}\_DST\_SLV\_ERR\_INT：目标从机错误中断
+        \item \label{int:DMACCHNSRCSLVERRINT}DMAC\_CH\regindex{n}\_SRC\_SLV\_ERR\_INT：源从机错误中断
+        \item \label{int:DMACCHNDSTDECERRINT}DMAC\_CH\regindex{n}\_DST\_DEC\_ERR\_INT：目标解码错误中断
+        \item \label{int:DMACCHNSRCDECERRINT}DMAC\_CH\regindex{n}\_SRC\_DEC\_ERR\_INT：源解码错误中断
+        \item \label{int:DMACCHNDSTTRANSCOMPINT}DMAC\_CH\regindex{n}\_DST\_TRANSCOMP\_INT：目标传输完成中断
+        \item \label{int:DMACCHNSRCTRANSCOMPINT}DMAC\_CH\regindex{n}\_SRC\_TRANSCOMP\_INT：源传输完成中断
+        \item \label{int:DMACCHNDMATFRDONEINT}DMAC\_CH\regindex{n}\_DMA\_TFR\_DONE\_INT：DMA 传输完成中断
+        \item \label{int:DMACCHNBLOCKTFRDONEINT}DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT：块传输完成中断
+    \end{itemize}
+\end{itemize}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:vdma-prog-procedures}
+
+\subsection{通用配置流程}
+
+以下两个步骤是通用的配置流程，应在进行其他配置之前执行。
+
+\begin{enumerate}
+    \item 配置 \hyperref[fielddesc:HPSYSCLKRSTGDMASYSCLKEN]{HP\_SYS\_CLKRST\_GDMA\_SYS\_CLK\_EN} 为 1，使能 VDMA 的总线时钟。
+    \item 通过 \hyperref[regdesc:TEEDMAGDMACHNWPMSREG]{TEE\_DMA\_GDMA\_CH\regindex{n}\_W\_PMS} 和 \hyperref[regdesc:TEEDMAGDMACHNRPMSREG]{TEE\_DMA\_GDMA\_CH\regindex{n}\_R\_PMS} 配置 VDMA 的访问权限。更多信息请查看章节 \ref{mod:permctrl} \textit{\nameref{mod:permctrl}}。
+\end{enumerate}
+
+\subsection{配置基于影子寄存器的多块传输}
+\begin{enumerate}
+    \item 读取 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 选择一个可用的通道。
+
+    \item 配置 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和/或 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 为 2，选择源传输和/或目标传输为基于影子寄存器的多块传输。
+
+    \item 通过 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}、\hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 配置第一个块。VDMA 将这些值加载到相应的影子寄存器。
+
+    \textbf{注意}：必须最后再将 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 的 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 位配置为 1。
+
+
+    \item 配置 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 为 1，使能相应通道。
+
+    \item VDMA 根据配置发起 DMA 块传输操作。
+
+        \begin{itemize}
+        \item 块传输可能立即启动，也可能在握手请求之后启动，这取决于 \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC}。具体为，
+        \begin{itemize}
+            \item 当源是存储器的时候，源传输就立即启动；当目标是存储器的时候，目标传输就立即启动。
+            \item 当源是外设时，从源获取数据需要等待与源的握手之后；当目标是外设时，往目标写入数据需要等待与目标的握手之后。
+        \end{itemize}
+
+        \item VDMA 检查 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 的值，如果为 0，VDMA 等待 \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} 置 1 来指示影子寄存器可用，然后再次尝试影子寄存器获取操作。在这种情况下，VDMA 可能生成 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断。
+        \item VDMA 检查 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 的值，如果为 1，VDMA 将影子寄存器内容复制到用于执行 DMA 传输的寄存器中（\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}），并且清零 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID}。
+            \begin{itemize}
+            \item 如果 VDMA 读到 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 为 1，则认为当前块是最后一块，并在当前块传输结束时完成 DMA 传输操作。
+            \item 如果 VDMA 读到 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 为 0，则认为还有一个或多个块需要传输，并在当前块传输结束时再次检查 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID}。
+        \end{itemize}
+    \end{itemize}
+
+    \item 软件等待 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 自动清零。
+
+    \item 通过 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG}、\hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 配置下一个块的信息。若下一个块是最后一个块，需要将 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 配置为 1。
+
+    \textbf{注意}：必须最后再将 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 配置为 1。
+
+    \item 软件等待 \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} 中断，或者轮询块传输完成状态指示位 \hyperref[fielddesc:DMACCHNBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INTSTAT} 直到读到 1。之后回到步骤 6 循环。
+
+
+\end{enumerate}
+
+\textbf{说明：}
+如果产生了 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断，推荐按照以下步骤恢复传输：
+
+\begin{itemize}
+    \item 通过 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG} 配置下一个块。
+    \item 配置 \hyperref[fielddesc:DMACCHNCLEARSHADOWREGORLLIINVALIDERRINTSTAT] {DMAC\_CH\regindex{n}\_CLEAR\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INTSTAT} 清除中断。
+    \item 配置 \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} 为 1 请求恢复块传输。
+\end{itemize}
+
+\subsection{配置基于链表的多块传输}
+\begin{enumerate}
+    \item 读取 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 选择一个可用的通道。
+    \item 配置 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和/或 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 为 3，选择源传输和/或目标传输为基于链表的多块传输。
+    \item 通过 \hyperref[regdesc:DMACCHNLLP0REG]{DMAC\_CH\regindex{n}\_LLP0\_REG} 配置第一个链表项的基地址，以及链表所在的主机接口。
+    \item 在系统存储器中创建一个或多个链表项。可以提前创建这个链表项或者使用 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 和 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 动态地扩展链表。动态扩展链表的具体操作为：
+    \begin{itemize}
+        \item 在 DMA 传输过程中，当链表没有准备好时，软件可以把链表中 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 置 0，然后等待准备好链表后，再置 1，用于拓展链表。
+        \item 当要结束 DMA 传输时，把最后一个链表的 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 置 1，来表示传输结束。
+    \end{itemize}
+    \item 配置 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 为 1，使能相应通道。
+
+\begin{tiplisting}
+步骤 4 和 5 的顺序可以互换。但是，如果先执行步骤 5，或者在多块传输期间，下一个块传输的链表项在系统存储器中不可用（即获取的链表项的 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 为 0），则 VDMA 可能会产生 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断。
+\end{tiplisting}
+
+    \item VDMA 根据配置发起 DMA 块传输。块传输可能立即启动，也可能在硬件握手请求之后启动，这取决于 \hyperref[fielddesc:DMACCHNTTFC]{DMAC\_CH\regindex{n}\_TT\_FC}。VDMA 将链表内容复制到用于执行 DMA 传输的寄存器中（\hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、\hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}），然后发起 DMA 块传输。
+
+    \item 在链表获取阶段：
+
+        \begin{itemize}
+        \item 如果 VDMA 读到 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 为 1，则认为当前块是最后一个块，并在当前块传输结束时完成 DMA 传输。
+        \item 如果 VDMA 读到 \hyperref[fielddesc:DMACCHNSHADOWREGORLLILAST]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_LAST} 为 0，则认为还有一个或多个块需要传输，并且回到步骤 6。
+        \item 如果 VDMA 读到 \hyperref[fielddesc:DMACCHNSHADOWREGORLLIVALID]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_VALID} 为 0，则可能产生 \hyperref[int:DMACCHNSHADOWREGORLLIINVALIDERRINT]{DMAC\_CH\regindex{n}\_SHADOWREG\_OR\_LLI\_INVALID\_ERR\_INT} 中断。VDMA 等待直到软件将 \hyperref[fielddesc:DMACCHNBLKTFRRESUMEREQ]{DMAC\_CH\regindex{n}\_BLK\_TFR\_RESUMEREQ} 置 1 来指示链表的可用性，然后再尝试读取链表。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{配置单块传输}
+
+\begin{enumerate}
+    \item 读取 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 选择一个可用的通道。
+    \item 配置 \hyperref[fielddesc:DMACCHNSRCMULTBLKTYPE]{DMAC\_CH\regindex{n}\_SRC\_MULTBLK\_TYPE} 和 \hyperref[fielddesc:DMACCHNDSTMULTBLKTYPE]{DMAC\_CH\regindex{n}\_DST\_MULTBLK\_TYPE} 为 0，选择连续地址的单块传输。
+    \item 配置 \hyperref[regdesc:DMACCHNSAR0REG]{DMAC\_CH\regindex{n}\_SAR0\_REG} 和/或 \hyperref[regdesc:DMACCHNDAR0REG]{DMAC\_CH\regindex{n}\_DAR0\_REG}、 \hyperref[fielddesc:DMACCHNBLOCKTS]{DMAC\_CH\regindex{n}\_BLOCK\_TS}、\hyperref[regdesc:DMACCHNCTL0REG]{DMAC\_CH\regindex{n}\_CTL0\_REG} 和 \hyperref[regdesc:DMACCHNCTL1REG]{DMAC\_CH\regindex{n}\_CTL1\_REG}。
+    \item 配置 \hyperref[fielddesc:DMACCH1EN]{DMAC\_CH\regindex{n}\_EN} 为 1 使能相应通道。
+
+    \item 软件等待 \hyperref[int:DMACCHNBLOCKTFRDONEINT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INT} 中断，或轮询块传输完成状态指示位 \hyperref[fielddesc:DMACCHNBLOCKTFRDONEINTSTAT]{DMAC\_CH\regindex{n}\_BLOCK\_TFR\_DONE\_INTSTAT} 直到读到 1。
+\end{enumerate}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{VDMA-reg-summ}{}
+\section{寄存器列表}
+\label{sec:VDMA-reg-summ}
+
+本小节的所有地址均为相对于 VDMA 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/06-VDMA-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 VDMA 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{如何配置寄存器的保留域}。
+
+\subfile{\modulefiles/06-VDMA-reg__CN}
+
+
+\end{document}

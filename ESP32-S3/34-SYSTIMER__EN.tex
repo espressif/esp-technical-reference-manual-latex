@@ -1,0 +1,324 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./34-SYSTIMER}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{systimer}{}
+\chapter{System Timer (SYSTIMER)}
+\label{mod:systimer}
+
+\section{Overview}
+\chipname{} provides a 52-bit timer, which can be used to generate tick interrupts for operating system, or be used as a general timer to generate periodic interrupts or one-time interrupts.
+
+The timer consists of two counters UNIT0 and UNIT1. The count values can be monitored by three comparators COMP0, COMP1 and COMP2. See the timer block diagram on Figure \ref{fig:system-timer-structure}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{34-SYSTIMER/figures/systimer_components_20220718}
+    \caption{System Timer Structure}
+    \label{fig:system-timer-structure}
+\end{figure}
+
+\section{Features}
+\begin{itemize}
+    \item Consist of two 52-bit counters and three 52-bit comparators
+    \item Software accessing registers is clocked by APB\_CLK
+    \item Use CNT\_CLK for counting, with an average frequency of 16 MHz in two counting cycles
+    \item Use 40 MHz XTAL\_CLK as the clock source of CNT\_CLK
+    \item Support for 52-bit alarm values (t) and 26-bit alarm periods ($\delta$t)
+    \item Provide two modes to generate alarms:
+    \begin{itemize}
+        \item Target mode: only a one-time alarm is generated based on the alarm value (t)
+        \item Period mode: periodic alarms are generated based on the alarm period ($\delta$t)
+    \end{itemize}
+    \item Three comparators can generate three independent interrupts based on configured alarm value (t) or alarm period ($\delta$t)
+    \item Software configuring the reference count value. For example, the system timer is able to load back the sleep time recorded by RTC timer via software after Light-sleep
+    \item Can be configured to stall or continue running when CPU stalls or enters on-chip-debugging mode
+\end{itemize}
+
+\section{Clock Source Selection}
+The counters and comparators are driven using XTAL\_CLK. After scaled by a fractional divider, a $f_{XTAL\_CLK}/3$ clock is generated in one count cycle and a $f_{XTAL\_CLK}/2$ clock in another count cycle. The average clock frequency is $f_{XTAL\_CLK}/2.5$, which is 16 MHz, i.e., the CNT\_CLK in Figure \ref{figure:System Timer Structure}. The timer counting is incremented by 1/16 $\mu s$ on each CNT\_CLK cycle.
+
+Software operation such as configuring registers is clocked by APB\_CLK. For more information about APB\_CLK, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+The following two bits of system registers are also used to control the system timer:
+
+\begin{itemize}
+    \item SYSTEM\_SYSTIMER\_CLK\_EN in register SYSTEM\_PERIP\_CLK\_EN0\_REG: enable APB\_CLK signal to system timer.
+    \item SYSTEM\_SYSTIMER\_RST in register SYSTEM\_PERIP\_RST\_EN0\_REG: reset system timer.
+\end{itemize}
+
+Note that if the timer is reset, its registers will be restored to their default values. For more information, please refer to Table Peripheral Clock Gating and Reset in Chapter \ref{mod:sysreg} \textit{\nameref{mod:sysreg}}.
+
+
+\section{Functional Description}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/systimer_210621}
+    \caption{System Timer Alarms}
+    \label{figure:System Timer Structure}
+\end{figure}
+
+Figure \ref{figure:System Timer Structure} shows the procedure to generate alarm/interrupt in system timer. In this process, one timer counter and one timer comparator are used. An alarm interrupt will be generated accordingly based on the comparison result in comparator.
+
+
+\subsection{Counter}
+The system timer has two 52-bit timer counters, shown as UNIT\regindex{n} (\regindex{n} = 0 or 1). Their counting clock source is a 16 MHz clock, i.e., CNT\_CLK. Whether UNIT\regindex{n} works or not is controlled by three bits in register \hyperref[regdesc:SYSTIMERCONFREG]{SYSTIMER\_CONF\_REG}:
+\begin{itemize}
+    \item \hyperref[fielddesc:SYSTIMERTIMERUNIT1WORKEN]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_WORK\_EN}: set this bit to enable the counter UNIT\regindex{n} in system timer.
+    \item \hyperref[fielddesc:SYSTIMERTIMERUNIT1CORE0STALLEN]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_CORE0\_STALL\_EN}: if this bit is set, the counter UNIT\regindex{n} stops counting when CPU0 is stalled. The counter continues its counting after the CPU0 resumes.
+    \item \hyperref[fielddesc:SYSTIMERTIMERUNIT1CORE0STALLEN]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_CORE1\_STALL\_EN}: if this bit is set, the counter UNIT\regindex{n} stops counting when CPU1 is stalled. The counter continues its counting after the CPU1 resumes.
+\end{itemize}
+The configuration of the three bits to control the counter UNIT\regindex{n} is shown below, assuming that CPU0 and CPU1 both are stalled.
+
+
+\begin{table}[H]
+    \centering
+    \caption{UNIT\regindex{n} Configuration Bits}
+    \label{}
+    \begin{threeparttable}
+    \begin{tabular}[c]{ |c |c|c| p{3.5cm}| }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{SYSTIMER\_TIMER\_} & \textbf{SYSTIMER\_TIMER\_} & \textbf{SYSTIMER\_TIMER\_} & \textbf{Counter} \\
+        \rowcolor{lightgray}
+        \textbf{UNIT\regindex{n}\_WORK\_EN} & \textbf{UNIT\regindex{n}\_CORE0\_STALL\_EN}& \textbf{UNIT\regindex{n}\_CORE1\_STALL\_EN} & \textbf{UNIT\regindex{n}} \\\hline
+        % table contents
+        0 & x\tnote{*} & x & Not at work \\\hline
+         \multirow{3}{*}{1} &  \multirow{3}{*}{x} &  \multirow{3}{*}{1} & Stop counting, but will continue its counting after CPU1 resumes. \\\hline
+         \multirow{3}{*}{1} &  \multirow{3}{*}{1} &  \multirow{3}{*}{x} & Stop counting, but will continue its counting after CPU0 resumes. \\\hline
+        1 & 0 & 0 & Keep counting \\\hline
+        \end{tabular}
+
+        \begin{tablenotes}
+            \item[*] x: Don't-care.
+        \end{tablenotes}
+     \end{threeparttable}
+    \end{table}
+
+When the counter UNIT\regindex{n} is at work, the count value is incremented on each counting cycle. When the counter UNIT\regindex{n} is stopped or stalled, the count value stops increasing and keeps unchanged.
+
+The low 32 bits and high 20 bits of initial count value are loaded from \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_HI}. Writing 1 to the bit \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD} will trigger a reload event, and the current count value will be changed immediately. If UNIT\regindex{n} is at work, the counter will continue to count up from the new reloaded value.
+
+Writing 1 to \hyperref[fielddesc:SYSTIMERTIMERUNIT0UPDATE]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_UPDATE} will trigger an update event. The low 32 bits and high 20 bits of current count value will be locked into \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI}, and then \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEVALID]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_VALID} is asserted. Before the next update event, the values of \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI} remain unchanged.
+
+
+\subsection{Comparator and Alarm}
+The system timer has three 52-bit comparators, shown as COMP\regindex{x} (\regindex{x} = 0, 1, or 2). The comparators can generate independent interrupts based on different alarm values (t) or alarm periods ($\delta$t).
+
+Configure \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE} to choose from the two alarm modes for each COMP\regindex{x}:
+\begin{itemize}
+    \item 1: select period mode
+    \item 0: select target mode
+\end{itemize}
+
+In period mode, the alarm period ($\delta$t) is provided by the register \hyperref[fielddesc:SYSTIMERTARGET2PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD}. Assuming that current count value is t1, when it reaches (t1 + $\delta$t), an alarm interrupt will be generated. Another alarm interrupt also will be generated when the count value reaches (t1 + 2*$\delta$t). By such way, periodic alarms are generated.
+
+In target mode, the low 32 bits and high 20 bits of the alarm value (t) are provided by \hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO} and \hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI}. Assuming that current count value is t2 (t2 <= t), an alarm interrupt will be generated when the count value reaches the alarm value (t). Unlike in period mode, only one alarm interrupt is generated in target mode.
+
+\hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} is used to choose the count value from which timer counter to be compared for alarm:
+
+\begin{itemize}
+        \item 1: use the count value from UNIT\regindex{1}
+        \item 0: use the count value from UNIT\regindex{0}
+\end{itemize}
+
+Finally, set \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN} and COMP\regindex{x} starts to compare the count value with the alarm value (t) in target mode or with the alarm period (t1 + n*$\delta$t) in period mode.
+
+An alarm is generated when the count value equals to the alarm value (t) in target mode or to the start value (t1) + n*alarm period $\delta$t (n = 1,2,3...) in period mode. But if the alarm value (t) set in registers is less than current count value, i.e., the target has already passed, or current count value is larger than the real target value within a range (0 \verb+~+ $2^{51}$ -1), an alarm interrupt also is generated immediately. The relationship between current count value $t_{c}$, the alarm value $t_{t}$ and alarm trigger point is shown below. No matter in target mode or period mode, the low 32 bits and high 20 bits of the real target value can always be read from \hyperref[fielddesc:SYSTIMERTARGET0LORO]{SYSTIMER\_TARGET\regindex{x}\_LO\_RO} and  \hyperref[fielddesc:SYSTIMERTARGET0HIRO]{SYSTIMER\_TARGET\regindex{x}\_HI\_RO}.
+
+\begin{longtable}[c]{ | p{5cm} | p{7.5cm} |}
+\caption{Trigger Point}\\\hline
+\rowcolor{lightgray}
+\textbf{Relationship Between $t_{c}$ and $t_{t}$} & \textbf{Trigger Point}\\ \hline
+\endhead
+$t_{c}$- $t_{t}$ <= 0 & $t_{c}$ = $t_{t}$, an alarm is triggered.\\ \hline
+0 <= $t_{c}$ - $t_{t}$ < $2^{51}$ - 1 \newline ( $t_{c}$ < $2^{51}$ and $t_{t}$ < $2^{51}$, \newline or $t_{c}$ >= $2^{51}$ and $t_{t}$ >= $2^{51}$)& An alarm is triggered immediately. \\ \hline
+\multirow{3}{*}{
+$t_{c}$ - $t_{t}$ >= $2^{51}$ - 1} &
+
+$t_{c}$ overflows after counting to its maximum value
+
+52'hfffffffffffff, and then starts counting up from 0.
+
+When its value reaches $t_{t}$, an alarm is triggered. \\ \hline
+\end{longtable}
+
+\subsection{Synchronization Operation}
+The clock APB\_CLK is used in software operation, while timer counters and comparators are working on CNT\_CLK. Synchronization is needed for some configuration registers. A complete synchronization action takes two steps:
+
+\begin{enumerate}
+    \item Software writes suitable values to configuration fields, see the first column in Table \ref{synchronization-configuration-table}.
+    \item Software writes 1 to corresponding bits to start synchronization, see the second column in Table \ref{synchronization-configuration-table}.
+\end{enumerate}
+
+\begin{longtable}[c]{ | p{5.5cm} | p{6cm} |}
+\caption{Synchronization Operation}\\\hline
+\rowcolor{lightgray}
+\label{synchronization-configuration-table}
+\textbf{Configuration Fields}&\textbf{Synchronization Enable Bit}\\ \hline
+\hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO}
+
+\hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_HI} & \multirow{2}{*}{ \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD}}
+\\ \hline
+\hyperref[fielddesc:SYSTIMERTARGET2PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD}
+
+\hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI}
+
+\hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO}& \multirow{3}{*}{\hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD}}
+\\ \hline
+\end{longtable}
+
+
+\subsection{Interrupt}
+Each comparator has one level-triggered alarm interrupt, named as SYSTIMER\_TARGET\regindex{x}\_INT. Interrupt signal is asserted high when the comparator starts to alarm. Until the interrupt is cleared by software, it remains high. To enable interrupts, set the bit \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\regindex{x}\_INT\_ENA}.
+
+\section{Programming Procedure}\label{Instructions of usage}
+When configuring COMP\regindex{x} and UNIT\regindex{n}, please ensure the corresponding COMP and UNIT are at work.
+\subsection{Read Current Count Value}\label{To read system timer value}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SYSTIMERTIMERUNIT0UPDATE]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_UPDATE} to update the current count value into \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_\\VALUE\_HI} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO}.
+    \item Poll the reading of \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEVALID]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_VALID}, till it's 1, which means user now can read the count values from \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_HI} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO}.
+    \item Read the low 32 bits and high 20 bits from \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUELO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_VALUE\_LO} and \hyperref[fielddesc:SYSTIMERTIMERUNIT0VALUEHI]{SYSTIMER\_TIMER\_\\UNIT\regindex{n}\_VALUE\_HI}.
+\end{enumerate}
+
+\subsection{Configure One-Time Alarm in Target Mode}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} to select the counter (UNIT\regindex{0} or UNIT\regindex{1}) used for COMP\regindex{x}.
+    \item Read current count value, see Section \ref{To read system timer value}. This value will be used to calculate the alarm value (t) in Step 4.
+    \item Clear \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE} to enable target mode.
+    \item Set an alarm value (t), and fill its low 32 bits to \hyperref[fielddesc:SYSTIMERTIMERTARGET0LO]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_LO}, and the high 20 bits to \hyperref[fielddesc:SYSTIMERTIMERTARGET0HI]{SYSTIMER\_TIMER\_TARGET\regindex{x}\_HI}.
+    \item Set \hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD} to synchronize the alarm value to COMP\regindex{x}, i.e., load the alarm value (t) to the COMP\regindex{x}.
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN} to enable the selected COMP\regindex{x}. COMP\regindex{x} starts comparing the count value with the alarm value (t).
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\regindex{x}\_INT\_ENA} to enable timer interrupt. When Unit\regindex{n} counts to the alarm value (t), a SYSTIMER\_TARGET\regindex{x}\_INT interrupt is triggered.
+\end{enumerate}
+
+\subsection{Configure Periodic Alarms in Period Mode}
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0TIMERUNITSEL]{SYSTIMER\_TARGET\regindex{x}\_TIMER\_UNIT\_SEL} to select the counter (UNIT\regindex{0} or UNIT\regindex{1}) used for COMP\regindex{x}.
+    \item Set a alarm period ($\delta$t), and fill it to \hyperref[fielddesc:SYSTIMERTARGET0PERIOD]{SYSTIMER\_TARGET\regindex{x}\_PERIOD}.
+    \item Set \hyperref[fielddesc:SYSTIMERTIMERCOMP0LOAD]{SYSTIMER\_TIMER\_COMP\regindex{x}\_LOAD} to synchronize the alarm period ($\delta$t) to COMP\regindex{x}, i.e., load the alarm period ($\delta$t) to COMP\regindex{x}.
+    \item Clear and then set \hyperref[fielddesc:SYSTIMERTARGET0PERIODMODE]{SYSTIMER\_TARGET\regindex{x}\_PERIOD\_MODE} to configure COMP\regindex{x} into period mode.
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0WORKEN]{SYSTIMER\_TARGET\regindex{x}\_WORK\_EN} to enable the selected COMP\regindex{x}. COMP\regindex{x} starts comparing the count value with the sum of start value + n*$\delta$t (n = 1, 2, 3...).
+    \item Set \hyperref[fielddesc:SYSTIMERTARGET0INTENA]{SYSTIMER\_TARGET\regindex{x}\_INT\_ENA} to enable timer interrupt. A SYSTIMER\_TARGET\regindex{x}\_INT interrupt is triggered when Unit\regindex{n} counts to start value + n*$\delta$t (n = 1, 2, 3...) set in step 2.
+\end{enumerate}
+
+
+
+\subsection{Update After Light-sleep}
+\begin{enumerate}
+    \item Configure the RTC timer before the chip goes to Light-sleep, to record the exact sleep time. For more information, see Chapter \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}.
+    \item Read the sleep time from the RTC timer when the chip is woken up from Light-sleep.
+    \item Read current count value of system timer, see Section \ref{To read system timer value}.
+    \item Convert the time value recorded by the RTC timer from the clock cycles based on RTC\_SLOW\_CLK to that based on 16 MHz CNT\_CLK. For example, if the frequency of RTC\_SLOW\_CLK is 32 KHz, the recorded the RTC timer value should be converted by multiplying by 500.
+    \item Add the converted RTC value to current count value of system timer:
+    \begin{itemize}
+        \item Fill the new value into \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADLO]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_LO} (low 32 bits) and \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOADHI]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD\_HI} (high 20 bits).
+        \item Set \hyperref[fielddesc:SYSTIMERTIMERUNIT0LOAD]{SYSTIMER\_TIMER\_UNIT\regindex{n}\_LOAD} to load new timer value into system timer. In such a way, the system timer is updated.    \end{itemize}
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+
+\hypertarget{systimer-reg-summ}{}
+\section{Register Summary}
+\label{sec:systimer-reg-summ}
+
+The addresses in this section are relative to system timer base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/34-SYSTIMER-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to system timer base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/34-SYSTIMER-reg__EN}
+
+
+\end{document}

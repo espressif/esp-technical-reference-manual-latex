@@ -1,0 +1,585 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+\setcounter{secnumdepth}{4}
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./32-ECDSA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ecdsa}{}
+\chapter{ECDSA 数字签名外设 (ECDSA\_DS)}
+\label{mod:ecdsa}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+在密码学中，椭圆曲线数字签名算法 (ECDSA) 是数字签名算法 (DSA) 基于椭圆曲线密码学的一种变体。
+
+\chipname{} 的 ECDSA 数字签名外设 (ECDSA\_DS) 可在安全高效的环境中计算 ECDSA 签名，不仅可保证签名过程的机密性，还实现了快速计算，非常适合对加密安全性和加密速度有高要求的应用。通过 ECDSA\_DS 模块，用户可以在不牺牲性能的情况下保证数据得到保护。
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:ecdsa-features}
+
+\chipname{} 的 ECDSA\_DS 模块支持：
+
+\begin{itemize}
+    \item 数字签名的验证
+    \item 两种椭圆曲线，分别是 P-192 和 P-256（具体定义见 \href{https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf}{FIPS 186-5 规范}）
+    \item 两种哈希算法，分别是 SHA-224 和 SHA-256（具体定义见 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范}）
+    \item 基于不同工作状态的寄存器访问控制，以确保信息安全
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+\label{sec:ecdsa-terminology}
+
+\section{ECDSA 背景知识}
+\subsection{域参数}
+
+ECDSA 使用的参数通常被称为域参数，可用于生成密钥、生成签名和验证签名等运算，主要包括有限域中定义的椭圆曲线参数、曲线上的基点和基点阶数等。
+
+ECDSA 使用的域参数主要包括两大类：
+
+\begin{itemize}
+    \item 椭圆曲线域参数：
+          \begin{itemize}
+              \item 质数模数 $p$，指定定义椭圆曲线的有限域的大小。
+              \item 系数 $a$ 和 $b$，用于指定椭圆曲线方程。
+              \item 曲线上的基点 $G$，用于生成公钥。
+              \item 基点的阶数 $n$，代表在椭圆曲线上对基点 $G$ 进行重复点加的次数。
+          \end{itemize}
+    \item 哈希函数参数：
+          \begin{itemize}
+              \item 哈希算法，用于将要签名的消息生成固定长度的哈希值。
+              \item 哈希值的长度，决定签名的大小。
+          \end{itemize}
+\end{itemize}
+
+这些参数共同定义了 ECDSA 域。
+
+\subsection{密钥生成}
+
+ECDSA 中的密钥生成过程如下所述：
+\begin{enumerate}
+    \item 选择一个椭圆曲线域，定义如下参数：
+    \begin{itemize}
+        \item 质数模数 $p$
+        \item 系数 $a$ 和 $b$
+        \item 基点 $G$ 和其阶数 $n$
+    \end{itemize}
+    \item 生成私钥：
+    \begin{itemize}
+        \item 私钥 $d$ 为在 1 到 $n$-1 之间随机选择的整数。注意，这里必须确保私钥是真正随机的（不可预测或复制）。因此，使用一个安全的\textit{\nameref{mod:rng}}非常重要。
+        \item 私钥用于生成签名，需妥善保密保管。
+    \end{itemize}
+    \item 计算公钥：
+    \begin{itemize}
+        \item 公钥 $Q$ 的计算方式为 $Q = dG$。
+    \end{itemize}
+    \item 导出公钥：
+    \begin{itemize}
+        \item 公钥 $Q$ 通常以 ($Qx$，$Qy$) 表示，可公开给他人。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{签名生成}
+
+ECDSA 签名生成过程如下所述：
+
+\begin{enumerate}
+    \item 选择一条消息 $m$，用于签名。
+    \item 计算消息 $m$ 的哈希值 $e$：$e$ = HASH(m)，其中 HASH 是一个密码学哈希函数，例如 SHA-256。
+    \item 计算消息哈希值 $e$ 的摘要 $z$：令 $z$ 为 $e$ 的左端 $L_n$ 位，其中 $L_n$ 是基点阶数 $n$ 的位长度。
+    \item 选择一个随机数 $k$：范围在 1 到 $n$-1 之间，其中 $n$ 是椭圆曲线上基点的阶数。
+    \item 计算签名：签名计算如下：
+          \begin{enumerate}
+              \item 计算点 ($x$, $y$) = $kG$
+              \item 计算 $r$ = $x$ \textrm{mod} $n$。如果 $r$ 等于零，返回上一步并选择新的 $k$ 值。
+              \item 计算 $s$ = $k$$^{-1}$ * $(z + d*r)$ \textrm{mod} $n$。如果 $s$ 等于零，返回步骤 4 并选择新的 $k$ 值。
+              \item 签名为 ($r$, $s$)。
+          \end{enumerate}
+    \item 发送消息 $m$ 和签名 ($r$, $s$) 给接收者。
+\end{enumerate}
+
+\subsection{签名验证}
+
+接收方可以使用密钥生成阶段导出的公钥，来验证对应私钥生成的签名。验证过程涉及检查签名是否由对应的私钥生成，以及签名是否对给定的消息有效。
+
+ECDSA 签名验证过程如下所述：
+
+\begin{enumerate}
+    \item 获得公钥 $Q$，接收消息 $m$ 和签名 ($r$, $s$)。
+    \item 计算消息的哈希值：$e$ 等于 HASH(m)，其中 HASH 是一个密码学哈希函数，例如 SHA-256。
+    \item 计算消息的摘要：令 $z$ 为 $e$ 的左端 $L_n$ 位，其中 $L_n$ 是基点阶数 $n$ 的位长度。
+    \item 验证签名：签名验证如下所示：
+        \begin{enumerate}
+            \item 验证 $r$ 和 $s$ 是否是介于 1 到 $n$-1 之间的整数，其中 $n$ 是椭圆曲线上基点的阶数。如果 $r$ 或 $s$ 超出此范围，则签名无效。
+            \item 计算 $u_1 = z * s^{-1}$ \textrm{mod} $n$ 和 $u_2 = r * s^{-1}$ \textrm{mod} $n$。
+            \item 计算点 $(x_1, y_1) = u_1 * G + u_2 * Q$，其中 $G$ 是椭圆曲线上的基点，$Q$ 是与用于签名生成的私钥相关联的公钥。
+            \item 验证 $r = x_1$ \textrm{mod} $n$。如果 $r$ 不等于 $x_1$ \textrm{mod} $n$，则签名无效。
+        \end{enumerate}
+    \item 接受或拒绝签名：如果签名有效，接收方可以确信消息没有被篡改，且消息来自预期的发送方，可以接收。否则，接收方将拒绝并判定为无效消息。
+\end{enumerate}
+
+
+
+\section{功能描述}
+
+本节描述了 \chipname{} 的 ECDSA\_DS 模块的详细信息。
+
+\subsection{ECDSA\_DS 工作模式}
+
+\chipname{} 内置的 ECDSA\_DS 支持签名验证。
+
+
+用户可以通过配置 \hyperref[fielddesc:ECDSAECCCURVE]{ECDSA\_ECC\_CURVE}，根据下表 \ref{tab:ecdsa-curve-selection} 选择 ECDSA\_DS 模块使用的椭圆曲线。
+
+\begin{table}[H]
+    \centering
+    \caption{ECDSA\_DS 椭圆曲线选择}
+    \label{tab:ecdsa-curve-selection}
+    \begin{tabular}{ | c | l | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:ECDSAECCCURVE]{ECDSA\_ECC\_CURVE}}      & \textbf{椭圆曲线}\\
+        \hline
+        0                       & P-192    \\\hline
+        1                       & P-256    \\\hline
+    \end{tabular}
+\end{table}
+
+用户可以通过配置 \hyperref[fielddesc:ECDSASHAMODE]{ECDSA\_SHA\_MODE}，根据下表 \ref{tab:ecdsa-sha-algorithms} 选择用于消息哈希的 SHA 算法。
+
+\begin{table}[H]
+    \centering
+    \caption{ECDSA\_DS SHA 算法}
+    \label{tab:ecdsa-sha-algorithms}
+    \begin{tabular}{ | c | l | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:ECDSASHAMODE]{ECDSA\_SHA\_MODE}}      & \textbf{SHA 算法}\\
+        \hline
+        1                       & SHA-224    \\\hline
+        2                       & SHA-256    \\\hline
+        其他                  & 无效    \\\hline
+    \end{tabular}
+\end{table}
+
+此外，用户可以通过查询 \hyperref[regdesc:ECDSASTATEREG]{ECDSA\_STATE\_REG} 寄存器并将返回值与下表 \ref{tab:ecdsa-working-state} 进行比较，来检查 ECDSA\_DS 模块的工作状态。
+
+\begin{table}[H]
+    \centering
+    \caption{ECDSA\_DS 工作状态}
+    \label{tab:ecdsa-working-state}
+    \begin{tabular}{ | c | l | L{8cm} | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[regdesc:ECDSASTATEREG]{ECDSA\_STATE\_REG}} & \textbf{状态} &  \textbf{描述} \\ \hline
+        0    & IDLE      &   空闲或已完成的运算，对应于 IDLE 阶段。\\ \hline
+        1    & LOAD      &   等待用户将信息加载到 ECDSA\_DS 中，对应于 LOAD 阶段。    \\ \hline
+        2    & 保留      &   --    \\ \hline
+        3    & BUSY      &   硬件正在运行中，对应于 PREP、PROC 和 POST 阶段。    \\ \hline
+    \end{tabular}
+\end{table}
+
+\subsection{数据和数据块}
+
+\chipname{} 的 ECDSA\_DS 模块会用到的数据位宽均为 256 或 512 位。假设一个数据为 $D[255:0]$，则其可以被划分为八个 32 位的数据块 $D[n][31:0](n=0,1,\cdots,7)$，序号数低的数据块对应二进制低位。
+以 256 位的数据为例：
+\[
+D[255:0] = {D[7][31:0],D[6][31:0],D[5][31:0],
+D[4][31:0],D[3][31:0],D[2][31:0],D[1][31:0],D[0][31:0]}
+\]
+
+\subsubsection{数据写入}
+
+数据写入即将数据写入进一个内存块的过程，该数据为 ECDSA\_DS 的输入数据。具体而言，将数据写入一个 ECDSA\_DS 内存块相当于将该数据 $D[n][31:0] (n=0, 1, \cdots, 7)$ 依次写入“该内存块起始地址 + $4 \times n$”：
+以 256 位的数据为例：
+\begin{itemize}
+    \item 将 $D[0]$ 写入“起始地址”
+    \item 将 $D[1]$ 写入“起始地址 + 4”
+    \item $\cdots$
+    \item 将 $D[7]$ 写入“起始地址 + 28”
+\end{itemize}
+
+\begin{tiplisting}
+在 192 位模式下进行数据写入运算时，需要在 192 位数据之后补 0，保证存储的数据为 256 位。
+\end{tiplisting}
+
+\subsubsection{数据读取}
+
+数据读取即将一个数据从一个内存块读出的过程，该数据为 ECDSA\_DS 的输出数据。具体来说，从一个 ECDSA\_DS 内存块读数据相当于从“该内存块起始地址 + $4 \times n$”依次读出 $D[n][31:0] (n=0, 1, \cdots, 7)$：
+以 256 位的数据为例：
+\begin{itemize}
+    \item 从“起始地址”读出 $D[0]$
+    \item 从“起始地址 + 4”读出 $D[1]$
+    \item $\cdots$
+    \item 从“起始地址 + 28”读出 $D[7]$
+\end{itemize}
+
+\begin{tiplisting}
+在 192 位模式下进行数据读取运算时，只需要读取低 192 位（即 6 个数据块）的数据。
+\end{tiplisting}
+
+\subsubsection{消息填充}\label{sec:ecdsa-msg-padding}
+
+SHA 加速器仅能处理长度为 512 位及其整倍数的信息。因此，在将信息送至 SHA 加速器进行运算前，应先通过软件运算将信息填充为符合要求的长度。
+
+假设待处理信息 \begin{math} M \end{math} 的长度为 \begin{math}L_M\end{math} 位，则填充步骤如下：
+
+\begin{enumerate}
+    \item 首先，在待处理信息后填充 1 个 ``1"；
+    \item 随后，再填充 \begin{math}L_A\end{math} 个 ``0"。其中，\begin{math}L_A\end{math} 为满足 \begin{math} L_M + 1 + L_A \ {\equiv} \ 448 \ mod \end{math} 512 的最小非负数解；
+    \item 最后，在末尾填充一个 64 位的信息块。该信息块的内容为用二进制表示的待处理信息的长度，即 \begin{math}L_M\end{math} 的值。
+\end{enumerate}
+
+更多详情，请参考 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{《FIPS PUB 180-4 规范》}> 章节 ``Padding the Message"。
+
+\subsubsection{解析消息}\label{sec:ecdsa-msg-parsing}
+
+在完成信息填充后，我们还需将待处理信息（及其填充）解析为 \begin{math}N\end{math} 个 512 位的信息块，即 \begin{math}M^{(1)}\end{math}、\begin{math}M^{(2)}\end{math}、 \dots、\begin{math}M^{(N)}\end{math}。
+
+\begin{tiplisting}
+\begin{enumerate}
+\vspace{-2.5em}
+    \item 有关“解析消息”的详细信息，请参考 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范} > 章节 ``Parsing the Message"。
+    \item 有关“信息块”及相关概念的描述，请参考 \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 规范} > 章节 ``Glossary of Terms and Acronyms"。
+\end{enumerate}
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Security Features %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{安全功能}
+\label{sec:ecdsa-security_features}
+为确保运算过程的安全性，ECDSA\_DS 模块实现了多种安全功能。
+
+\subsubsection{基于状态的寄存器访问控制}
+
+\chipseries{} 的 ECDSA\_DS 模块实施了基于状态的寄存器访问控制，可有效防止运行过程中可能发生的非法配置篡改或数据访问，从而保证密钥的安全性。
+
+具体来说，ECDSA\_DS 的寄存器在不同工作状态下的访问权限是不同的。例如，\hyperref[regdesc:ECDSACONFREG]{ECDSA\_CONF\_REG} 寄存器仅在 ECDSA\_DS 处于 IDLE 状态时允许读写运算。这样一来，当 ECDSA\_DS 处于其他状态（如 LOAD、BUSY）时，该寄存器中的配置信息则不允许读取或写入，从而得到很好的保护。有关 ECDSA\_DS 所有工作状态的详细信息，请见表 \ref{tab:ecdsa-working-state}。
+
+有关基于状态的 ECDSA\_DS 寄存器访问控制的详细信息，请参阅\hyperref[sec:ecdsa-reg-summ]{寄存器摘要}。
+
+\subsubsection{硬件占用}
+
+在运算过程中，\chipname{} 的 ECDSA\_DS 模块将占用以下硬件模块：
+\begin{itemize}
+    \item SHA 加速器
+    \item RSA 加速器
+    \item ECC 加速器
+\end{itemize}
+其中，SHA 加速器在触发 \hyperref[int:ECDSASHARELEASEINT]{ECDSA\_SHA\_RELEASE\_INT} 时将释放，而 RSA 加速器和 ECC 加速器在整个 ECDSA\_DS 运算中将被占用。
+
+\begin{tiplisting}
+硬件占用是一种保护复用模块和存储空间的机制。当一个模块被硬件占用时，用户将无法执行以下运算：
+\vspace{-0.5em}
+\begin{itemize}
+    \item 读取或写入模块的寄存器或存储器数据。
+    \item 关闭模块时钟。
+    \item 复位模块。
+\end{itemize}
+\vspace{-0.5em}
+在硬件占用结束时，占用的模块将自动复位。此外，当用户对主模块执行软件复位时，所有占用的模块将同时复位。
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{编程指南}
+\label{sec:ecdsa-prog-procedures}
+
+\subsection{ECDSA\_DS 流程}
+ECDSA\_DS 的完整工作流程包括以下五个阶段。
+
+\begin{figure}[H]
+\includegraphics[width=0.35\textwidth]{\modulefiles/figures/ecdsa-stage-changes-new.pdf}
+\centering
+\caption{ECDSA\_DS 流程}
+\end{figure}
+
+每个阶段的详细编程流程在下面的章节中描述。
+
+\subsubsection{IDLE 阶段}
+在 IDLE 阶段：
+\begin{enumerate}
+	\item 配置静态参数，包括 eFuse 位 ECDSA\_KEY，即 ECDSA\_DS 中的私钥 $d$ 的值。为了正确配置 eFuse 中的密钥值，用户需要将密钥值写入 KEY\regindex{n}（n = 0 \textasciitilde \ 5），并将相应的 EFUSE\_KEY\_PURPOSE\_\regindex{n} 设置为 ECDSA\_KEY。有关更详细的配置步骤，请参阅第 \ref{mod:efuse} 章 \textit{\nameref{mod:efuse}}。
+	\item 配置配置寄存器，包括以下字段：
+	      \begin{enumerate}
+		      \item \hyperref[fielddesc:ECDSAECCCURVE]{ECDSA\_ECC\_CURVE}：选择 ECDSA\_DS 模块的椭圆曲线。
+		      \item \hyperref[fielddesc:ECDSASOFTWARESETZ]{ECDSA\_SOFTWARE\_SET\_Z}：选择使用直接输入的 $z$。
+	      \end{enumerate}
+	\item 配置寄存器字段 \hyperref[fielddesc:ECDSASTART]{ECDSA\_START} 以进入 PREP 阶段。
+\end{enumerate}
+
+
+\subsubsection{PREP 阶段}
+
+在 PREP 阶段，\hyperref[regdesc:ECDSASTATEREG]{ECDSA\_STATE\_REG} 为 BUSY，ECDSA\_DS 执行准备工作。
+
+通过轮询 \hyperref[fielddesc:ECDSABUSY]{ECDSA\_BUSY} 的状态直到其不为 BUSY，表示 PREP 阶段已结束。然后 ECDSA\_DS 将自动进入 LOAD 阶段。
+
+\subsubsection{LOAD 阶段}
+在 LOAD 阶段：
+
+\begin{enumerate}
+	\item 使用以下选项之一将输入 $z$ 提供给 ECDSA\_DS：
+	      \begin{itemize}
+		      \item 直接输入 $z$：将 $z$ 写入 \hyperref[tab:ecdsa-memory]{ECDSA\_Z\_MEM}。
+		      \item ECDSA\_DS SHA 接口：从消息生成 $z$。有关详细信息，请参阅第 \ref{sec:ecdsa-sha-interface} 节。
+	      \end{itemize}
+		      \item 写入签名验证所需的签名和公钥内容：
+		            \begin{enumerate}
+			            \item 将签名（$r$，$s$）写入 \hyperref[tab:ecdsa-memory]{ECDSA\_R\_MEM} 和 \hyperref[tab:ecdsa-memory]{ECDSA\_S\_MEM}。
+			            \item 将公钥（$Qx$，$Qy$）写入 \hyperref[tab:ecdsa-memory]{ECDSA\_QX\_MEM} 和 \hyperref[tab:ecdsa-memory]{ECDSA\_QY\_MEM}。
+		            \end{enumerate}
+	\item 将 1 写入 \hyperref[fielddesc:ECDSALOADDONE]{ECDSA\_LOAD\_DONE}，表示配置完成。然后 ECDSA\_DS 将自动进入 PROC 阶段。
+\end{enumerate}
+
+\subsubsection{PROC 阶段}
+
+在 PROC 阶段，\hyperref[regdesc:ECDSASTATEREG]{ECDSA\_STATE\_REG} 为 BUSY，ECDSA\_DS 执行 ECDSA 算法中的签名验证。
+
+通过轮询 \hyperref[fielddesc:ECDSABUSY]{ECDSA\_BUSY} 直到其不为 BUSY，表示 PROC 阶段已结束。然后 ECDSA\_DS 将自动进入 POST 阶段。
+
+
+
+\subsubsection{POST 阶段}
+
+在 POST 阶段，\hyperref[regdesc:ECDSASTATEREG]{ECDSA\_STATE\_REG} 为 BUSY，ECDSA\_DS 执行运算的收尾工作。
+
+通过轮询 \hyperref[fielddesc:ECDSABUSY]{ECDSA\_BUSY} 直到不再为 BUSY，表示 POST 阶段已结束。然后 ECDSA\_DS 将自动返回 IDLE 阶段。
+
+\subsubsection{ECDSA\_DS SHA 接口}
+\label{sec:ecdsa-sha-interface}
+\chipseries{} 的 ECDSA\_DS 模块可以自动执行哈希运算并基于直接输入的消息生成 $z$。
+
+对于消息哈希，ECDSA\_DS 模块支持 SHA 算法 SHA-224（仅当选择 P-192 作为椭圆曲线时有效）和 SHA-256。
+
+要使用 ECDSA\_DS SHA 接口，请完成以下步骤：
+
+\begin{enumerate}
+	\item 根据第 \ref{sec:ecdsa-msg-padding} 节中的描述，对消息进行填充。
+	\item 将消息及其填充解析为消息块。详细信息请参见第 \ref{sec:ecdsa-msg-parsing} 节。
+	\item \label{others:ecdsa-current-block} 处理当前消息块。
+	      \begin{itemize}
+		      \item 将当前消息块写入 \hyperref[tab:ecdsa-memory]{ECDSA\_MEM\_M}。
+	      \end{itemize}
+	\item 启动 ECDSA\_DS SHA 接口 \hyperref[others:ecdsa-note-sha]{$^1$}。
+	      \begin{itemize}
+		      \item 如果这是第一次执行此步骤，请将 1 写入 \hyperref[fielddesc:ECDSASHASTART]{ECDSA\_SHA\_START} 以启动 ECDSA\_DS SHA 接口；
+		      \item 如果不是第一次执行此步骤 \hyperref[others:ecdsa-note-sha]{$^2$}，请将 1 写入 \hyperref[fielddesc:ECDSASHACONTINUE]{ECDSA\_SHA\_CONTINUE} 以继续运算。
+	      \end{itemize}
+	\item 查询当前信息块的处理进度。
+	      \begin{itemize}
+		      \item 轮询寄存器 \hyperref[fielddesc:ECDSASHABUSY]{ECDSA\_SHA\_BUSY}，直到其为 IDLE，表示接口已完成当前消息块的运算。
+	      \end{itemize}
+
+	\item 处理下一个消息块：
+	      \begin{itemize}
+		      \item 如有，则返回到步骤 \ref{others:ecdsa-current-block}。
+		      \item 如没有更多的消息块，退出。
+	      \end{itemize}
+
+\end{enumerate}
+
+\begin{tiplisting}\label{others:ecdsa-note-sha}
+\vspace{-2.5em}
+\begin{enumerate}
+\item 在此步骤中，软件还可以在接口启动 SHA 运算时将下一个要处理的消息块（如有）写入寄存器 \hyperref[tab:ecdsa-memory]{ECDSA\_MEM\_M}，以节省时间。
+\item 您正在继续之前暂停的 ECDSA\_DS SHA 接口运算。
+\end{enumerate}
+\end{tiplisting}
+\subsection{时钟和复位}
+
+\chipname{} 的 ECDSA\_DS 模块有一个时钟模块和一个复位模块，其激活仅需使能 \hyperref[regdesc:HPSYSCLKRSTPERICLKCTRL25REG]{HP\_SYS\_CLKRST\_PERI\_CLK\_CTRL25\_REG} 外围时钟的 \hyperref[fielddesc:HPSYSCLKRSTCRYPTOECDSACLKEN]{HP\_SYS\_CLKRST\_CRYPTO\_ECDSA\_CLK\_EN} 位，并同时清零 \hyperref[regdesc:HPSYSCLKRSTHPRSTEN2REG]{HP\_SYS\_CLKRST\_HP\_RST\_EN2\_REG} 寄存器的 \hyperref[fielddesc:HPSYSCLKRSTRSTENECDSA]{HP\_SYS\_CLKRST\_RST\_EN\_ECDSA} 位。有关如何配置 ECDSA\_DS 时钟和复位的详细信息，请参考第 \ref{mod:resclk} 章\textit{\nameref{mod:resclk}}。
+
+\subsection{中断}
+\label{sec:ecdsa-interrupt}
+
+\chipname{} 的 ECDSA\_DS 模块可以生成一个中断信号 ECDSA\_INTR 并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+ECDSA\_DS 模块有两个中断源可产生中断信号 ECDSA\_INTR：
+\begin{itemize}
+	\item \label{int:ECDSACALCDONEINT}ECDSA\_CALC\_DONE\_INT：在 ECC 运算完成时触发。可以通过以下寄存器配置此中断源：
+	      \begin{itemize}
+		      \item \hyperref[fielddesc:ECDSACALCDONEINTRAW]{ECDSA\_CALC\_DONE\_INT\_RAW}：存储 ECDSA\_CALC\_DONE\_INT 的原始中断状态。
+		      \item \hyperref[fielddesc:ECDSACALCDONEINTST]{ECDSA\_CALC\_DONE\_INT\_ST}：代表 ECDSA\_CALC\_DONE\_INT 中断的状态。通过 \hyperref[fielddesc:ECDSACALCDONEINTRAW]{ECDSA\_CALC\_DONE\_INT\_RAW} 字段启用/禁用此字段生成。
+		      \item \hyperref[fielddesc:ECDSACALCDONEINTENA]{ECDSA\_CALC\_DONE\_INT\_ENA}：启用/禁用 ECDSA\_CALC\_DONE\_INT 中断。
+		      \item \hyperref[fielddesc:ECDSACALCDONEINTCLR]{ECDSA\_CALC\_DONE\_INT\_CLR}：将此位设置为 1 以清除 ECDSA\_CALC\_DONE\_INT 中断状态。通过将此位设置为 1，字段 \hyperref[fielddesc:ECDSACALCDONEINTRAW]{ECDSA\_CALC\_DONE\_INT\_RAW} 和 \hyperref[fielddesc:ECDSACALCDONEINTST]{ECDSA\_CALC\_DONE\_INT\_ST} 将被清除。
+	      \end{itemize}
+	\item \label{int:ECDSASHARELEASEINT}ECDSA\_SHA\_RELEASE\_INT：在 SHA 释放时触发。可以通过以下寄存器配置此中断源：
+	      \begin{itemize}
+		      \item \hyperref[fielddesc:ECDSASHARELEASEINTRAW]{ECDSA\_SHA\_RELEASE\_INT\_RAW}：存储 ECDSA\_SHA\_RELEASE\_INT 的原始中断状态。
+		      \item \hyperref[fielddesc:ECDSASHARELEASEINTST]{ECDSA\_SHA\_RELEASE\_INT\_ST}：代表 ECDSA\_SHA\_RELEASE\_INT 中断的状态。通过 \hyperref[fielddesc:ECDSASHARELEASEINTRAW]{ECDSA\_SHA\_RELEASE\_INT\_RAW} 字段启用/禁用此字段生成。
+		      \item \hyperref[fielddesc:ECDSASHARELEASEINTENA]{ECDSA\_SHA\_RELEASE\_INT\_ENA}：启用/禁用 ECDSA\_SHA\_RELEASE\_INT 中断。
+		      \item \hyperref[fielddesc:ECDSASHARELEASEINTCLR]{ECDSA\_SHA\_RELEASE\_INT\_CLR}：将此位设置为 1 以清除 ECDSA\_SHA\_RELEASE\_INT 中断状态。通过将此位设置为 1，字段 \hyperref[fielddesc:ECDSASHARELEASEINTRAW]{ECDSA\_SHA\_RELEASE\_INT\_RAW} 和 \hyperref[fielddesc:ECDSASHARELEASEINTST]{ECDSA\_SHA\_RELEASE\_INT\_ST} 将被清除。
+	      \end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+
+\section{存储器块}
+
+
+\begin{table}[H]
+    \centering
+    \caption{ECDSA\_DS 存储器块} \label{tab:ecdsa-memory}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | l | l | l | l | l | }
+    \hline
+        \rowcolor{lightgray}
+        \textbf{存储器块} & \textbf{大小（字节）}  &  \textbf{起始地址}\tnote{*} &  \textbf{结束地址} \tnote{*} & \textbf{访问权限}   \\ \hline
+        ECDSA\_MEM\_M    & 64  & 0x280 & 0x2BF & R/W \\ \hline
+        ECDSA\_MEM\_R    & 32  & 0xA00 & 0xA1F & R/W \\ \hline
+        ECDSA\_MEM\_S    & 32  & 0xA20 & 0xA3F & R/W \\ \hline
+        ECDSA\_MEM\_Z    & 32  & 0xA40 & 0xA5F & R/W \\ \hline
+        ECDSA\_MEM\_Qx   & 32  & 0xA60 & 0xA7F & R/W \\ \hline
+        ECDSA\_MEM\_Qy   & 32  & 0xA80 & 0xA9F & R/W \\ \hline
+    \end{tabular}
+    \begin{tablenotes}
+        \item[*] 相对于 ECDSA\_DS 基地址的地址偏移在第 \ref{mod:sysmem} 章\textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address} 中提供。
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{ecdsa-reg-summ}{}
+\section{寄存器列表}
+\label{sec:ecdsa-reg-summ}
+
+本小节的所有地址均为相对于 ECDSA\_DS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+为了提高安全性，在不同工作状态下，ECDSA\_DS 寄存器的读写权限不同。以下是每个工作状态的缩写及其与阶段的对应关系：
+
+\begin{itemize}
+    \item PI：IDLE 状态，对应 IDLE 阶段。
+    \item PL：LOAD 状态，对应 LOAD 阶段。
+    \item PB：BUSY 状态，对应 PREP、PROC 和 POST 阶段。
+\end{itemize}
+
+请查看章节 \hyperref[glossary-access-types]{寄存器的访问类型}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/32-ECDSA-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 ECDSA\_DS 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/32-ECDSA-reg__CN}
+
+
+\end{document}

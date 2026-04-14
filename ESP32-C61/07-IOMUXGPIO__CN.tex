@@ -1,0 +1,939 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./07-IOMUXGPIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{iomuxgpio}{}
+\chapter{GPIO 交换矩阵和 IO MUX (GPIO, IO MUX)}
+\label{mod:iomuxgpio}
+
+\section{概述}
+
+GPIO 交换矩阵是一种硬件结构，允许芯片上的 GPIO 管脚与外设输入/输出信号之间进行动态的重新映射和交换，以提供更大的灵活性。IO MUX（输入/输出多路复用）是一种技术，允许同一管脚在不同时间承担不同的功能，通过配置实现对管脚功能的动态切换。
+
+\chipname{} 提供两组 GPIO 交换矩阵和 IO MUX：
+
+\begin{itemize}
+    \item HP GPIO 交换矩阵和 HP IO MUX
+    \item LP GPIO 交换矩阵和 LP IO MUX
+\end{itemize}
+
+\chipname{} 共有 30 个 GPIO 管脚，编号为 GPIO0$\sim$GPIO29，其中包括：
+\begin{itemize}
+    \item 7 个 LP GPIO 管脚 (GPIO0$\sim$GPIO6)，可由 HP 或 LP 外设使用。
+    \item 15 个 HP GPIO 管脚（GPIO7$\sim$GPIO13 和 GPIO22$\sim$GPIO29），只能由 HP 外设使用。
+    \item 8 个外接 flash 或 PSRAM 专用的 GPIO 管脚 (GPIO14$\sim$GPIO21)。\textbf{这些专用管脚不可用于其他用途，因此不在后续章节进行描述}。如需了解专用管脚的更多信息，请参考\textit{\href{https://www.espressif.com/sites/default/files/documentation/esp32-c61_datasheet_cn.pdf}{《\chipname{} 技术规格书》}} > 章节\textit{芯片与 flash 的管脚对应关系}。
+\end{itemize}
+每个管脚都可用作一个通用 IO，或连接一个内部的外设信号。这些模块共同组成了芯片的 GPIO 控制。
+\begin{itemize}
+    \item 利用 HP GPIO 交换矩阵和 HP IO MUX，可配置 HP 外设模块的输入信号来源于\textbf{任何的 GPIO 管脚}，并且 HP 外设模块的输出信号也可连接到\textbf{任意 GPIO 管脚}。
+    \item 利用 LP GPIO 交换矩阵和 LP IO MUX，可配置 LP 实现简单的 GPIO 输入输出、GPIO 唤醒等功能。
+\end{itemize}
+
+\textbf{除非另有说明，本章节所述的 GPIO 交换矩阵同时包括 HP GPIO 交换矩阵和 LP GPIO 交换矩阵；IO MUX 同时包括 HP IO MUX 和 LP IO MUX。}
+
+\section{主要特性}
+\subsection{HP GPIO 交换矩阵和 HP IO MUX}
+
+\textbf{HP GPIO 交换矩阵具有以下特性：}
+\begin{itemize}
+\item HP 外设输入输出信号和 GPIO 管脚之间的全交换矩阵
+\item 36 个 HP 外设输入信号可以选择任意一个 GPIO 管脚的输入信号
+\item 每个 GPIO 管脚的输出信号可以来自 48 个 HP 外设输出信号的任意一个
+\item HP 外设输入信号经 GPIO SYNC 模块同步至 HP IO MUX 运行时钟
+\item 支持 GPIO 滤波器对输入信号进行滤波
+\item 支持 GPIO 简单输入输出
+\item 支持 HP GPIO 唤醒
+\end{itemize}
+
+\textbf{HP IO MUX 具有以下特性：}
+\begin{itemize}
+\item 控制 22 个 GPIO (GPIO0$\sim$GPIO13、GPIO22$\sim$GPIO29) 供 HP 外设使用
+\item 为每个 GPIO 管脚提供一个寄存器 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{n}\_REG}，用于控制管脚的输入/输出、上拉/下拉、驱动强度、功能选择等配置
+\item 支持高频信号如 SPI 直接通过 HP IO MUX 输入和输出外设，实现更好的高频数字特性
+\end{itemize}
+
+\subsection{LP GPIO 交换矩阵和 LP IO MUX}
+
+\textbf{LP GPIO 交换矩阵具有如下特性：}
+\begin{itemize}
+\item 支持 GPIO 简单输入输出
+\item 支持 LP GPIO 唤醒
+\end{itemize}
+
+\textbf{LP IO MUX 具有如下特性：}
+\begin{itemize}
+    \item 7 个 LP GPIO 管脚 (GPIO0$\sim$GPIO6) 供 LP 外设使用
+    \item 为每个 LP GPIO 管脚提供一个 \hyperref[regdesc:LPIOMUXGPIONREG]{LP\_IO\_MUX\_GPIO\regindex{n}\_REG} 寄存器，用于控制管脚的输入/输出、上拉/下拉、驱动强度、功能选择等配置
+    \item 支持使用 \hyperref[fielddesc:LPAONGPIOMUXSEL] {LP\_AON\_GPIO\_MUX\_SEL} 来选择管脚控制来自 HP IO MUX 还是 LP IO MUX
+\end{itemize}
+
+\section{结构概览}
+图 \ref{fig:iomux-gpio-matrix-overview-detail} 所示为 HP GPIO 交换矩阵、 HP IO MUX、 LP GPIO 交换矩阵和 LP IO MUX 将信号引入外设和引出至管脚的具体过程。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/07-IOMUXGPIO-structure}
+    
+    \textcolor{red}{--->}：旁路 HP GPIO 交换矩阵的信号；\textcolor{blue!50!cyan}{--->}：通过 HP GPIO 交换矩阵的信号。
+    \caption{HP GPIO 交换矩阵、HP IO MUX、LP GPIO 交换矩阵和 LP IO MUX 框图}
+    \label{fig:iomux-gpio-matrix-overview-detail}
+\end{figure}
+
+以下各点内容是对上图数字标注区域的解释说明，以 HP 系统为例：
+
+    \hspace{2em} \textcircled{\footnotesize 1} 部分输入信号既可以通过 HP GPIO 交换矩阵连接外设又可以直接通过 HP IO MUX 直连外设，这些输入信号在表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} “信号可经由 IO MUX 直接输入”一栏中被标为 “yes”。剩余其他信号只能通过 HP GPIO 交换矩阵连接至外设。\\
+    \hspace{2em} \textcircled{\footnotesize 2} \chipname{} 共有 22 个 用户可用的 GPIO 管脚，因此从 GPIO SYNC 进入到 HP GPIO 交换矩阵的输入共有 22 个。\\
+    \hspace{2em} \textcircled{\footnotesize 3} 管脚由 IE、OE、WPU 和 WPD 信号控制。\\
+    \hspace{2em} \textcircled{\footnotesize 4} 部分输出信号既可以通过 HP GPIO 交换矩阵连接外设又可通过 HP IO MUX 直连管脚，这些输出信号在表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} “信号可经由 IO MUX 直接输出”一栏中被标为 “yes”。剩余其他信号只能通过 HP GPIO 交换矩阵连接至管脚。\\
+    \hspace{2em} \textcircled{\footnotesize 5} 从 HP GPIO 交换矩阵到 HP IO MUX 的输出共有 22 个，对应 GPIO \regindex{X}：0$\sim$13、22$\sim$29。\\
+    \hspace{2em} \textcircled{6} 仅通过 HP IO MUX 的外设输入。\\
+    \hspace{2em} \textcircled{7} 仅通过 HP IO MUX 的外设输出。
+
+图 \ref{fig:pad-overview} 展示了芯片焊盘 (PAD) 的内部结构，即芯片逻辑与 GPIO 管脚之间的电气接口。\chipname{} 所有的 GPIO 管脚均采用这一结构，且由 IE、OE、WPU 和 WPD 信号控制。信号配置请参考 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} 寄存器或 \hyperref[regdesc:LPIOMUXGPIONREG]{LP\_IO\_MUX\_GPIO\regindex{x}\_REG} 寄存器。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/07-IOMUXGPIO-pad-overview}    \caption{焊盘内部结构}
+    \label{fig:pad-overview}
+\end{figure}
+\begin{itemize}
+    \item IE：输入使能
+    \item OE：输出使能
+    \item WPU：内部弱上拉电阻使能
+    \item WPD：内部弱下拉电阻使能
+    \item Bonding pad：接合焊盘，芯片逻辑的结点，实现芯片封装内晶片与 GPIO 管脚之间的物理连接。
+\end{itemize}
+
+\section{通过 GPIO 交换矩阵的外设输入}
+\label{sec:peripheral-input-via-gpio-matrix}
+
+\subsection{概述}
+
+通过 HP GPIO 交换矩阵接收外部输入信号，一般步骤如下：
+\begin{itemize}
+    \item 配置 HP GPIO 交换矩阵从 22 个 GPIO (0$\sim$13、22$\sim$29) 中获取外部输入信号，见表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn}。
+    \item 配置外设输入选择通过 HP GPIO 交换矩阵接收输入信号。
+    \item 配置 GPIO 管脚由 HP IO MUX 控制。
+\end{itemize}
+具体配置流程，可参考图 \ref{fig:iomux-gpio-matrix-overview-detail} 和章节 \ref{sec:functional-description}。
+
+如图 \ref{fig:iomux-gpio-matrix-overview-detail} 所示，使用 GPIO 交换矩阵将信号从管脚输入时，所有外部输入信号均来源于 GPIO 管脚，然后经 GPIO 滤波器进行滤波，见章节 \ref{sec:functional-description} 中的步骤 \ref{step:2}。
+
+所有信号经 GPIO 滤波器硬件滤波后，均将被 GPIO SYNC 硬件同步至 IO MUX 运行时钟，然后进入 GPIO 交换矩阵，见章节 \ref{sec:input-config}。外部输入信号也可经 IO MUX 直接输入至外设，但信号无法进行滤波及时钟同步操作。
+
+\subsection{信号同步}
+\label{sec:input-config}
+
+HP GPIO 交换矩阵支持信号同步功能。GPIO SYNC 模块的功能如图 \ref{fig:gpio-input-sync} 所示。其中，negative sync 为 GPIO 输入经过 HP IO MUX 运行时钟的下降沿同步，positive sync 为 GPIO 输入经过 HP IO MUX 运行时钟的上升沿同步。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=1.0\textwidth]{\modulefiles/figures/07-IOMUXGPIO-gpio-input-sync}}
+    \caption{GPIO 输入经 HP IO MUX 运行时钟上升沿或下降沿同步}
+    \label{fig:gpio-input-sync}
+\end{figure}
+
+同步器 (synchronizer) 默认关闭同步功能。但如果一个异步外设信号连接到管脚时，该信号应通过两级同步器（即图 \ref{fig:gpio-input-sync} 中的 first-level synchronizer 和 second-level synchronizer）进行同步，以减小亚稳态产生的概率。
+
+
+\subsection{GPIO 滤波器}
+
+GPIO 滤波功能仅在 HP GPIO 交换矩阵中可用。使能 GPIO 滤波器功能后，只有当输入信号的有效宽度大于两个时钟周期时，输入信号才会被采样。否则，输入信号将会被滤掉。见图 \ref{fig:gpio-filter}。
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/07-IOMUXGPIO-gpio-filter.eps}}
+    \caption{GPIO 输入信号滤波时序图}
+    \label{fig:gpio-filter}
+\end{figure}
+
+\subsection{简单 GPIO 输入}
+
+HP GPIO 交换矩阵和 LP GPIO 交换矩阵均支持简单 GPIO 输入。使用简单 GPIO 输入模式时，任意 GPIO 管脚的值均可随时读取，而无需将 GPIO 管脚输入绑定到某个外设信号。
+
+配置 HP GPIO 交换矩阵实现简单 GPIO 输入，具体过程如下：
+\begin{itemize}
+    \item 置位 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} 的 \hyperref[fielddesc:IOMUXGPIONMCUIE] {IO\_MUX\_GPIO\regindex{x}\_MCU\_IE} 位，使能管脚输入。
+    \item 读取 \hyperref[regdesc:GPIOINREG]{GPIO\_IN\_REG[\regindex{x}]}，即可实现简单 GPIO 输入。
+\end{itemize}
+
+配置 LP GPIO 交换矩阵实现简单 GPIO 输入，具体过程如下：
+\begin{itemize}
+    \item 置位 \hyperref[regdesc:LPIOMUXGPIONREG]{LP\_IO\_MUX\_GPIO\regindex{x}\_REG} 的 \hyperref[fielddesc:LPIOMUXGPIONFUNIE] {LP\_IO\_MUX\_GPIO\regindex{x}\_FUN\_IE} 位，使能管脚输入。
+    \item 读取 \hyperref[regdesc:LPGPIOINREG]{LP\_GPIO\_IN\_REG[\regindex{x}]}，即可实现简单 GPIO 输入。
+\end{itemize}
+
+
+\subsection{GPIO 唤醒}
+
+\subsubsection{HP GPIO 唤醒}
+    当 HP 系统处于 Light-sleep 模式时，HP GPIO 唤醒功能可用于将系统从 Light-sleep 模式唤醒。当 HP 系统掉电时，HP GPIO 唤醒功能不可用。可通过配置 \hyperref[fielddesc:GPIOPINNWAKEUPENABLE] {GPIO\_PIN\regindex{x}\_WAKEUP\_ENABLE} (\regindex{x}: 0$\sim$13, 22$\sim$29) 使能 HP GPIO 唤醒功能。
+
+   HP GPIO 支持高电压敏感和低电压敏感两种唤醒方式，具体由 \hyperref[fielddesc:GPIOPINNINTTYPE] {GPIO\_PIN\regindex{x}\_INT\_TYPE} 配置决定，见下表。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] \regindex{x} = 0$\sim$13、22$\sim$29。
+    \item[2] 配置为其他值时，HP GPIO 唤醒功能不可用。
+\end{TableNotes}
+
+\begin{longtable}{ | p{5cm} | p{5cm} | p{5cm} | }
+\caption{HP GPIO 唤醒信号触发条件和清除条件}
+    \label{tab:hp-gpio-wakeup-signal-trigger-and-clear-conditions}\\\hline
+\hline\rowcolor{lightgray}
+\textbf{\hyperref[fielddesc:GPIOPINNINTTYPE] {GPIO\_PIN\regindex{x}\_INT\_TYPE}}\tnote{1}\tnote{,2} & \textbf{触发条件} &  \textbf{清除条件} \\ \hline
+    \endfirsthead
+
+    \insertTableNotes
+    \endlastfoot
+
+5 & GPIO 输入为高电平 & GPIO 输入为低电平 \\\hline
+4 & GPIO 输入为低电平 & GPIO 输入为高电平 \\\hline
+\end{longtable}
+\end{ThreePartTable}
+\subsubsection{LP GPIO 唤醒}
+\label{sec:lp-gpio-wakeup}
+    LP GPIO 唤醒功能可用于将系统从 Deep-sleep 模式唤醒。当 LP 外设掉电时，LP GPIO 唤醒功能不可用。GPIO0$\sim$GPIO6 可通过配置 \hyperref[fielddesc:LPGPIOPINNWAKEUPENABLE]{LP\_GPIO\_PIN\regindex{x}\_WAKEUP\_ENABLE} (\regindex{x} = 0$\sim$6) 使能 LP GPIO 唤醒功能。
+
+    LP GPIO 唤醒支持上升沿敏感、下降沿敏感、上升沿和下降沿敏感、高电压敏感以及低电压敏感唤醒。具体情况由寄存器配置决定，见下表。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[1] \regindex{x} = 0$\sim$6。
+    \item[2] 配置为其他值时，LP GPIO 唤醒功能不可用。
+\end{TableNotes}
+
+\begin{longtable}{ | L{4.5cm} | p{5.2cm} | p{6.5cm} | }
+\caption{LP GPIO 唤醒信号触发条件和清除条件}
+    \label{tab:lp-gpio-wakeup-signal-trigger-and-clear-conditions}\\\hline
+\hline\rowcolor{lightgray}
+\textbf{\textbf{\hyperref[fielddesc:LPGPIOPINNINTTYPE]{LP\_GPIO\_PIN\regindex{x}\_INT\_TYPE}}}\tnote{1}\tnote{,2} & \textbf{触发条件} &  \textbf{清除条件} \\ \hline
+    \endfirsthead
+
+    \insertTableNotes
+    \endlastfoot
+
+1 & GPIO 输入从低电平跳变为高电平 & 置位 \hyperref[fielddesc:LPGPIOPINNEDGEWAKEUPCLR]{LP\_GPIO\_PIN\regindex{x}\_EDGE\_WAKEUP\_CLR} \\\hline
+2 & GPIO 输入从高电平跳变为低电平 & 置位 \hyperref[fielddesc:LPGPIOPINNEDGEWAKEUPCLR]{LP\_GPIO\_PIN\regindex{x}\_EDGE\_WAKEUP\_CLR} \\\hline
+3 & GPIO 输入从高电平跳变为低电平，或从低电平跳变为高电平 & 置位 \hyperref[fielddesc:LPGPIOPINNEDGEWAKEUPCLR]{LP\_GPIO\_PIN\regindex{x}\_EDGE\_WAKEUP\_CLR} \\\hline
+4 & GPIO 输入为低电平 & GPIO 输入为高电平 \\\hline
+5 & GPIO 输入为高电平 & GPIO 输入为低电平 \\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+\subsection{编程流程}
+\label{sec:functional-description}
+\subsubsection{HP GPIO 交换矩阵}
+\label{sec:prgramming-procedure-for-hp}
+把某个 HP 外设输入信号 \regindex{Y} 绑定到某个 GPIO 管脚 \regindex{X}\hyperref[input-note-1]{$^1$} 的配置过程如下：
+
+\begin{enumerate}
+    \item 在 HP GPIO 交换矩阵中配置外设信号 \regindex{Y} 的 \hyperref[regdesc:GPIOFUNCMINSELCFGREG]{GPIO\_FUNC\regindex{y}\_IN\_SEL\_CFG\_REG} 寄存器：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG\regindex{y}\_IN\_SEL} 选择通过 HP GPIO 交换矩阵接收外部输入信号。
+        \item 设置 \hyperref[fielddesc:GPIOFUNCMINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} 为需要的 GPIO 管脚编号，此处应为 \regindex{X}。
+    \end{itemize}
+    \item \label{step:2} 可选：置位 \hyperref[fielddesc:IOMUXGPIONFILTEREN]{IO\_MUX\_GPIO\regindex{X}\_FILTER\_EN} 使能 GPIO 管脚的输入信号滤波功能。
+    \item \label{step:4} 同步 GPIO 输入信号。配置 GPIO 管脚 \regindex{X} 的 \hyperref[regdesc:GPIOPINNREG]{GPIO\_PIN\regindex{x}\_REG} 来同步 GPIO 输入信号，过程如下：
+    \begin{itemize}
+        \item 如图 \ref{fig:gpio-input-sync} 所示，配置 \hyperref[fielddesc:GPIOPINNSYNC1BYPASS]{GPIO\_PIN\regindex{x}\_SYNC1\_BYPASS} 使能输入信号在第一级同步中为上升沿或下降沿同步。
+        \item 如图 \ref{fig:gpio-input-sync} 所示，配置 \hyperref[fielddesc:GPIOPINNSYNC2BYPASS]{GPIO\_PIN\regindex{x}\_SYNC2\_BYPASS} 使能输入信号在第二级同步中为上升沿或下降沿同步。
+    \end{itemize}
+    \item 配置 HP IO MUX 寄存器使能 GPIO 管脚的输入功能\hyperref[input-note-2]{$^2$}。配置 GPIO 管脚 \regindex{X} 的 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG}，过程如下：
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{x}\_FUN\_IE} 使能输入\hyperref[input-note-3]{$^3$}。
+        \item 置位或清零 \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPU} 和 \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPD}，使能或关闭内部上拉/下拉电阻。
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+\item \label{input-note-1} 同一个输入管脚可以同时绑定多个输入信号。
+\item \label{input-note-2} 置位 \hyperref[fielddesc:GPIOFUNCNININVSEL]{GPIO\_FUNC\regindex{y}\_IN\_INV\_SEL} 可以把输入信号取反。
+\item \label{input-note-3}无需将输入信号绑定到一个 GPIO 管脚也可以使 HP 外设读取恒低或恒高电平的输入值。实现方式为选择特定的 \hyperref[fielddesc:GPIOFUNCMINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} 输入值而不是一个 GPIO 序号：
+\begin {itemize}
+\item 设置 \hyperref[fielddesc:GPIOFUNCMINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} 为 0x40，则输入信号恒为 1。
+\item 设置 \hyperref[fielddesc:GPIOFUNCMINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} 为 0x60，则输入信号恒为 0。
+\end{itemize}
+\end{enumerate}
+\end{tiplisting}
+
+\textbf{编程示例}
+
+要把 UART0 RXD 输入信号\hyperref[input-note-3]{$^3$}（U0RXD\_in，信号索引号 6）绑定到 GPIO7，请按照以下步骤操作：
+\begin{enumerate}
+\item 置位 \hyperref[regdesc:GPIOFUNCMINSELCFGREG]{GPIO\_FUNC6\_IN\_SEL\_CFG\_REG} 中的 \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG6\_IN\_SEL} 位，使能通过 HP GPIO 交换矩阵接收外部输入信号。
+\item 配置 \hyperref[regdesc:GPIOFUNCMINSELCFGREG]{GPIO\_FUNC6\_IN\_SEL\_CFG\_REG} 中的 \hyperref[fielddesc:GPIOFUNCMINSEL]{GPIO\_FUNC6\_IN\_SEL} 为 7，即选择管脚 GPIO7。
+\item 置位 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO7\_REG} 中 \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO7\_FUN\_IE} 位使能管脚输入。
+\end{enumerate}
+
+\subsubsection{LP GPIO 交换矩阵}
+
+LP GPIO 交换矩阵输入仅支持 GPIO 唤醒，配置 LP GPIO 输入唤醒可参考章节 \ref{sec:lp-gpio-wakeup}。
+
+
+\section{通过 GPIO 交换矩阵的外设输出}
+\label{sec:peripheral-output-via-gpio-matrix}
+
+\subsection{概述}
+
+通过 HP GPIO 交换矩阵输出外设信号，一般步骤如下：
+\begin{itemize}
+    \item 配置 HP GPIO 交换矩阵将 HP 外设信号（即在表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 中``输出信号”一栏所列出的信号）输出到 22 个 GPIO (0$\sim$13、22$\sim$29) 管脚
+    \item 输出信号从外设输出到 HP GPIO 交换矩阵，然后到达 HP IO MUX。HP IO MUX 必须设置相应管脚为 GPIO 功能，这样输出 GPIO 信号就能连接到相应管脚。
+\end{itemize}
+
+具体的编程步骤见章节 \ref{sec:prgramming-procedure-for-hp-output}。
+
+\begin{tiplisting}
+表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 中输出索引号为 97$\sim$100 的外设信号，没有连接至外设，可配置为从一个 GPIO 管脚输出后，直接由另一个 GPIO 管脚输入（索引号：97$\sim$100）。
+\end{tiplisting}
+\vspace{-2em}
+
+\subsection{简单 GPIO 输出}
+\label{sec:simple-gpio-out}
+
+GPIO 交换矩阵也可用于简单 GPIO 输出，即 GPIO 管脚可直接输出所期望的输出值，而无需将某个外设信号绑定到该 GPIO 管脚。
+
+对于 HP GPIO 交换矩阵，具体配置如下：
+
+\begin{itemize}
+    \item 设置 \hyperref[fielddesc:GPIOFUNCNOUTSEL]{GPIO\_FUNC\regindex{x}\_OUT\_SEL} 为特定的外设索引值 256 (0x100)。
+    \item 设置 \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG} 中相应位的值为期望 GPIO 输出的值。
+\end{itemize}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+
+\item \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}[0$\sim$13 和 22$\sim$29] 分别对应 GPIO0$\sim$GPIO13 和 GPIO22$\sim$GPIO29。
+\item 推荐使用相应的 W1TS 和 W1TC 寄存器，例如 \hyperref[fielddesc:GPIOOUTW1TS]{GPIO\_OUT\_W1TS} 来置位/清除 \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}。
+\end{itemize}
+\end{tiplisting}
+对于 LP GPIO 交换矩阵，仅支持简单 GPIO 输出，因此无需配置功能选择寄存器，仅需设置 \hyperref[regdesc:LPGPIOOUTREG]{LP\_GPIO\_OUT\_REG} 中相应位的值为期望 GPIO 输出的值。
+
+\begin{tiplisting}
+推荐使用相应的 W1TS 和 W1TC 寄存器，例如 \hyperref[fielddesc:LPGPIOOUTW1TS]{LP\_GPIO\_OUT\_W1TS} 或 \hyperref[fielddesc:LPGPIOOUTW1TC]{LP\_GPIO\_OUT\_W1TC} 来置位/清除 \hyperref[regdesc:LPGPIOOUTREG]{LP\_GPIO\_OUT\\\_REG}。
+\end{tiplisting}
+
+\subsection{编程流程}
+
+\subsubsection{HP GPIO 交换矩阵}
+\label{sec:prgramming-procedure-for-hp-output}
+如图 \ref{fig:iomux-gpio-matrix-overview-detail} 所示，表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 中“输出信号”列的某一个信号通过 HP GPIO 交换矩阵到达 HP IO MUX，然后连接到某个 GPIO 管脚。
+
+输出外设信号 \regindex{Y} 到某一 GPIO 管脚 \regindex{X}\hyperref[output-note-1]{$^1$} 的步骤如下：
+
+\begin{enumerate}
+    \item 在 HP GPIO 交换矩阵中配置 GPIO 管脚 \regindex{X} 的 \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} 和 \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}[\regindex{x}]。推荐使用相应 \hyperref[regdesc:GPIOENABLEW1TSREG]{W1TS}（写 1 置位）和 \hyperref[regdesc:GPIOENABLEW1TCREG]{W1TC}（写 1 清零）来更新 \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} 中的值。
+
+
+    \begin{itemize}
+        \item 设置 \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} 中的 \hyperref[fielddesc:GPIOFUNCNOUTSEL]{GPIO\_FUNC\regindex{x}\_OUT\_SEL} 字段为外设输出信号 Y 的索引号 (\regindex{Y})。
+        \item 要将信号强制使能为输出模式，需要将 GPIO 管脚 \regindex{X} 对应的 \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} 寄存器中 \hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{x}\_OE\_SEL} 字段置位；同时需要将 \hyperref[regdesc:GPIOENABLEW1TSREG]{GPIO\_ENABLE\_W1TS\_REG} 中的相应位置位。或者，将 \hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{x}\_OE\_SEL} 清零，即选择采用外设的输出使能信号，此时输出使能信号由内部逻辑功能决定。比如，表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 中 “\hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} = 0 时输出信号的输出使能信号” 一栏的 FFSPIQ\_oe 信号。
+       \item 置位 \hyperref[regdesc:GPIOENABLEW1TCREG]{GPIO\_ENABLE\_W1TC\_REG} 中相应位可以关闭 GPIO 管脚的输出。
+    \end{itemize}
+    \item 要选择以开漏方式输出，可以设置 GPIO 管脚 \regindex{X} 的 \hyperref[regdesc:GPIOPINNREG]{GPIO\_PIN\regindex{x}\_REG} 寄存器中 \hyperref[fielddesc:GPIOPINNPADDRIVER]{GPIO\_PIN\regindex{x}\_PAD\_DRIVER} 位。
+    \item 配置 HP IO MUX 寄存器来选择经由 HP GPIO 交换矩阵输出信号。配置 GPIO 管脚 \regindex{X} 的 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} 的过程如下：
+    \begin{itemize}
+        \item 设置 GPIO 管脚 \regindex {X} 的 \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{x}\_MCU\_SEL} 为所需的管脚功能。此处选择数值 1，即功能 1（GPIO 功能），适用于所有管脚。
+        \item 设置 \hyperref[fielddesc:IOMUXGPIONFUNDRV]{IO\_MUX\_GPIO\regindex{x}\_FUN\_DRV} 字段为特定的输出强度值 (0$\sim$3)，值越大，输出驱动能力越强。
+        \item 在开漏模式下，通过置位/清零 \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPU} 和 \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPD} 使能或关闭上拉/下拉电阻。
+    \end{itemize}
+    \item 使能迟滞功能：
+    \begin{itemize}
+        \item 请参考章节 \ref{sec:pad-hys-en}。
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item \label{output-note-1} 某一个外设的输出信号可以同时从多个管脚输出。
+\item \label{output-note-2} 置位 \hyperref[fielddesc:GPIOFUNCNOUTINVSEL]{GPIO\_FUNC\regindex{x}\_OUT\_INV\_SEL} 可以把输出的信号取反。
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{LP GPIO 交换矩阵}
+
+LP GPIO 交换矩阵输出仅支持简单 GPIO 输出，配置 LP GPIO 简单输出可参考章节 \ref{sec:simple-gpio-out}。
+
+\section{IO MUX 的直接输入输出功能}
+
+\subsection{概述}
+
+SPI、JTAG 等数字信号可以旁路 GPIO 交换矩阵以实现更好的高频数字特性。所以此类信号可以直接通过 IO MUX 输入和输出。这样比使用 GPIO 交换矩阵的灵活度要低，即每个 GPIO 管脚的 IO MUX 寄存器只有较少的功能选择，但可以实现更好的高频数字特性。
+
+\chipname{} 中有 7 个 GPIO 管脚 (GPIO0$\sim$GPIO6) 具有低功耗 (LP) 性能。这些管脚可由 HP IO MUX 或 LP IO MUX 控制。如果由 LP IO MUX 控制，这些管脚将旁路 HP IO MUX 和 HP GPIO 交换矩阵，直接供 LP 系统中的外设使用。
+
+当这些管脚被配置为 LP GPIO 管脚，仍然能够在芯片处于 Deep-sleep 模式下由 LP 系统的外设控制，也可以作为唤醒源将芯片从 Deep-sleep 中唤醒。
+
+\subsection{功能描述}
+
+LP 管脚 (GPIO0$\sim$GPIO6) 由 \hyperref[regdesc:LPAONGPIOMUXREG]{LP\_AON\_GPIO\_MUX\_REG} 中的 \hyperref[fielddesc:LPAONGPIOMUXSEL] {LP\_AON\_GPIO\_MUX\_SEL} 的 bit\regindex{[n]} (\regindex{n} = 0$\sim$6) 位控制。此位默认置为 0，通过 HP IO MUX 输入输出信号。
+
+如果置位 \hyperref[fielddesc:LPAONGPIOMUXSEL] {LP\_AON\_GPIO\_MUX\_SEL} 的 bit\regindex{[n]}，则控制权交由 LP IO MUX 接管。在这种模式下，\hyperref[regdesc:LPIOMUXGPIONREG]{LP\_IO\_MUX\_GPIO\regindex{n}\_REG} 寄存器用于控制 LP GPIO 管脚。表 \ref{tab:LP-IO-MUX-CN} 列出了 LP GPIO 管脚的 LP 功能。\hyperref[regdesc:LPIOMUXGPIONREG]{LP\_IO\_MUX\_GPIO\regindex{n}\_REG} 寄存器使用的是 LP GPIO 管脚的序号， \chipname{} 芯片中 LP GPIO 管脚的序号与 HP GPIO 管脚的序号相同。
+
+\subsubsection{HP IO MUX}
+对于 HP 外设输入信号，旁路 HP GPIO 交换矩阵必须配置以下两个字段：
+
+\begin{enumerate}
+\item GPIO 管脚的 \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} 必须配置为相应的管脚功能。表 \ref{tab:HP-IO-MUX-CN} 列出了管脚功能。
+\item 清除 \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG\regindex{n}\_IN\_SEL}，直接将输入信号连接到外设。
+\end{enumerate}
+
+对于 HP 外设输出信号，旁路 HP GPIO 交换矩阵只需将 GPIO 管脚的 \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} 配置为相应的管脚功能即可。
+
+\begin{tiplisting}
+并非所有外设输入/输出信号均可直接通过 IO MUX 连接到外设，某些输入/输出信号只能通过 HP GPIO 交换矩阵连接到外设，详见表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn}。
+\end{tiplisting}
+
+\subsubsection{LP IO MUX}
+对于 LP 外设输入输出信号，旁路 LP GPIO 交换矩阵，必须将 GPIO 管脚的 \hyperref[fielddesc:LPIOMUXGPIONMCUSEL] {LP\_IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} 配置为相应的管脚功能。表 \ref{tab:LP-IO-MUX-CN} 列出了管脚功能。
+
+
+\section{模拟功能描述}
+
+\subsection{概述}
+\chipname{} 共有 9 个 GPIO 管脚 (GPIO0$\sim$GPIO1, GPIO3$\sim$GPIO5, GPIO8$\sim$GPIO9, GPIO12$\sim$GPIO13) 具有模拟功能，其中包括 5 个 LP GPIO 管脚和 4 个 HP GPIO 管脚。
+见表 \ref{tab:ANA-IO-MUX-CN}。
+
+\subsection{模拟功能描述}
+当使用管脚的模拟功能时，需要确保该管脚处于浮空状态，此时外部模拟信号通过 GPIO 管脚直接与内部的模拟信号相连。相关配置如下：
+
+\begin{itemize}
+    \item 清除 \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{n}\_FUN\_IE}、 \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{n}\_FUN\_WPU} 和 \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{n}\_FUN\_WPD} 将管脚设置为浮空状态。
+    \item 向 \hyperref[regdesc:GPIOENABLEW1TCREG]{GPIO\_ENABLE\_W1TC} 中对应位写 1，清除输出使能。
+\end{itemize}
+
+对于表 \ref{tab:ANA-IO-MUX-CN} 中列出的不同模拟功能的使用方法，请参考相关章节：
+
+\begin{itemize}
+    \item XTAL\_32K 相关功能见章节 \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}。
+    \item ADC 相关功能见章节 \ref{mod:adc} \textit{\nameref{mod:adc}}。
+    \item 模拟电压比较器功能见章节 \ref{mod:anacom} \textit{\nameref{mod:anacom}}。
+\end{itemize}
+
+
+\section{Light-sleep 模式管脚功能}\label{sec:iomuxgpio-pin-func-light-sleep}
+
+当 \chipname{} 处于 Light-sleep 模式时管脚可以有不同的功能。如果某一 GPIO 管脚的 \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{n}\_REG} 寄存器中 \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} 置位时，芯片处于 Light-sleep 模式下将由另一组不同的寄存器控制管脚。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[*] 如果 \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} 置为 0，则芯片在正常工作和 Light-sleep 模式下，管脚的功能一样。此时，具体的输出使能配置请参考 \ref{sec:prgramming-procedure-for-hp-output} 章节。
+\end{TableNotes}
+
+\begin{longtable}[c]{|p{3.5cm}|m{5.5cm}|m{5.8cm}|}
+\caption{IO MUX Light-sleep 管脚功能控制寄存器}
+\label{tab:iomuxgpio-pin-function-register-light-sleep-mode} \\
+    \hline
+    \rowcolor{lightgray}
+  & \textbf{正常工作模式} & \textbf{Light-sleep 模式} \\
+ \rowcolor{lightgray}
+   \multirow{-2}{*}{\textbf{IO MUX 功能}}  & \textbf{OR \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} = 0} & \textbf{AND \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} = 1} \\\hline
+
+    \endfirsthead
+
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+
+    \rowcolor{lightgray}
+    \rowcolor{lightgray}
+   & \textbf{正常工作模式} & \textbf{Light-sleep 模式} \\
+ \rowcolor{lightgray}
+   \multirow{-2}{*}{\textbf{IO MUX 功能}}  & \textbf{OR \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} = 0} & \textbf{AND \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_GPIO\regindex{n}\_SLP\_SEL} = 1}\\\hline
+    \endhead
+
+    \multicolumn{3}{r}{\textbf{见下页}} \\
+    \endfoot
+    \insertTableNotes
+    \endlastfoot
+
+输出驱动强度 & \hyperref[fielddesc:IOMUXGPIONFUNDRV]{IO\_MUX\_GPIO\regindex{n}\_FUN\_DRV} & \hyperref[fielddesc:IOMUXGPIONMCUDRV]{IO\_MUX\_GPIO\regindex{n}\_MCU\_DRV} \\
+\hline
+上拉电阻 & \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{n}\_FUN\_WPU} & \hyperref[fielddesc:IOMUXGPIONMCUWPU]{IO\_MUX\_GPIO\regindex{n}\_MCU\_WPU} \\
+\hline
+下拉电阻 & \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{n}\_FUN\_WPD} & \hyperref[fielddesc:IOMUXGPIONMCUWPD]{IO\_MUX\_GPIO\regindex{n}\_MCU\_WPD} \\
+\hline
+输入使能 & \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{n}\_FUN\_IE} & \hyperref[fielddesc:IOMUXGPIONMCUIE]{IO\_MUX\_GPIO\regindex{n}\_MCU\_IE} \\
+\hline
+输出使能 & 由 GPIO 交换矩阵的 \hyperref[fielddesc:GPIOFUNCNOESEL]{OE\_SEL} \tnote{*} 控制 & \hyperref[fielddesc:IOMUXGPIONMCUOE]{IO\_MUX\_GPIO\regindex{n}\_MCU\_OE} \\
+\hline
+\end{longtable}
+\end{ThreePartTable}
+
+\section{GPIO 管脚的 Hold 特性}\label{sec:pad-hold}
+
+每个 GPIO 管脚都有单独的 Hold 功能，由电源管理单元 (PMU) 或寄存器控制。管脚的 Hold 功能被置上后，管脚在置上 Hold 那一刻的状态被强制保持，无论内部信号如何变化，修改 IO MUX 配置或者 GPIO 配置，都不会改变管脚的状态。如果希望在看门狗超时触发内核复位时或者 Deep-sleep 触发内核复位时管脚的状态不被改变，就需要提前把 Hold 置上。
+
+每个 GPIO 管脚的 Hold 状态由各管脚的 Hold 使能信号和全局的 Hold 使能信号经过\textbf{或运算}后共同控制。
+\begin{itemize}
+    \item 各个 GPIO 管脚的 Hold 信号
+    \begin{itemize}
+        \item \hyperref[regdesc:LPAONGPIOHOLD0REG]{LP\_AON\_GPIO\_HOLD0\_REG[\regindex{n}]} (\regindex{n} = 0$\sim$13, 22$\sim$29) 控制各个 GPIO 管脚的 Hold 信号。
+        \end{itemize}
+    \item 全局 Hold 信号
+        \begin{itemize}
+            \item HP GPIO 的全局 Hold 信号
+            \begin{itemize}
+                \item PMU\_TIE\_HIGH\_HP\_PAD\_HOLD\_ALL：用于使能所有 HP GPIO 管脚的全局 Hold 信号。
+                \item PMU\_TIE\_LOW\_HP\_PAD\_HOLD\_ALL：用于关闭所有 HP GPIO 管脚的全局 Hold 信号。
+            \end{itemize}
+            \item LP GPIO 的全局 Hold 信号
+            \begin{itemize}
+                \item PMU\_TIE\_HIGH\_LP\_PAD\_HOLD\_ALL：用于使能 LP GPIO 管脚的全局 Hold 信号。
+                \item PMU\_TIE\_LOW\_LP\_PAD\_HOLD\_ALL：用于关闭所有 LP GPIO 管脚的全局 Hold 信号。
+            \end{itemize}
+        \end{itemize}
+    \end{itemize}
+
+可通过以下任一方式使能或关闭管脚的 Hold 功能。
+
+\begin{itemize}
+    \item \textbf{方式 1：使能或关闭某一个管脚的 Hold 功能}\\
+    如要在 Deep-sleep 中保持该管脚的输入输出的状态值，需要置位 \hyperref[regdesc:LPAONGPIOHOLD0REG]{LP\_AON\_GPIO\_HOLD0\_REG[\regindex{n}]} 中的相应位，其中 \regindex{n} = 0$\sim$13, 22$\sim$29，分别对应 GPIO0$\sim$GPIO13 和 GPIO22$\sim$GPIO29。在芯片被唤醒后，若要关闭 Hold 功能，可将 \hyperref[regdesc:LPAONGPIOHOLD0REG]{LP\_AON\_GPIO\_HOLD0\_REG} 中的相应位 bit[\regindex{n}] 清除。
+    \item \textbf{方式 2：使能或关闭所有 HP 管脚和 LP 管脚的 Hold 功能}\\
+    \begin{itemize}
+        \item HP 管脚\\
+        置位 \hyperref[fielddesc:PMUTIEHIGHHPPADHOLDALL]{PMU\_TIE\_HIGH\_HP\_PAD\_HOLD\_ALL} 可保持所有 HP  管脚的输入输出状态；置位 \hyperref[fielddesc:PMUTIELOWHPPADHOLDALL]{PMU\_TIE\_LOW\_HP\_PAD\_HOLD\_ALL} 可关闭所有 HP 管脚的 Hold 功能。
+        \item LP 管脚\\
+        置位 \hyperref[fielddesc:PMUTIEHIGHLPPADHOLDALL]{PMU\_TIE\_HIGH\_LP\_PAD\_HOLD\_ALL} 可保持所有 LP 管脚的输入输出状态；置位 \hyperref[fielddesc:PMUTIELOWLPPADHOLDALL]{PMU\_TIE\_LOW\_LP\_PAD\_HOLD\_ALL} 可关闭所有 LP 管脚的 Hold 功能。
+    \end{itemize}
+    \item \textbf{方式 3：使用 PMU 任务}\\
+    在芯片进入 Deep-sleep 前，可配置 PMU 任务，用以保持所有 HP 管脚的状态。进入 Deep-sleep 后，PMU 可自动保持这些 HP 管脚的值。
+\end{itemize}
+
+
+\section{GPIO 管脚的迟滞特性}\label{sec:pad-hys-en}
+
+每个 GPIO 管脚都具有迟滞功能。当未使能迟滞功能时，如图 \ref{fig:hysteresis-disabled} 所示，芯片焊盘 (PAD) 上输入给芯片内部的信号 (C) 的电平翻转只有一个阈值（Vt，约 1.7 V）。当 PAD 的电压高于 Vt 时，C 的电平为高，否则为低。但如果 PAD 上的信号有噪声，可能会影响 C 上的信号。
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/07-IOMUXGPIO-hysteresis-disabled}}
+    \caption{未使能迟滞功能时 PAD 上的电平翻转示例}
+    \label{fig:hysteresis-disabled}
+\end{figure}
+
+当使能迟滞功能时，如图 \ref{fig:hysteresis-enabled} 所示，C 的电平翻转有两个阈值，分别为高电平阈值（Vth，约 1.7 V）和低电平阈值（Vtl，约 1.4 V）。当 PAD 的电压由低变高时，如果电压高于 Vth，则 C 的电平为高。当 PAD 的电压由高变低时，若电压低于 Vtl，则 C 的电平为低。当 PAD 的电压在 Vth 和 Vtl 之间时，C 的电平不变。迟滞功能可以减少噪声的影响，起到抗干扰作用，减少 C 的电平翻转次数。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/07-IOMUXGPIO-hysteresis-enabled}}
+    \caption{使能迟滞功能时 PAD 上的电平翻转示例}
+    \label{fig:hysteresis-enabled}
+\end{figure}
+
+要使能迟滞功能，请按照以下步骤操作：
+
+\begin{itemize}
+    \item 当 \hyperref[fielddesc:IOMUXGPIONHYSSEL]{IO\_MUX\_GPIO\regindex{n}\_HYS\_SEL} 为 0 时（\regindex{n} 的取值范围是 0$\sim$13、22$\sim$29，分别对应 GPIO0$\sim$GPIO13、GPIO22$\sim$GPIO29）：
+    \begin{itemize}
+        \item 当 \hyperref[fielddesc:EFUSEHYSENPAD]{EFUSE\_HYS\_EN\_PAD} 为 1 时，开启 GPIO\regindex{n} 的迟滞功能。
+        \item 当 \hyperref[fielddesc:EFUSEHYSENPAD]{EFUSE\_HYS\_EN\_PAD} 为 0 时，关闭 GPIO\regindex{n} 的迟滞功能。
+    \end{itemize}
+    \item 当 \hyperref[fielddesc:IOMUXGPIONHYSSEL]{IO\_MUX\_GPIO\regindex{n}\_HYS\_SEL} 为 1 时（\regindex{n} 的取值范围是 0$\sim$13、22$\sim$29，分别对应 GPIO0$\sim$GPIO13、GPIO22$\sim$GPIO29）：
+    \begin{itemize}
+        \item 设置 \hyperref[fielddesc:IOMUXGPIONHYSEN]{IO\_MUX\_GPIO\regindex{n}\_HYS\_EN} 为 1，可开启 GPIO\regindex{n} 的迟滞功能
+        \item 设置 \hyperref[fielddesc:IOMUXGPIONHYSEN]{IO\_MUX\_GPIO\regindex{n}\_HYS\_EN} 为 0，可关闭 GPIO\regindex{n} 的迟滞功能
+    \end{itemize}
+\end{itemize}
+
+建议设置 \hyperref[fielddesc:IOMUXGPIONHYSSEL]{IO\_MUX\_GPIO\regindex{n}\_HYS\_SEL} 为 1 ，使用 \hyperref[fielddesc:IOMUXGPIONHYSEN]{IO\_MUX\_GPIO\regindex{n}\_HYS\_EN} 来开启或关闭 GPIO\regindex{n} 的迟滞功能。
+
+
+\section{GPIO 管脚供电和电源管理}
+
+\subsection{GPIO 管脚供电}
+GPIO 管脚供电请参考\textit{\href{https://www.espressif.com/sites/default/files/documentation/esp32-c61_datasheet_en.pdf}{《\chipname{} 技术规格书》}}中管脚定义章节。所有管脚均可用于将芯片从 Light-sleep 中唤醒，但仅有 VDDPST1 域中的管脚 (GPIO0$\sim$GPIO6) 可用于将芯片从 Deep-sleep 唤醒。
+
+\subsection{电源管理}
+
+ \chipname{} 的管脚可由如下不同的电源域供电。
+
+\begin{itemize}
+    \item VDDPST1：LP GPIO 管脚的输入电源
+    \item VDDPST2：HP GPIO 管脚的输入电源
+\end{itemize}
+
+\section{HP 外设信号列表}
+
+表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 列出了所有经由 HP GPIO 交换矩阵的外设输入输出信号。
+
+请注意 \hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} 位的配置：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} = 1，则寄存器 \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} 中的相应位 \regindex{n} 将用于控制信号输出使能。
+
+    \begin{itemize}
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}[\regindex{n}] = 0：输出关闭。
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}[\regindex{n}] = 1：输出使能。
+    \end{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} = 0，则输出信号的使能由外设控制，例如表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn} 中 “\hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} = 0 时输出信号的输出使能信号”一栏的 FSPIQ\_oe。注意，使能信号 FSPIQ\_oe 可设置为 1 (1'd1) 或 0 (1'd0)，具体由外设的配置决定。如果 “\hyperref[fielddesc:GPIOFUNCNOESEL]{GPIO\_FUNC\regindex{n}\_OE\_SEL} = 0 时输出信号的输出使能信号”一栏中为 1'd1，则表示输出信号默认始终使能。
+\end{itemize}
+
+\begin{tiplisting}
+信号连续编号，但并非所有信号均有效。表 \ref{tab:iomuxgpio-periph-signals-via-hp-gpio-matrix-cn}“输入信号”一栏中有名字的信号均为有效输入信号；“输出信号”一栏中有名字的信号均为有效输出信号。
+\end{tiplisting}
+
+\input{\modulefiles/tables/07-IOMUXGPIO-peripheral-signals-via-gpio-matrix.tex}
+\tableheaderHPSignalCN
+\tablecontentHPSignal
+
+
+\section{HP IO MUX 管脚功能列表}
+
+表 \ref{tab:HP-IO-MUX-CN} 列出了每个 GPIO 管脚的 HP IO MUX 功能及其默认状态。
+\input{\modulefiles/tables/07-IOMUXGPIO-iomux-pad-summary.tex}
+\tableheaderHPFunctionsCN
+\tablecontentHPFunctions
+
+\begin{importantlisting}\\
+    HP IO MUX 中，没有用到的管脚需要配置成 GPIO 功能。
+\end{importantlisting}
+
+\normalsize
+
+\textbf{驱动强度}
+
+``驱动强度" 一栏所示为每个管脚复位后的默认驱动强度。
+
+\begin{itemize}
+\item \textbf{0} - 驱动电流 = $\sim$5 mA
+\item \textbf{1} - 驱动电流 = $\sim$10 mA
+\item \textbf{2} - 驱动电流 = $\sim$20 mA
+\item \textbf{3} - 驱动电流 = $\sim$40 mA
+\end{itemize}
+\textbf{复位}
+
+``复位" 一栏所示为每个管脚复位后的默认配置。
+
+\begin{itemize}
+\item \textbf{0} - IE = 0（输入关闭）
+\item \textbf{1} - IE = 1（输入使能）
+\item \textbf{3} - IE = 1，WPU = 1 （输入使能，上拉电阻使能）
+\item \textbf{4} - IE = 1，OE = 1 （输入使能，输出使能）
+\item \textbf{1*} - 如果 \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG} = 1，则 MTCK 管脚复位后浮空，即 IE = 1。如果 \hyperref[fielddesc:EFUSEDISPADJTAG]{EFUSE\_DIS\_PAD\_JTAG} = 0，则 MTCK 管脚连接内部上拉电阻，即 IE = 1，WPU = 1。
+\item \textbf{3*} - IE = 1，WPU = 0，GPIO14 的 USB 上拉默认值为 1，因此，其上拉电阻使能，具体见以下\textbf{说明}。
+\end{itemize}
+
+\textbf{说明}
+
+\begin{itemize}
+\item \textbf{R} - LP 管脚，部分具有模拟功能，见表 \ref{tab:ANA-IO-MUX-CN}。
+\item \textbf{USB} - USB 上拉电阻使能            
+\begin{itemize}
+    \item USB 管脚（GPIO13 和 GPIO14）默认开启 USB 功能，此时管脚是否上拉由 USB 是否上拉决定。USB 上拉由 USB\_SERIAL\_JTAG\_DP/DM\_PULLUP 控制，USB 上拉电阻的具体阻值可通过 USB\_SERIAL\_JTAG\_PULLUP\_VALUE 位控制，详见章节 \nameref{mod:usbserialjtag}。
+    \item USB 管脚关闭 USB 功能时，用作普通 GPIO，默认禁用管脚内部弱上/下拉电阻，可通过 \hyperref[fielddesc:IOMUXGPIONMCUWPU]{IO\_MUX\_GPIO\regindex{n}\_MCU\_WPU/WPD} 配置。
+\end{itemize}
+\end{itemize}
+
+\section{LP IO MUX 管脚功能列表}
+
+表 \ref{tab:LP-IO-MUX-CN} 列出了每个 GPIO 管脚的 LP IO MUX 功能。GPIO 管脚默认由 HP IO MUX 控制，因此表 \ref{tab:LP-IO-MUX-CN} 仅列出了 LP 管脚的 LP IO MUX 功能。
+
+\input{\modulefiles/tables/07-IOMUXGPIO-lpiomux-pad-summary.tex}
+\tableheaderLPFunctionsCN
+\tablecontentLPFunctions
+
+\begin{importantlisting}\\
+    LP IO MUX 中，没有用到的管脚需要配置成 LP\_GPIO 功能。
+\end{importantlisting}
+
+\section{GPIO 管脚模拟功能列表}
+
+表 \ref{tab:ANA-IO-MUX-CN} 列出了 GPIO 管脚及其相应的模拟功能。
+
+\input{\modulefiles/tables/07-IOMUXGPIO-analog-function-summary.tex}
+\tableheaderAnalogFunctionsCN
+\tablecontentAnalogFunctions
+\begin{tiplisting}
+\vspace{-2em}
+    \begin{itemize}
+        \item GPIO1 有两种模拟功能，可以同时使用。
+        \item ZCD0 和 ZCD1 是模拟电压比较器功能，见章节 \ref{mod:anacom} \textit{\nameref{mod:anacom}}。
+    \end{itemize}
+\end{tiplisting}
+
+\section{事件任务矩阵 (ETM) 功能}
+
+在 \chipname{} 中，GPIO 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 GPIO 的 ETM 任务，或者通过 GPIO 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \textit{\nameref{mod:evntaskmatrix}}。这里仅介绍与 GPIO 相关的 ETM 任务和 ETM 事件。
+
+GPIO ETM 有八个任务通道 \regindex{x} (0$\sim$7)。每个任务通道可接收的 ETM 任务有：
+
+\begin{itemize}
+    \item GPIO\_TASK\_CH\regindex{x}\_SET：触发时 GPIO 变为高电平。
+    \item GPIO\_TASK\_CH\regindex{x}\_CLEAR：触发时 GPIO 变为低电平。
+    \item GPIO\_TASK\_CH\regindex{x}\_TOGGLE：触发时 GPIO 电平翻转。
+\end{itemize}
+
+将任务通道 \regindex{x} 配置到 GPIO\regindex{y} 的示例如下：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{y}\_MCU\_SEL} 的值为 1，使得 GPIO\regindex{y} 选择表 \ref{tab:HP-IO-MUX-CN} 中的功能 1。
+    \item 配置 \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG[\regindex{y}]} 的值为 1。
+    \item 配置 \hyperref[fielddesc:GPIOEXTETMTASKGPIO0SEL]{GPIO\_EXT\_ETM\_TASK\_GPIO\regindex{y}\_SEL} 为 \regindex{x}。
+    \item 置位 \hyperref[fielddesc:GPIOEXTETMTASKGPIO0EN]{GPIO\_EXT\_ETM\_TASK\_GPIO\regindex{y}\_EN}，使能 GPIO\regindex{y} 受到任务通道 \regindex{x} 的控制。
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item 一个任务通道可被一个或多个 GPIO 选择。
+
+\item 如果 GPIO\regindex{y} 选择的任务通道 \regindex{x} 其信号 (GPIO\_TASK\_CH\regindex{x}\_SET、GPIO\_TASK\_CH\regindex{x}\_CLEAR 和 GPIO\_TASK\_CH\regindex{x}\_\\TOGGLE) 中有两个或三个同时有效，则 GPIO\_TASK\_CH\regindex{x}\_SET 优先级最高，GPIO\_TASK\_CH\regindex{x}\_CLEAR 优先级次之，GPIO\_TASK\_CH\regindex{x}\_TOGGLE 优先级最低。
+
+\item GPIO\regindex{y} 受到 ETM 任务通道控制时， \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}、 \hyperref[fielddesc:GPIOFUNCNOUTINVSEL]{GPIO\_FUNC\regindex{y}\_OUT\_INV\_SEL} 和 \hyperref[fielddesc:GPIOFUNCNOUTSEL]{GPIO\_FUNC\regindex{y}\_OUT\_SEL} 的值可能会被硬件修改。在 GPIO 退出 ETM 任务通道控制后，建议对上述寄存器重新进行配置。
+\end{itemize}
+\end{tiplisting}
+
+GPIO 有八个事件通道，每个事件通道可以生成的 ETM 事件有：
+
+\begin{itemize}
+    \item GPIO\_EVT\_CH\regindex{x}\_RISE\_EDGE：对应 GPIO 滤波器（见图 \ref{fig:iomux-gpio-matrix-overview-detail}）输出信号出现上升沿。
+    \item GPIO\_EVT\_CH\regindex{x}\_FALL\_EDGE：对应 GPIO 滤波器（见图 \ref{fig:iomux-gpio-matrix-overview-detail}）输出信号出现下降沿。
+    \item GPIO\_EVT\_CH\regindex{x}\_ANY\_EDGE：对应 GPIO 滤波器（见图 \ref{fig:iomux-gpio-matrix-overview-detail}）输出信号发生翻转。
+\end{itemize}
+
+事件通道具体配置如下：
+
+\begin{itemize}
+    \item 置位 \hyperref[fielddesc:GPIOEXTETMCHNEVENTEN]{GPIO\_EXT\_ETM\_CH\regindex{x}\_EVENT\_EN} 使能事件通道 \regindex{x} (0$\sim$7)。
+    \item 配置 \hyperref[fielddesc:GPIOEXTETMCHNEVENTSEL]{GPIO\_EXT\_ETM\_CH\regindex{x}\_EVENT\_SEL} 为 \regindex{y} (0$\sim$13、22$\sim$29)，即选择 22 个 GPIO 中的一个 GPIO。
+\end{itemize}
+
+\begin{tiplisting}
+ 一个 GPIO 可被一个或多个事件通道选择。
+\end{tiplisting}
+
+GPIO 的 ETM 事件可以用来触发 GPIO 的 ETM 任务。例如，事件通道 0 选择 GPIO0，GPIO1 选择任务通道 0，并且 GPIO\_EVT\_CH\regindex{0}\_RISE\_EDGE 事件用于触发 GPIO\_TASK\_CH\regindex{0}\_TOGGLE 任务。当通过 GPIO0 向芯片输入一个方波信号时，芯片通过 GPIO1 输出一个二分频的方波信号。
+
+\section{中断}
+
+\chipname{} 的 HP IO MUX 和 HP GPIO交换矩阵可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item GPIO\_EXT\_REG\_INT
+        \item GPIO\_PROCPU\_INT
+    \end{itemize}
+HP IO MUX 和 HP GPIO 交换矩阵有多个中断源可生成以上中断信号。 
+表 \ref{tab:hpio-int-sources} 列出了 HP IO MUX 和 HP GPIO 交换矩阵内部的中断源及其触发条件。
+\begin{longtable}{ | L{5cm} | L{6.5cm} | L{4cm} | }
+\caption{HP IO MUX 和 HP GPIO 交换矩阵内部中断源} \label{tab:hpio-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+GPIO\_EXT\_COMP\_ALL\_0\_INT  & 参考章节 \ref{mod:anacom} \textit{\nameref{mod:anacom}}  &  GPIO\_EXT\_REG\_INT  \\ \hline
+GPIO\_EXT\_COMP\_NEG\_0\_INT  & 参考章节 \ref{mod:anacom} \textit{\nameref{mod:anacom}}  &  GPIO\_EXT\_REG\_INT  \\ \hline
+GPIO\_EXT\_COMP\_POS\_0\_INT  & 参考章节 \ref{mod:anacom} \textit{\nameref{mod:anacom}}  &  GPIO\_EXT\_REG\_INT  \\ \hline
+GPIO\_REG\_INTR  & \hyperref[fielddesc:GPIOSTATUSINTERRUPT]{GPIO\_STATUS\_INTERRUPT}[\regindex{n}] \& \hyperref[fielddesc:GPIOPINNINTENA]{GPIO\_PIN\regindex{n}\_INT\_ENA}[0] (\regindex{n}: 0$\sim$13,22$\sim$29) &  GPIO\_PROCPU\_INT  \\ \hline
+\end{longtable}
+
+\chipname{} 的 LP IO MUX 和 LP GPIO 交换矩阵可以生成以下中断信号，生成的中断信号只会发送给 LP\_CORE。
+
+    \begin{itemize}
+        \item LP\_GPIO\_INTR
+    \end{itemize}
+表 \ref{tab:lpio-int-sources} 列出了 LP IO MUX 和 LP GPIO 交换矩阵内部的中断源及其触发条件。
+\begin{longtable}{ | L{4.5cm} | L{7cm} | L{4cm} | }
+\caption{LP IO MUX 和 LP GPIO 交换矩阵内部中断源} \label{tab:lpio-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+LP\_GPIO\_REG\_INTR  & \hyperref[fielddesc:LPGPIOSTATUSINTERRUPT]{LP\_GPIO\_STATUS\_INTERRUPT}[\regindex{n}] (\regindex{n}: 0$\sim$6) &  LP\_GPIO\_INTR  \\ \hline
+\end{longtable}
+
+\hypertarget{iomuxgpio-reg-summ}{}
+\section{寄存器列表}
+\subsection{HP GPIO 交换矩阵寄存器列表}
+\label{sec:hp-gpio-reg-summ}
+本小节的所有地址均为相对于 HP GPIO 交换矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节\hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/07-IOMUXGPIO-gpio_reg_summ__CN}
+
+\subsection{HP IO MUX 寄存器列表}
+本小节的所有地址均为相对于 HP IO MUX 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节\hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/07-IOMUXGPIO-io_mux_reg_summ__CN}
+
+\subsection{GPIO EXT 寄存器列表}
+GPIO EXT 寄存器包括模拟电压比较器寄存器和 ETM 寄存器。
+
+本小节的所有地址均为相对于 GPIO EXT 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节\hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/07-IOMUXGPIO-gpio_ext_reg_summ__CN}
+
+\subsection{LP GPIO 交换矩阵寄存器列表}
+\label{sec:lp-gpio-register-summ}
+
+本小节的所有地址均为相对于 LP GPIO 交换矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+请查看章节\hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/07-IOMUXGPIO-lp_gpio_reg_summ__CN}
+
+\subsection{LP IO MUX 寄存器列表}
+\label{sec:lp-iomux-register-summ}
+
+本小节的所有地址均为相对于 LP IO MUX 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节\hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles//07-IOMUXGPIO-lp_io_mux_reg_summ__CN}
+
+
+\section{寄存器}
+
+\subsection{HP GPIO 交换矩阵寄存器}
+本小节的所有地址均为相对于 HP GPIO 交换矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节\hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/07-IOMUXGPIO-gpio_reg__CN}
+
+\subsection{HP IO MUX 寄存器}
+本小节的所有地址均为相对于 HP IO MUX 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节\hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/07-IOMUXGPIO-io_mux_reg__CN}
+
+\subsection{GPIO EXT 寄存器}
+
+本小节的所有地址均为相对于 GPIO EXT 的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节\hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/07-IOMUXGPIO-gpio_ext_reg__CN}
+
+\subsection{LP GPIO 矩阵寄存器}
+本小节的所有地址均为相对于 LP GPIO 交换矩阵基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节\hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/07-IOMUXGPIO-lp_gpio_reg__CN}
+
+\subsection{LP IO MUX 寄存器}
+本小节的所有地址均为相对于 LP IO MUX 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节\hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/07-IOMUXGPIO-lp_io_mux_reg__CN}
+
+\end{document}

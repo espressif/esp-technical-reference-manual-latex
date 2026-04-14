@@ -1,0 +1,1071 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./36-JPEGCODEC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+\begin{document}
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{jpegcodec}{}
+\chapter{JPEG 图像编解码器}
+\label{mod:jpegcodec}
+
+\chipname{} 的 JPEG 图像编解码器是一种基于 JPEG 基线标准的图像编解码器，可以对图像进行压缩（编码）和解压缩（解码），从而降低传输图像所需的带宽或存储图像所需的空间，可以处理高分辨率的图像。图像编码流程主要包括离散余弦变换 (DCT)、Z 形 (Zigzag) 扫描、量化和哈夫曼编码。图像解码流程是编码流程的逆操作，主要包括哈夫曼解码、反量化、反 Z 形扫描和反离散余弦变换。
+
+\section{术语}
+\begin{longtable}[c]{ R{4cm} p{12cm} }
+\textbf{MCU} & 最小编码单元，即编码和解码的基础单位 \\
+\textbf{基线 (baseline)} & JPEG 协议中规定的一种基于 DCT 的顺序编码和解码处理，在所有基于 DCT 的解码处理中都需用到 \\
+\textbf{图像 (image)} & 整数二维数组集 \\
+\textbf{分量 (component)} & 二维数组组成的图像中的一维 \\
+\textbf{数据单元 (data unit)} & 组成分量的 8 × 8 像素块 \\
+\textbf{标记 (marker)} & 两字节码，第一个字节为十六进制的 0xFF，第二个字节为 1 至 0xFE 区间内的值，用于识别压缩数据格式的各个组成部分 \\
+\textbf{恢复标记 (restart marker)} & 区分两个编码后数据段的标记，用于解码器再同步、错误恢复等特定用途 \\
+\textbf{恢复间隔 (restart interval)} & 两个恢复标记间隔的整数个 MCU  \\
+\textbf{扫描 (scan)} & 对一幅图像分量的一个或多个数据进行的单一浏览\\
+\end{longtable}
+
+图 \ref{fig:jpeg-bs} 为 JPEG 码流的组成结构图。图中虚线部分表示该部分码流的组成结构，黄色部分表示标记码。
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/jpeg-bs}
+    \caption{JPEG 码流格式}
+    \label{fig:jpeg-bs}
+\end{figure}
+
+表 \ref{tab:marker_code_assign} 为码流中包含的各个标记码及其描述。
+\begin{longtable}{ | L{4cm} | L{2cm} | L{8cm} |}
+\caption{标记码描述} \label{tab:marker_code_assign}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{代码} & \textbf{标记}  &  \textbf{描述}\\ \hline
+0xFFC0  &  SOF0 &  帧开始标记（基线 DCT） \\ \hline
+0xFFC4  &  DHT  &  定义的哈夫曼表标记 \\ \hline
+0xFFDm  &  RSTm &  恢复标记，模数为 8 \\ \hline
+0xFFD8  &  SOI  &  图像开始标记 \\ \hline
+0xFFD9  &  EOI  &  图像结束标记 \\ \hline
+0xFFDA  &  SOS  &  开始扫描标记 \\ \hline
+0xFFDB  &  DQT  &  定义的量化表标记 \\ \hline
+0xFFDD  &  DRI  &  定义的恢复间隔标记 \\ \hline
+0xFFEn  &  APPn &  用于应用段的标记， ``n" 为 0 到 F 区间内的值\\ \hline
+0xFFFE  &  COM  &  注释标记 \\ \hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+\chipname{} 的 JPEG 图像编解码器基于 JPEG 基线标准，该标准规定了编码处理需通过一次或多次扫描完成。一次扫描可以处理一个或多个 MCU。MCU 由数据单元序列构成，而数据单元序列取决于扫描图像分量的取样因子，也就是说不同图像格式的 MCU 可能由不同的数据单元序列构成，如表 \ref{tab:data_unit_of_mcu} 所示。
+
+\begin{ThreePartTable}
+\begin{longtable}{ | l | l | l | l |}
+\caption{不同图像格式 MCU 包含的数据单位} \label{tab:data_unit_of_mcu}
+\\\hline
+
+\rowcolor{lightgray}
+ & \multicolumn{3}{c}{\textbf{MCU\tnote{1}}} \\\cline{2-4}
+
+\rowcolor{lightgray}
+\multirow{-2}*{\textbf{图像格式}}  & \textbf{亮度分量 Y}  &  \textbf{色度分量 U}  &  \textbf{色度分量 V}\\ \hline
+
+YUV444  &  1 x 1 &  1 x 1 &  1 x 1  \\ \hline
+YUV422  &  2 x 1 &  1 x 1 &  1 x 1  \\ \hline
+YUV420  &  2 x 2 &  1 x 1 &  1 x 1  \\ \hline
+GRAY    &  1 x 1 &  无  &  无  \\ \hline
+\end{longtable}
+
+\begin{tablenotes}
+\item[1] 每个图像格式的 MCU 可以表示为每个分量水平方向的数据单元 x 垂直方向的数据单元。
+\end{tablenotes}
+
+\end{ThreePartTable}
+
+
+在同一个时刻，JPEG 图像编解码器只能配置为编码器或解码器，即不能同时作为编码器和解码器工作：
+\begin{itemize}
+    \item 作为编码器使用时，通过 2D DMA 获取待压缩图像，将编码后的码流发送给 2D DMA；
+    \item 作为解码器使用时，通过 2D DMA 获取编码后的码流，将解码后的图像发送给 2D DMA。
+\end{itemize}
+
+JPEG 图像解码器模块的工作流程如图 \ref{fig:jpeg-sys-connect} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/jpeg-sys-connect}
+    \caption{JPEG 图像编解码器的系统连接框图}
+    \label{fig:jpeg-sys-connect}
+\end{figure}
+
+JPEG 图像编解码器的功能时钟是 SYS\_CLK。
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:jpegcodec-features}
+
+JPEG 图像编解码器作为编码器使用时，具有以下特性：
+\begin{itemize}
+    \item 使用离散余弦变换算法
+    \item 使用范式哈夫曼编码
+    \item 原始输入图像格式支持 RGB888、RGB565、YUV422和 GRAY
+    \item 支持将 RGB888、RGB565 图像格式转换为 YUV444、YUV422 或 YUV420 格式的图像进行压缩（压缩仅支持  YUV444、YUV422 或 YUV420 格式）
+    \item 支持 4 个 8 位或 16 位精度的可配置量化系数表
+    \item 性能：
+        \begin{itemize}
+            \item 静态图像压缩最大支持 4K 分辨率
+            \item 动态图像压缩最大支持 1080P@40fps,720P@70fps（不包括包头编码时间）
+        \end{itemize}
+    \item 可自动填充零字节
+    \item 可自动添加 EOI 标记
+\end{itemize}
+
+JPEG 图像编解码器作为解码器使用时，具有以下特性：
+\begin{itemize}
+    \item 使用反离散余弦变换算法
+    \item 使用哈夫曼解码
+    \item 支持 YUV444、YUV422、YUV420、GRAY 图像格式的压缩码流解码
+    \item 支持 4 个 8 位或 16 位精度的可配置量化系数表
+    \item 支持 2 个 DC 和 2 个 AC 哈夫曼表
+    \item 支持任意分辨率的图像解码，但输出的解码图像分辨率不同于输入图像格式：
+        \begin{itemize}
+        \item YUV444、GRAY：输出的解码图像水平和垂直分辨率均为 8 的倍数，即 150 × 150 的图像输出分辨率为 152 × 152
+        \item YUV422：输出的解码图像水平分辨率为 16 的倍数，垂直分辨率为 8 的倍数，即 150 × 150 的图像输出分辨率为 160 × 152
+        \item YUV420：输出的解码图像水平和垂直分辨率均为 16 的倍数，即 150 × 150 的图像输出分辨率为 160 × 160
+        \end{itemize}
+    \item 性能：
+    \begin{itemize}
+        \item 静态图像解码最大支持 4K 分辨率
+        \item 动态图像解码最大支持 1080P@40fps,720P@70fps（不包括包头解析时间）
+    \end{itemize}
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{架构概述}
+\label{sec:jpegcodec-arch-overview}
+
+JPEG 图像编解码器配置为编码器时，其架构如图 \ref{fig:jpeg-enc－arc} 所示。
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/jpeg-enc-arc}
+    \caption{JPEG 编码器架构}
+    \label{fig:jpeg-enc－arc}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{rgb2ycrcb} 模块实现颜色空间转换功能，将原始图像转换为编解码器支持的压缩图像格式
+    \item \textbf{dct\_idct} 模块实现对数据单元的二维 DCT 变换
+    \item \textbf{zigzag} 模块对 DCT 变换后的数据单元进行 Z 形扫描排序
+    \item \textbf{quant\_table} 模块存储软件下发的量化系数表
+    \item \textbf{quantizer} 模块根据 \textbf{quant\_table} 模块存储的量化系数表，对 Z 形排序后的数据进行量化
+    \item \textbf{huffman\_encoder} 模块对数据单元量化后结果进行哈夫曼编码
+    \item \textbf{packer} 模块对哈夫曼编码后数据按照 32 bit 位为一组进行打包，输出最终的编码码流
+\end{itemize}
+
+JPEG 图像编解码器配置为解码器时，其架构如图 \ref{fig:jpeg-dec－arc} 所示。
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/jpeg-dec-arc}
+    \caption{JPEG 解码器架构}
+    \label{fig:jpeg-dec－arc}
+\end{figure}
+
+\begin{itemize}
+    \item \textbf{header\_dec} 模块实现码流的提取及 SOS 和 EOI 标记的解析，并控制解码流程
+    \item \textbf{huffman\_decoder} 模块存储软件下发的哈夫曼表，并实现对码流的哈夫曼解码
+    \item \textbf{quant\_table} 模块存储软件下发的量化系数表
+    \item \textbf{dequantizer} 模块根据 \textbf{quant\_table} 模块存储的量化系数表，对哈夫曼解码后的数据进行反量化
+    \item \textbf{dezigzag} 模块对反量化后的数据进行反 Z 形扫描排序，组合成反量化后的数据单元
+    \item \textbf{dct\_idct} 模块对反量化后的数据单元进行二维反 DCT 变换，输出最终的解码后数据单元
+\end{itemize}
+
+由于 JPEG 图像编解码器不能同时作为编码器和解码器使用，编码器和解码器可以共用 \textbf{quant\_table} 模块和 \textbf{dct\_idct} 模块，节约硬件资源。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:jpegcodec-func-descr}
+
+JPEG 图像编解码器可配置为编码器或解码器使用。
+
+\subsection{JPEG 编码器}
+\label{sec:jpegcodec-enc-mode}
+
+
+\subsubsection{暂停}
+\label{sec:jpegcodec-enc-pause}
+
+在执行其他优先级更高的任务时，JPEG 编码器可以暂停。该功能可通过 \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN} 位控制。
+
+\begin{itemize}
+    \item \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN} 置 1 时，JPEG 编码器不再输出码流到 2D DMA 的接收通道
+    \item \hyperref[fielddesc:JPEGPAUSEEN]{JPEG\_PAUSE\_EN} 清 0 时，JPEG 编码器恢复运行，正常输出码流
+\end{itemize}
+
+\subsubsection{颜色空间转换}
+\label{sec:jpegcodec-enc-csc}
+
+根据 JPEG 标准，JPEG 编码器支持的图像格式为 YUV444、YUV422、 YUV420 和 GRAY。\chipname{} 的 JPEG 编码器集成了颜色空间转换功能后，可以在编码前将 RGB888 和 RGB565 格式转换为编码器支持的上述图像格式。如此，JPEG 编码器便可以支持更多图像格式。
+
+RGB 转换为 YUV 颜色空间的公式为：
+\begin{center}
+$Y = (0.299 * R) + (0.587 * G) + (0.114 * B)$ \\
+$U = (-0.1687 * R) + (-0.3313 * G) + (0.5 * B) + 128$ \\
+$V = (0.5 * R) + (-0.4187 * G) + (-0.0813 * B) + 128$ \\
+\end{center}
+
+\tagged{ESP32-P4-latest}{
+    YUV 格式仅支持下采样 (downsampling)。例如，YUV444 可以保持原格式不变，或者降低采样数转换为 YUV422 或 YUV420；YUV422 可以保持原格式不变，或者降低采样数转换为 YUV420。
+}
+
+转换前的图像格式由格式和像素顺序表示。表 \ref{tab:csc_result} 为颜色空间转换支持图像格式的表示方式：
+
+\begin{table}[H]
+    \centering
+    \caption{颜色空间转换支持的图像格式}
+    \label{tab:csc_result}
+    \begin{threeparttable}
+
+    \untagged{ESP32-P4-latest}{
+        \begin{tabular}{ | c | c | c | c |}
+        \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:JPEGCOLORSPACE]{JPEG\_COLOR\_SPACE}} & \textbf{格式\tnote{1}}                  & \textbf{\hyperref[fielddesc:JPEGPIXELREV]{JPEG\_PIXEL\_REV}} & \textbf{像素顺序} \\ \hline
+
+        \multirow{2}{*}{0} & \multirow{2}{*}{RGB888} & 0                & RGB         \\ \cline{3-4}
+                           &                         & 1                & BGR         \\ \hline
+        \multirow{2}{*}{1} & \multirow{2}{*}{YUV422\tnote{2}} & 0                & YUYV        \\ \cline{3-4}
+                           &                         & 1                & UYVY        \\ \hline
+        \multirow{2}{*}{2} & \multirow{2}{*}{RGB565}  & 0                & RGB         \\ \cline{3-4}
+                           &                         & 1                & BGR         \\ \hline
+        3                  & GRAY\tnote{2}                    & N/A      & YYY         \\ \hline
+        \end{tabular}
+    }
+
+    \tagged{ESP32-P4-latest}{
+        \begin{tabular}{ | C{3.5cm} | C{2.5cm} | C{3.5cm} | C{1.5cm} | C{2.5cm} | C{1.5cm} | }
+        \hline
+        \rowcolor{lightgray}
+        \textbf{\hyperref[fielddesc:JPEGEXTDCOLORSPACEEN]{\makecell{JPEG\_EXTD\_\\COLOR\_SPACE\_EN}}} &
+        \textbf{\hyperref[fielddesc:JPEGCOLORSPACE]{\makecell{JPEG\_\\COLOR\_SPACE}}} &
+        \textbf{\hyperref[fielddesc:JPEGEXTDCOLORSPACE]{\makecell{JPEG\_EXTD\_\\COLOR\_SPACE}}} &
+        \textbf{格式\tnote{1}} &
+        \textbf{\hyperref[fielddesc:JPEGPIXELREV]{\makecell{JPEG\_\\PIXEL\_REV}}} &
+        \textbf{像素顺序} \\ \hline
+
+        \multirow{7}{*}{0} & \multirow{2}{*}{0} & \multirow{7}{*}{N/A} & \multirow{2}{*}{RGB888} & 0                & RGB         \\ \cline{5-6}
+                           &                    &                      &                              & 1                & BGR         \\ \cline{2-2}\cline{4-6}
+                           & \multirow{2}{*}{1} &                      & \multirow{2}{*}{YUV422\tnote{2}} & 0                & YUYV        \\ \cline{5-6}
+                           &                    &                      &                                       & 1                & UYVY        \\ \cline{2-2}\cline{4-6}
+                           & \multirow{2}{*}{2} &                      & \multirow{2}{*}{RGB565}  & 0                & RGB         \\ \cline{5-6}
+                           &                    &                      &                              & 1                & BGR         \\ \cline{2-2}\cline{4-6}
+                           & 3                  &                      & GRAY\tnote{2}                    & N/A              & YYY         \\ \hline
+        \multirow{4}{*}{1} & \multirow{4}{*}{N/A} & \multirow{2}{*}{0} & \multirow{2}{*}{YUV444} & 0                & YUV         \\ \cline{5-6}
+                           &                    &                      &                         & 1                & VUY         \\ \cline{3-6}
+                           &                    &   1                  & YUV420\tnote{2}         & N/A              & YYU/YYV\tnote{3} \\ \hline
+        \end{tabular}
+    }
+
+    \begin{tablenotes}
+        \item[1] 可通过配置 \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} 字段选择编码器支持的转换格式：
+        \begin{itemize}
+            \item 0：YUV444
+            \item 1：YUV422
+            \item 2：YUV420
+        \end{itemize}
+        \untagged{ESP32-P4-latest}{
+            \item[2] YUV422 和 GRAY 格式的图像无法转换，不受 \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} 的配置控制。
+
+        }
+        \tagged{ESP32-P4-latest}{
+            \item[2] 图像格式转换存在以下限制:
+                \begin{itemize}
+                    \item YUV422：仅可保持不变或降低采样数至 YUV420。设置 \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} 为 0 无效。
+                    \item YUV420 或 GRAY：无法转换，不受 \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} 的配置控制。
+                \end{itemize}
+            \item[3] 像素排列方式按行交替：奇数行采用 YYU 模式，偶数行采用 YYV 模式。
+        }
+    \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+\subsubsection{可配置量化系数表}
+\label{sec:jpegcodec-enc-qnr}
+
+\chipname{} 的 JPEG 编码器硬件支持四个 8 x 8 量化系数表，每个表可以通过软件配置 64 个系数值。
+
+每个量化表的精度可通过 \hyperref[fielddesc:JPEGQNRPRECISION]{JPEG\_QNR\_PRECISION} 配置：
+\begin{itemize}
+\item 0：低 8 位有效
+\item 1：低 16 位有效
+\end{itemize}
+
+量化表系数值的配置模式可通过 \hyperref[fielddesc:JPEGQNRFIFOEN]{JPEG\_QNR\_FIFO\_EN} 选择：
+\begin{itemize}
+\item 0：非 FIFO 模式，系数写入特定地址
+\item 1：FIFO 模式，所有系数写入同一地址
+\end{itemize}
+
+\begin{longtable}{ | r | r | r | r | r | r | r | r | }
+\caption{量化系数表中系数的位置编号（示例）} \label{tab:example_qnr}
+\\ \hline
+ $_{0}$ & $_{1}$ & $_{2}$ & $_{3}$ & $_{4}$ & $_{5}$ & $_{6}$ & $_{7}$ \\ \hline
+ $_{8}$ & $_{9}$ & $_{10}$ & $_{11}$ & $_{12}$ & $_{13}$ & $_{14}$ & $_{15}$ \\ \hline
+ \multicolumn{8}{c}{...} \\ \hline
+ $_{56}$ & $_{57}$ & $_{58}$ & $_{59}$ & $_{60}$ & $_{61}$ & $_{62}$ & $_{63}$ \\ \hline
+\end{longtable}
+
+不同模式下，量化系数表的配置方式会有所不同。注意，\regindex{n} (\regindex{n} = 0, 1, 2, 3) 表示每个量化系数表的编号。
+\begin{itemize}
+    \item 非 FIFO 模式：量化系数表 \regindex{n} 中的所有量化系数必须按位置写入到特定地址，即 (JPEG 图像编解码器基地址 + \regindex{n} * 0x100 + \regindex{量化系数位置编号} * 0x4)，其中 \regindex{量化系数位置编号} 可以是 0、1、2、...、63（详见表 \ref{tab:example_qnr}）。在该模式下，由于每个系数都写入到特定地址，因此不需要按顺序配置这 64 个量化系数。
+    \item FIFO 模式：量化系数表 \regindex{n} 中的 64 个量化系数全部写入相同的地址，即 \hyperref[regdesc:JPEGT0QNRREG]{JPEG\_T\regindex{n}QNR\_REG}。在该模式下，由于所有系数都写入相同的地址，因此需要按顺序配置这 64 个量化系数。然后，硬件将自动按照表 \ref{tab:example_qnr} 中的顺序存储这 64 个量化系数。
+\end{itemize}
+
+如果量化系数表不足四个，则对应的量化表不配置。
+
+要将特定量化系数表 \regindex{n} 用于亮度分量或色度分量，只需将相应的寄存器字段设置为 \regindex{n}：
+\begin{itemize}
+\item 亮度分量：\hyperref[fielddesc:JPEGLQNRTBLSEL]{JPEG\_LQNR\_TBL\_SEL}
+\item 色度分量：\hyperref[fielddesc:JPEGCQNRTBLSEL]{JPEG\_CQNR\_TBL\_SEL}
+\end{itemize}
+
+表 \ref{tab:luminance_qnr} 和表 \ref{tab:chrominance_qnr} 分别为 JPEG 基线标准推荐用于亮度分量和色度分量的 8 位精度量化系数表。
+
+\begin{longtable}{ | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | }
+\caption{推荐用于亮度分量的 8 位精度量化系数表} \label{tab:luminance_qnr}
+\\ \hline
+ 16 & 11 & 10 & 16 & 24 & 40 & 51 & 61 \\ \hline
+ 12 & 12 & 14 & 19 & 26 & 58 & 60 & 55 \\ \hline
+ 14 & 13 & 16 & 24 & 40 & 57 & 69 & 56 \\ \hline
+ 14 & 17 & 22 & 29 & 51 & 87 & 80 & 62 \\ \hline
+ 18 & 22 & 37 & 56 & 68 & 109 & 103 & 77 \\ \hline
+ 24 & 35 & 55 & 64 & 81 & 104 & 113 & 92 \\ \hline
+ 49 & 64 & 78 & 87 & 103 & 121 & 120 & 101 \\ \hline
+ 72 & 92 & 95 & 98 & 112 & 100 & 103 & 99 \\ \hline
+\end{longtable}
+
+\begin{longtable}{ | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | C{0.7cm} | }
+\caption{推荐用于色度分量的 8 位精度量化系数表} \label{tab:chrominance_qnr}
+\\ \hline
+ 17 & 18 & 24 & 47 & 99 & 99 & 99 & 99 \\ \hline
+ 18 & 21 & 26 & 66 & 99 & 99 & 99 & 99 \\ \hline
+ 24 & 26 & 56 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 47 & 66 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+ 99 & 99 & 99 & 99 & 99 & 99 & 99 & 99 \\ \hline
+\end{longtable}
+
+更多信息，请参阅 \href{https://www.itu.int/rec/T-REC-T.81}{ITU T.81 Recommendation}。调整量化系数表会改变压缩比（即未压缩图像大小与压缩图像大小之间的比率）和编码图像的质量（量化系数越大，压缩比越大，图像质量越差）。
+
+\subsubsection{填充零字节}
+\label{sec:jpegcodec-enc-zero_byte}
+
+JPEG 基线标准要求在哈夫曼编码段内避免使用任何标记，所有哈夫曼编码生成的 0xFF 字节后应“填充”零字节。
+
+JPEG 编码器实现了该功能，可以在码流中哈夫曼编码段的 0xFF 字节后自动 “填充” 0x00 字节。
+
+用户可以通过 \hyperref[fielddesc:JPEGFFCHECKEN]{JPEG\_FF\_CHECK\_EN} 配置是否在 0xFF 字节后添加 0x00 字节：
+\begin{itemize}
+    \item 0：不添加
+    \item 1：添加（默认）
+\end{itemize}
+
+\subsubsection{EOI 标记}
+\label{sec:jpegcodec-enc-eoi}
+
+图像结束 (EOI) 标记用于标记压缩图像码流的结束。EOI 标记代码为 0xFFD9。
+
+JPEG 编码器可以在码流末尾自动添加 EOI 标记。
+
+用户可以通过 \hyperref[fielddesc:JPEGTAILEREN]{JPEG\_TAILER\_EN} 配置是否添加 EOF 标记：
+\begin{itemize}
+    \item 0：不添加
+    \item 1：添加
+\end{itemize}
+
+\subsection{JPEG 解码器}
+\label{sec:jpegcodec-dec-mode}
+
+码流中的信息必须先由软件解析，然后通过 APB 配置总线发送给硬件。注意，硬件不支持解析除 SOS、RST 和 EOI 标记段之外的任何标记段。
+
+\subsubsection{多个色度分量}
+\label{sec:jpegcodec-dec-color_components}
+
+帧头包含有关图像色度分量数量、每个分量的 ID 以及每个分量水平和垂直方向采样因子的信息。
+
+JPEG 解码器的软件必须解析这类信息，并将其传递给响应寄存器 \hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}、\hyperref[regdesc:JPEGC0REG]{JPEG\_C\regindex{n}\_ID}、\hyperref[fielddesc:JPEGC0xFACTOR]{JPEG\_C\regindex{n}\_X\_FACTOR} 和 \hyperref[fielddesc:JPEGC0YFACTOR]{JPEG\_C\regindex{n}\_Y\_FACTOR}。此处 \regindex{n} 可以为 0、1、2，表示硬件支持最多 3 个色度分量。注意，如果分量不足 3 个，不需要配置其余寄存器。
+
+硬件会参考每个色度分量寄存器 \hyperref[regdesc:JPEGC0REG]{JPEG\_C\regindex{n}\_ID} 的值，检查其是否与 Scan 头信息中的 ID 一致。采样因子表示一个 MCU 在水平和垂直方向上包含该色度分量的数据单元数。因此，根据 \hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}、\hyperref[fielddesc:JPEGC0xFACTOR]{JPEG\_C\regindex{n}\_X\_FACTOR} 和 \hyperref[fielddesc:JPEGC0YFACTOR]{JPEG\_C\regindex{n}\_Y\_FACTOR} 字段的值，硬件可以获得各个色度分量的比例，即待解码图像的格式。详见表 \ref{tab:color_xy_factor}。
+
+\begin{longtable}{ | c | c | c | }
+\caption{采样因子和图像格式} \label{tab:color_xy_factor}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{\hyperref[fielddesc:JPEGCOMPONENTNUM]{JPEG\_COMPONENT\_NUM}} & \textbf{JPEG\_C\regindex{n}\_X/Y\_FACTOR}  &  \textbf{待解码图像的格式}\\ \hline
+ 0 & - & 无效 \\ \hline
+\multirow{2}{*}{1} & C0\_X\_FACTOR 为 1 & \multirow{2}{*}{GRAY} \\
+  & C0\_Y\_FACTOR 为 1 &  \\ \hline
+ 2 & - & 无效 \\ \hline
+\multirow{18}{*}{3} & C0\_X\_FACTOR 为 1 & \multirow{6}{*}{YUV444} \\
+  & C0\_Y\_FACTOR 为 1 &  \\
+  & C1\_X\_FACTOR 为 1 &  \\
+  & C1\_Y\_FACTOR 为 1 &  \\
+  & C2\_X\_FACTOR 为 1 &  \\
+  & C2\_Y\_FACTOR 为 1 &  \\ \cline{2-3}
+  & C0\_X\_FACTOR 为 2 & \multirow{6}{*}{YUV422} \\
+  & C0\_Y\_FACTOR 为 1 &  \\
+  & C1\_X\_FACTOR 为 1 &  \\
+  & C1\_Y\_FACTOR 为 1 &  \\
+  & C2\_X\_FACTOR 为 1 &  \\
+  & C2\_Y\_FACTOR 为 1 &  \\ \cline{2-3}
+  & C0\_X\_FACTOR 为 2 & \multirow{6}{*}{YUV420} \\
+  & C0\_Y\_FACTOR 为 2 &  \\
+  & C1\_X\_FACTOR 为 1 &  \\
+  & C1\_Y\_FACTOR 为 1 &  \\
+  & C2\_X\_FACTOR 为 1 &  \\
+  & C2\_Y\_FACTOR 为 1 &  \\ \hline
+\end{longtable}
+
+无论待解码图像是什么格式，解码器只支持一次扫描所有分量。解码后，图像会发送到 2D DMA，有关每种解码图像格式的布局请参考章节 \ref{mod:2ddma} \textit{\nameref{mod:2ddma}}。
+
+\subsubsection{解析 RST 标记}
+\label{sec:jpegcodec-dec-rst_marker}
+
+Scan 段比特流中可能包含恢复 (RST) 标记。RST 标记的代码为 0xFFD\regindex{x} (\regindex{x} = 0, 1, ..., 7)。
+
+JPEG 解码器的硬件可以解析 RST 标记，检查两个 RST 标记之间实际的 MCU 个数是否与 Tables/Miscellaneous 段中 DRI 定义的恢复间隔相同。
+
+首先，软件会解析 DRI 段，并将定义的恢复间隔传递给 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 字段。之后，硬件每解码 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 个 MCU，就会检查后续码流是否包含 RST 标记。
+
+如果 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 配置为 0，则码流中不包含 RST 标记，此时硬件将不检查 RST 标记。
+
+\subsubsection{可配置量化系数表}
+\label{sec:jpegcodec-dec-qnr}
+
+\chipname{} JPEG 解码器同样支持 4 个可配置量化系数表。由于 JPEG 图像编解码器不能同时用作编码器和解码器，解码器可以和编码器共用相同的 4 个可配置系数表，从而节省硬件资源。
+
+解码器量化系数表的配置与编码器的（详见章节 \ref{sec:jpegcodec-enc-qnr}）类似，但有以下不同：
+\begin{itemize}
+    \item 软件需要解析 Tables/Miscellaneous 段中的 DQT 段，获取解码器的量化系数表。推荐的解码器量化系数表与编码器相同，如表 \ref{tab:luminance_qnr} 和表 \ref{tab:chrominance_qnr} 所示。
+    \item 量化系数表\regindex{n} 的精度可以通过 \hyperref[regdesc:JPEGDQTINFOREG]{JPEG\_T\regindex{n}\_DQT\_INFO} 字段的高 4 位配置：
+    \begin{itemize}
+        \item 0：低 8 位有效
+        \item 1：低 16 位有效
+    \end{itemize}
+    精度也是从 Tables/Miscellaneous 段中的 DQT 段获取。
+    \item 每个色度分量可选择不同的量化系数表。 \hyperref[regdesc:JPEGDQTINFOREG]{JPEG\_T\regindex{n}\_DQT\_INFO} 字段的低 4 位配置量化系数表的 ID，\hyperref[fielddesc:JPEGC0DQTTBLSEL]{JPEG\_C\regindex{n}\_DQT\_TBL\_SEL} 字段配置每个色度分量选择的量化系数表 ID。每个量化系数表的 ID 也从 Tables/Miscellaneous 段中的 DQT 段获取。
+\end{itemize}
+
+\subsubsection{可配置哈夫曼表}
+\label{sec:jpegcodec-dec-huffman}
+
+\chipname{} 支持最多 2 个 DC 哈夫曼表和 2 个 AC 哈夫曼表。用户可在限制范围内配置所需数量的哈夫曼表。
+
+每个哈夫曼表可以包含三类信息，这三类信息可从 Tables/Miscellaneous 段中的 DHT 段获取：
+\begin{itemize}
+    \item 长度为 1 到 16 位的码字数量
+    \item 解码后码字对应的符号
+    \begin{itemize}
+        \item DC 表：最多 16 个符号
+        \item AC 表：最多 256 个符号
+    \end{itemize}
+    \item 长度为 1 到 16 位的最小码字
+\end{itemize}
+
+DC 和 AC 哈夫曼表都可以通过 \hyperref[fielddesc:JPEGDHTFIFOEN]{JPEG\_DHT\_FIFO\_EN} 选择配置模式：
+\begin{itemize}
+    \item 0：非 FIFO 模式
+    \item 1：FIFO 模式
+\end{itemize}
+
+不同模式下，哈夫曼表的配置方式会有所不同。以下是 DC 表\regindex{n} (\regindex{n} = 0, 1 ) 的配置方式：
+\begin{itemize}
+    \item 非 FIFO 模式：DC\regindex{n} 哈夫曼表的不同信息必须按信息类型写入到特定地址。
+    \begin{itemize}
+        \item 长度为 1 到 16 位的码字数量：JPEG 图像编解码器基地址 + 0x500 + \regindex{n} * 0x80 +（\regindex{码字长度} - 1）* 0x4，其中 \regindex{码字长度} = 1, 2, ..., 16。
+        \item 解码后码字对应的符号：JPEG 图像编解码器基地址 + 0x600 + \regindex{n} * 0x40 + \regindex{符号位置} * 0x4，其中  \regindex{符号位置} = 0, 1, ..., 15。
+        \item 长度为 1 到 16 位的最小码字：JPEG 图像编解码器基地址 + 0xF00 + \regindex{n} * 0x80 +（\regindex{码字长度} - 1）* 0x4，其中  \regindex{码字长度} = 1, 2, ..., 16。
+    \end{itemize}
+    在该模式下，由于信息按类型都写入到特定地址，因此不需要按顺序配置。
+    \item FIFO 模式：DC\regindex{n} 哈夫曼表同一类型的信息全部写入到同个地址。
+    \begin{itemize}
+        \item 长度为 1 到 16 位的码字数量：\hyperref[regdesc:JPEGDHTTOTLENDC0REG]{JPEG\_DHT\_TOTLEN\_DC\regindex{n}\_REG}。
+        \item 解码后码字对应的所有符号 (DC 表最多 16 个符号）：\hyperref[regdesc:JPEGDHTVALDC0REG]{JPEG\_DHT\_VAL\_DC\regindex{n}\_REG}。
+        \item 长度为 1 到 16 位的最小码字：\hyperref[regdesc:JPEGDHTCODEMINDC0REG]{JPEG\_DHT\_CODEMIN\_DC\regindex{n}\_REG}。
+    \end{itemize}
+    在该模式下，由于同一类型的信息全部写入到同个地址，因此需要按顺序配置同一类型的信息。之后，硬件将自动按顺序存储这些信息。
+\end{itemize}
+
+AC\regindex{n} (\regindex{n} = 0, 1 ) 表的配置方式与 DC\regindex{n} (\regindex{n} = 0, 1 ) 表类似。以下是 AC\regindex{n} (\regindex{n} = 0, 1 ) 的配置方式：
+
+\begin{itemize}
+    \item  非 FIFO 模式：AC\regindex{n} 哈夫曼表的不同信息必须按信息类型写入到特定地址。
+    \begin{itemize}
+        \item 长度为 1 到 16 位的码字数量：JPEG 图像编解码器基地址 + 0x540 + \regindex{n} * 0x80 +（\regindex{码字长度} - 1）* 0x4，其中 \regindex{码字长度} = 1, 2, ..., 16。
+        \item 解码后码字对应的符号：JPEG 图像编解码器基地址 + 0x680 + \regindex{n} * 0x400 + \regindex{符号位置} * 0x4，其中 \regindex{符号位置} = 0, 1, ..., 256。
+        \item 长度为 1 到 16 位的最小码字：JPEG 图像编解码器基地址 + 0xF40 + \regindex{n} * 0x80 +（\regindex{码字长度} - 1）* 0x4，其中 \regindex{码字长度} = 1, 2, ..., 16。
+    \end{itemize}
+    在该模式下，由于信息按类型都写入到特定地址，因此不需要按顺序配置。
+    \item FIFO 模式：AC\regindex{n} 哈夫曼表同一类型的信息全部写入到同个地址。
+    \begin{itemize}
+        \item 长度为 1 到 16 位的码字数量：\hyperref[regdesc:JPEGDHTTOTLENAC0REG]{JPEG\_DHT\_TOTLEN\_AC\regindex{n}\_REG}。
+        \item 解码后码字对应的所有符号（AC 表最多 256 个符号）：\hyperref[regdesc:JPEGDHTVALAC0REG]{JPEG\_DHT\_VAL\_AC\regindex{n}\_REG}。
+        \item 长度为 1 到 16 位的最小码字：\hyperref[regdesc:JPEGDHTCODEMINAC0REG]{JPEG\_DHT\_CODEMIN\_AC\regindex{n}\_REG}。
+    \end{itemize}
+    在该模式下，由于同一类型的信息全部写入到同个地址，因此需要按顺序配置同一类型的信息。之后，硬件将自动按顺序存储这些信息。
+\end{itemize}
+
+长度为 1 到 16 位的最小码字应该向左偏移到 16 位配置值的高位。如果没有码字长度，则配置值为 0xFFFF。例如，如果最小码字为 0x7C，则 16 位配置值应为 0x7C00。
+
+JPEG 基线标准推荐的 DC 和 AC 哈夫曼表，可在 \href{https://www.itu.int/rec/T-REC-T.81}{ITU T.81 Recommendation} 中找到。
+
+软件可以通过解析 Tables/Miscellaneous 段中的 DHT 段来获取 DC\regindex{n} 和 AC\regindex{n} 哈夫曼表的 ID，然后将 ID 传递给相应字段  \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_DC\regindex{n}\_DHT\_ID} 和 \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_AC\regindex{n}\_DHT\_ID}。
+
+硬件会自动使用与 \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_DC\regindex{n}\_DHT\_ID} 和 \hyperref[regdesc:JPEGDHTINFOREG]{JPEG\_AC\regindex{n}\_DHT\_ID} ID 值相同的 DC\regindex{n} 和 AC\regindex{n} 哈夫曼表。
+
+\subsubsection{超时检测}
+
+JPEG 图像编解码器用作解码器时还支持超时检测。以下情况出现时，硬件会触发超时中断 JPEG\_DECODE\_TIMEOUT\_INT：
+\begin{itemize}
+    \item 解码器停止读取码流超过 ($ 2 ^ {\hyperref[fielddesc:JPEGDECODETIMEOUTTHRES]{JPEG\_DECODE\_TIMEOUT\_THRES}} - 1 $) 个时钟周期
+    \item 解码图像所用的时钟周期数超过 ($ 2 ^ {\hyperref[fielddesc:JPEGDECODETIMEOUTTHRES]{JPEG\_DECODE\_TIMEOUT\_THRES}} - 1 $) 的值
+\end{itemize}
+
+超时中断触发后，解码器会根据 \hyperref[fielddesc:JPEGDECODETIMEOUTTASKSEL]{JPEG\_DECODE\_TIMEOUT\_TASK\_SEL} 的配置复位：
+\begin{itemize}
+    \item 0：硬件不会执行任何操作，需要软件配置 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 或 \hyperref[fielddesc:JPEGFSMRST]{JPEG\_FSM\_RST} 来执行复位操作。
+    \item 1：硬件将自动复位解码器，从而退出超时状态并进入初始状态。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的 JPEG 图像编解码器可以生成 JPEG\_INTR 中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+JPEG\_INTR 中断信号由下列中断源生成：
+
+\begin{itemize}
+\item JPEG\_DONE\_INT：当一帧图像编码或解码结束时触发。
+\item JPEG\_RLE\_PARALLEL\_ERR\_INT：当游程编码出错时触发。
+\item JPEG\_CID\_ERR\_INT：当解码得到的各个分量 ID 和软件配置的各个分量 ID 不同时触发。
+\item JPEG\_C\_DHT\_DC\_ID\_ERR\_INT：当解码得到的各个分量 DC 哈夫曼表 ID 不是软件配置的 DC0 哈夫曼表 ID 或 DC1 哈夫曼表 ID 时触发。
+\item JPEG\_C\_DHT\_AC\_ID\_ERR\_INT：当解码得到的各个分量 AC 哈夫曼表 ID 不是软件配置的 AC0 哈夫曼表 ID 或 AC1 哈夫曼表 ID 时触发。
+\item JPEG\_C\_DQT\_ID\_ERR\_INT：当解码得到的各个分量量化表 ID 和软件配置的各个分量量化表 ID 不同时触发。
+\item JPEG\_RST\_UXP\_ERR\_INT：当软件配置的 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 为 0 但解码器解析到 RST 标记时触发。
+\item JPEG\_RST\_CHECK\_NONE\_ERR\_INT：当软件配置的 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 非 0 但解码器解析不到 RST 标记时触发。
+\item JPEG\_RST\_CHECK\_POS\_ERR\_INT：当两个解析到的 RST 标记之间的 MCU 数不等于软件配置的 \hyperref[fielddesc:JPEGRESTARTINTERVAL]{JPEG\_RESTART\_INTERVAL} 时触发。
+\item JPEG\_OUT\_EOF\_INT：当从 2D DMA 的 TX 通道读取到 EOF 标志时触发。
+\item JPEG\_SR\_COLOR\_MODE\_ERR\_INT：该中断无效。
+\item JPEG\_DCT\_DONE\_INT：当一个数据单元 DCT 或 IDCT 计算完成时触发。
+\item JPEG\_BS\_LAST\_BLOCK\_EOF\_INT：当最后一个数据单元编码完成时触发。
+\item JPEG\_SCAN\_CHECK\_NONE\_ERR\_INT：当一帧图像有多个待解码 Scan 并且在任意 Scan 头信息中 （\hyperref[fielddesc:JPEGSOSCHECKBYTENUM]{JPEG\_SOS\_CHECK\_BYTE\_NUM} + 1） 个字节都未解析到 SOS 标记时触发。
+\item JPEG\_SCAN\_CHECK\_POS\_ERR\_INT：当解码器解析到的 Scan 头信息位置错误时触发。
+\item JPEG\_UXP\_DET\_INT：当解码器解析到的标记不是硬件支持的标记时触发。
+\item JPEG\_EN\_FRAME\_EOF\_ERR\_INT：当从 2D DMA 读取到的待编码数据单元数量小于根据软件配置的图像分辨率计算出的数据单元数量时触发。
+\item JPEG\_EN\_FRAME\_EOF\_LACK\_INT：当从 2D DMA 读取完一帧待编码图像但未读取到 EOF 标志时触发。
+\item JPEG\_DE\_FRAME\_EOF\_ERR\_INT：当解码完一帧图像得到的数据单元数量和根据软件配置的图像分辨率计算出的数据单元数量不一致时触发。
+\item JPEG\_DE\_FRAME\_EOF\_LACK\_INT：当从 2D DMA 读取完一帧图像的码流但未读到 EOF 标志或 EOI 标记时触发。
+\item JPEG\_SOS\_UNMATCH\_ERR\_INT：当解码器解析到的 Scan 头信息中的分量数为 0 或解析到的 Scan 头信息中的头长度与实际不符时触发。
+\item JPEG\_MARKER\_ERR\_FST\_SCAN\_INT：当解码器解析到的第一个 Scan 头信息中有错时触发，错误包括触发 JPEG\_CID\_ERR\_INT、 JPEG\_C\_DHT\_DC\_ID\_ERR\_INT、 JPEG\_C\_DHT\_AC\_ID\_ERR\_INT、 JPEG\_C\_DQT\_ID\_ERR\_INT 和 JPEG\_SOS\_UNMATCH\_ERR\_INT 的错误。
+\item JPEG\_MARKER\_ERR\_OTHER\_SCAN\_INT：当解码器解析到的非第一个 Scan 头信息中有错时触发，错误类型和触发 JPEG\_MARKER\_ERR\_FST\_SCAN\_INT 的错误相同。
+\item JPEG\_UNDET\_INT：当从 2D DMA 读取完一帧图像的码流但未读到过 SOS 标记时触发。
+\item JPEG\_DECODE\_TIMEOUT\_INT：当解码器超时时触发。
+\end{itemize}
+
+上述中断源仅在对应中断使能寄存器 \regindex{中断源名称}\_ENA 置 1 时才能触发。向 \regindex{中断源名称}\_CLR 写 1 可清除中断。
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:jpegcodec-reg-summ} \textit{\nameref{sec:jpegcodec-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{编程流程}
+\label{sec:jpegcodec-prog-procedures}
+
+\subsection{JPEG 编码器}
+\label{sec:jpegcodec-enc-prog}
+
+JPEG 图像编解码器作为编码器使用时，配置流程为：
+\begin{enumerate}
+    \item 激活 JPEG 图像编解码器
+    \begin{itemize}
+        \item 将  \hyperref[fielddesc:HPSYSCLKRSTJPEGSYSCLKEN]{HP\_SYS\_CLKRST\_JPEG\_SYS\_CLK\_EN} 置 1，使能 JPEG 图像编解码器时钟。
+        \item 将 \hyperref[fielddesc:HPSYSCLKRSTRSTENJPEG]{HP\_SYS\_CLKRST\_RST\_EN\_JPEG} 置 0，释放 JPEG 图像编解码器系统级复位。
+    \end{itemize}
+    \item 配置 JPEG 图像编解码器
+    \begin{itemize}
+        \item 将 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 置 1，复位 JPEG 图像编解码器，再将 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 置 0，释放 JPEG 图像编解码器复位。
+        \item 将 \hyperref[fielddesc:JPEGMODE]{JPEG\_MODE} 置 0， 把 JPEG 图像编解码器配置为编码器。
+        \item 配置以下字段，选择原始图像格式：
+        \begin{itemize}
+            \item 格式：
+                \begin{itemize}
+                    \item \hyperref[fielddesc:JPEGCOLORSPACE]{JPEG\_COLOR\_SPACE}
+                    \tagged{ESP32-P4-latest}{
+                        \item \hyperref[fielddesc:JPEGEXTDCOLORSPACEEN]{JPEG\_EXTD\_COLOR\_SPACE\_EN}
+                        \item \hyperref[fielddesc:JPEGEXTDCOLORSPACE]{JPEG\_EXTD\_COLOR\_SPACE}
+                    }
+                \end{itemize}
+            \item 像素顺序：\hyperref[fielddesc:JPEGPIXELREV]{JPEG\_PIXEL\_REV}
+        \end{itemize}
+        详见表 \ref{tab:csc_result}。
+        \item 配置 \hyperref[fielddesc:JPEGTAILEREN]{JPEG\_TAILER\_EN}，选择是否在码流末尾添加 EOI 标记 (0xFFD9)：
+        \begin{itemize}
+            \item 0：禁用
+            \item 1：使能
+        \end{itemize}
+        \item 配置 \hyperref[fielddesc:JPEGSAMPLESEL]{JPEG\_SAMPLE\_SEL} 选择待压缩图像格式：
+                \begin{itemize}
+                    \item 0：YUV444
+                    \item 1：YUV422
+                    \item 2：YUV420
+                \end{itemize}
+        注意：该字段仅在原始图像格式为 RGB\tagged{ESP32-P4-latest}{、YUV444 或 YUV422} 时有效。详见表  \ref{tab:csc_result}。
+        \item 将 \hyperref[fielddesc:JPEGHA]{JPEG\_HA} 配置为原始图像宽度，\hyperref[fielddesc:JPEGVA]{JPEG\_VA} 配置为原始图像高度。
+        \item 参考章节 \ref{sec:jpegcodec-enc-qnr} 的说明配置量化系数表。
+    \end{itemize}
+    \item 配置 2D DMA（具体配置方法和相关概念介绍，请参考章节 \ref{mod:2ddma}
+    \textit{\nameref{mod:2ddma}}。）
+    \begin{enumerate}
+        \item 配置 2D DMA TX 通道的链表：
+        \begin{itemize}
+            \item 将 2DEN 置 1，使能 2D 功能。
+            \item 将 Buffer address pointer 配置为存储原始图像的起始地址。
+            \item 将 pbyte 选择原始图像一个像素的字节数。
+            \item 将 HA 配置为原始图像宽度，VA 配置为原始图像高度。
+            \item 将 hb 配置为一个图像块水平方向的像素个数，vb 配置为一个图像块垂直方向的像素个数。
+            \item 将 mod 配置为 1，表示连续读取 hb × vb 大小图像块。
+            \item 将 (X，Y) 配置为起始图像块的第一个像素坐标。根据原始图像格式和待压缩图像的格式，hb 和 vb 有一定限制，如表\ref{tab:en_hb_vb}所示：
+
+            \untagged{ESP32-P4-latest}{
+                \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                \caption{JPEG 编码器 hb 和 vb 配置} \label{tab:en_hb_vb}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{原始图像格式} & \textbf{待压缩图像格式}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+
+                RGB  &  YUV444 &  8 的倍数 &  8 的倍数  \\ \hline
+                RGB  &  YUV422 &  16 的倍数 &  8 的倍数  \\ \hline
+                RGB  &  YUV420 &  16 的倍数 &  16 的倍数  \\ \hline
+                YUV422  &  YUV422 &  16 的倍数 &  8 的倍数  \\ \hline
+                GRAY  &  GRAY &  8 的倍数 &  8 的倍数  \\ \hline
+
+                \end{longtable}
+            }
+
+            \tagged{ESP32-P4-latest}{
+                \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                \caption{JPEG 编码器 hb 和 vb 配置} \label{tab:en_hb_vb}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{原始图像格式} & \textbf{待压缩图像格式}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+
+                \multirow{3}{*}{RGB/YUV444} &  YUV444 &  8 的倍数 &  8 的倍数  \\ \cline{2-4}
+                    &  YUV422 &  16 的倍数 &  8 的倍数  \\ \cline{2-4}
+                    &  YUV420 &  16 的倍数 &  16 的倍数  \\ \hline
+                \multirow{2}{*}{YUV422}  &  YUV422 &  16 的倍数 &  8 的倍数  \\ \cline{2-4}
+                    &  YUV420 &  16 的倍数 &  16  \\ \hline
+                YUV420  &  YUV420 &  16 的倍数 &  16  \\ \hline
+                GRAY    &  GRAY   &  8 的倍数  &  8 的倍数  \\ \hline
+
+                \end{longtable}
+            }
+        \end{itemize}
+        \item 配置 2D DMA RX 通道的链表：
+        \begin{itemize}
+            \item 将 2DEN 置 1，使能 1D 功能。
+            \item 将 Buffer address pointer 配置为存储编码码流的起始地址。
+            \item 将 size 配置为存储编码码流空间的字节数。
+            \item 将 mod 配置为 0，表示一次读取 hb × vb 大小图像块。
+        \end{itemize}
+        \item 连接 JPEG 图像编解码器和 2D DMA 通道：
+        \begin{itemize}
+            \item 将 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} 配置为 0，连接 JPEG 图像编解码器和 TX\regindex{n}；
+            \item 将 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} 配置为 0，连接 JPEG 图像编解码器和 RX\regindex{n}。
+        \end{itemize}
+        \item 复位 2D DMA 通道：
+        \begin{itemize}
+            \item 2D DMA TX 通道\regindex{n}：将 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 1，复位 2D DMA TX 通道\regindex{n}，再将 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 0，释放 2D DMA TX 通道\regindex{n} 复位。
+            \item 2D DMA RX 通道\regindex{n}：将 \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 1，复位 2D DMA RX 通道\regindex{n}，再将 \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 0，释放 2D DMA RX 通道\regindex{n} 复位。
+        \end{itemize}
+        \item 选择 2D DMA 通道的突发长度：
+        \begin{itemize}
+            \item 配置 \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}}，选择 2D DMA TX 通道\regindex{n} 的突发长度。
+            \item 配置 \hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}}，选择 2D DMA RX 通道\regindex{n} 的突发长度。
+        \end{itemize}
+        \item 根据原始图像的格式和待压缩图像的格式，配置 \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 选择 2D DMA 输出图像块大小。详见表 \ref{tab:en_block_size}：
+            \begin{itemize}
+                \item 0：8x8
+                \item 1：16x8
+                \item 2：16x16
+            \end{itemize}
+
+            \untagged{ESP32-P4-latest}{
+                \begin{longtable}{ | c | c | c | }
+                \caption{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 配置} \label{tab:en_block_size}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{原始图像格式} & \textbf{待压缩图像格式}  &  \textbf{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+
+                RGB  &  YUV444 &  0 \\ \hline
+                RGB  &  YUV422 &  1 \\ \hline
+                RGB  &  YUV420 &  2 \\ \hline
+                YUV422  &  YUV422 &  1 \\ \hline
+                GRAY  &  GRAY &  0 \\ \hline
+
+                \end{longtable}
+            }
+
+            \tagged{ESP32-P4-latest}{
+                \begin{longtable}{ | c | c | c | }
+                \caption{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 配置} \label{tab:en_block_size}
+                \\ \hline
+                \rowcolor{lightgray}
+                \textbf{原始图像格式} & \textbf{待压缩图像格式}  &  \textbf{\hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+                \multirow{3}{*}{RGB/YUV444}  &  YUV444 &  0 \\ \cline{2-3}
+                     &  YUV422 &  1 \\ \cline{2-3}
+                     &  YUV420 &  2 \\ \hline
+                \multirow{2}{*}{YUV422}  &  YUV422 &  1 \\ \cline{2-3}
+                     &  YUV420 &  2 \\ \hline
+                YUV420  &  YUV420 &  2 \\ \hline
+                GRAY    &  GRAY   &  0 \\ \hline
+                \end{longtable}
+            }
+        \item 将 \hyperref[fielddesc:DMA2DOUTREORDERENCHN]{DMA2D\_OUT\_REORDER\_EN\_CH0} 置 1 使能重排 (Reorder) 功能，提高带宽利用率。此功能仅适用于 2D DMA TX 通道 0，不适用于任何其他 TX 通道。
+        \item 配置 2D DMA 通道链表地址：
+        \begin{itemize}
+            \item 2D DMA TX 通道：\hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}}
+            \item 2D DMA RX 通道：-\hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}}
+        \end{itemize}
+    \end{enumerate}
+    \item 使能中断源：
+    \begin{itemize}
+        \item \hyperref[regdesc:DMA2DOUTINTENACHNREG]{DMA2D\_OUT\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:DMA2DININTENACHNREG]{DMA2D\_IN\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:JPEGINTENAREG]{JPEG\_INT\_ENA\_REG}
+    \end{itemize}
+    \item 开启 2D DMA 通道传输：
+    \begin{itemize}
+        \item 2D DMA TX 通道：将 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 先置 1 再 置 0
+        \item 2D DMA RX 通道：将 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 先置 1 再 置 0
+    \end{itemize}
+    \item 配置 \hyperref[fielddesc:JPEGJPEGSTART]{JPEG\_JPEG\_START} 字段，让 JPEG 图像编解码器开始编码。
+    \item 等待 DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 变为 1，表示已将编码后的码流完全写入存储器。
+\end{enumerate}
+
+
+\subsection{JPEG 解码器}
+\label{sec:jpegcodec-dec-prog}
+
+JPEG 图像编解码器作为解码器使用时，配置流程为：
+\begin{enumerate}
+    \item 激活 JPEG 图像编解码器
+    \begin{itemize}
+        \item 将  \hyperref[fielddesc:HPSYSCLKRSTJPEGSYSCLKEN]{HP\_SYS\_CLKRST\_JPEG\_SYS\_CLK\_EN} 置 1，使能 JPEG 图像编解码器时钟。
+        \item 将 \hyperref[fielddesc:HPSYSCLKRSTRSTENJPEG]{HP\_SYS\_CLKRST\_RST\_EN\_JPEG} 置 0，释放 JPEG 图像编解码器系统级复位。
+    \end{itemize}
+    \item 配置 JPEG 图像编解码器
+    \begin{itemize}
+        \item 将 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 置 1，复位 JPEG 图像编解码器，再将 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 置 0，释放 JPEG 图像编解码器复位。
+        \item 将 \hyperref[fielddesc:JPEGMODE]{JPEG\_MODE} 置 1， 把 JPEG 图像编解码器配置为解码器。
+        \item 参考章节 \ref{sec:jpegcodec-dec-rst_marker} 的说明，根据需要使能 RST 标记检测。
+        \item 参考章节 \ref{sec:jpegcodec-dec-qnr} 的说明配置量化系数表。
+        \item 参考章节 \ref{sec:jpegcodec-dec-huffman} 的说明配置哈夫曼表。
+        \item 配置解码图像的宽度和高度：
+        \begin{itemize}
+            \item 宽度：将解码图像的宽度写入 \hyperref[fielddesc:JPEGHA]{JPEG\_HA}.
+            \item 高度：将解码图像的高度写入 \hyperref[fielddesc:JPEGVA]{JPEG\_VA}.
+            \item 根据不同的解码图像格式，\hyperref[fielddesc:JPEGHA]{JPEG\_HA} 和 \hyperref[fielddesc:JPEGVA]{JPEG\_VA} 必须满足表 \ref{tab:de_jpeg_ha_va} 的要求。
+
+                \untagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG 解码器 \hyperref[fielddesc:JPEGHA]{JPEG\_HA}、\hyperref[fielddesc:JPEGVA]{JPEG\_VA} 的配置} \label{tab:de_jpeg_ha_va}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{解码图像格式} & \textbf{\hyperref[fielddesc:JPEGHA]{JPEG\_HA}} & \textbf{\hyperref[fielddesc:JPEGVA]{JPEG\_VA}}\\ \hline
+
+                    YUV444 & 8 的倍数 & 8 的倍数 \\ \hline
+                    YUV422 & 16 的倍数 & 8 的倍数 \\ \hline
+                    YUV420 & 16 的倍数 & 16 的倍数 \\ \hline
+                    GRAY & 8 的倍数 & 8 的倍数 \\ \hline
+
+                    \end{longtable}
+                }
+
+                \tagged{ESP32-P4-latest}{
+                    \begin{longtable}{ | L{4cm} | L{4cm} | l | l |}
+                    \caption{JPEG 解码器 \hyperref[fielddesc:JPEGHA]{JPEG\_HA}、\hyperref[fielddesc:JPEGVA]{JPEG\_VA} 的配置} \label{tab:de_jpeg_ha_va}
+                    \\ \hline
+                    \rowcolor{lightgray}
+                    \textbf{解码图像格式} & \textbf{\hyperref[fielddesc:JPEGHA]{JPEG\_HA}} & \textbf{\hyperref[fielddesc:JPEGVA]{JPEG\_VA}}\\ \hline
+
+                    YUV444 & 8 的倍数 & 8  \\ \hline
+                    YUV422 & 16 的倍数 & 8  \\ \hline
+                    YUV420 & 16 的倍数 & 16  \\ \hline
+                    GRAY & 8 的倍数 & 8  \\ \hline
+
+                    \end{longtable}
+                }
+        \end{itemize}
+    \end{itemize}
+    \item 配置 2D DMA（具体配置方法和相关概念介绍，请参考章节 \ref{mod:2ddma}
+    \textit{\nameref{mod:2ddma}}。）
+    \begin{enumerate}
+        \item 配置 2D DMA TX 通道的链表：
+        \begin{itemize}
+            \item 将 2DEN 置 0，使能 1D 功能。
+            \item 将 Buffer address pointer 配置为存储待解码码流的起始地址。
+            \item 将 size 配置为存储待解码码流空间的字节数。
+            \item 将 mod 配置为 0，表示一次读取 hb × vb 大小图像块。
+        \end{itemize}
+        \item 配置 2D DMA RX 通道的链表：
+        \begin{itemize}
+            \item 将 2DEN 置 1，使能 2D 功能。
+            \item 将 Buffer address pointer 配置为存储解码图像的起始地址。
+            \item 将 pbyte 配置为解码并经过 2D DMA 颜色空间转换的图像一个像素的字节数。
+            \item 将 HA 配置为输出解码图像宽度，VA 配置为输出解码图像高度，hb 配置为一个图像块水平方向的像素个数，vb 配置为一个图像块垂直方向的像素个数。
+            \item 将 mod 配置为 1，表示连续读取 hb × vb 大小图像块。
+            \item 将 (X，Y) 配置为起始图像块的第一个像素坐标。根据原始图像格式和待压缩图像的格式，hb 和 vb 有一定限制，如表 \ref{tab:en_hb_vb} 所示：
+        \begin{longtable}{ | L{4cm} | L{3cm} | L{3cm} | }
+        \caption{JPEG 解码器 hb 和 vb 配置} \label{tab:de_hb_vb}
+        \\ \hline
+        \rowcolor{lightgray}
+        \textbf{解码图像格式}  &  \textbf{hb}  &  \textbf{vb}\\ \hline
+        YUV444 &  8 的倍数 &  8 的倍数  \\ \hline
+        YUV422 &  16 的倍数 &  8 的倍数  \\ \hline
+        YUV420 &  16 的倍数 &  16 的倍数  \\ \hline
+        GRAY &  8 的倍数 &  8 的倍数  \\ \hline
+        \end{longtable}
+        \end{itemize}
+        \item 连接 JPEG 图像编解码器和 2D DMA 通道：
+        \begin{itemize}
+            \item 将 \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} 配置为 0，连接 JPEG 图像编解码器和 TX 通道\regindex{n}；
+            \item 将 \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} 配置为 0，连接 JPEG 图像编解码器和 RX 通道\regindex{n}。
+        \end{itemize}
+        \item 复位 2D DMA 通道：
+        \begin{itemize}
+            \item 2D DMA TX 通道\regindex{n}：将 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 1，复位 2D DMA TX 通道\regindex{n}，再将 \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} 置 0，释放 2D DMA TX 通道\regindex{n} 复位。
+            \item 2D DMA RX 通道\regindex{n}：将\hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 1，复位 2D DMA RX 通道\regindex{n}，再将 \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} 置 0，释放 2D DMA RX 通道\regindex{n} 复位。
+        \end{itemize}
+        \item 选择 2D DMA 通道的突发长度：
+        \begin{itemize}
+            \item 配置 \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}}，选择 2D DMA TX 通道\regindex{n} 的突发长度。
+            \item 配置 \hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}}，选择 2D DMA RX 通道\regindex{n} 的突发长度。
+        \end{itemize}
+        \item 根据解码图像的格式，配置 \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 选择 2D DMA 接收图像块大小。详见表 \ref{tab:de_block_size}：
+        \begin{itemize}
+            \item 0：8x8
+            \item 1：16x8
+            \item 2：16x16
+        \end{itemize}
+        \begin{longtable}{ | c | c | }
+        \caption{\hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} 配置} \label{tab:de_block_size}
+        \\ \hline
+        \rowcolor{lightgray}
+        \textbf{解码图像格式} & \textbf{\hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}}}  \\ \hline
+        YUV444 &   0\\ \hline
+        YUV422 &   1\\ \hline
+        YUV420 &   2\\ \hline
+        GRAY &    0\\ \hline
+        \end{longtable}
+        \item 将 \hyperref[fielddesc:DMA2DINREORDERENCHN]{DMA2D\_IN\_REORDER\_EN\_CH0} 置 1 使能重排 (Reorder) 功能，提高带宽利用率。此功能仅适用于 2D DMA RX 通道 0，不适用于任何其他 RX 通道。
+        \item 配置 \hyperref[fielddesc:DMA2DINSCRAMBLESELPRECHN]{DMA2D\_IN\_SCRAMBLE\_SEL\_PRE\_CH0}，选择在 2D DMA 颜色空间转换前如何调换解码图像的像素顺序：
+        \begin{itemize}
+            \item 0：BYTE2-1-0
+            \item 1：BYTE2-0-1
+            \item 2：BYTE1-0-2
+            \item 3：BYTE1-2-0
+            \item 4：BYTE0-2-1
+            \item 5：BYTE0-1-2
+        \end{itemize}
+        字段配置为 5 表示调换像素顺序，例如将 JPEG 解码器输出的 YUV444 调换为 VUY444。请注意，该功能仅适用于 2D DMA RX 通道 0，不适用于其他 RX 通道。
+        \item 配置 \hyperref[fielddesc:DMA2DINCOLORINPUTSELCHN]{DMA2D\_IN\_COLOR\_INPUT\_SEL\_CH0}、\hyperref[fielddesc:DMA2DINCOLOR3BPROCENCHN]{DMA2D\_IN\_COLOR\_3B\_PROC\_EN\_CH0} 和 \hyperref[fielddesc:DMA2DINCOLOROUTPUTSELCHN]{DMA2D\_IN\_COLOR\_OUTPUT\_SEL\_CH0} 选择颜色转换的方式。详见表 \ref{tab:de_csc}：
+            \begin{longtable}{ | l | c | c | c | }
+            \caption{2D DMA 颜色空间转换配置} \label{tab:de_csc}
+            \\ \hline
+            \rowcolor{lightgray}
+            \textbf{颜色空间转换方式} & \textbf{INPUT\_SEL\_CH0}  &  \textbf{3B\_PROC\_EN\_CH0} &  \textbf{OUTPUT\_SEL\_CH0}  \\ \hline
+            YUV420 -> RGB &  0  &  1  &  1 \\ \hline
+            YUV422 -> RGB &  0  &  1  &  1 \\ \hline
+            YUV444 -> RGB &  2  &  1  &  1 \\ \hline
+            YUV444（仅调换像素顺序） &  2  &  0  &  1 \\ \hline
+            不转换颜色空间 &  7  &  N/A  &  N/A \\ \hline
+            \end{longtable}
+        请注意，该功能仅适用于 2D DMA RX 通道 0，不适用于其他 RX 通道。
+        \item 配置颜色空间转换公式所需的参数，包括  \hyperref[fielddesc:DMA2DINCOLORPARAMH0CHN]{DMA2D\_IN\_COLOR\_PARAM\_H0\_CH0}、\hyperref[fielddesc:DMA2DINCOLORPARAMH1CHN]{DMA2D\_IN\_COLOR\_PARAM\_H1\_CH0}、\hyperref[fielddesc:DMA2DINCOLORPARAMM0CHN]{DMA2D\_IN\_COLOR\_PARAM\_M0\_CH0}、\hyperref[fielddesc:DMA2DINCOLORPARAMM1CHN]{DMA2D\_IN\_COLOR\_PARAM\_M1\_CH0}、\hyperref[fielddesc:DMA2DINCOLORPARAML0CHN]{DMA2D\_IN\_COLOR\_PARAM\_L0\_CH0} 和 \hyperref[fielddesc:DMA2DINCOLORPARAML1CHN]{DMA2D\_IN\_COLOR\_PARAM\_L1\_CH0}。请注意，该功能仅适用于 2D DMA RX 通道 0，不适用于其他 RX 通道。
+        \item 配置 \hyperref[fielddesc:DMA2DINSCRAMBLESELPOSTCHN]{DMA2D\_IN\_SCRAMBLE\_SEL\_POST\_CH0}，选择在 2D DMA 颜色空间转换后如何调换图像的像素顺序：
+        \begin{itemize}
+            \item 0：BYTE2-1-0
+            \item 1：BYTE2-0-1
+            \item 2：BYTE1-0-2
+            \item 3：BYTE1-2-0
+            \item 4：BYTE0-2-1
+            \item 5：BYTE0-1-2
+        \end{itemize}
+        字段配置为 5 表示翻转像素顺序，例如将 2D DMA 颜色空间转换后的 RGB 翻转为 BGR。请注意，该功能仅适用于 2D DMA RX 通道 0，不适用于其他 RX 通道。
+        \item 配置 2D DMA 通道链表地址：
+        \begin{itemize}
+            \item 2D DMA TX 通道：\hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}}
+            \item 2D DMA RX 通道：\hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}}
+        \end{itemize}
+    \end{enumerate}
+    \item 使能中断源：
+    \begin{itemize}
+        \item \hyperref[regdesc:DMA2DOUTINTENACHNREG]{DMA2D\_OUT\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:DMA2DININTENACHNREG]{DMA2D\_IN\_INT\_ENA\_CH\regindex{n}\_REG}
+        \item \hyperref[regdesc:JPEGINTENAREG]{JPEG\_INT\_ENA\_REG}
+    \end{itemize}
+    \item 开启 2D DMA 通道传输：
+    \begin{itemize}
+        \item 2D DMA TX 通道：将 \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} 先置 1 再 置 0
+        \item 2D DMA RX 通道：将 \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} 先置 1 再 置 0
+    \end{itemize}
+    \item 配置 \hyperref[fielddesc:JPEGJPEGSTART]{JPEG\_JPEG\_START} 字段，让 JPEG 图像编解码器开始解码。
+    \item 等待 DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT 变为 1，表示解码图像已完全写入存储器。
+\end{enumerate}
+
+\subsection{复位}
+根据实际场景，用户可以在编码或解码过程中 \textbf{复位} JPEG 图像编解码器的所有模块或部分模块：
+\begin{itemize}
+    \item 复位 JPEG 图像编解码器的所有模块，包括所以 RAM、FIFO 和状态机：将 \hyperref[fielddesc:JPEGSOFTRST]{JPEG\_SOFT\_RST} 置 1。 此时寄存器配置不会复位。
+    \item 复位 JPEG 图像编解码器的所有 RAM 和 FIFO，比如在更改量化系数表或哈夫曼表时：将 \hyperref[fielddesc:JPEGFIFORST]{JPEG\_FIFO\_RST} 置 1。
+    \item 复位 JPEG 图像编解码器的所有状态机，比如终止当前编码或解码流程时：将 \hyperref[fielddesc:JPEGFSMRST]{JPEG\_FSM\_RST} 置 1。
+\end{itemize}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{jpegcodec-reg-summ}{}
+\section{寄存器列表}
+\label{sec:jpegcodec-reg-summ}
+
+本小节的所有地址均为相对于 JPEG 图像编解码器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/36-JPEGCODEC-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 JPEG 图像编解码器 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/36-JPEGCODEC-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,351 @@
+\newif\ifglobal
+    
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./32-DBGASSIST}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\chapter{辅助调试 (ASSIST\_DEBUG)}
+\label{mod:dbgassist}
+\hypertarget{dbgassist}{}
+
+
+\section{概述}
+
+辅助调试模块提供一套调试功能，可用于软件开发时进行调试定位问题所在。
+
+\section{主要特性}
+\label{sec:dbgassist-features}
+
+\begin{itemize}
+    \item {\bfseries 读写监测}：监测 CPU 总线是否在限定的地址范围内进行读写操作，若发生读写操作则触发中断。
+    \item {\bfseries 栈指针 (SP) 监测}：监测栈指针是否超出限定的范围，若超出范围则产生中断。
+    \item {\bfseries 程序计数器 (PC) 记录}：记录 PC，可以获得上一次 CPU 复位时的 PC 值。
+    \item {\bfseries 总线访问记录}：记录总线访问信息，当 CPU 或者 DMA 写了某个特殊值时，会记录此次写行为的地址和 PC 值，并将这些信息记录到 SRAM 中。
+\end{itemize}
+
+
+\section{功能描述}
+\label{sec:dbgassist-func-descr}
+
+\subsection{区域读写监测}
+为确认 CPU 是否在某段地址范围（即区域）进行过读写行为，辅助调试模块能够监测 CPU 的数据总线和外设总线，当总线在监测地址范围进行读写操作时会触发中断。数据总线可同时监测两段地址范围，假设命名为数据总线区域 0 和数据总线区域 1，外设总线也可同时监测两段地址范围，假设命名为外设总线区域 0 和外设总线区域 1。区域 0 和区域 1 根据需要进行配置。
+
+\subsection{栈指针监测}
+为防止栈溢出或者错误的压栈弹栈，辅助调试模块能够监测栈指针，当栈指针超过限定的上下边界时会记录 PC 指针并产生中断，边界由软件进行配置。
+
+\subsection{PC 记录}
+在某些时候软件开发者希望知道上次 CPU 复位时的 PC 指针。比如，在程序卡死只能复位时，开发者可能希望读取复位时的 PC 指针以便知道程序在哪里卡死，然后进行调试。辅助调试模块可以记录 CPU 复位时的 PC，方便开发者进行调试。
+
+\subsection{CPU/DMA 总线访问记录}
+辅助调试模块能够实时记录 CPU 数据总线和 DMA 总线的写行为，当总线在某个范围内发生写操作或者写某个特定的值时，此次操作的总线类型、PC 和地址等信息会被记录下来，并按照一定的格式存储到 SRAM中。
+
+\section{工作流程}
+\label{sec:dbgassist-recommended-operation}
+
+\subsection{区域监测和栈监测配置}
+
+区域监测可监测数据总线和外设总线的读写行为，每个总线可同时监测两个区域。详细监测模式如下。
+
+\begin{itemize}
+    \item 数据总线读写监测
+        \begin{itemize}
+            \item 监测数据总线在区域 0 是否进行读操作
+            \item 监测数据总线在区域 0 是否进行写操作
+            \item 监测数据总线在区域 1 是否进行读操作
+            \item 监测数据总线在区域 1 是否进行写操作
+        \end{itemize}    
+    \item 外设总线读写监测
+        \begin{itemize}
+            \item 监测外设总线在区域 0 是否进行读操作
+            \item 监测外设总线在区域 0 是否进行写操作
+            \item 监测外设总线在区域 1 是否进行读操作
+            \item 监测外设总线在区域 1 是否进行写操作
+        \end{itemize}
+    \item 栈指针监测
+        \begin{itemize}
+            \item 监测栈指针是否越过上限
+            \item 监测栈指针是否越过下限
+        \end{itemize}
+\end{itemize}
+
+
+区域监测和栈监测的配置流程如下：
+\begin{enumerate}
+    \item 配置监测区域和栈指针
+        \begin{itemize}
+            \item 数据总线区域 0 由 \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM00MINREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_0\_MIN\_REG} 和\\ \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM00MAXREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_0\_MAX\_REG} 进行配置。
+            \item 数据总线区域 1 由 \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM01MINREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_1\_MIN\_REG} 和\\ \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM01MAXREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_1\_MAX\_REG} 进行配置。
+            \item 外设总线区域 0 由 \hyperref[regdesc:ASSISTDEBUGCORE0AREAPIF0MINREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_PIF\_0\_MIN\_REG} 和\\ \hyperref[regdesc:ASSISTDEBUGCORE0AREAPIF0MAXREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_PIF\_0\_MAX\_REG} 进行配置。
+            \item 外设总线区域 1 由 \hyperref[regdesc:ASSISTDEBUGCORE0AREAPIF1MINREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_PIF\_1\_MIN\_REG} 和\\ \hyperref[regdesc:ASSISTDEBUGCORE0AREAPIF1MAXREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_PIF\_1\_MAX\_REG} 进行配置。
+            \item 栈指针范围由 \hyperref[regdesc:ASSISTDEBUGCORE0SPMINREG]{ASSIST\_DEBUG\_CORE\_0\_SP\_MIN\_REG} 和\\ \hyperref[regdesc:ASSISTDEBUGCORE0SPMAXREG]{ASSIST\_DEBUG\_CORE\_0\_SP\_MAX\_REG} 进行配置。
+        \end{itemize}
+    \item 配置中断
+    \begin{itemize}
+        \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0INTRENAREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_ENA\_REG} 用于使能不同模式的中断。
+        \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0INTRRAWREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_RAW\_REG} 用于查询不同模式的中断状态。
+        \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0INTRCLRREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_CLR\_REG} 用于清除不同模式的中断。
+        \end{itemize}
+    \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0MONTRENAREG]{ASSIST\_DEBUG\_CORE\_0\_MONTR\_ENA\_REG} 使能不同的监测模式，可同时使能。
+\end{enumerate}
+
+
+
+ 
+ 比如，若想监测数据总线地址 A 到地址 B 范围内是否进行过写操作，可通过数据总线区域 0 或者区域 1 进行监测，以区域 0 为例：
+\begin{enumerate}
+    \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM00MINREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_0\_MIN\_REG} 为 A。
+    \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0AREADRAM00MAXREG]{ASSIST\_DEBUG\_CORE\_0\_AREA\_DRAM0\_0\_MAX\_REG} 为 B。
+    \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0INTRENAREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_ENA\_REG} bit[1] 使能数据总线区域 0 写监测中断。
+    \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0MONTRENAREG]{ASSIST\_DEBUG\_CORE\_0\_MONTR\_ENA\_REG} bit[1] 使能数据总线区域 0 写监测。
+    \item 配置中断矩阵将 ASSIST\_DEBUG\_INT 映射到 CPU 中断上（参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}})）。
+    \item 发生中断后
+    \begin{itemize}
+        \item 读取 \hyperref[regdesc:ASSISTDEBUGCORE0INTRRAWREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_RAW\_REG} 确认是什么操作触发的中断。
+        \item 如果是区域监测引发的中断，读取 \hyperref[fielddesc:ASSISTDEBUGCORE0AREAPC]{ASSIST\_DEBUG\_CORE\_0\_AREA\_PC} 可获取触发中断时刻的 PC 值，读取 \hyperref[fielddesc:ASSISTDEBUGCORE0AREASP]{ASSIST\_DEBUG\_CORE\_0\_AREA\_SP}可获取触发中断时刻的 SP 值。
+        \item 如果是栈监测引发的中断，读取 \hyperref[fielddesc:ASSISTDEBUGCORE0SPPC]{ASSIST\_DEBUG\_CORE\_0\_SP\_PC} 可获取触发中断时刻的 PC 值。
+        \item 配置 \hyperref[regdesc:ASSISTDEBUGCORE0INTRCLRREG]{ASSIST\_DEBUG\_CORE\_0\_INTR\_CLR\_REG} 不同位可清除不同的中断。
+    \end{itemize}
+
+\end{enumerate}
+
+
+\subsection{PC 记录配置}
+
+CPU 输出一个 PC 信号给 辅助调试模块，当 \hyperref[fielddesc:ASSISTDEBUGCORE0RCDPDEBUGEN]{ASSIST\_DEBUG\_CORE\_0\_RCD\_PDEBUGEN} 配置为 1 时，该信号才有效，否则一直为 0。同时当 \hyperref[fielddesc:ASSISTDEBUGCORE0RCDRECORDEN]{ASSIST\_DEBUG\_CORE\_0\_RCD\_RECORDEN} 配置为 1 时，\\\hyperref[regdesc:ASSISTDEBUGCORE0RCDPDEBUGPCREG]{ASSIST\_DEBUG\_CORE\_0\_RCD\_PDEBUGPC\_REG} 会去采样 CPU PC 信号，否则保持原值。
+
+寄存器 \hyperref[regdesc:ASSISTDEBUGCORE0RCDENREG]{ASSIST\_DEBUG\_CORE\_0\_RCD\_EN\_REG}、\hyperref[regdesc:ASSISTDEBUGCORE0RCDPDEBUGPCREG]{ASSIST\_DEBUG\_CORE\_0\_RCD\_PDEBUGPC\_REG} 描述见 \ref{regdesc:ASSISTDEBUGCORE0RCDENREG}、\ref{regdesc:ASSISTDEBUGCORE0RCDPDEBUGPCREG}。
+
+当 CPU 发生复位时，\hyperref[regdesc:ASSISTDEBUGCORE0RCDENREG]{ASSIST\_DEBUG\_CORE\_0\_RCD\_EN\_REG} 会被复位，但是\\ \hyperref[regdesc:ASSISTDEBUGCORE0RCDPDEBUGPCREG]{ASSIST\_DEBUG\_CORE\_0\_RCD\_PDEBUGPC\_REG} 不会被复位，因此后者会一直保持复位时刻的 PC 值。
+
+\subsection{CPU/DMA 总线访问记录配置}
+总线访问记录的配置流程如下：
+
+\begin{enumerate}
+    \item 配置监测地址范围
+        \begin{itemize}
+            \item 配置 \hyperref[regdesc:ASSISTDEBUGLOGMINREG]{ASSIST\_DEBUG\_LOG\_MIN\_REG} 和 \hyperref[regdesc:ASSISTDEBUGLOGMAXREG]{ASSIST\_DEBUG\_LOG\_MAX\_REG} 确定地址范围。
+        \end{itemize}
+    \item 配置监测模式 (\hyperref[fielddesc:ASSISTDEBUGLOGMODE]{ASSIST\_DEBUG\_LOG\_MODE})
+       \begin{itemize}
+            \item 写监测（监测总线是否发生写操作）
+           \item 字 (word) 监测（监测总线是否写某个特定 word）
+           \item 半字 (halfword) 监测（监测总线是否写某个特定 halfword）
+           \item 字节 (byte) 监测（监测总线是否写某个特定 byte）
+       \end{itemize}
+    \item 配置需要监测的特殊值
+        \begin{itemize}
+            \item 监测模式为 word 监测时，\hyperref[regdesc:ASSISTDEBUGLOGDATA0REG]{ASSIST\_DEBUG\_LOG\_DATA\_0\_REG} 即为监测的特定 word。
+            \item 监测模式为 halfword 监测时，\hyperref[regdesc:ASSISTDEBUGLOGDATA0REG]{ASSIST\_DEBUG\_LOG\_DATA\_0\_REG} 的 [15:0] 即为监测的特定 halfword。
+            \item 监测模式为 byte 监测时，\hyperref[regdesc:ASSISTDEBUGLOGDATA0REG]{ASSIST\_DEBUG\_LOG\_DATA\_0\_REG} 的 [7:0] 即为监测的特定 byte。
+            \item \hyperref[regdesc:ASSISTDEBUGLOGDATAMASKREG]{ASSIST\_DEBUG\_LOG\_DATA\_MASK\_REG} 用于屏蔽 \hyperref[regdesc:ASSISTDEBUGLOGDATA0REG]{ASSIST\_DEBUG\_LOG\_DATA\_0\_REG} 的相应 byte。当某一 byte 被屏蔽，表示该 byte 可为任意的值，比如 word 监测，\hyperref[regdesc:ASSISTDEBUGLOGDATA0REG]{ASSIST\_DEBUG\_LOG\_DATA\_0\_REG} 配置为 0x01020304，\hyperref[regdesc:ASSISTDEBUGLOGDATAMASKREG]{ASSIST\_DEBUG\_LOG\_DATA\_MASK\_REG} 配置为 0x1，因此只要总线写 0x010203XX 都会被记录。
+        \end{itemize}
+    \item 配置记录信息的存储地址范围
+        \begin{itemize}
+            \item \hyperref[regdesc:ASSISTDEBUGLOGMEMSTARTREG]{ASSIST\_DEBUG\_LOG\_MEM\_START\_REG} 和 \hyperref[regdesc:ASSISTDEBUGLOGMEMENDREG]{ASSIST\_DEBUG\_LOG\_MEM\_END\_REG} 为存储地址范围配置寄存器。 记录信息的存储地址范围为 0x3FCC\_0000 \verb+~+ 0x3FCD\_FFFF。
+            \item 配置辅助调试模块对 internal SRAM 的使用权限，只有开启了辅助调试模块对 SRAM 的使用权限才能访问 SRAM。关于如何配置，详情见章节 \ref{mod:permctrl} \textit{\nameref{mod:permctrl}})。
+        \end{itemize}
+    \item 配置写内存的存储模式：loop 模式和非 loop 模式
+        \begin{itemize}
+            \item loop 模式下，会在配置地址范围内进行循环写，当写到结束地址时回到起始地址开始写，覆盖之前记录的信息。\\
+            例如，地址范围为 0 \verb+~+ 4 ，有 1 \verb+~+ 10 十次写操作，那么第 5 次写操作写到地址 4 后，第 6 次写操作会回到地址 0 开始写，第 6 \verb+~+ 10 写操作会覆盖之前的 0 \verb+~+ 4 写操作的数据。
+            \item 非 loop 模式下，当写到结束地址后，会一直停留在结束地址进行写，不会覆盖最开始的记录信息。\\
+            例如，地址范围为 0 \verb+~+ 4 ，有 1 \verb+~+ 10 十次写操作，那么第 5 次写操作写到地址 4 后，第 6 \verb+~+ 10 写操作会一直在地址 4 上写，并且地址 4 最后会保留第 10 次写操作的数据。
+        \end{itemize}
+     \item 配置总线使能
+        \begin{itemize}
+            \item 配置 \hyperref[fielddesc:ASSISTDEBUGLOGENA]{ASSIST\_DEBUG\_LOG\_ENA} 使能 CPU 或 DMA 总线访问记录，可同时使能。
+        \end{itemize}
+\end{enumerate}
+
+当总线访问记录结束后需要从内存中读取记录数据并进行解码。记录数据里只有两种包格式，CPU 数据包和 DMA 数据包，对应 CPU 数据总线记录信息和 DMA 总线访问记录信息，其包格式如表 \ref{tab:dbgassist-cpu-packet-format}、\ref{tab:dbgassist-dma-packet-format} 所示：
+    
+    \begin{longtable}[c]{|L{4cm}|L{5cm}|l|}
+    \caption{CPU 包格式}\label{tab:dbgassist-cpu-packet-format}
+    \\\hline
+    \rowcolor{lightgray}
+    {\bfseries Bit[49:29]} & {\bfseries Bit[28:2]} & {\bfseries Bit[1:0]} \\\hline
+    addr\_offset & pc\_offset & format \\\hline
+    \end{longtable}
+    
+    \begin{longtable}[c]{|L{3cm}|L{2cm}|l|}
+    \caption{DMA 包格式}\label{tab:dbgassist-dma-packet-format}
+    \\\hline
+    \rowcolor{lightgray}
+    {\bfseries Bit[24:6]} & {\bfseries Bit[5:2]} & {\bfseries Bit[1:0]} \\\hline
+     addr\_offset & dma\_source & format  \\\hline
+    \end{longtable}
+
+从包格式可以看出，CPU 数据包共 50 位，DMA 数据包共 25 位。下面介绍各个域的含义：
+\begin{itemize}
+    \item {\bfseries format} 表示此次数据包的类型，1 表示 CPU 数据包，3 表示 DMA 数据包，其余值保留。
+    \item {\bfseries pc\_offset} 记录了 CPU 的 PC 指针的偏移量，实际 PC = pc\_offset + 0x4000\_0000。
+    \item {\bfseries addr\_offset} 记录了此次写操作的地址偏移，实际地址 = addr\_offset + \hyperref[regdesc:ASSISTDEBUGLOGMINREG]{ASSIST\_DEBUG\_LOG\_MIN\_REG}。
+    \item {\bfseries dma\_source} 记录了哪一个外设发起的 DMA 访问，具体见 \ref{tab:dbgassist-dma-source}。
+    
+        \begin{longtable}[c]{|l|l|}
+        \caption{DMA 访问来源}\label{tab:dbgassist-dma-source}
+        \\\hline
+        \rowcolor{lightgray}
+        {\bfseries 值} & {\bfseries 来源} \\\hline
+        \endfirsthead \hline \rowcolor{lightgray}
+        {\bfseries 值} & {\bfseries 来源} \\\hline
+        \endhead \endfoot \hline \endlastfoot
+        1 & SPI2 \\\hline
+        2 & reserved \\\hline
+        3 & reserved \\\hline
+        4 & AES \\\hline
+        5 & SHA \\\hline 
+        6 & ADC\_DAC \\\hline
+        7 & I2S \\\hline 
+        8 & reserved \\\hline
+        9 & reserved \\\hline
+        10 & reserved \\\hline
+        11 & UHCI0 \\\hline
+        12 & reserved \\\hline
+        13 & reserved \\\hline
+        14 & reserved \\\hline
+        15 & reserved \\\hline 
+        \end{longtable}
+\end{itemize}
+
+数据包缓存到内部 buffer 中，当 buffer 中数据满 125 位 后扩展为 128 位数据写到 internal SRAM 中，写入内存的数据格式如表 \ref{tab:dbgassist-written-data-format} 所示。
+        
+        \begin{longtable}[c]{|L{7cm}|l|}
+        \caption{写内存数据格式}\label{tab:dbgassist-written-data-format}
+        \\\hline
+        \rowcolor{lightgray}
+        {\bfseries Bit[127:3]} & {\bfseries Bit[2:0]} \\\hline
+        有效数据包 & 
+        START\_FLAG \\\hline
+        \end{longtable}
+
+由于 CPU 数据包共 50 位，DMA 数据包共 25 位，因此每次产生的记录信息最少 25 位，最多 75 位。当内部 buffer 满 125 位后，将数据写进内存，因此存在有的数据包被分成两部分，前部分被写进内存，后部分留在 buffer 中等待下次写入的情况，留在 buffer 中的数据称为残留数据。START\_FLAG 表示本次 125 位数据中残留数据的位数（位数 = START\_FLAG * 25），也可以理解为本次第一个完整数据包的起始位 (bit)。比如当前已经发生了 4 次 DMA 写操作，此时 buffer 里有 4 个 DMA 数据包共 100 位数据，此时再发生一次 CPU 写操作，会产生 50 位记录数据，此时 buffer 会将前面 100 位数据和 CPU 数据包里的前 25 位写人 SRAM，后 25 位留在 buffer 中等待下次写入，那么下次写入时数据格式中的 START\_FLAG 会指明上次残留有 25 位在本次数据中。
+
+当采用 loop 模式时，若在配置的存储地址范围内循环了若干次，残留数据会干扰解析，因此确定第一个有效数据包的位置时必须过滤残留数据。使用 START\_FLAG 和 \hyperref[regdesc:ASSISTDEBUGLOGMEMCURRENTADDRREG]{ASSIST\_DEBUG\_LOG\_MEM\_CURRENT\_ADDR\_REG} 确定了数据包的起始位置之后，数据都是连续的，可忽略 START\_FLAG 标志信息。
+
+注意，由于内部存在 buffer，当 buffer 不满时不会写入内存，在解析时，应确保所有的数据都已写入内存，通过关闭总线访问记录能确保 buffer 中的数据全部写入内存中。当总线使能 \hyperref[fielddesc:ASSISTDEBUGLOGENA]{ASSIST\_DEBUG\_LOG\_ENA} 全部配置为 0 时，若 buffer 有数据未写入内存中会以高位补零的形式以 128 位写到内存中。
+
+数据包解析流程如下：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:ASSISTDEBUGLOGMEMFULLFLAG]{
+    \hyperref[fielddesc:ASSISTDEBUGLOGMEMFULLFLAG]{ASSIST\_DEBUG\_LOG\_MEM\_FULL\_FLAG}} 确定数据是否溢出配置范围，如果未溢出，则以\\ \hyperref[regdesc:ASSISTDEBUGLOGMEMSTARTREG]{ASSIST\_DEBUG\_LOG\_MEM\_START\_REG} 作为第一个数据包的起始地址，若溢出并且开启了 loop 模式，则以 
+    \hyperref[regdesc:ASSISTDEBUGLOGMEMCURRENTADDRREG]{ASSIST\_DEBUG\_LOG\_MEM\_CURRENT\_ADDR\_REG}  作为第一个数据包的起始地址。
+    
+    \item 从起始地址处开始读取数据并解析，每次读取 128 位。
+    
+    \item 通过 START\_FLAG 来确认第一个数据包的起始位 (bit)，起始位为 START\_FLAG * 25 + 3。
+\end{itemize}
+
+注意 START\_FLAG 只用来找到起始位，找到第一个数据包之后后续数据中需过滤掉该信息。
+
+数据解析完成之后需要通过配置 \hyperref[fielddesc:ASSISTDEBUGCLRLOGMEMFULLFLAG]{ASSIST\_DEBUG\_CLR\_LOG\_MEM\_FULL\_FLAG} 清除 \\ \hyperref[fielddesc:ASSISTDEBUGLOGMEMFULLFLAG]{ASSIST\_DEBUG\_LOG\_MEM\_FULL\_FLAG} 标志位。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{寄存器列表}
+\label{sec:dbgassist-reg-summ}
+\hypertarget{dbgassist-reg-summ}{}
+
+本小节的所有地址均为相对于辅助调试基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/32-DBGASSIST-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\clearpage
+\section{寄存器}\label{sec:dbgassist-reg}
+
+本小节的所有地址均为相对于辅助调试基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/32-DBGASSIST-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,326 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./14-TIMG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{timg}{}
+\chapter{定时器组 (TIMG)}
+\label{mod:timg}
+
+
+\section{概述}
+通用定时器可用于准确设定时间间隔、在一定间隔后触发（周期或非周期的）中断或充当硬件时钟。如图 \ref{fig:timg} 所示，ESP32-S3 包含两个定时器组，即定时器组 0 和定时器组 1。每个定时器组有两个通用定时器（下文用 T\regindex{x} 表示， \regindex{x} 为 0 或 1）和一个主系统看门狗定时器。所有通用定时器均基于 16 位预分频器和 54 位可自动重新加载向上／向下计数器。
+
+\begin{figure}[h! ]
+    \centering
+    \includegraphics[width=0.6\textwidth]{./14-TIMG/figures/timergroupb5}
+    \caption{定时器组}
+    \label{fig:timg}
+\end{figure}
+
+本章包含主系统看门狗定时器的寄存器描述，其功能描述请参阅章节 \ref{mod:wdt} \textit{\nameref{mod:wdt}}。本章中“定时器”指代通用定时器。
+
+定时器具有如下功能：
+\begin{itemize}
+    \item 16 位时钟预分频器，分频系数为 2 到 65536
+    \item 54 位时基计数器可配置成递增或递减
+    \item 可读取时基计数器的实时值
+    \item 暂停和恢复时基计数器
+    \item 可配置的报警产生机制
+    \item 计数器值重新加载（报警时自动重新加载或软件控制的即时重新加载）
+    \item 电平触发中断
+\end{itemize}
+
+\clearpage
+\section{功能描述}
+
+\begin{figure}[h! ]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./14-TIMG/figures/725timergroup_architecture}}
+    \caption{定时器组架构}
+    \label{fig:timg-architecture}
+\end{figure}
+
+图 \ref{fig:timg-architecture} 为定时器组的 T\regindex{x}。 T\regindex{x} 包含时钟选择器、一个 16 位整数预分频器、一个时基计数器和一个用于产生警报的比较器。
+
+\subsection{16 位预分频器与时钟选择器}
+
+每个定时器可通过配置寄存器 \hyperref[regdesc:TIMGTXCONFIGREG]{TIMG\_T\regindex{x}CONFIG\_REG} 的 \hyperref[fielddesc:TIMGTXUSEXTAL]{TIMG\_T\regindex{x}\_USE\_XTAL} 字段，选择 APB 时钟 (APB\_CLK) 或外部时钟 (XTAL\_CLK) 作为时钟源。时钟源经 16 位预分频器分频，产生时基计数器使用的时基计数器时钟 (TB\_CLK)。16 位预分频器的分频系数可通过 \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} 字段配置，选取从 2 到 65536 之间的任意值。注意，将 \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} 置 0 后，分频系数会变为 65536。
+\hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} 置 1 时，实际分频系数为 2，计数器的值为实际时间的一半。
+
+定时器必须关闭（即 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 必须清零），才能更改 16 位预分频器。在定时器使能时更改 16 位预分频器会造成不可预知的结果。
+
+\subsection{54 位时基计数器}
+54 位时基计数器基于 TB\_CLK，可通过 \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} 字段配置为递增或递减。时基计数器可通过置位或清零 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 字段使能或关闭。使能时，时基计数器的值会在每个 TB\_CLK 周期递增或递减。关闭时，时基计数器暂停计数。注意，\hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 置位后，\hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} 字段还可以更改，时基计数器可立即改变计数方向。
+
+时基计数器 54 位定时器的当前值必须被锁入两个寄存器，才能被 CPU 读取（因为 CPU 为 32 位）。向 \\\hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} 写入任意值时，54 位定时器的值开始被锁入寄存器 \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} 和 \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}，两个寄存器分别锁存低 32 位和高 22 位。当 \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} 被硬件清零，表明锁存操作已经完成，可以从这两个寄存器中读取当前计数值。在 \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} 被写入新值之前，保持寄存器 \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} 和 \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}
+的值不变，以供 32 位的 CPU 读值。
+
+\subsection{报警产生}
+定时器可配置为在当前值与报警值相同时触发报警。报警会产生中断，（可选择）让定时器的当前值自动重新加载（详见第 \ref{sec:timg-func-descr-reload} 节）。
+
+54 位报警值可在 \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} 和 \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG} 配置，两者分别代表报警值的低 32 位和高 22 位。但是，只有置位 \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 字段使能报警功能后，配置的报警值才会生效。为解决报警使能“过晚”（即报警使能时，定时器的值已过报警值），可逆计数器向上计数时，若定时器的当前值高于报警值（在一定范围内），或可逆计数器向下计数时，定时器的当前值低于报警值（在一定范围内），硬件都会立即触发报警。表 \ref{tab:timg-alarm-generation-up} 和表 \ref{tab:timg-alarm-generation-down} 说明了定时器当前值、报警值与报警触发的关系。假设定时器当前值和报警值如下：
+
+\begin{itemize}
+    \item TIMG\_VALUE = \{\hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}, \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG}\}
+    \item ALARM\_VALUE = \{\hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}, \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG}\}
+\end{itemize}
+
+
+\begin{table}[H]
+\centering
+\caption{可逆计数器向上计数时的报警触发场景}
+\label{tab:timg-alarm-generation-up}
+
+\begin{tabular}{|l|l|m{7cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{场景} & \textbf{范围} & \textbf{报警} \\\hline
+     1 & ALARM\_VALUE $-$ TIMG\_VALUE $>$ $2^{53}$ & 触发 \\\hline
+     2 & 0 $<$ ALARM\_VALUE $-$ TIMG\_VALUE $\leq$ $2^{53}$ & 定时器计数器向上计数，TIMG\_VALUE 达到 ALARM\_VALUE 时报警 \\\hline
+     3 & 0 $\leq$ TIMG\_VALUE $-$ ALARM\_VALUE $<$ $2^{53}$ & 触发 \\\hline
+     4 & TIMG\_VALUE $-$ ALARM\_VALUE $\geq$ $2^{53}$ & 定时器计数器向上计数达到最大值时，重新开始从 0 向上 计数，TIMG\_VALUE 达到 ALARM\_VALUE 时触发报警\\\hline
+
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{可逆计数器向下计数时的报警触发场景}
+\label{tab:timg-alarm-generation-down}
+
+\begin{tabular}{|l|l|m{7cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{场景} & \textbf{范围} & \textbf{报警} \\\hline
+     5 & TIMG\_VALUE $-$ ALARM\_VALUE  $>$ $2^{53}$ & 触发 \\\hline
+     6 &  0 $<$ TIMG\_VALUE $-$ ALARM\_VALUE $\leq$ $2^{53}$ & 定时器计数器向下计数，TIMG\_VALUE 达到 ALARM\_VALUE 时报警 \\\hline
+     7 & 0 $\leq$ ALARM\_VALUE $-$ TIMG\_VALUE $<$ $2^{53}$ & 触发 \\\hline
+     8 & ALARM\_VALUE $-$ TIMG\_VALUE $\geq$ $2^{53}$ & 定时器计数器向下计数达到最小值时，重新开始从最大值向下计数，TIMG\_VALUE 达到 ALARM\_VALUE 时触发报警 \\\hline
+
+\end{tabular}
+\end{table}
+
+报警时，\hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 字段自动清零，在下次置位 \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 前不会再次报警。
+
+\subsection{定时器重新加载} \label{sec:timg-func-descr-reload}
+定时器重新加载指将定时器的低 32 位和高 22 位分别更新为寄存器 \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} 和 \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} 存储的重新加载值。但是，把重新加载值写入 \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} 和 \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} 寄存器不会改变定时器的当前值。写入的重新加载值会被定时器忽视，直到重新加载事件被触发。重新加载事件可由软件即时重新加载或报警时自动重新加载触发。
+
+CPU 在寄存器 \hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG} 写任意值会触发软件即时重新加载，定时器的当前值会立即改变。如置位 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}，定时器会继续从新数值开始递增或递减计数。如清零 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}，定时器将保持当前值，直至计数重新使能。
+
+报警时自动重新加载功能可让定时器在报警时重新加载，从重新加载值开始继续递增或递减计数。该功能通常用于周期性报警时重置定时器的值。\hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} 字段置 1 可以使能报警时自动重新加载。如未使能该功能，报警后定时器的值会在过报警值后继续递增或递减。
+
+\subsection{RTC 慢速时钟 (RTC\_SLOW\_CLK) 频率计算}
+定时器组可以通过使用 XTAL\_CLK 计算低功耗时钟的三个慢速时钟源 RC\_SLOW\_CLK、 RC\_FAST\_DIV\_CLK 和 XTAL32K\_CLK 的实际频率。计算方式如下：
+\begin{enumerate}
+    \item 通过周期性或单次计算的方式启动频率计算模块；
+    \item 在接收到计算开始的信号后，两个分别工作在 XTAL\_CLK 以及 RTC\_SLOW\_CLK 的计数器同时开始计数，当 RTC\_SLOW\_CLK 的计数器达到设定的计算周期 C0 时，同时停止两个计数器；
+    \item 通过 XTAL\_CLK 的计数器值 C1 即可计算 RTC\_SLOW\_CLK 的时钟频率：$f\_rtc = \frac{C0 \times f\_XTAL\_CLK}{C1}$
+\end{enumerate}
+
+\subsection{中断}\label{sec:timg-interrupt}
+每个定时器都有一根连接至 CPU 的中断线。因此，每个定时器组有三根中断线。定时器每次产生的电平中断必须由 CPU 清除。
+
+电平中断在报警后（或看门狗定时器阶段超时）触发。报警（或阶段超时）后，电平中断会一直被拉高，直至手动清除中断。要使能定时器的中断，\hyperref[regdesc:TIMGINTENATIMERSREG]{TIMG\_T\regindex{x}\_INT\_ENA} 需置 1。
+
+每个定时器组的中断受一组寄存器控制。每个定时器在下列寄存器中都有对应的位：
+
+\begin{itemize}
+
+\item \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW}：
+报警时置 1。该位在写值到对应的 \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR} 位后才会被清零。
+\item \hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW}：阶段超时时置 1。该位在写值到对应的 \hyperref[fielddesc:TIMGWDTINTCLR]{TIMG\_WDT\_INT\_CLR} 位后才会被清零。
+\item \hyperref[fielddesc:TIMGTXINTST]{TIMG\_T\regindex{x}\_INT\_ST}：反映每个定时器中断的状态，通过用 \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA} 屏蔽 \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW} 位来生成。
+\item \hyperref[fielddesc:TIMGWDTINTST]{TIMG\_WDT\_INT\_ST}：反映每个看门狗定时器中断的状态，通过用 \hyperref[fielddesc:TIMGWDTINTENA]{TIMG\_WDT\_INT\_ENA} 屏蔽 \\\hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW} 位来生成。
+\item \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA}：用于使能或屏蔽组内定时器的中断状态位。
+\item \hyperref[fielddesc:TIMGWDTINTENA]{TIMG\_WDT\_INT\_ENA}：用于使能或屏蔽组内看门狗定时器的中断状态位。
+\item \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}：置 1 此位清除定时器中断，定时器在 \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW} 和 \hyperref[fielddesc:TIMGTXINTST]{TIMG\_T\regindex{x}\_INT\_ST} 的对应位会清零。注意，下一个中断产生前，必须清除定时器中断。
+\item \hyperref[fielddesc:TIMGWDTINTCLR]{TIMG\_WDT\_INT\_CLR}：置 1 此位清除定时器中断，看门狗定时器在 \hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW} 和\\\hyperref[fielddesc:TIMGWDTINTST]{TIMG\_WDT\_INT\_ST} 的对应位会清零。注意，下一个中断产生前，必须清除看门狗定时器中断。
+\end{itemize}
+
+\section{配置与使用}
+\subsection{定时器用作简单时钟}\label{sec:timg-func-descr-simple-clock}
+\begin{enumerate}
+    \item 配置时基计数器。
+        \begin{itemize}
+        \item 置位或清除 \hyperref[fielddesc:TIMGTXUSEXTAL]{TIMG\_T\regindex{x}\_USE\_XTAL} 字段选择时钟源。
+        \item 置位 \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} 配置 16 位预分频器。
+        \item 置位或清除 \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} 配置定时器方向。
+        \item 在 \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} 和 \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} 上写初始值设置定时器的初始值，然后在 \\\hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG} 上写任意值将初始值重新加载进定时器。
+    \end{itemize}
+    \item 置位 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 开启定时器。
+    \item 获得定时器的当前值。
+    \begin{itemize}
+        \item 在 \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} 上写任意值锁存定时器的当前值。
+        \item 等待硬件将 \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} 清 0。
+        \item 从 \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} 和 \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} 读取锁存的定时器值。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{定时器用于一次性报警}\label{sec:timg-func-descr-timer-alarm}
+\begin{enumerate}
+    \item 按照第 \ref{sec:timg-func-descr-simple-clock} 节的第 1 步配置时基计数器。
+    \item 配置报警。
+    \begin{itemize}
+        \item 置位 \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} 和 \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG} 配置报警值。
+        \item 置位 \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA} 使能中断。
+    \end{itemize}
+    \item 清零 \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} 关闭自动重新加载。
+    \item 置位 \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 开启报警。
+    \item 处理报警中断。
+    \begin{itemize}
+        \item 置位定时器在 \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR} 的对应位清除中断。
+        \item 清零 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 关闭定时器。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{定时器用于周期性报警}
+
+\begin{enumerate}
+    \item 按照第 \ref{sec:timg-func-descr-simple-clock} 节的第 1 步配置时基计数器。
+    \item 按照第 \ref{sec:timg-func-descr-timer-alarm} 节的第 2 步配置报警。
+    \item 置位 \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} 使能自动重新加载，将重新加载值写入 \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} 和 \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}。
+    \item 置位 \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 开启报警。
+    \item 处理报警中断（每次报警时重复）。
+    \begin{itemize}
+        \item 置位定时器在 \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR} 的对应位清除中断。
+        \item 如下一次报警需要新的报警值和重新加载值（即每次都有不同的报警间隔），则应根据需要重新配置 \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG}、\hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}、\hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} 和 \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} 。否则，上述寄存器应保持不变。
+        \item 置位 \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} 重新使能报警。
+    \end{itemize}
+    \item（最后一次报警时）关闭定时器。
+    \begin{itemize}
+        \item 置位定时器在 \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR} 的对应位清除中断。
+        \item 清零 \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} 关闭定时器。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{RTC\_SLOW\_CLK 频率计算}
+\begin{enumerate}
+    \item 单次计算
+    \begin{itemize}
+        \item 设置 \hyperref[fielddesc:TIMGRTCCALICLKSEL]{TIMG\_RTC\_CALI\_CLK\_SEL} 选择需要计算频率的时钟（RTC\_SLOW\_CLK 的时钟源），设置 \hyperref[fielddesc:TIMGRTCCALIMAX]{TIMG\_RTC\_CALI\_MAX} 配置频率计算时间。
+        \item 清空 \hyperref[fielddesc:TIMGRTCCALISTARTCYCLING]{TIMG\_RTC\_CALI\_START\_CYCLING} 选择单次校准模式，然后配置 \hyperref[fielddesc:TIMGRTCCALISTART]{TIMG\_RTC\_CALI\_START} 开启两个计数器。
+        \item 等待 \hyperref[fielddesc:TIMGRTCCALIRDY]{TIMG\_RTC\_CALI\_RDY} 的值变为 1，读取 \hyperref[fielddesc:TIMGRTCCALIVALUE]{TIMG\_RTC\_CALI\_VALUE} 获取 XTAL\_CLK 计数器值，计算 RTC\_SLOW\_CLK 频率。
+    \end{itemize}
+    \item 周期性计算
+    \begin{itemize}
+        \item 设置 \hyperref[fielddesc:TIMGRTCCALICLKSEL]{TIMG\_RTC\_CALI\_CLK\_SEL} 选择需要计算频率的时钟（RTC\_SLOW\_CLK 的时钟源），设置 \hyperref[fielddesc:TIMGRTCCALIMAX]{TIMG\_RTC\_CALI\_MAX} 配置频率计算时间。
+        \item 使能 \hyperref[fielddesc:TIMGRTCCALISTARTCYCLING]{TIMG\_RTC\_CALI\_START\_CYCLING}，硬件将不间断进行频率计算过程。
+        \item 只要 \hyperref[fielddesc:TIMGRTCCALICYCLINGDATAVLD]{TIMG\_RTC\_CALI\_CYCLING\_DATA\_VLD} 为 1，即表示 \hyperref[fielddesc:TIMGRTCCALIVALUE]{TIMG\_RTC\_CALI\_VALUE} 有效。
+    \end{itemize}
+    \item 超时\\
+    如果 RTC\_SLOW\_CLK 的计数器没有在 \hyperref[fielddesc:TIMGRTCCALITIMEOUTRSTCNT]{TIMG\_RTC\_CALI\_TIMEOUT\_RST\_CNT} 的 XTAL\_CLK 计数器内完成计数，将置位 \hyperref[fielddesc:TIMGRTCCALITIMEOUT]{TIMG\_RTC\_CALI\_TIMEOUT} 标记计算超时。
+\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{timg-reg-summ}{}
+\section{寄存器列表}
+\label{sec:timg-reg-summ}
+
+本小节的所有地址均为相对于 \textcolor{red}{定时器组} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/14-TIMG-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 \textcolor{red}{定时器组} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/14-TIMG-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,332 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./25-BROWNOUT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[10pt]{article}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    \usepackage{diagbox}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{brownout}{}
+\chapter{Brown-out Detector}
+\label{mod:brownout}
+
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+The brown-out detector of \chipname{} monitors the voltage levels of pins VDD\_ANA and VDD\_BAT. If the voltage on these pins drops below the predefined threshold (defaulting to \untagged{ESP32-P4-latest}{2.7} \tagged{ESP32-P4-latest}{2.4} V), the detector triggers signals to shut down certain power-consuming blocks (e.g., flash), ensuring that the digital module has sufficient time to save and transfer important data.
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:brownout-features}
+
+\begin{itemize}
+    \item Two monitored sources
+       \begin{itemize}
+        \item Monitors the voltage level of pin VDD\_ANA, which supplies power to the analog circuit.
+        \item Monitors the voltage level of pin VDD\_BAT, which connects the external battery to the chip.
+    \end{itemize}
+    \item Two configurable monitoring modes
+        \begin{itemize}
+        \item Mode 0: The brown-out detector triggers interrupts when the brown-out counter reaches the predefined threshold and selects the reset mode according to the configuration.
+        \item Mode 1: The brown-out detector triggers a system reset when the voltage falls below the threshold.
+    \end{itemize}
+    \item Configurable voltage-monitoring thresholds and noise tolerance
+    \item Configurable handling modes for under-voltage events
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:brownout-arch-overview}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/brownout.pdf}
+    \caption{Brown-out Detector Overview}
+    \label{fig:brownout-detector-overview}
+\end{figure}
+
+ \begin{itemize}
+     \item Source selection for detection: The brown-out detector can select which power source to monitor by configuring \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA}. RTC\_VGOOD\_VBAT indicates the detection result of VDD\_BAT, and RTC\_VGOOD\_VDDA indicates the detection result of VDD\_ANA.
+     \item Brown-out detector (Brown Out): An analog circuit designed to monitor the voltage of power pins and generate brown-out signals. It compares the voltage with the predefined threshold. When the voltage falls below this threshold, the detector outputs brown-out signals.
+     \item Brown-out counter (brownout cnt): A counter used for filtering voltage noise on the detected power pins. When the brown-out signal is received, the counter starts counting based on the clock source LP\_DYN\_FAST\_CLK. If the brown-out signal ceases during the counting process, the counter resets to 0. This counter can be cleared by configuring \hyperref[fielddesc:LPANABODMODE0CNTCLR]{LP\_ANA\_BOD\_MODE0\_CNT\_CLR}.
+    \item Interrupt comparator (cmp0): The comparator generates interrupts by comparing the counter value with the threshold. When the counter value exceeds the threshold, the comparator generates the interrupt signal bod\_mode0\_int. If \hyperref[fielddesc:LPANABODMODE0CLOSEFLASHENA]{LP\_ANA\_BOD\_MODE0\_CLOSE\_FLASH\_ENA} is enabled, bod\_mode0\_close\_flash will be triggered, causing flash to enter the SUSPEND state.
+     \item Reset comparator (cmp1): The comparator triggers reset signals by comparing the counter value with the threshold. When the counter value exceeds the threshold, the comparator triggers reset signals.
+ \end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:brownout-func-descr}
+
+\begin{itemize}
+    \item Monitored sources
+    \begin{itemize}
+        \item VDD\_ANA: Power pin for the analog circuit, supporting both Mode 0 and Mode 1.
+        \item VDD\_BAT: Power pin connected to the battery, supporting both Mode 0 and Mode 1. In addition, it supports two configurable voltage thresholds:
+        \begin{itemize}
+        \item VBAT\_BOD: Used for brown-out detection of VDD\_BAT
+        \item VBAT\_CHARGER: Indicates whether the battery connected to VDD\_BAT needs charging.
+        \end{itemize}
+         These thresholds trigger different interrupts.
+    \end{itemize}
+
+    \item Monitoring modes \\
+    There are two monitoring modes based on the way the brown-out detector handles the brown-out signal:
+    \begin{itemize}
+        \item Mode 0: When Mode 0 is enabled, the brown-out counter starts counting after detecting a brown-out signal. Interrupt and reset signals are generated when the counter reaches the thresholds defined by \hyperref[fielddesc:LPANABODMODE0RESETWAIT]{LP\_ANA\_BOD\_MODE0\_RESET\_WAIT} and \hyperref[fielddesc:LPANABODMODE0INTRWAIT]{LP\_ANA\_BOD\_MODE0\_INTR\_WAIT}, respectively. This helps filter out noise on the monitored pins. Configure \hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL} to select the reset options:
+        \begin{itemize}
+            \item 0: Reset the chip.
+            \item 1: Reset the system.
+        \end{itemize}
+        \item Mode 1: Mode 1 is the default mode, which resets the system immediately upon detecting under-voltage.
+    \end{itemize}
+
+    \item Voltage-monitoring thresholds\\
+    The voltage-monitoring threshold is configured in the analog circuit by the analog I2C master. The threshold configuration registers are as follows. BIAS is the slave of the analog I2C master. The address of BIAS is 0x6a. REGXX indicates the register address of BIAS, and [x:x] indicates the bits of this register. \\
+    \begin{itemize}
+    \item BIAS\_OR\_DREFL\_VBAT (REG08[7:5]): threshold for releasing the under-voltage state of VDD\_BAT\\
+    \item BIAS\_OR\_DREFH\_VBAT (REG08[4:2]): under-voltage threshold of VDD\_BAT\\
+    \item BIAS\_OR\_DREFL\_VDDA (REG09[7:5]): threshold for releasing the under-voltage state of VDD\_ANA\\
+    \item BIAS\_OR\_DREFH\_VDDA (REG09[4:2]): under-voltage threshold of VDD\_ANA\\
+    \item BIAS\_OR\_DREFL\_VBAT\_CHARGER (REG10[7:5]): threshold for releasing the under-voltage state of battery connected to VDD\_BAT\\
+    \item BIAS\_OR\_DREFH\_VBAT\_CHARGER (REG10[4:2]): under-voltage threshold of battery connected to VDD\_BAT\\
+    \end{itemize}
+
+    \untagged{ESP32-P4-latest}{
+        The relationship between the threshold configuration and voltage is:
+        \begin{itemize}
+        \item 0: 2.52 V
+        \item 1: 2.57 V
+        \item 2: 2.63 V
+        \item 3: 2.68 V
+        \item 4: 2.74 V
+        \item 5: 2.78 V
+        \item 6: 2.83 V
+        \item 7: 2.89 V
+        \end{itemize}
+    }
+
+     \tagged{ESP32-P4-latest}{
+        The relationship between the threshold configuration of VBAT/VDDA and voltage is:
+        \begin{itemize}
+            \item 0: 2.0 V
+            \item 1: 2.1 V
+            \item 2: 2.2 V
+            \item 3: 2.3 V
+            \item 4: 2.4 V
+            \item 5: 2.5 V
+            \item 6: 2.6 V
+            \item 7: 2.7 V
+        \end{itemize}
+        The relationship between the threshold configuration of VBAT\_CHARGER and voltage is:
+        \begin{itemize}
+            \item 0: 2.2 V
+            \item 1: 2.3 V
+            \item 2: 2.4 V
+            \item 3: 2.5 V
+            \item 4: 2.6 V
+            \item 5: 2.7 V
+            \item 6: 2.8 V
+            \item 7: 2.9 V
+        \end{itemize}
+    }
+
+ \item Voltage-monitoring filter\\
+    A dedicated glitch filter is used to process the detection results of VDD\_BAT, as shown in the figure below.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/brownout_filter.pdf}
+    \caption{Structure of Brown-out Detector}
+    \label{fig:sar-adc-functional-overvie}
+\end{figure}
+
+    \begin{itemize}
+        \item vdd\_cnt: the value of the brown-out counter.
+        \item bod\_source: the monitored source, which is VDD\_BAT in the figure.
+        \item vdd\_undervoltage\_flag: the under-voltage flag.
+    \end{itemize}
+    \begin{itemize}
+        \item Stage 0 \verb+~+ 1: When bod\_source is 1, it indicates the voltage is normal, and the brown-out counter (vdd\_cnt) remains 0.
+        \item Stage 1 \verb+~+ 2: When bod\_source is 0, it indicates under-voltage happens, and the brown-out counter will start to count. When the counter value reaches the corresponding threshold, vdd\_undervoltage\_flag will be set to 1, and the interrupt is generated.
+        \item Stage 2 \verb+~+ 3: When vdd\_underboltage\_flag is 1, the brown-out counter will stop counting, and stabilize at \hyperref[fielddesc:LPANAVDDBATUNDERVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UNDERVOLTAGE\_TARGET}.
+        \item Stage 3 \verb+~+ 4 \verb+~+ 5: When bod\_source changes back to 0 for a short period, the value in the brown-out counter will decrease. However, as the value does not reach to \hyperref[fielddesc:LPANAVDDBATUPVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UPVOLTAGE\_TARGET}, vdd\_underboltage\_flag will not be toggled.
+        \item Stage 6 \verb+~+ 7: After bod\_source remains 0 for a certain period, i.e., the counter value decreases to \hyperref[fielddesc:LPANAVDDBATUPVOLTAGETARGET]{LP\_ANA\_VDDBAT\_UPVOLTAGE\_TARGET}, vdd\_underboltage\_flag is reset to 0. Then the counter is cleared to 0.
+    \end{itemize}
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s brown-out detector can generate the following interrupt and send it to \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item LP\_ANAPERI\_INT
+    \end{itemize}
+
+The interrupt is generated by the internal interrupt sources of the brown-out detector.
+
+\begin{itemize}
+\item \label{int:LPANAVDDBATCHARGEUPVOLTAGEINT}LP\_ANA\_VDDBAT\_CHARGE\_UPVOLTAGE\_INT: Triggered when the voltage of VDD\_BAT increases to the predefined charging threshold.
+\item \label{int:LPANAVDDBATCHARGEUNDERVOLTAGEINT}LP\_ANA\_VDDBAT\_CHARGE\_UNDERVOLTAGE\_INT: Triggered when the voltage of VDD\_BAT decreases to the predefined charging threshold.
+\item \label{int:LPANAVDDBATUPVOLTAGEINTRAW}LP\_ANA\_VDDBAT\_UPVOLTAGE\_INT: Triggered when the voltage of VDD\_BAT increases to the predefined brown-out threshold.
+\item \label{int:LPANAVDDBATUNDERVOLTAGEINT}LP\_ANA\_VDDBAT\_UNDERVOLTAGE\_INT: Triggered when the voltage of VDD\_BAT reduces to the predefined brown-out threshold.
+\item \label{int:LPANABODMODE0INT}LP\_ANA\_BOD\_MODE0\_INT: Triggered when the value of the brown-out counter reaches the predefined threshold in Mode 0.
+\end{itemize}
+
+Each interrupt source can be configured by a common set of registers that are described in Chapter \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:brownout-reg-summ} \textit{\nameref{sec:brownout-reg-summ}}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Programming Procedures}
+
+\begin{itemize}
+    \item Mode 0
+
+    \begin{itemize}
+        \item Configure \hyperref[fielddesc:LPANABODMODE0RESETWAIT]{LP\_ANA\_BOD\_MODE0\_RESET\_WAIT} to set the counter threshold for triggering the reset signal.
+        \item Configure \hyperref[fielddesc:LPANABODMODE0INTRWAIT]{LP\_ANA\_BOD\_MODE0\_INTR\_WAIT} to set the counter threshold for triggering interrupts.
+        \item Set \hyperref[fielddesc:LPANABODMODE0RESETSEL]{LP\_ANA\_BOD\_MODE0\_RESET\_SEL} to select the reset way in Mode 0.
+        \item Configure \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA} to enable the power pin to be detected.
+        \item Set \hyperref[fielddesc:LPANABODMODE0RESETENA]{LP\_ANA\_BOD\_MODE0\_RESET\_ENA} to enable the brown-out reset functionality.
+        \item Set \hyperref[fielddesc:LPANABODMODE0INTRENA]{LP\_ANA\_BOD\_MODE0\_INTR\_ENA} to enable the noise-filtering counter and interrupts.
+    \end{itemize}
+
+    \item Mode 1
+
+    \begin{itemize}
+        \item Configure \hyperref[fielddesc:LPANABODSOURCEENA]{LP\_ANA\_BOD\_SOURCE\_ENA} to enable the power pin to be detected.
+    \end{itemize}
+
+\end{itemize}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{brownout-reg-summ}{}
+\section{Register Summary}
+\label{sec:brownout-reg-summ}
+
+The addresses in this section are relative to Brown-out Detector base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/25-BROWNOUT-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to Brown-out Detector base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{Programming Reserved Register Field}.
+
+\subfile{\modulefiles/25-BROWNOUT-reg__EN}
+
+
+\end{document}

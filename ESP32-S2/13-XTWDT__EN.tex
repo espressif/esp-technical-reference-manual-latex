@@ -1,0 +1,135 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./13-XTWDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{xtwdt}{}
+\chapter{XTAL32K Watchdog Timer (XTWDT)}
+\label{mod:xtwdt}
+
+\section{Overview}
+
+The XTAL32K watchdog timer on ESP32-S2 is used to monitor the status of external crystal XTAL32K\_CLK. This Watchdog can detect the oscillation failure of XTAL32K\_CLK, change the clock source of RTC, etc. When XTAL32K\_CLK works as the clock source of RTC SLOW\_CLK and stops vibrating, the XTAL32K watchdog timer first switches to BACKUP32K\_CLK derived from RC\_SLOW\_CLK and generates an interrupt (if the chip is in Deep-sleep mode, the CPU will be woken up), and then switches back to XTAL32K\_CLK after it is restarted by software.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/xtal32k_watchdog}}
+    \caption{XTAL32K Watchdog Timer}
+    \label{Figure:xtal32k}
+\end{figure}
+
+\section{Features}
+
+\subsection{XTAL32K Watchdog Timer Interrupts and Wake-up}
+
+When the XTAL32K watchdog timer detects the oscillation failure of XTAL32K\_CLK, an oscillation failure interrupt is generated. At this point the CPU will be woken up if in hibernation.
+
+\subsection{BACKUP32K\_CLK}
+
+Once the XTAL32K watchdog timer detects the oscillation failure of XTAL32K\_CLK, it replaces XTAL32K\_CLK with BACKUP32K\_CLK (with a frequency of 32 kHz) derived from RC\_SLOW\_CLK as RTC’s SLOW\_CLK, so as to ensure proper functioning of the system.
+
+\section{Functional Description}
+
+\subsection{Workflow}
+
+\begin{enumerate}
+    \item The XTAL32K watchdog timer starts counting when \hyperref[fielddesc:RTCCNTLXTAL32KWDTEN]{RTC\_CNTL\_XTAL32K\_WDT\_EN} is enabled. The counter keeps counting until it detects the positive edge of XTAL\_32K and is then cleared. When the counter reaches \hyperref[fielddesc:RTCCNTLXTAL32KWDTTIMEOUT]{RTC\_CNTL\_XTAL32K\_WDT\_TIMEOUT}, it generates an interrupt or a wake-up signal and is then reset.
+    \item The XTAL32K watchdog timer automatically enables BACKUP32K\_CLK as the alternative clock source of RTC SLOW\_CLK, to ensure the system’s proper functioning and the accuracy of timers running on RTC SLOW\_CLK (e.g. RTC\_TIMER). For information about clock frequency configuration, please refer to Section \ref{subsubsection:divisor_configuration} \textit{\nameref{subsubsection:divisor_configuration}}.
+    \item To restore the XTAL32K watchdog timer, software restarts XTAL32K\_CLK by turning its XPD signal on and on again via RTC\_CNTL\_XPD\_XTAL\_32K bit. Then, the XTAL32K watchdog timer switches back to XTAL32K\_CLK by setting \hyperref[fielddesc:RTCCNTLXTAL32KWDTEN]{RTC\_CNTL\_XTAL32K\_WDT\_EN} bit to 0. If the chip is in Deep-sleep mode, the XTAL32K watchdog timer will wake up the CPU to finish the above steps.
+\end{enumerate}
+
+\subsection{Configuring the Divisor of BACKUP32K\_CLK}\label{subsubsection:divisor_configuration}
+
+Chips have different RC\_SLOW\_CLK frequencies due to production process variations. To ensure the accuracy of RTC\_TIMER and other timers running on SLOW\_CLK when BACKUP32K\_CLK is at work, the divisor of BACKUP32K\_CLK should be configured according to the actual frequency of RC\_SLOW\_CLK. For details about the actual frequency of RC\_SLOW\_CLK, please refer to \ref{mod:lowpowm} \textit{\nameref{mod:lowpowm}}.
+
+Define the frequency of RC\_SLOW\_CLK as f\_rc\_slow\_clk (unit: kHz), and the eight divisor components as \begin{math} x_0, x_1, x_2, x_3, x_4, x_5, x_6 \end{math}, and \begin{math}x_7\end{math}, respectively. \begin{math}S = x_0 + x_1 + x_2 + x_3 + x_4 + x_5 + x_6 + x_7\end{math}.
+
+The following conditions should be fulfilled:
+
+    \begin{gather*}
+    S = f\_rc\_slow\_clk \times (4/32)\\
+    M + 1 \geq x_n \geq M (0 \leq n \leq 7)\\
+    M = f\_rc\_slow\_clk/32/2
+    \end{gather*}
+    
+\begin{math}x_n\end{math} should be an integer. \begin{math}M\end{math} and \begin{math}S\end{math} are rounded up or down. Each divisor component (\begin{math}x_0\end{math} \textasciitilde \begin{math}x_7\end{math}) is 4-bit long, and corresponds to the value of \hyperref[fielddesc:RTCCNTLXTAL32KCLKFACTOR]{RTC\_CNTL\_XTAL32K\_CLK\_FACTOR} (32-bit) in order.
+
+For example, if the frequency of RC\_SLOW\_CLK is 163 kHz, then \begin{math} f\_rc\_slow\_clk = 163, S = 20, M = 2 \end{math}, and \begin{math} \left\{x_0, x_1, x_2, x_3, x_4, x_5, x_6, x_7\right\} = \left\{2, 3, 2, 3, 2, 3, 2, 3\right\}\end{math}. As a result, the frequency of BACKUP32K\_CLK is 32.6 kHz.
+\end{document}

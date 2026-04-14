@@ -1,0 +1,355 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./21-SHA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sha}{}
+\chapter{SHA Accelerator (SHA)}
+\label{mod:sha}
+\section{Introduction}
+
+\chipname{} integrates an SHA accelerator, which is a hardware device that speeds up SHA algorithm significantly, compared to SHA algorithm implemented solely in software. The SHA accelerator integrated in \chipname{} has two working modes, which are  \hyperref[sec:sha-typical-sha]{Typical SHA} and  \hyperref[sec:sha-dma-sha]{DMA-SHA}.
+
+\section{Features}
+
+The following functionality is supported:
+
+\begin{itemize}
+    \item The following hash algorithms introduced in   \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 Spec}.
+    \begin{itemize}
+        \item SHA-1
+        \item SHA-224
+        \item SHA-256
+    \end{itemize}
+    \item Two working modes
+    \begin{itemize}
+        \item Typical SHA 
+        \item DMA-SHA  
+    \end{itemize}
+    \item Interleaved function when working in Typical SHA working mode
+    \item Interrupt function when working in DMA-SHA working mode
+\end{itemize}
+
+\section{Working Modes}
+The SHA accelerator integrated in \chipname{} has two working modes.
+
+\begin{itemize}
+    \item \hyperref[sec:sha-typical-sha]{Typical SHA Working Mode}: all the data is written and read via CPU directly.
+    \item \hyperref[sec:sha-dma-sha]{DMA-SHA Working Mode}: all the data is read via DMA. That is, users can configure the DMA controller to read all the data needed for hash operation, thus releasing CPU for completing other tasks.
+\end{itemize}    
+
+Users can start the SHA accelerator with different working modes by configuring registers \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} and \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG}. For details, please see Table \ref{tab:sha-working-mode}.
+\begin{longtable}[c]{ | l | l | }
+\caption{SHA Accelerator Working Mode}
+\label{tab:sha-working-mode}
+\\\hline 
+\rowcolor{lightgray}
+Working Mode      & Configuration Method\\
+    \hline
+    \hyperref[sec:sha-typical-sha]{Typical SHA}      &  Set \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} to 1   \\
+    \hline
+    \hyperref[sec:sha-dma-sha]{DMA-SHA}           &  Set \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG} to 1   \\
+    \hline
+\end{longtable}
+
+Users can choose hash algorithms by configuring the \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} register. For details, please see Table \ref{tab:sha-hash-algo-select}.
+
+\begin{longtable}[c]{| l | c |}
+\caption{SHA Hash Algorithm Selection}
+\label{tab:sha-hash-algo-select}
+\\\hline
+\rowcolor{lightgray}
+Hash Algorithm & \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} Configuration\\
+    \hline
+    SHA-1 & 0\\
+    \hline
+    SHA-224 & 1\\
+    \hline
+    SHA-256 & 2 \\\hline 
+\end{longtable}
+
+
+\begin{importantlisting}
+\vspace{-0.5em}
+
+    ESP32-C3's \nameref{mod:digsig} and \nameref{mod:hmac} modules also call the SHA accelerator. Therefore, users cannot access the SHA accelerator when these modules are working.
+\end{importantlisting}
+
+\section{Function Description}
+
+SHA accelerator can generate the message digest via two steps: \hyperref[sec:sha-preprocessing]{Preprocessing} and  \hyperref[sec:sha-hash-operation]{Hash operation}.
+
+\subsection{Preprocessing}\label{sec:sha-preprocessing}
+
+Preprocessing consists of three steps: \hyperref[sec:sha-padding-msg]{padding the message}, \hyperref[sec:sha-parsing-msg]{parsing the message into message blocks} and \hyperref[sec:sha-set-initial-hash]{setting the initial hash value}.
+
+\subsubsection{Padding the Message}\label{sec:sha-padding-msg}
+
+The SHA accelerator can only process message blocks of 512 bits. Thus, all the messages should be padded to a multiple of 512 bits before the hash task.
+
+Suppose that the length of the message \begin{math}M\end{math} is \begin{math} m \end{math} bits. Then \begin{math} M \end{math} shall be padded as introduced below:
+
+\begin{enumerate}
+    \item First, append the bit ``1" to the end of the message;
+    \item Second, append \begin{math} k \end{math} bits of zeros, where \begin{math} k \end{math} is the smallest, non-negative solution to the equation \begin{math}m + 1 + k \ {\equiv} \ 448 \ mod \end{math} 512;
+    \item Last, append the 64-bit block of value equal to the number \begin{math} m \end{math} expressed using a binary representation.
+\end{enumerate}
+
+For more details, please refer to Section ``5.1 Padding the Message" in \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 Spec}.
+
+\subsubsection{Parsing the Message}\label{sec:sha-parsing-msg}
+
+The message and its padding must be parsed into \begin{math}N\end{math} 512-bit blocks, \begin{math}M^{(1)}\end{math}, \begin{math}M^{(2)}\end{math}, \dots, \begin{math}M^{(N)}\end{math}. Since the 512 bits of the input block may be expressed as sixteen 32-bit words, the first 32 bits of message block \begin{math}i\end{math} are denoted M$^{(i)}_{0}$, the next 32 bits are M$^{(i)}_{1}$, and so on up to M$^{(i)}_{15}$.
+
+During the task, all the message blocks are written into the \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG}: M$^{(i)}_{0}$ is stored in \hyperref[regdesc:SHAMNREG]{SHA\_M\_0\_REG}, M$^{(i)}_1$ stored in \hyperref[regdesc:SHAMNREG]{SHA\_M\_1\_REG}, \dots, and M$^{(i)}_{15}$ stored in \hyperref[regdesc:SHAMNREG]{SHA\_M\_15\_REG}.
+
+\begin{tiplisting}
+\vspace{-0.5em}
+For more information about ``message block", please refer to Section ``2.1 Glossary of Terms and Acronyms" in \href{https://doi.org/10.6028/NIST.FIPS.180-4}{FIPS PUB 180-4 Spec}.
+\end{tiplisting}
+
+\subsubsection{Setting the Initial Hash Value}\label{sec:sha-set-initial-hash}
+
+Before hash task begins for any secure hash algorithms, the initial Hash value H(0) must be set based on different algorithms. However, the SHA accelerator uses the initial Hash values (constant C) stored in the hardware for hash tasks.  
+
+\subsection{Hash Operation}\label{sec:sha-hash-operation}
+
+After the preprocessing, the \chipname{} SHA accelerator starts to hash a message \begin{math}M\end{math} and generates message digest of different lengths, depending on different hash algorithms. As described above, the \chipname{} SHA accelerator supports two working modes, which are \hyperref[sec:sha-typical-sha]{Typical SHA} and \hyperref[sec:sha-dma-sha]{DMA-SHA}. The
+operation process for the SHA accelerator under two working modes is described in the following subsections.
+
+\subsubsection{Typical SHA Mode Process}\label{sec:sha-typical-sha}
+
+Usually, the SHA accelerator will process all blocks of a message and produce a message digest before starting the computation of the next message digest.
+
+However, \chipname{} SHA also supports optional ``interleaved" message digest calculation. Users can insert new calculation (both Typical SHA and DMA-SHA) each time the SHA accelerator completes a sequence of operations.
+\begin{itemize}
+    \item In \hyperref[sec:sha-typical-sha]{Typical SHA} mode, this can be done after each individual message block. 
+    \item In \hyperref[sec:sha-dma-sha]{DMA-SHA} mode, this can be done after a full sequence of DMA operations is complete.
+\end{itemize} 
+
+Specifically, users can read out the message digest from  registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} after completing part of a message digest calculation, and use the SHA accelerator for a different calculation. After the different calculation completes, users can restore the previous message digest to registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}, and resume the accelerator with the previously paused calculation.
+
+\subparagraph{Typical SHA Process}
+
+\begin{enumerate}
+    \item \label{others:sha-sel-algorithm} Select a hash algorithm.
+    \begin{itemize}
+        \item Configure the \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} register based on Table \ref{tab:sha-hash-algo-select}.
+    \end{itemize}
+    \item \label{others:sha-current-block} Process the current message block \hyperref[others:sha-note-typical-sha]{$^1$}.
+    \begin{itemize}
+        \item Write the message block in registers \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG}.
+    \end{itemize}
+    \item Start the SHA accelerator.
+    \begin{itemize}
+        \item If this is the first time to execute this step, set the \hyperref[regdesc:SHASTARTREG]{SHA\_START\_REG} register to 1 to start the SHA accelerator. In this case, the accelerator uses the initial hash value stored in hardware for a given algorithm configured in Step \ref{others:sha-sel-algorithm} to start the calculation;
+        \item If this is not the first time to execute this step\hyperref[others:sha-note-typical-sha]{$^2$}, set the \hyperref[regdesc:SHACONTINUEREG]{SHA\_CONTINUE\_REG} register to 1 to start the SHA accelerator. In this case, the accelerator uses the hash value stored in the \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG} register to start calculation.
+    \end{itemize}
+    \item Check the progress of the current message block.
+    \begin{itemize}
+        \item Poll register \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} until the content of this register becomes 0, indicating the accelerator has completed the calculation for the current message block and now is in the ``idle" status \hyperref[others:sha-note-typical-sha]{$^3$}. 
+    \end{itemize}
+        
+    \item Decide if you have more message blocks to process:
+    \begin{itemize}
+        \item If yes, please go back to Step \ref{others:sha-current-block}.
+        \item Otherwise, please continue.
+    \end{itemize}
+
+    \item Obtain the message digest.
+    \begin{itemize}
+        \item Read the message digest from registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}.
+    \end{itemize}
+\end{enumerate}
+  
+\begin{tiplisting}\label{others:sha-note-typical-sha}
+\vspace{-2.5em}
+\begin{enumerate}
+\item In this step, the software can also write the next message block (to be processed) in registers \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG}, if any, while the hardware starts SHA calculation, to save time.
+\item You are resuming the SHA accelerator with the previously paused calculation.
+\item Here you can decide if you want to insert other calculations. If yes, please go to the \hyperref[others:sha-interleaved]{process for interleaved calculations} for details.
+\end{enumerate} 
+\end{tiplisting}
+
+\label{others:sha-interleaved}As mentioned above, \chipname{} SHA accelerator supports \textbf{``interleaving" calculation under the Typical SHA working mode}. 
+
+The process to implement interleaved calculation is described below.
+
+\begin{enumerate}
+    \item Prepare to hand the SHA accelerator over for an interleaved calculation by storing the following data of the previous calculation.
+        \begin{itemize}
+            \item The selected hash algorithm stored in the \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} register.
+            \item The message digest stored in registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}.
+        \end{itemize}
+    \item Perform the interleaved calculation. For the detailed process of the interleaved calculation, please refer to \hyperref[sec:sha-typical-sha]{Typical SHA process} or \hyperref[sec:sha-dma-sha]{DMA-SHA process}, depending on the working mode of your interleaved calculation.
+    \item Prepare to hand the SHA accelerator back to the previously paused calculation by restoring the following data of the previous calculation.
+        \begin{itemize}
+            \item Write the previously stored hash algorithm back to register \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG}.
+            \item Write the previously stored message digest back to registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}.
+        \end{itemize}
+    \item Write the next message block from the previous paused calculation in registers \hyperref[regdesc:SHAMNREG]{SHA\_M\_\regindex{n}\_REG}, and set the \hyperref[regdesc:SHACONTINUEREG]{SHA\_CONTINUE\_REG} register to 1 to restart the SHA accelerator with the previously paused calculation. 
+\end{enumerate}
+
+
+
+\subsubsection{DMA-SHA Mode Process}\label{sec:sha-dma-sha}
+
+\chipname{} SHA accelerator does not support ``interleaving" message digest calculation at the level of individual message blocks when using DMA, which means you cannot insert new calculation before a complete DMA-SHA process (of one or more message blocks) completes. In this case, users who need interleaved operation are recommended to divide the message blocks and perform several DMA-SHA calculations, instead of trying to compute all the messages in one go.
+
+Single DMA-SHA calculation supports up to 63 data blocks.
+
+In contrast to the Typical SHA working mode, when the SHA accelerator is working under the DMA-SHA mode, all data read are completed via DMA. Therefore, users are required to configure the DMA controller following the description in Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+
+\subparagraph{DMA-SHA process}
+
+\begin{enumerate}
+    \item Select a hash algorithm.
+    \begin{itemize}
+        \item Select a hash algorithm by configuring the \hyperref[regdesc:SHAMODEREG]{SHA\_MODE\_REG} register. For details, please refer to Table \ref{tab:sha-hash-algo-select}.
+    \end{itemize}
+    \item Configure the \hyperref[regdesc:SHAINTENAREG]{SHA\_INT\_ENA\_REG} register to enable or disable interrupt (Set 1 to enable).
+    \item Configure the number of message blocks.
+    \begin{itemize}
+        \item  Write the number of message blocks \begin{math}M\end{math} to the  \hyperref[regdesc:SHADMABLOCKNUMREG]{SHA\_DMA\_BLOCK\_NUM\_REG} register.
+    \end{itemize}
+    \item Start the DMA-SHA calculation.
+        \begin{itemize}
+            \item If the current DMA-SHA calculation follows a previous calculation, firstly write the message digest from the previous calculation to registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}, then write 1 to register \hyperref[regdesc:SHADMACONTINUEREG]{SHA\_DMA\_CONTINUE\_REG} to start SHA accelerator;
+            \item Otherwise, write 1 to register \hyperref[regdesc:SHADMASTARTREG]{SHA\_DMA\_START\_REG} to start the accelerator.
+        \end{itemize}
+    \item Wait till the completion of the DMA-SHA calculation, which happens when:
+        \begin{itemize}
+            \item The content of \hyperref[regdesc:SHABUSYREG]{SHA\_BUSY\_REG} register becomes 0, or
+            \item An SHA interrupt occurs. In this case, please clear interrupt by writing 1 to the \hyperref[regdesc:SHAINTCLEARREG]{SHA\_INT\_CLEAR\_REG} register.
+        \end{itemize}
+    
+    \item Obtain the message digest:
+    \begin{itemize}
+        \item Read the message digest from registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}.
+    \end{itemize}
+\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Message Digest}
+
+After the hash task completes, the SHA accelerator writes the message digest from the task to registers \hyperref[regdesc:SHAHNREG]{SHA\_H\_\regindex{n}\_REG}(\regindex{n}: 0\verb+~+7). The lengths of the generated message digest are different depending on different hash algorithms. For details, see Table \ref{tab:sha-message-digest} below:
+
+
+\begin{table}[H]
+    \centering
+    \caption{The Storage and Length of Message Digest from Different Algorithms}
+    \label{tab:sha-message-digest}
+    \begin{threeparttable}
+    \begin{tabular}{ | l | c | c |}
+    \hline
+        \rowcolor{lightgray}
+        \textbf{Hash Algorithm} & \textbf{Length of Message Digest (in bits)} & \textbf{Storage\tnote{1}} \\\hline
+        SHA-1 & 160 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_4\_REG \\\hline
+        SHA-224 & 224 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_6\_REG \\\hline  
+        SHA-256 & 256 & SHA\_H\_0\_REG\verb+ ~ +SHA\_H\_7\_REG \\\hline
+    \end{tabular}
+
+    \begin{tablenotes}
+        \item[1] The message digest is stored in registers from most significant bits to the least significant bits, with the first word stored in register \hyperref[regdesc:SHAHNREG]{SHA\_H\_0\_REG} and the second word stored in register \hyperref[regdesc:SHAHNREG]{SHA\_H\_1\_REG}... For details, please see subsection \ref{sec:sha-parsing-msg}.
+    \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+\subsection{Interrupt}
+
+SHA accelerator supports interrupt on the completion of message digest calculation when working in the DMA-SHA mode. To enable this function, write 1 to register \hyperref[regdesc:SHAINTENAREG]{SHA\_INT\_ENA\_REG}. Note that the interrupt should be cleared by software after use via setting the \hyperref[regdesc:SHAINTCLEARREG]{SHA\_INT\_CLEAR\_REG} register to 1.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{sha-reg-summ}{}
+\section{Register Summary} \label{sec:sha-reg-summ} 
+
+The addresses in this section are relative to the SHA accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/21-SHA-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Registers}
+
+The addresses in this section are relative to the SHA accelerator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/21-SHA-reg__EN}
+
+\end{document}

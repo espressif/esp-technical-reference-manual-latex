@@ -14,7 +14,7 @@ import gitlab
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Path to reused chapters list (.tex paths and module folder paths from collect_reused_chapters.py)
-REUSED_CHAPTER_LIST = os.path.join(os.path.dirname(__file__), "test_reused_chapter_list.txt")
+REUSED_CHAPTER_LIST = os.path.join(os.path.dirname(__file__), "reused_chapter_list.txt")
 
 
 def get_merged_mr_iid(project, commit_sha):

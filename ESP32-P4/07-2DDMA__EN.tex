@@ -1,0 +1,875 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./07-2DDMA}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./chip-spec-settings/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './chip-spec-settings/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './chip-spec-settings/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{2ddma}{}
+\chapter{2D-DMA Controller (2D-DMA)}
+\label{mod:2ddma}
+
+
+\section{Overview}
+
+The 2D-DMA controller is a DMA (Direct Memory Access) dedicated to two-dimensional image processing. In addition to all the features of GDMA-AXI, it includes support for macroblock reordering and color space conversion (CSC)  to better meet the data transfer requirements from JPEG and PPA. Notably, the 2D-DMA facilitates memory-to-memory transfers, enabling the movement of macroblocks between different segments of memory address space while concurrently performing color space conversion.
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:2ddma-features}
+
+\begin{itemize}
+    \item One AXI master interface
+    \item Data transfer with unaligned starting addresses
+    \item Memory-to-memory, peripheral-to-memory (RX), and memory-to-peripheral (TX) data transfer
+    \iftagged{ESP32-P4-latest}{
+        \item Four memory-to-peripheral channels, and three peripheral-to-memory channels
+    }{
+        \item Three memory-to-peripheral channels, and two peripheral-to-memory channels
+    }
+    \item Support for PPA and JPEG Codec
+    \item Macroblock reordering
+    \item Color space conversion
+    \item Configurable channel priority and weight
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architecture}
+\label{sec:2ddma-arch-overview}
+
+In \chipname{}, only JPEG Codec and PPA support 2D-DMA. The 2D-DMA controller and CPU data bus have access to the same address space in memory. Figure \ref{fig:dma2d_arch} shows the basic architecture of the 2D-DMA controller.
+
+\begin{figure}[H]
+\iftagged{ESP32-P4-latest}{
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/dma2d_arch_latest.pdf}
+}{
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/dma2d_arch.eps}
+}
+\centering
+\caption{2D-DMA Architecture}
+\label{fig:dma2d_arch}
+\end{figure}
+
+\iftagged{ESP32-P4-latest}{
+    The 2D-DMA has seven independent channels: four transmit channels and three receive channels.
+}{
+    The 2D-DMA has five independent channels: three transmit channels and two receive channels.
+}
+Every channel can be connected to different peripherals, or in other words shared by peripherals.
+
+The macroblock reordering and color space conversion features of the 2D-DMA are not supported by all channels. Among the channels, transmit channel 0 and receive channel 0 support macroblock reordering, while transmit channel 0 \verb+~+ \iftagged{ESP32-P4-latest}{3}{2} and receive channel 0 support color space conversion.
+
+The 2D-DMA reads data from or writes data to the internal or external memory via AXI\_BUS. Before the data transfer, the 2D-DMA uses configurable arbitration schemes for channels requesting read or write access. For the available address range of internal and external memory, please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The software can use the 2D-DMA through linked lists stored in internal or external memory. These linked lists consist of outlink\textcolor{red}{\it{n}} and inlink\textcolor{red}{\it{n}}, where \textcolor{red}{\it{n}} indicates the channel number. For outlink\textcolor{red}{\it{n}}, \textcolor{red}{\it{n}} ranges from 0 to \iftagged{ESP32-P4-latest}{3}{2}; for inlink\textcolor{red}{\it{n}}, \textcolor{red}{\it{n}} ranges from 0 to \iftagged{ESP32-P4-latest}{2}{1}.
+The 2D-DMA reads an outlink\textcolor{red}{\it{n}} (i.e., a linked list of transmit descriptors) from memory and transmit data in corresponding memory according to the outlink\textcolor{red}{\it{n}}, or read an inlink\textcolor{red}{\it{n}} (i.e., a linked list of receive descriptors) and store received data into specific address space in memory according to the inlink\textcolor{red}{\it{n}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:2ddma-func-descr}
+
+\subsection{Transfer Mode}
+
+The 2D-DMA supports four transfer modes:
+
+\begin{itemize}
+    \item 1D mode: enabled by setting the 2DEN field of DW0 and the mod field of DW2 to 0. In this mode, the 2D-DMA has the same functionalities as GDMA-AXI: it performs memory read/write operations based on the data length and memory space configured in the linked list, and the operation addresses are contiguous.
+    \item 2D-MOD0 mode: enabled by setting the 2DEN field of DW0 to 1 and the mod field of DW2 to 0. In this mode, the 2D-DMA reads or writes a hb*vb macroblock starting from the (X, Y) coordinates of the HA*VA image. After the last data in each row has been read or written, the address jumps to the address of the first data in the next row to be read or written.
+    \item 2D-MOD1 mode: enabled by setting the 2DEN field of DW0 to 1 and the mod field of DW2 to 1. In this mode, the 2D-DMA reads or writes multiple macroblocks from the starting address of the HA*VA image until the HA*VA image has been fully read or written. For JPEG, it is necessary to configure \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} to choose a macroblock size out of the three available options (horizontal $\times$ vertical): 8 pixels $\times$ 8 pixels, 8 pixels $\times$ 16 pixels, and 16 pixels $\times$ 16 pixels. For more information about macroblock size, see Chapter \ref{mod:jpegcodec} \textit{\nameref{mod:jpegcodec}}. For correspondence between macroblock size, hb, and vb of descriptors, see Table \ref{tab:ro_out_conf} and Table \ref{tab:ro_in_conf}.
+    \item DSCR-PORT mode: enabled by setting the 2DEN field of DW0 to 1, the mod field of DW2 to 0, and the \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\regindex{n}} bit or the \hyperref[fielddesc:DMA2DINDSCRPORTENCHN]{DMA2D\_IN\_DSCR\_PORT\_EN\_CH\regindex{n}} bit to 1. This mode is specifically designed for PPA. For details, see Chapter \ref{mod:ppa} \textit{\nameref{mod:ppa}}.
+\end{itemize}
+
+1D Mode, 2D-MOD0 Mode, 2D-MOD1 Mode, and DSCR-PORT support both peripheral-to-memory and memory-to-peripheral data transfers.
+Only 1D Mode and 2D-MOD0 Mode support memory-to-memory data transfers.
+
+\subsection{Linked List}
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/link_dscr_arch}
+\centering
+\caption{Structure of a Linked List}
+\label{fig:link_dscr_arch}
+\end{figure}
+
+Figure \ref{fig:link_dscr_arch} shows the structure of a linked list. An outlink and an inlink have the same structure. A linked list is formed by one or more descriptors, and each descriptor consists of five words. Linked lists should be stored in the memory for the 2D-DMA to be able to use them. The meanings of a descriptor's fields are shown in Table \ref{tab:2ddma-dw}.
+
+{\bfseries Note:} DMA2D\_OUT is the prefix of transmit channel registers, and DMA2D\_IN is the prefix of receive channel registers.
+
+\begin{longtable}[c]{|m{1.8cm}|m{2.5cm}|L{10.2cm}|}
+\caption{Descriptor Field Description} \label{tab:2ddma-dw}\\\hline
+\rowcolor{lightgray}
+\textbf{Bits} & \textbf{Name} & \textbf{Description} \\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}
+\textbf{Bits} & \textbf{Name} & \textbf{Description} \\\hline
+\endhead
+\endfoot
+
+DW0[31] & owner & Specifies who is allowed to access the buffer that this descriptor points to.
+    \begin{itemize}
+        \item 0: CPU can access the buffer
+        \item 1: The 2D-DMA controller can access the buffer
+    \end{itemize}
+    When the 2D-DMA controller stops using the buffer, this bit in a receive descriptor is automatically cleared by hardware, while this bit in a transmit descriptor can only be automatically cleared by hardware if \hyperref[fielddesc:DMA2DOUTAUTOWRBACKCHN]{DMA2D\_OUT\_AUTO\_WRBACK\_CH\regindex{n}} is set to 1. When software loads a linked list, this bit should be set to 1. \\\hline
+DW0[30] & eof & Specifies the end of frame.
+    \begin{itemize}
+        \item 0: The current descriptor is not the last descriptor of an image
+        \item 1: The current descriptor is the last descriptor of an image
+    \end{itemize}
+    For receive descriptors, software needs to write 0 to this bit first, and hardware would set this bit to 1 after receiving a complete image. For transmit descriptors, software should set this bit in the last descriptor of an image to 1. \\\hline
+DW0[29] & 2DEN & Specifies whether to enable 2D functions.
+    \begin{itemize}
+        \item 0: 2D-DMA operates in 1D mode
+        \item 1: 2D-DMA operates in 2D mode
+        \vspace{-1.5em}
+    \end{itemize}
+    \\\hline
+DW0[28] & err\_eof & Specifies whether the received data has errors (JPEG only).
+    \begin{itemize}
+        \item 0: The received data does not have errors
+        \item 1: The received data has errors
+    \end{itemize}
+    For receive descriptors, the hardware sets this bit to 1 after receiving a complete image and detecting errors in the received data. \\\hline
+DW0[27:14] & length[13:0]/hb &  \textbf{hb} in 2D mode -- Specifies the horizontal width of the macroblocks to be moved in the unit of pixels.
+
+    \textbf{length[13:0]} in 1D mode -- Specifies the lower 14 bits of length, which is the number of valid bytes in the buffer that this descriptor points to. This field in a transmit descriptor is written by software and indicates how many bytes can be read from the buffer; this field in a receive descriptor is written by hardware automatically and indicates how many valid bytes have been stored in the buffer. \\\hline
+DW0[13:0] & size[13:0]/vb &  \textbf{vb} in 2D mode -- Specifies the vertical height of the macroblocks to be moved in the unit of pixels.
+
+    \textbf{size[13:0]} in 1D mode -- Specifies the lower 14 bits of size, which is the capacity of the buffer that this descriptor points to in the unit of bytes. \\\hline
+
+DW1[31:28] & pbyte & In 2D mode, specifies the number of bytes per pixel of the image to be transferred to/from the memory. (If color space conversion is applied, this field represents the number of bytes per pixel of the image stored in the memory.)
+    \begin{itemize}
+        \item 0: 0.5 byte/pixel
+        \item 1: 1 byte/pixel
+        \item 2: 1.5 bytes/pixel
+        \item 3: 2 bytes/pixel
+        \item 4: 3 bytes/pixel
+        \item 5: 4 bytes/pixel
+    \end{itemize}
+    In 1D mode, this field is not used and can be any value.\\\hline
+DW1[27:14] & length[27:14]/HA & \textbf{HA} in 2D mode -- Specifies the horizontal width of the original image corresponding to the macroblocks to be moved in the unit of pixels.
+
+    \textbf{length[27:14]} in 1D mode -- Specifies the higher 14 bits of length. \\\hline
+DW1[13:0] & size[27:14]/VA & \textbf{VA} in 2D mode -- Specifies the vertical height of the original image corresponding to the macroblocks to be moved in the unit of pixels.
+
+    \textbf{size[27:14]} in 1D mode -- Specifies the higher 14 bits of size. \\\hline
+
+DW2[31:29] & Reserved & Reserved. Irrelevant. \\\hline
+DW2[28] & mod & Specifies the macroblock read mode.
+    \begin{itemize}
+        \item 0: 2D-DMA reads or writes a single macroblock with horizontal width hb and vertical height vb only once
+        \item 1: 2D-DMA reads or writes multiple macroblocks with horizontal width hb and vertical height vb until the image data with horizontal width HA and vertical height VA is fully read or written
+    \end{itemize}
+    In 1D mode, this bit must be 0. 
+    \begin{tiplisting}
+        hb/vb/HA/VA are in the unit of pixels.
+    \end{tiplisting}
+    \\\hline
+DW2[27:14] & X & In 2D mode, specifies the X coordinate of the hb*vb image block within the HA*VA image in the unit of pixels.
+
+    In 1D mode, this field is not used and can be any value. \\\hline
+DW2[13:0] & Y & In 2D mode, specifies the Y coordinate of the hb*vb image block within the HA*VA image in the unit of pixels.
+
+    In 1D mode, this field is not used and can be any value. \\\hline
+
+DW3 & Buffer address pointer & In 2D mode, specifies the address of the HA*VA image block origin in the buffer (the address of the original image's first byte in the memory).
+
+    In 1D mode, specifies the starting address of the buffer. \\\hline
+
+DW4 & Next descriptor address & Address of the next descriptor. If the current descriptor is the last descriptor in the linked list, this value can be 0. This address can point to the address space of internal or external memory. 
+    \begin{tiplisting}
+        The starting address for storing 2D-DMA descriptors must be 8-byte aligned.
+    \end{tiplisting}
+    \\\hline
+\end{longtable}
+
+
+
+
+\subsection{Padding in 2D-MOD1 Mode and DSCR-PORT Mode}
+
+This section only applies to the TX direction of 2D-DMA transfers in 2D-MOD1 and DSCR-PORT mode.
+
+For JPEG decoding, the basic unit of image data input is a block of 8 $\times$ 8, 8 $\times$ 16, or 16 $\times$ 16 (pixels). In 2D-MOD1 mode, when the length and width of the image are not integer multiples of the basic unit, the image needs to pad out to integer multiples of the basic unit based on the previous or the current macroblock.
+
+For PPA, the basic unit for transmit channels in DSCR-PORT mode is \iftagged{ESP32-P4-latest}{36 $\times$ 36 (YUV420), 36 $\times$ 34 (YUV422) and 34 $\times$ 34 (horizontal $\times$  vertical)}{20 $\times$ 20 (YUV420) or 18 $\times$ 18}. The width and height of a basic unit for different transmit channels are configured using \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKHCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_H\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DOUTDSCRPORTBLKVCHN]{DMA2D\_OUT\_DSCR\_PORT\_BLK\_V\_CH\regindex{n}}. When the length and width of the image are not integer multiples of the basic unit, the image needs to pad out.
+
+Below are the padding rules rules:
+\begin{itemize}
+    \item Horizontally, the padding depends on the pbyte field of DW1.
+        \begin{itemize}
+            \item When pbyte is 0 (0.5 byte/pixel), the remaining pixels must be even, and the padding is the last 0.5 byte.
+            \item When pbyte is 1 (1 byte/pixel), the padding is the last 1 byte.
+            \item When pbyte is 2 (1.5 bytes/pixel), the remaining pixels must be even, and the padding is the last 3 bytes.
+            \item When pbyte is 3 (2 bytes/pixel), the padding is the last 2 bytes.
+            \item When pbyte is 4 (3 bytes/pixel), the padding is the last 3 bytes.
+            \item When pbyte is 5 (4 bytes/pixel), the padding is the last 4 bytes.
+        \end{itemize}
+    \item Vertically, the padding is the last row.
+\end{itemize}
+
+Figure \ref{fig:padding_arch} and Figure \ref{fig:padding_details} illustrate the padding method.
+
+In Figure \ref{fig:padding_arch}, a blue grid represents a basic unit (a block of 8 $\times$ 8, 8 $\times$ 16, or 16 $\times$ 16 pixels), and a yellow box (incomplete basic unit) along with a green box (padding) forms a basic unit.
+
+In Figure \ref{fig:padding_details}, a grid represents one pixel, and the numbers inside each grid represent pixel values.
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/padding_arch}
+\centering
+\caption{Padding Illustration (Overall)}
+\label{fig:padding_arch}
+\end{figure}
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/padding_details}
+\centering
+\caption{Padding Illustration (Detail)}
+\label{fig:padding_details}
+\end{figure}
+
+
+\subsection{Peripheral-to-Memory and Memory-to-Peripheral Data Transfer}
+
+When \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_MEM\_TRANS\_EN\_CH\regindex{n}} is 0, the 2D-DMA controller enters peripheral transfer mode. The transmit channel reads data from the memory and transmits it to peripherals, while the receive channel receives data from peripherals and stores it into the memory.
+
+The transmit direction refers to data transfer from memory to peripheral, and the receive direction refers data transfer from peripheral to memory. A transmit channel transfers data in the specified memory location to a peripheral's transmitter via an outlink\textcolor{red}{\it{n}}, whereas a receive channel transfers data received by a peripheral to the specified memory location via an inlink\textcolor{red}{\it{n}}.
+
+Every transmit and receive channel can be connected to any peripheral that supports 2D-DMA. Table  \ref{tab:2ddma-tx-peri-sel} and Table \ref{tab:2ddma-rx-peri-sel} illustrate how to select the peripheral to be connected via registers. ``Dummy-\regindex{n}" corresponds to register values for memory-to-memory data transfer. When a channel is connected to a peripheral, the rest of the channels cannot be connected to that peripheral.
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{Selecting Peripherals via Register Configuration in TX Direction}  
+\label{tab:2ddma-tx-peri-sel}\\   
+\hline     
+    \rowcolor{lightgray}    
+    \textbf{\hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_PERI\_OUT\_SEL\_CH\regindex{n}}} & \textbf{Peripheral}\\\hline 
+    
+    0   & JPEG \\ \hline
+    1   & PPA's SRM module\\ \hline
+    2   & PPA's BLEND0 module\\ \hline
+    3   & PPA's BLEND1 module\\ \hline
+    4 \verb+~+ 7 & Dummy-4 \verb+~+ 7 \\ \hline
+\end{longtable}    
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{Selecting Peripherals via Register Configuration in RX Direction}  
+\label{tab:2ddma-rx-peri-sel}\\   
+\hline     
+    \rowcolor{lightgray}    
+    \textbf{\hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_PERI\_IN\_SEL\_CH\regindex{n}}} & \textbf{Peripheral}\\\hline 
+    
+    0   & JPEG \\ \hline
+    1   & PPA's SRM module\\ \hline
+    2   & PPA's BLEND channel \\ \hline
+    3 \verb+~+ 7 & Dummy-3 \verb+~+ 7 \\ \hline
+\end{longtable}
+
+\subsection{Memory-to-Memory Data Transfer}
+
+The 2D-DMA controller allows memory-to-memory data transfer only in 1D mode and 2D-MOD0 mode. Such data transfer can be enabled by setting \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_IN\_MEM\_TRANS\_EN\_CH\regindex{n}}, which connects the output of transmit channel \textcolor{red}{\it{n}} to the input of receive channel \textcolor{red}{\it{n}}. Note that a transmit channel can only be connected to the receive channel with the same number (\textcolor{red}{\it{n}}), and \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} should be configured to any value corresponding to ``Dummy".
+
+Memory-to-memory data transfer can be used in combination with color space conversion so that a macroblock can be moved from one segment of memory address space to another with its color space converted.
+
+
+\subsection{Macroblock Reordering}
+
+\subsubsection{Macroblock Reordering in TX Direction}
+
+When the 2D-DMA accesses external memory via SPI, in order to improve the bandwidth utilization of SPI, it is necessary to initiate AXI transfers with a larger burst length. In 2D-MOD1 mode, the 2D-DMA can increase the burst length of AXI transfers by fetching multiple macroblocks at once. For example, the 2D-DMA can fetch five macroblocks of 8x8 pixels in one operation, and in this case, the hb field in the descriptor should be 40 and vb should be 8. However, the JPEG requires the 2D-DMA to send data in the order of macroblocks. This means that the 2D-DMA needs to reorder the fetched macroblocks to meet the requirements of JPEG.
+
+Recommended configurations for macroblock reordering are listed in Table \ref{tab:ro_out_conf}.
+
+\begin{longtable}[c]{|l|c|r|r|r|}
+\caption{Recommended Configurations for Macroblock Reordering in TX Direction}  
+\label{tab:ro_out_conf}\\   
+\hline     
+    \rowcolor{lightgray}
+    \textbf{Byte/Pixel} & \textbf{Macroblock Size (Pixel)} & \textbf{Optimal Macroblock Count} & \textbf{hb}  & \textbf{vb} \\\hline 
+    3          & 8$\times$ 8      & 5     & 40  & 8  \\ \hline
+    3          & 16 $\times$ 8     & 2     & 32  & 8  \\ \hline
+    3          & 16 $\times$ 16    & 2     & 32  & 16 \\ \hline
+    2          & 8 $\times$ 8      & 8     & 64  & 8  \\ \hline
+    2          & 16 $\times$ 8     & 4     & 64  & 8  \\ \hline
+    2          & 16 $\times$ 16    & 3     & 48  & 16 \\ \hline
+    1          & 8 $\times$ 8      & 16    & 128 & 8 \\ \hline
+\end{longtable}
+
+The macroblock size in TX direction should be configured via the \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} field.
+
+\subsubsection{Macroblock Reordering in RX Direction}
+
+Currently, in RX direction the 2D-DMA can only reorder the data decoded by JPEG (the bitstream is 1 scan, see Chapter \ref{mod:jpegcodec} \textit{\nameref{mod:jpegcodec}}). The 2D-DMA breaks down color component data decoded by JPEG into pixels, assembles them into larger macroblocks, and writes these blocks into the memory.
+
+The data formats decoded by JPEG include GRAY, YUV444, YUV422, and YUV420. Recommended configurations for macroblock reordering are listed in Table \ref{tab:ro_in_conf}.
+
+\begin{longtable}[c]{|l|c|r|r|r|}
+\caption{Recommended Configuration Table for Macroblock Reordering in 2D-DMA Receive Direction (Without Color Format Conversion)}
+\label{tab:ro_in_conf}\\
+\hline
+\rowcolor{lightgray}
+\textbf{Format} & \textbf{Macroblock Size (pixels)} & \textbf{Optimal Macroblock Count} & \textbf{hb} & \textbf{vb} \\\hline
+GRAY & 8 $\times$ 8 & 12 & 96 & 8 \\\hline
+YUV444 & 8 $\times$ 8 & 5 & 40 & 8 \\\hline
+YUV422 & 16 $\times$ 8 & 4 & 64 & 8 \\\hline
+YUV420 & 16 $\times$ 16 & 3 & 48 & 16 \\\hline
+\end{longtable}
+
+The macroblock size in TX direction should be configured via the \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} field.
+
+Figure \ref{fig:jpeg_output} shows the layout of macroblocks outputted by the JPEG decoder. Each blue grid in this figure represents 8x8 bytes of continuous data, and for each color format the figure displays four macroblocks of 8 $\times$ 8 pixels.
+
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/jpeg_output}
+\centering
+\caption{Macroblock Layout of JPEG Decoder Output Data}
+\label{fig:jpeg_output}
+\end{figure}
+
+
+\subsection{Color Space Conversion}
+
+On the transmit side, the 2D-DMA converts the color space after assembling the data read from memory into pixels. The 2D-DMA supports the following conversion except YUV420:
+\begin{itemize}
+    \item RGB888 to RGB565
+    \item RGB565 to RGB888
+    \item RGB888 to YUV444
+    \item RGB888 to YUV422 (the number of pixels per row in RGB format must be even)
+    \item YUV444 to RGB888
+    \item YUV422 to RGB888
+\end{itemize}
+
+On the receive side, only pixels received from JPEG requires color space conversion. The 2D-DMA supports the following conversion:
+\begin{itemize}
+    \item YUV444 to RGB888/RGB565\tagged{ESP32-P4-latest}{/YUV422/YUV420}
+    \item YUV422 to YUV444 to RGB888/RGB565\tagged{ESP32-P4-latest}{/YUV420}
+    \item YUV420 to YUV444 to RGB888/RGB565
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item For JPEG decoding, i.e., the receive side of 2D-DMA, the hardware will forcibly convert YUV422 and YUV420 to the YUV444 format. Software can optionally further convert the format to RGB888/RGB565 with the color space conversion feature.
+\end{itemize}
+\end{tiplisting}
+
+Figure \ref{fig:csc_arch} shows the structure of the color space conversion module.
+
+\begin{figure}[H]
+\includegraphics[width=0.95\textwidth]{\modulefiles/figures/csc_arch}
+\centering
+\caption{Color Space Conversion}
+\label{fig:csc_arch}
+\end{figure}
+
+Color space conversion is performed in 3 stages. The first stage converts a specific 16-bit color format (2 bytes/pixel) to a 24-bit color format (3 bytes/pixel). The source color formats can be configured via the \hyperref[fielddesc:DMA2DOUTCOLORINPUTSELCHN]{DMA2D\_OUT\_COLOR\_INPUT\_SEL\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DINCOLORINPUTSELCH0]{DMA2D\_IN\_COLOR\_INPUT\_SEL\_CH0} field. (See the supported color format conversion in the first stage by clicking the fields)
+
+The second stage further converts the output data of the first stage using the following formula: 
+\[
+256*Q = A[9:0] * x + B[10:0] * y + C[9:0] * z + D[17:0]
+\]
+In this formula, Q is the output data; x, y, and z are the most significant, middle, and the least significant byte of the input data respectively;  A, B, C, and D are the corresponding multiplication or addition coefficients, which are signed numbers. At most 3 bytes of data can be processed in one go, and therefore 3 * 4 = 12 coefficients need to be configured via the following fields:
+\begin{itemize}
+    \item DMA2D\_OUT\_COLOR\_PARAM\_H0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_H0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_H1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_H1\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_M0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_M0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_M1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_M1\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_L0\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_L0\_CH0
+    \item DMA2D\_OUT\_COLOR\_PARAM\_L1\_CH\regindex{n}/DMA2D\_IN\_COLOR\_PARAM\_L1\_CH0
+\end{itemize}
+PARAM\_H\regindex{x}, PARAM\_M\regindex{x}, and PARAM\_L\regindex{x} (\regindex{x} is 0 or 1) in field names represent the parameters for the three bytes of data respectively. Take PARAM\_H\regindex{x} as examples, the lower 10 bits of the 21-bit PARAM\_H0 is coefficient A, the higher 11 bits of PARAM\_H0 is coefficient B, the lower 10 bits of the 28-bit PARAM\_H1 is coefficient C, and the higher 18 bits of PARAM\_H1 is coefficient D.
+
+The third stage, similar to the first stage, outputs the color format converted in the second stage directly, or further converts the 24-bit color format (3 bytes/pixel) to a 16-bit color format. This is configured using \hyperref[fielddesc:DMA2DOUTCOLOROUTPUTSELCHN]{DMA2D\_OUT\_COLOR\_OUTPUT\_SEL\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DINCOLOROUTPUTSELCH0]{DMA2D\_IN\_COLOR\_OUTPUT\_SEL\_CH0}.
+
+The following table lists the parameter configurations for commonly used color space conversions:
+
+\setlength\tabcolsep{3pt}
+
+\begin{small}
+
+\begin{longtable}[c]{ |L{2.5cm}|l|l|l|l|l|l|l|l|l| }
+    \caption{Parameter Configuration for Color Space Conversion in TX Direction}
+    \label{tab:2ddma-tx-format-conversion}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Conversion} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endfirsthead
+
+    \multicolumn{10}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Conversion} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endhead
+    
+    \multicolumn{10}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+    
+    \endlastfoot
+    
+    % table contents
+    No conversion & 7 & N/A & N/A & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    Only scramble order & 2/3 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB888  $\rightarrow$  RGB565 & 3 & 0 & 0 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB565  $\rightarrow$  RGB888 & 0 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    RGB888  $\rightarrow$ (601) YUV444 & 3 & 1 & 2 & 20442 & 400019 & 1EDBDA & 2000070 & 1E8870 & 20003EE \\ \hline
+    RGB888  $\rightarrow$ (709) YUV444 & 3 & 1 & 2 & 2742F & 400010 & 1EABE6 & 2000070 & 1E6870 & 20003F6 \\ \hline
+    RGB888  $\rightarrow$ (601) YUV422-MIPI & 3 & 1 & 1 & 20442 & 400019 & 1EDBDA & 2000070 & 1E8870 & 20003EE \\ \hline
+    RGB888  $\rightarrow$ (709) YUV422-MIPI & 3 & 1 & 1 & 2742F & 400010 & 1EABE6 & 2000070 & 1E6870 & 20003F6 \\ \hline
+    YUV444  $\rightarrow$ (601) RGB888 & 3 & 1 & 2 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV444  $\rightarrow$ (709) RGB888 & 3 & 1 & 2 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV422-MIPI  $\rightarrow$ (601) RGB888 & 1 & 1 & 2 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV422-MIPI  $\rightarrow$ (709) RGB888 & 1 & 1 & 2 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+
+\end{longtable}
+
+\begin{longtable}[c]{ |L{2.5cm}|l|l|l|l|l|l|l|l|l| }
+    \caption{Parameter Configuration for Color Space Conversion in RX Direction}
+    \label{tab:2ddma-rx-format-conversion}\\\hline
+
+    \rowcolor{lightgray}
+    \textbf{Conversion} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endfirsthead
+
+    \multicolumn{10}{c}{\bfseries \tablename\ \thetable{} -- cont'd from previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{Conversion} & \textbf{input\_sel} & \textbf{proc\_en} & \textbf{output\_sel} & \textbf{param\_h0} & \textbf{param\_h1} & \textbf{param\_m0} & \textbf{param\_m1} & \textbf{param\_l0} & \textbf{param\_l1} \\ \hline
+    \endhead
+    
+    \multicolumn{10}{r}{\textbf{Cont'd on next page}} \\
+    \endfoot
+    
+    \endlastfoot
+    
+    % table contents
+    No conversion & 7 & N/A & N/A & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    Only scramble order & 1/2 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    YUV422 $\rightarrow$ YUV444 & 0 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    YUV420 $\rightarrow$ YUV444 & 0 & 0 & 1 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    \tagged{ESP32-P4-latest}{
+        YUV444 $\rightarrow$ YUV422 & 0 & 0 & 2 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+        YUV444 $\rightarrow$ YUV420 & 0 & 0 & 3 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+        YUV422 $\rightarrow$ YUV420 & 0 & 0 & 3 & N/A & N/A & N/A & N/A & N/A & N/A \\ \hline
+    }
+    YUV420 $\rightarrow$ (601) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV422 $\rightarrow$ (601) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV444 $\rightarrow$ (601) RGB888/RGB565 & 2 & 1 & 1/0 & 12A & C86D999 & 1E712A & 21E4F30 & 8112A & BAD3000 \\ \hline
+    YUV420 $\rightarrow$ (709) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV422 $\rightarrow$ (709) RGB888/RGB565 & 0 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+    YUV444 $\rightarrow$ (709) RGB888/RGB565 & 2 & 1 & 1/0 & 12A & C21E5CB & 1F252A & 1338778 & 8752A & B7D0800 \\ \hline
+\end{longtable}
+
+\end{small}
+
+Additionally, the color space conversion module can scramble the order of at most three bytes per pixel. This can be done before the color space conversion in TX direction, and before or after the color space conversion in RX direction. Table \ref{tab:rgb888_order}, Table \ref{tab:yuv444_order}, and Table \ref{tab:yuv422_order} show the byte order per pixel required by the color space conversion module. For the JPEG decoder, if the byte order per pixel is not scrambled after the macroblock reordering in RX direction, it will conform to the requirements of color space conversion. Assuming that the order of an input pixel is represented from MSB to LSD as 2, 1, 0, the order can be scrambled and outputted as 210 (default), 201, 102, 120, 021, or 012. In RX direction, this feature can be configured before or after the color space conversion via \hyperref[fielddesc:DMA2DINSCRAMBLESELPRECH0]{DMA2D\_IN\_SCRAMBLE\_SEL\_PRE\_CH0} or\hyperref[fielddesc:DMA2DINSCRAMBLESELPOSTCH0]{DMA2D\_IN\_SCRAMBLE\_SEL\_POST\_CH0} respectively; in TX rection, this feature can be configured before the color space conversion via \hyperref[fielddesc:DMA2DOUTSCRAMBLESELPRECHN]{DMA2D\_OUT\_SCRAMBLE\_SEL\_PRE\_CH\regindex{n}}.
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|l|}
+\caption{RGBB888 Storage Format}  
+\label{tab:rgb888_order}\\   
+\hline
+          & LSB &    &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & B1  & G1 & R1 & B2 & G2 & R2 & B3 & G3 & R3  \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|l|}
+\caption{YUV444 Storage Format}  
+\label{tab:yuv444_order}\\   
+\hline
+          & LSB &    &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & V1  & U1 & Y1 & V2 & U2 & Y2 & V3 & U3 & Y3  \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|}
+\caption{YUV422 Storage Format}  
+\label{tab:yuv422_order}\\   
+\hline
+          & LSB &    &    &    &    &    &    & MSB \\ \hline
+    LINE  & U1  & Y1 & V1 & Y2 & U3 & Y3 & V3 & Y4  \\ \hline
+\end{longtable}
+
+
+\subsection{Enabling 2D-DMA}
+
+The software uses the 2D-DMA controller through linked lists. For receive channels, software loads an inlink, configures the \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} field with the address of the first receive descriptor, and sets the \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} bit to enable the 2D-DMA. For transmit channels, software loads an outlink, prepares data to be transmitted, configures the \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} field with address of the first transmit descriptor, and sets the \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} bit to enable the 2D-DMA. The \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} bit and \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} bit are cleared automatically by hardware.
+
+In some cases, you may want to append more descriptors to a 2D-DMA transfer that is already started. Naively, it would seem to be possible to do this by clearing the eof bit of the final descriptor in the existing list and setting its next descriptor address pointer field (DW4) to the first descriptor of the to-be-added list. However, this strategy fails if the existing 2D-DMA transfer is almost or entirely finished. Instead, the 2D-DMA controller has specialized logic to make sure a transfer can be continued or restarted: if the transfer is ongoing, the controller will make sure to take the appended descriptors into account; if the transfer has already finished, the controller will restart with the new descriptors. This is implemented by the Restart function.
+
+When using the Restart function, software needs to
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMA2DINLINKSTOPCHN]{DMA2D\_INLINK\_STOP\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTLINKSTOPCHN]{DMA2D\_OUTLINK\_STOP\_CH\regindex{n}} to stop the 2D-DMA when it finishes processing the current descriptor
+    \item Rewrite the address of the first descriptor in the new list to DW4 of the last descriptor in the loaded list
+    \item Set \hyperref[fielddesc:DMA2DINLINKRESTARTCHN]{DMA2D\_INLINK\_RESTART\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTLINKRESTARTCHN]{DMA2D\_OUTLINK\_RESTART\_CH\regindex{n}} (these two bits are cleared automatically by hardware)
+\end{enumerate}
+
+By doing so, hardware can obtain the address of the first descriptor in the new list when reading the last descriptor in the loaded list, and then read the new list.
+
+
+\subsection{Linked List Reading Process}
+
+Once configured and enabled by software, the 2D-DMA controller starts to read the linked list from the memory. The 2D-DMA performs checks on descriptors in the linked list. Only if descriptors pass the checks, the corresponding 2D-DMA channel will start data transfer. If the descriptors fail any of the checks, hardware will trigger descriptor error interrupt (either \hyperref[int:DMA2DINDSCRERRINT]{DMA2D\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT} or \hyperref[int:DMA2DOUTDSCRERRINT]{DMA2D\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT}), and the channel will remain idle. This channel can be restarted by setting \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} or  \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} again.
+
+The checks performed on descriptors are:
+\begin{itemize}
+    \item Owner bit check when \hyperref[fielddesc:DMA2DINCHECKOWNERCHN]{DMA2D\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTCHECKOWNERCHN]{DMA2D\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is set to 1. If the owner bit is 0, the buffer is accessed by the CPU. In this case, the owner bit fails the check. The owner bit will not be checked if \hyperref[fielddesc:DMA2DINCHECKOWNERCHN]{DMA2D\_IN\_CHECK\_OWNER\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTCHECKOWNERCHN]{DMA2D\_OUT\_CHECK\_OWNER\_CH\regindex{n}} is 0.
+    \item Descriptor address check, which checks if the descriptor address is located in configured memory space. If a 2D-DMA descriptor points to \hyperref[fielddesc:DMA2DACCESSINTRMEMSTARTADDR]{DMA2D\_ACCESS\_INTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSINTRMEMENDADDR]{DMA2D\_ACCESS\_INTR\_MEM\_END\_ADDR} (the value should be located in internal memory) or \hyperref[fielddesc:DMA2DACCESSEXTRMEMSTARTADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_START\_ADDR} \verb+~+ \hyperref[fielddesc:DMA2DACCESSEXTRMEMENDADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_END\_ADDR} (the value should be located in external memory), it passes the check. For details, please refer to Section \ref{sec:dma2d-access-ram}).
+    \item HA/VA/hb/vb/SIZE check, which checks if any of these fields is 0. If any field is 0, it fails the check. HA/VA/hb/vb fields are not checked in 1D mode, while SIZE is checked only in 1D mode.
+\end{itemize}
+
+After the software detects a descriptor error interrupt, it must reset the corresponding channel, and restart the 2D-DMA DMA by setting the \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} bit.
+
+To quickly obtain receive or transmit descriptors from the memory, AXI burst transfers for 2D-DMA can be enabled by setting \hyperref[fielddesc:DMA2DINDSCRBURSTENCHN]{DMA2D\_INDSCR\_BURST\_EN\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTDSCRBURSTENCHN]{DMA2D\_OUTDSCR\_BURST\_EN\_CH\regindex{n}}.
+
+
+\subsection{EOF}
+
+{\bfseries Note: }In this chapter, EOF of transmit descriptors refers to eof (i.e., bit 30 of DW0), while EOF of receive descriptors refers to both eof and err\_eof (i.e., bit 28 of DW0).
+
+The 2D-DMA controller uses EOF (end of frame) flags to indicate the end of the image transmission.
+
+For data transmission, the 2D-DMA generates two types of EOF interrupts:
+\begin{itemize}
+    \item DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT, generated when the eof bit of any descriptor in the linked list is set, and the data corresponding to this descriptor has been transmitted. Usually, the eof bit is set in the last descriptor for the transmission of an image. This interrupt is enabled by setting the \hyperref[fielddesc:DMA2DOUTEOFCHNINTENA]{DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+    \item DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT, generated when the eof bit of the last descriptor in the linked list is set, and the data corresponding to the last descriptor has been transmitted. This interrupt is enabled by setting the \hyperref[fielddesc:DMA2DOUTTOTALEOFCHNINTENA]{DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+\end{itemize}
+
+For data reception, the 2D-DMA also generates two types of EOF interrupts:
+\begin{itemize}
+    \item DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT, generated when an image has been received. This interrupt is enabled by setting the \hyperref[fielddesc:DMA2DINSUCEOFCHNINTENA]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT\_ENA} bit.
+    \item (JPEG only) DMA2D\_IN\_ERR\_CH\regindex{n}\_EOF\_INT, generated when an image has been received with errors. This interrupt is enabled by setting the \hyperref[fielddesc:DMA2DINERREOFCHNINTENA]{DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT\_ENA} bit, and is valid only when the channel is connected to JPEG.
+\end{itemize}
+
+When detecting an \hyperref[int:DMA2DOUTTOTALEOFINT]{DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT} or \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} interrupt, software can read the value of the \hyperref[fielddesc:DMA2DOUTEOFDESADDRCHN]{DMA2D\_OUT\_EOF\_DES\_ADDR\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DINSUCEOFDESADDRCHN]{DMA2D\_IN\_SUC\_EOF\_DES\_ADDR\_CH\regindex{n}} field, which stores the address of the finished descriptor. Therefore, the software can tell which descriptors have been used and reclaim them as needed. In RX direction, the address of the descriptor can also be stored to the \hyperref[fielddesc:DMA2DINERREOFDESADDRCHN]{DMA2D\_IN\_ERR\_EOF\_DES\_ADDR\_CH\regindex{n}} field when an \hyperref[int:DMA2DINERREOFINT]{DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT} interrupt is triggered.
+
+
+\subsection{Accessing Memory}\label{sec:dma2d-access-ram}
+
+Any transmit and receive channels of the 2D-DMA can access the internal memory address space configured by \hyperref[fielddesc:DMA2DACCESSINTRMEMSTARTADDR]{DMA2D\_ACCESS\_INTR\_MEM\_START\_ADDR} and \hyperref[fielddesc:DMA2DACCESSINTRMEMENDADDR]{DMA2D\_ACCESS\_INTR\_MEM\_END\_ADDR}, and the external memory address space configured by \hyperref[fielddesc:DMA2DACCESSEXTRMEMSTARTADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_START\_ADDR} and \hyperref[fielddesc:DMA2DACCESSEXTRMEMENDADDR]{DMA2D\_ACCESS\_EXTR\_MEM\_END\_ADDR}.
+
+The 2D-DMA can send data in the internal memory in burst mode via the AXI bus. Burst transfer on the AXI bus is enabled by default, and cannot be disabled. Users can configure the number of data bytes in a single AXI burst (burst length) to 8, 16, 32, 64, or 128 bytes via \hyperref[fielddesc:DMA2DINMEMBURSTLENGTHCHN]{DMA2D\_IN\_MEM\_BURST\_LENGTH\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DOUTMEMBURSTLENGTHCHN]{DMA2D\_OUT\_MEM\_BURST\_LENGTH\_CH\regindex{n}}.
+
+When the 2D-DMA accesses the encrypted external memory space (see Chapter \ref{mod:extmemencr} \textit{\nameref{mod:extmemencr}}), buffer address pointer and corresponding data should be 16-byte aligned; when it accesses the configured internal memory and non-encrypted external memory space, there are no requirements for descriptor field alignment.
+
+
+\subsection{Arbitration}
+
+To ensure timely response to peripherals running at a high speed with low latency, the 2D-DMA controller implements two arbitration schemes, based on channel priority and channel weight respectively.
+
+\begin{itemize}
+    \item Priority arbitration: Each channel can be assigned a priority from \iftagged{ESP32-P4-latest}{0 \textasciitilde 15 (in total 16 levels)}{0 \textasciitilde 3 (in total 4 levels)}. The larger the number, the higher the priority. When several channels perform data transfers at the same time, the 2D-DMA would respond to the transfer requests according to priority levels, and the channel with higher priority would get a response more timely.
+    \item Weight arbitration: 
+        \begin{itemize}
+            \item Each channel is assigned a weight (i.e., the number of tokens) from 0 \verb+~+ 15. The 2D-DMA divides the AXI bus clock period into multiple time slots, and in each time slot, the number of transfers performed by a channel is determined by the number of its tokens. Every time a channel performs a data transfer, one of its tokens is spent. If all of its tokens have been spent in a time slot, then this channel's transfer request will no longer be responded to until the time slot expires, or until tokens of all channels have been spent and the new time slot starts.
+            \item If the number of tokens assigned to a channel is not zero, the 2D-DMA waits for this channel's tokens to be spent even if it does not have data transfer requests, and will not exit from this time slot ahead of expiration. This leads to a waste of bandwidth. Therefore, the 2D-DMA provides weight arbitration optimization. When this feature is enabled, a channel without data transfer requests will not be involved in the arbitration and its tokens will be ignored. When all channels no longer have transfer requests, the 2D-DMA arbiter exits from the current time slot before expiration. This way, the arbitration response is accelerated and the transfer efficiency is improved.
+        \end{itemize}
+\end{itemize}
+
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item If channels have the same weight but different priorities, on condition that the number of bytes to be transferred is the same and not large, channels with higher priorities would finish data transfers first.
+    \item If channels have different priorities and weights, on condition that the number of bytes to be transferred is the same, channels with higher weights would be allocated more bandwidth and finish data transfers first.
+\end{itemize}
+\end{tiplisting}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Event Task Matrix Feature}
+\label{sec:etm-func}
+
+The 2D-DMA controller on \chipname{} supports the Event Task Matrix (ETM) function, which allows 2D-DMA's ETM tasks to be triggered by any peripherals' ETM events, or 2D-DMA's ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to 2D-DMA. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+
+2D-DMA can receive the following ETM tasks:
+
+\begin{itemize}
+    \item DMA2D\_TASK\_IN\_START\_CH\regindex{n}: Enables the corresponding receive channel \regindex{n} for data transfer.
+    \item DMA2D\_TASK\_OUT\_START\_CH\regindex{n}: Enables the corresponding transmit channel \regindex{n} for data transfer.
+        \begin{tiplisting}
+        Above ETM tasks can achieve the same functions as CPU configuring \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} and \\\hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}}. When \hyperref[fielddesc:DMA2DINETMENCHN]{DMA2D\_IN\_ETM\_EN\_CH\regindex{n}}  or \hyperref[fielddesc:DMA2DOUTETMENCHN]{DMA2D\_OUT\_ETM\_EN\_CH\regindex{n}} is 1, only ETM tasks can be used to configure the transfer direction and enable the corresponding 2D-DMA channel. When \hyperref[fielddesc:DMA2DINETMENCHN]{DMA2D\_IN\_ETM\_EN\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTETMENCHN]{DMA2D\_OUT\_ETM\_EN\_CH\regindex{n}} is 0, only CPU can be used to enable the corresponding 2D-DMA channel.
+        \end{tiplisting}
+    \item DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n}: Allows receive channel \regindex{n} to process the next descriptor.
+    \item DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n}: Allows transmit channel \regindex{n} to process the next descriptor.
+        \begin{tiplisting}
+        In normal conditions, after finishing with the current descriptor if the next descriptor is available (i.e., the next descriptor address field is not zero), the 2D-DMA would process the next descriptor directly and reads/writes to the memory according to the descriptor's configuration until all descriptors are processed. When \\\hyperref[fielddesc:DMA2DINETMLOOPENCHN]{DMA2D\_IN\_ETM\_LOOP\_EN\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTETMLOOPENCHN]{DMA2D\_OUT\_ETM\_LOOP\_EN\_CH\regindex{n}} is set, after finishing with the current descriptor, the 2D-DMA would not start processing the next descriptor until receiving the DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} or \\DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} task.\\
+        The DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} or DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} task can be stored in the task buffer, which can cache at most four tasks. When the 2D-DMA receives this task but the current descriptor is not yet processed, it can cache the task. The depth of the task buffer is determined by \\\hyperref[fielddesc:DMA2DINDSCRTASKMAKCHN]{DMA2D\_IN\_DSCR\_TASK\_MAX\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTDSCRTASKMAKCHN]{DMA2D\_OUT\_DSCR\_TASK\_MAX\_CH\regindex{n}}.\\
+        When the task buffer exceeds its maximum capacity, it will trigger an \hyperref[int:DMA2DINDSCRTASKOVFINT]{DMA2D\_IN\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT} or \hyperref[int:DMA2DOUTDSCRTASKOVFINT]{DMA2D\_OUT\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT} interrupt.
+        \end{tiplisting}
+\end{itemize}
+
+2D-DMA can generate the following ETM events:
+
+\begin{itemize}
+    \item DMA2D\_EVT\_IN\_DONE\_CH\regindex{n}: Indicates that the data has been received according to the receive descriptor via channel \regindex{n}.
+    \item DMA2D\_EVT\_IN\_SUC\_EOF\_CH\regindex{n}: Indicates that the data corresponding to a receive descriptor has been received via channel \regindex{n} and the Eof bit of this descriptor is 1.
+    \item DMA2D\_EVT\_OUT\_DONE\_CH\regindex{n}: Indicates that the data has been transmitted according to the transmit descriptor via channel \regindex{n}.
+    \item DMA2D\_EVT\_OUT\_SUC\_EOF\_CH\regindex{n}: Indicates that the data corresponding to a transmit descriptor has been transmitted or received via channel \regindex{n} and the eof bit of this descriptor is 1.
+    \item DMA2D\_EVT\_OUT\_TOTAL\_EOF\_CH\regindex{n}: Indicates that the data corresponding to the last transmit descriptors has been sent via transmit channel \regindex{n} and the eof bit of this descriptor is 1.
+\end{itemize}
+
+In practical applications, 2D-DMA's ETM events can trigger its own ETM tasks. For example, the DMA2D\_EVT\_OUT\_TOTAL\_EOF\_CH0 event can trigger the DMA2D\_TASK\_IN\_START\_CH1 task, and in this way trigger a new round of 2D-DMA operations.
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s 2D-DMA module can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item DMA2D\_IN\_CH0\_INTR
+        \item DMA2D\_IN\_CH1\_INTR
+        \tagged{ESP32-P4-latest}{\item DMA2D\_IN\_CH2\_INTR}
+        \item DMA2D\_OUT\_CH0\_INTR
+        \item DMA2D\_OUT\_CH1\_INTR
+        \item DMA2D\_OUT\_CH2\_INTR
+        \tagged{ESP32-P4-latest}{\item DMA2D\_OUT\_CH3\_INTR}
+    \end{itemize}
+
+There are several internal interrupt sources from 2D-DMA that can generate the above interrupt signals.
+
+The DMA2D\_IN\_CH\regindex{n}\_INTR (\regindex{n} is 0 \verb+~+ \iftagged{ESP32-P4-latest}{2}{1}) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+    \item \label{int:DMA2DINDONEINT}DMA2D\_IN\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a receive descriptor has been received via receive channel \textcolor{red}{\it{n}}.
+    \item \label{int:DMA2DINSUCEOFINT}DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT: Triggered when the eof bit in a receive descriptor is 1 and the data corresponding to this receive descriptor has been received (i.e., when an image corresponding to an inlink has been received) via receive channel \regindex{n}.
+    \item \label{int:DMA2DINERREOFINT}DMA2D\_IN\_ERR\_EOF\_CH\regindex{n}\_INT: Triggered when an error is detected in the image received via receive channel \textcolor{red}{\it{n}}. This interrupt is used only for JPEG.
+    \item \label{int:DMA2DINDSCREMPTYINT}DMA2D\_IN\_DSCR\_EMPTY\_CH\regindex{n}\_INT: Triggered when the size of the buffer pointed by receive descriptors is smaller than the length of data to be received via receive channel \textcolor{red}{\it{n}}.
+    \item \label{int:DMA2DINDSCRERRINT}DMA2D\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when a receive descriptor on receive channel \textcolor{red}{\it{n}} fails any of the two descriptor checks.
+    \item \label{int:DMA2DINFIFOOVFINT}DMA2D\_INFIFO\_OVF\_CH\regindex{n}\_INT: Triggered when the RX FIFO of 2D-DMA overflows.
+    \item \label{int:DMA2DINFIFOUDFINT}DMA2D\_INFIFO\_UDF\_CH\regindex{n}\_INT or AXI\_DMA\_INFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT: Triggered when the RX FIFO of 2D-DMA underflows.
+    \item \label{int:DMA2DINDSCRTASKOVFINT} DMA2D\_IN\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT: Triggered when the number of cached DMA2D\_TASK\_IN\_DSCR\_READY\_CH\regindex{n} task exceeds the maximum capacity of the task buffer.
+    \item \label{int:DMA2DINFIFOROOVFINT} DMA2D\_INFIFO\_RO\_OVF\_CH0\_INT (only channel 0): Triggered when the buffer for macroblock reordering in RX direction overflows.
+    \item \label{int:DMA2DINFIFOROUDFINT} DMA2D\_INFIFO\_RO\_UDF\_CH0\_INT (only channel 0): Triggered when the buffer for macroblock reordering in RX direction underflows.
+\end{itemize}
+
+The DMA2D\_OUT\_CH\regindex{n}\_INTR (\regindex{n} is 0 \verb+~+ \iftagged{ESP32-P4-latest}{3}{2}) signals are generated by the following interrupt sources:
+
+\begin{itemize}
+    \item \label{int:DMA2DOUTDONEINT}DMA2D\_OUT\_DONE\_CH\regindex{n}\_INT: Triggered when all data corresponding to a transmit descriptor has been sent via transmit channel \textcolor{red}{\it{n}}.
+    \item \label{int:DMA2DOUTEOFINT}DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT: Triggered when the eof bit in a transmit descriptor is 1 and data corresponding to this descriptor has been sent via transmit channel \textcolor{red}{\it{n}}. If \hyperref[fielddesc:DMA2DOUTEOFMODECHN]{DMA2D\_OUT\_EOF\_MODE\_CH\regindex{n}} is 0, this interrupt will be triggered when the last byte of data corresponding to this descriptor enters 2D-DMA's transmit channel via the bus; if \hyperref[fielddesc:DMA2DOUTEOFMODECHN]{DMA2D\_OUT\_EOF\_MODE\_CH\regindex{n}} is 1, this interrupt is triggered when the last byte of data is taken from 2D-DMA's transmit channel.
+    \item \label{int:DMA2DOUTDSCRERRINT}DMA2D\_OUT\_DSCR\_ERR\_CH\regindex{n}\_INT: Triggered when a transmit descriptor on transmit channel \textcolor{red}{\it{n}} fails any of the two descriptor checks.
+    \item \label{int:DMA2DOUTTOTALEOFINT}DMA2D\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT: Triggered when all data corresponding to a linked list (including multiple descriptors) has been sent via transmit channel \textcolor{red}{\it{n}}.
+    \item \label{int:DMA2DOUTFIFOOVFINT}DMA2D\_OUTFIFO\_L1/L2/L3\_OVF\_CH\regindex{n}\_INT: Triggered when the TX FIFO of 2D-DMA overflows.
+    \item \label{int:DMA2DOUTFIFOUDFINT}DMA2D\_OUTFIFO\_L1/L2/L3\_UDF\_CH\regindex{n}\_INT: Triggered when the TX FIFO of 2D-DMA underflows.
+    \item \label{int:DMA2DOUTDSCRTASKOVFINT} DMA2D\_OUT\_DSCR\_TASK\_OVF\_CH\regindex{n}\_INT: Triggered when the number of cached DMA2D\_TASK\_OUT\_DSCR\_READY\_CH\regindex{n} task exceeds the maximum capacity of the task buffer.
+    \item \label{int:DMA2DOUTFIFOROOVFINT} DMA2D\_OUTFIFO\_RO\_OVF\_CH0\_INT (only channel 0): Triggered when the buffer for macroblock reordering or color space conversion in TX direction overflows.
+    \item \label{int:DMA2DOUTFIFOROUDFINT} DMA2D\_OUTFIFO\_RO\_UDF\_CH0\_INT (only channel 0): Triggered when the buffer for macroblock reordering or color space conversion in TX direction underflows.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:2ddma-prog-procedures}
+
+The clock gating for the 2D-DMA can be configured via \hyperref[fielddesc:HPSYSCLKRSTDMA2DSYSCLKEN]{HP\_SYS\_CLKRST\_DMA2D\_SYS\_CLK\_EN}, and is enabled by default. The 2D-DMA can be reset globally by configuring \hyperref[fielddesc:HPSYSCLKRSTRSTENAHBPDMA]{HP\_SYS\_CLKRST\_RST\_EN\_AHB/AXI\_PDMA}.
+
+\subsection{General Configurations for 2D-DMA}
+
+
+Configure the accessible address space of internal and external memory and burst length according to Section \ref{sec:dma2d-access-ram}.
+
+
+\subsection{Mode-Specific Configurations for 2D-DMA}
+
+\begin{itemize}
+\item 1D Mode: No specific configuration required.
+\item 2D-MOD0 Mode: No specific configuration required.
+\item 2D-MOD1 Mode: For JPEG, configure \hyperref[fielddesc:DMA2DINMACROBLOCKSIZECHN]{DMA2D\_IN\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} or \hyperref[fielddesc:DMA2DOUTMACROBLOCKSIZECHN]{DMA2D\_OUT\_MACRO\_BLOCK\_SIZE\_CH\regindex{n}} to choose a macroblock size out of the three available options (horizontal $\times$ vertical): 8 pixels $\times$ 8 pixels, 8 pixels $\times$ 16 pixels, and 16 pixels $\times$ 16 pixels. For more information about macroblock size, see Chapter \ref{mod:jpegcodec} \textit{\nameref{mod:jpegcodec}}. For correspondence between macroblock size, hb, and vb of descriptors, see Table \ref{tab:ro_out_conf} and Table \ref{tab:ro_in_conf}.
+\item DSCR-PORT Mode: Set \hyperref[fielddesc:DMA2DOUTDSCRPORTENCHN]{DMA2D\_OUT\_DSCR\_PORT\_EN\_CH\regindex{n}} to enter this mode. This mode is specifically designed for PPA. For details, see Chapter \ref{mod:ppa} \textit{\nameref{mod:ppa}}.
+\end{itemize}
+
+
+\subsection{Configurations for 2D-DMA's Transmit Channel}
+
+To transmit data, 2D-DMA's transmit channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of 2D-DMA's transmit channel and FIFO pointer.
+    \item Load an outlink, and configure \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} with address of the first transmit descriptor.
+    \item Configure \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_OUT\_PERI\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:2ddma-tx-peri-sel}.
+    \item Set \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} to enable 2D-DMA's transmit channel for data transfer.
+    \item Configure and enable the corresponding peripheral. See details in individual chapters of these peripherals.
+    \item Wait for the \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_OUT\_EOF\_CH\regindex{n}\_INT} interrupt, which indicates the completion of data transfer.
+\end{enumerate} 
+
+\subsection{Configurations for 2D-DMA's Receive Channel}
+To receive data, 2D-DMA's receive channel should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of 2D-DMA's receive channel and FIFO pointer.
+    \item Load an inlink, and configure \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor.
+    \item Configure \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_IN\_PERI\_SEL\_CH\regindex{n}} with the value corresponding to the peripheral to be connected, as shown in Table \ref{tab:2ddma-rx-peri-sel}.
+    \item Set \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} to enable 2D-DMA's receive channel for data transfer.
+    \item Configure and enable the corresponding peripheral. See details in individual chapters of these peripherals.
+    \item Wait for \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} interrupt, which indicates that an image has been received.
+\end{enumerate} 
+
+\subsection{Configurations for Memory-to-Memory Transfer}
+To transfer data from one memory location to another, 2D-DMA should be configured by software as follows:
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMA2DOUTRSTCHN]{DMA2D\_OUT\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of 2D-DMA's transmit channel and FIFO pointer.
+    \item Set \hyperref[fielddesc:DMA2DINRSTCHN]{DMA2D\_IN\_RST\_CH\regindex{n}} first to 1 and then to 0, to reset the state machine of 2D-DMA's receive channel and FIFO pointer.
+    \item Load an outlink, and configure \hyperref[fielddesc:DMA2DOUTLINKADDRCHN]{DMA2D\_OUTLINK\_ADDR\_CH\regindex{n}} with address of the first transmit descriptor.
+    \item Load an inlink, and configure \hyperref[fielddesc:DMA2DINLINKADDRCHN]{DMA2D\_INLINK\_ADDR\_CH\regindex{n}} with address of the first receive descriptor.
+    \item Configure \hyperref[fielddesc:DMA2DOUTPERISELCHN]{DMA2D\_PERI\_OUT\_SEL\_CH\regindex{n}} with any value corresponding to Dummy-\regindex{n} (see Table \ref{tab:2ddma-tx-peri-sel}).
+    \item Configure \hyperref[fielddesc:DMA2DINPERISELCHN]{DMA2D\_PERI\_IN\_SEL\_CH\regindex{n}} with any value corresponding to Dummy-\regindex{n} (see Table \ref{tab:2ddma-rx-peri-sel}).
+    \item Set \hyperref[fielddesc:DMA2DINMEMTRANSENCHN]{DMA2D\_IN\_MEM\_TRANS\_EN\_CH\regindex{n}} to enable memory-to-memory transfer.
+    \item Set \hyperref[fielddesc:DMA2DOUTLINKSTARTCHN]{DMA2D\_OUTLINK\_START\_CH\regindex{n}} to enable 2D-DMA's transmit channel for data transfer.
+    \item Set \hyperref[fielddesc:DMA2DINLINKSTARTCHN]{DMA2D\_INLINK\_START\_CH\regindex{n}} to enable 2D-DMA's receive channel for data transfer.
+    \item Wait for \hyperref[int:DMA2DINSUCEOFINT]{DMA2D\_IN\_SUC\_EOF\_CH\regindex{n}\_INT} interrupt, which indicates that a data transaction has been completed.
+\end{enumerate}  
+
+\subsection{Configurations for Channel Priority and Weight}
+
+The priority arbitration can be configured as follows:
+\begin{enumerate}
+    \item Configure the channel priority for TX and RX respectively via \hyperref[fielddesc:DMA2DOUTARBPRIORITYCHN]{DMA2D\_OUT\_ARB\_PRIORITY\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DINARBPRIORITYCHN]{DMA2D\_IN\_ARB\_PRIORITY\_CH\regindex{n}}.
+\end{enumerate}
+
+The weight arbitration can be configured as follows:
+\begin{enumerate}
+    \item Configure the time slot for TX and RX respectively via \hyperref[fielddesc:DMA2DOUTARBTIMEOUTNUM]{DMA2D\_OUT\_ARB\_TIMEOUT\_NUM} and \hyperref[fielddesc:DMA2DINARBTIMEOUTNUM]{DMA2D\_IN\_ARB\_TIMEOUT\_NUM}.
+    \item Configure the number of tokens for TX and RX respectively via \hyperref[fielddesc:DMA2DOUTARBTOKENNUMCHN]{DMA2D\_OUT\_ARB\_TOKEN\_NUM\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DINARBTOKENNUMCHN]{DMA2D\_IN\_ARB\_TOKEN\_NUM\_CH\regindex{n}}.
+    \item Enable weight arbitration optimization for TX and RX respectively by clearing \hyperref[fielddesc:DMA2DOUTARBWEIGHTOPTDISCHN]{DMA2D\_OUT\_ARB\_WEIGHT\_OPT\_DIS\_CH\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DINARBWEIGHTOPTDISCHN]{DMA2D\_IN\_ARB\_WEIGHT\_OPT\_DIS\_CH\regindex{n}}.
+    \item Enable the arbitration for TX and RX respectively via \hyperref[fielddesc:DMA2DOUTWEIGHTEN]{DMA2D\_OUT\_WEIGHT\_EN} and \hyperref[fielddesc:DMA2DINWEIGHTEN]{DMA2D\_IN\_WEIGHT\_EN}.
+\end{enumerate}
+
+
+\subsection{Resetting 2D-DMA While it Runs}
+
+When the 2D-DMA is running, namely when it is still processing descriptors, it must be stopped first before being reset fully via \hyperref[fielddesc:HPSYSCLKRSTRSTENDMA2D]{HP\_SYS\_CLKRST\_RST\_EN\_DMA2D} or partially (only reset AXI functions) via \hyperref[fielddesc:DMA2DAXIMRDRST]{DMA2D\_AXIM\_RD\_RST} and \hyperref[fielddesc:DMA2DAXIMWRRST]{DMA2D\_AXIM\_WR\_RST}. The procedures are as follows:
+
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:DMA2DINCMDDISABLECHN]{DMA2D\_IN\_CMD\_DISABLE\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DOUTCMDDISABLECHN]{DMA2D\_OUT\_CMD\_DISABLE\_CH\regindex{n}} to stop the 2D-DMA.
+    \item Reset the 2D-DMA when \hyperref[fielddesc:DMA2DOUTRESETAVAILCHN]{DMA2D\_OUT\_RESET\_AVAIL\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DINRESETAVAILCHN]{DMA2D\_IN\_RESET\_AVAIL\_CH\regindex{n}} turn to 1.
+    \item Clear \hyperref[fielddesc:DMA2DINCMDDISABLECHN]{DMA2D\_IN\_CMD\_DISABLE\_CH\regindex{n}} and \hyperref[fielddesc:DMA2DOUTCMDDISABLECHN]{DMA2D\_OUT\_CMD\_DISABLE\_CH\regindex{n}} to 0 after the 2D-DMA is reset.
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\begin{landscape}
+
+\hypertarget{2ddma-reg-summ}{}
+\section{Register Summary}
+\label{sec:2ddma-reg-summ}
+
+The addresses in this section are relative to 2D-DMA base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\iftagged{ESP32-P4-latest}{
+    \subfile{\modulefiles/07-2DDMA-reg-summ-latest__EN}
+}{ 
+    \subfile{\modulefiles/07-2DDMA-reg-summ__EN}
+}
+\end{landscape}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to 2D-DMA base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\iftagged{ESP32-P4-latest}{
+    \subfile{\modulefiles/07-2DDMA-reg-latest__EN}
+}{
+    \subfile{\modulefiles/07-2DDMA-reg__EN}
+}
+
+
+\end{document}

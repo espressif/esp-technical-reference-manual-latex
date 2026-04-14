@@ -1,0 +1,242 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./11-TIMG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{timg}{}
+\chapter{Timer Group (TIMG)}
+\label{mod:timg}
+
+
+\section{Overview}
+General purpose timers can be used to precisely time an interval, trigger an interrupt after a particular interval (periodically and aperiodically), or act as a hardware clock. As shown in Figure \ref{Figure:timergroup}, the ESP32-S2 chip contains two timer groups, namely timer group 0 and timer group 1. Each timer group consists of two general purpose timers referred to as T\regindex{x} (where \regindex{x} is 0 or 1) and one Main System Watchdog Timer. All general purpose timers are based on 16-bit prescalers and 64-bit auto-reload-capable up/down counters.
+
+\begin{figure}[h! ]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/timergroupb5}\label{TIMG0}
+    \caption{Timer Units within Groups}
+    \label{Figure:timergroup}
+\end{figure}
+
+Note that while the Main System Watchdog Timer registers are described in this chapter, their functional description is included in the Chapter \ref{mod:wdt}: \textit{Watchdog Timers}. Therefore, the term `timers' within this chapter refers
+to the general purpose timers.
+
+The timers' features are summarized as follows:
+\begin{itemize}
+    \item A 16-bit clock prescaler, from 1 to 65536
+    \item A 64-bit time-base counter programmable to be incrementing or decrementing
+    \item Able to read real-time value of the time-base counter
+    \item Halting and resuming the time-base counter
+    \item Programmable alarm generation
+    \item Timer value reload (Auto-reload at alarm or software-controlled instant reload)
+    \item Level and edge interrupt generation
+\end{itemize}
+
+\newpage
+\section{Functional Description}
+
+\subsection{16-bit Prescaler and Clock Selection}
+
+Each timer can select between the APB clock (APB\_CLK) or external clock (XTAL\_CLK) as its clock source by setting the \hyperref[fielddesc:TIMGTXUSEXTAL]{TIMG\_T\regindex{x}\_USE\_XTAL} field of the \hyperref[regdesc:TIMGTXCONFIGREG]{TIMG\_T\regindex{x}CONFIG\_REG} register. The clock is then divided by a 16-bit prescaler to generate the time-base counter clock (TB\_CLK) used by the time-base counter. The 16-bit prescaler is configured by the \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} field and can take any value from 1 to 65536. Note that programming a value of 0 in \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} will result in the divisor being 65536.
+
+The timer must be disabled (i.e. \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} should be cleared) before modifying the 16-bit prescaler. Modifying the 16-bit prescaler whilst the timer is enabled can lead to unpredictable results.
+
+\subsection{64-bit Time-based Counter}
+The 64-bit time-base counters are based on TB\_CLK and can the configured to increment or decrement via the \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} field. The time-base counter can be enabled/disabled by setting/clearing the \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} field. Whilst enabled, the time-base counter will increment/decrement on each cycle of TB\_CLK. When disabled, the time-base counter is essentially frozen. Note that the \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} field can be changed whilst \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is set and will cause the time-base counter to change direction instantly.
+
+To read the 64-bit current timer value of the time-base counter, the timer value must be latched to two registers before being read by the CPU (due to the CPU being 32-bit). By writing any value to the \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG}, the current value of the 64-bit timer is instantly latched into the \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} registers containing the lower and upper 32-bits respectively. \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} registers will remain unchanged for the CPU to read in its own time until \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} is written to again.
+
+\subsection{Alarm Generation}
+A timer can be configured to trigger an alarm when the timer's current value matches the alarm value. An alarm will cause an interrupt to occur and (optionally) an automatic reload of the timer's current value (see Section \ref{Timer_Reload}).
+The 64-bit alarm value is configured in the \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} and \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}
+representing the lower and upper 32-bits of the alarm value respectively. However, the configured alarm value is ineffective until the alarm is enabled by setting the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} field. In order to simply the scenario where the alarm is enabled `too late' (i.e. the timer value has already passed the alarm value when the alarm is enabled), the alarm value will also trigger immediately if the current timer value is larger/smaller than the alarm value for an up-counting/down-counting timer.
+
+When an alarm occurs, the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} field is automatically cleared and no alarm will occur again until the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} is set.
+
+\subsection{Timer Reload} \label{Timer_Reload}
+A timer is reloaded when a timer's current value is overwritten with a reload value stored in the \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} registers that correspond to the lower and upper 32-bits of the timer's new value respectively. However, writing a reload value to \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} will not cause the timer's current value to change. Instead, the reload value is ignored by the timer until a reload event occurs. A reload event can be triggered either by a software instant reload or an auto-reload at alarm.
+
+A software instant reload is triggered by the CPU writing any value to \hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG} causing the timer's current value to be instantly reloaded. If \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is set, the timer will continue incrementing/decrementing from the new value. If \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is cleared, the timer will remain frozen at the new value until counting is re-enabled.
+
+An auto-reload at alarm will cause a timer reload when an alarm occurs thus allowing the timer to continue incrementing/decrementing from the reload value. This is generally useful for resetting the timer's value when using periodic alarms. To enable auto-reload at alarm, the \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} field should be set. If not enabled, the timer's value will continue to increment/decrement past the alarm value after an alarm.
+\subsection{Interrupts}
+Each timer has its own pair of interrupt lines (for edge and level interrupts) that can be routed to the CPU. Thus, there are a total of six interrupt lines per timer group and they are named as follows:
+\begin{itemize}
+\item \label{int:TIMERSWDTLEVELINT}TIMG\_WDT\_LEVEL\_INT:
+Level interrupt line for the watchdog timer in the group, generated when a watchdog timer interrupt stage times out.
+\item \label{int:TIMERSWDTEDGEINT}TIMG\_WDT\_EDGE\_INT: Edge interrupt line for the watchdog timer in the group, generated when a watchdog timer interrupt stage times out.
+\item \label{int:TIMERSTXLEVELINT}TIMG\_T\regindex{x}\_LEVEL\_INT: Level interrupt for one of the general purpose timers, generated when an alarm event happens.
+\item \label{int:TIMERSTXEDGEINT}TIMG\_T\regindex{x}\_EDGE\_INT: Edge interrupt for one of the general purpose timer, generated when an alarm event happens.
+\end{itemize}
+
+Interrupts are triggered after an alarm (or stage timeout for watchdog timers) occurs. Level interrupt lines will be held high after an alarm (or stage timeout) occurs, and will remain so until manually cleared. Conversely, edge interrupts will generate a short pulse after an alarm (or stage timeout) occurs. To enable a timer's level or edge interrupt lines, the \hyperref[fielddesc:TIMGTXLEVELINTEN]{TIMG\_T\regindex{x}\_LEVEL\_INT\_EN} or \hyperref[fielddesc:TIMGTXEDGEINTEN]{TIMG\_T\regindex{x}\_EDGE\_INT\_EN} bits should be set respectively.
+
+The interrupts of each timer group are governed by a set of registers. Each timer within the group will have a corresponding bit in each of these registers:
+
+\begin{itemize}
+
+\item \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW} :
+An alarm event sets it to 1. The bit will remain set until writing to the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}.
+\item \hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW} : A stage time out will set the timer's bit to 1. The bit will remain set until writing to the timer's corresponding bit in \hyperref[fielddesc:TIMGWDTINTCLR]{TIMG\_WDT\_INT\_CLR}.
+\item \hyperref[fielddesc:TIMGTXINTST]{TIMG\_T\regindex{x}\_INT\_ST} : Reflects the status of each timer's interrupt and is generated by masking the bits of \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW} with \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA}. For level interrupts, these bits reflect the level on the watchdog timer's level interrupt line.
+\item \hyperref[fielddesc:TIMGWDTINTST]{TIMG\_WDT\_INT\_ST} : Reflects the status of each watchdog timer's interrupt and is generated by masking the bits of \hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW} with \hyperref[fielddesc:TIMGWDTINTENA]{TIMG\_WDT\_INT\_ENA}. For level interrupts, these bits reflect the level on the watchdog timer's level interrupt line.
+\item \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA} : Used to enable or mask the interrupt status bits of timers within the group.
+\item \hyperref[fielddesc:TIMGWDTINTENA]{TIMG\_WDT\_INT\_ENA} : Used to enable or mask the interrupt status bits of watchdog timer within the group.
+\item \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR} : Used to clear a timer's interrupt by setting its corresponding bit to 1. The timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTRAW]{TIMG\_T\regindex{x}\_INT\_RAW} and \hyperref[fielddesc:TIMGTXINTST]{TIMG\_T\regindex{x}\_INT\_ST} will be cleared as a result. Note that a timer's interrupt must be cleared before the next interrupt occurs when using level interrupts.
+\item \hyperref[fielddesc:TIMGWDTINTCLR]{TIMG\_WDT\_INT\_CLR} : Used to clear a timer's interrupt by setting its corresponding bit to 1. The watchdog timer's corresponding bit in \hyperref[fielddesc:TIMGWDTINTRAW]{TIMG\_WDT\_INT\_RAW} and \hyperref[fielddesc:TIMGWDTINTST]{TIMG\_WDT\_INT\_ST} will be cleared as a result. Note that a watchdog timer's interrupt must be cleared before the next interrupt occurs when using level interrupts.
+\end{itemize}
+\section{Configuration and Usage}
+\subsection{Timer as a Simple Clock}\label{simple_clock}
+\begin{enumerate}
+    \item Configure the time-base counter
+    \begin{itemize}
+        \item Select clock source by setting \hyperref[fielddesc:TIMGTXUSEXTAL]{TIMG\_T\regindex{x}\_USE\_XTAL} field.
+        \item Configure the 16-bit prescaler by setting \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER}.
+        \item Configure the timer direction by setting/clearing \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE}.
+        \item Set the timer's starting value by writing the starting value to \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}, then reloading it into the timer by writing any value to \hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG}.
+    \end{itemize}
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}.
+    \item Get the timer's current value.
+    \begin{itemize}
+        \item  Write any value to \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} to latch the timer's current value.
+        \item  Read the latched timer value from \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Timer as One-shot Alarm}\label{Timer_Alarm}
+\begin{enumerate}
+    \item Configure the time-base counter following step 1 of Section \ref{simple_clock}.
+    \item Configure the alarm.
+    \begin{itemize}
+        \item Configure the alarm value by setting \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} and \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}.
+        \item Enable interrupt by setting  \hyperref[fielddesc:TIMGTXLEVELINTEN]{TIMG\_T\regindex{x}\_LEVEL\_INT\_EN} or \hyperref[fielddesc:TIMGTXEDGEINTEN]{TIMG\_T\regindex{x}\_EDGE\_INT\_EN} for level or edge interrupts respectively.
+    \end{itemize}
+    \item Disable auto reload by clearing \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD}.
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}.
+    \item Handle the alarm interrupt.
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}.
+        \item Disable the timer by clearing \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}.
+    \end{itemize}
+\end{enumerate}
+\newpage
+\subsection{Timer as Periodic Alarm}
+
+\begin{enumerate}
+    \item Configure the time-base counter following step 1 of Section \ref{simple_clock}.
+    \item Configure the alarm following step 2 of Section \ref{Timer_Alarm}.
+    \item Enable auto reload by setting \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} and setting the reload value in \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}.
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}.
+    \item Handle the alarm interrupt (repeat on each alarm iteration).
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}.
+        \item If the next alarm requires a new alarm value and reload value (i.e. different alarm interval per iteration), then \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG}, \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}, \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO}, and \\\hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} should be reconfigured as needed. Otherwise, the aforementioned registers should remain unchanged.
+        \item Re-enable the alarm by setting \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}.
+    \end{itemize}
+    \item Stop the timer (on final alarm iteration).
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}.
+        \item Disable the timer by clearing \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}.
+    \end{itemize}
+\end{enumerate}
+
+\section{Base Address}\label{subsection:timer base address}
+Users can access the 64-bit Timer with four base addresses, which can be seen in the following table. For more information about accessing peripherals from different buses please see Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}[c]{ |l|l|c|}
+\caption{64-bit Timers Base Address}\label{table:timer base address}
+\\\hline
+\rowcolor{lightgray}
+    Module &   Bus to Access Peripheral      & Base Address \\\hline
+    \multirow{2}*{TIMG0}&  PeriBUS1 & \hexprefix{}3F41F000 \\\cline{2-3}
+    &PeriBUS2 & \hexprefix{}6001F000 \\\hline
+    \multirow{2}*{TIMG1}& PeriBUS1 & \hexprefix{}3F420000 \\\cline{2-3}
+    &PeriBUS2 & \hexprefix{}60020000 \\\hline
+\end{longtable}
+
+\hypertarget{timg-reg-summ}{}
+\section{Register Summary}
+
+The addresses in the following table are relative to the 64-bit Timer base addresses provided in Section \ref{subsection:timer base address}.
+\subfile{\modulefiles/timers_summary_en.tex}
+
+\section{Registers}\label{timer_registers}
+\subfile{\modulefiles/timers_reg_en.tex}
+\end{document}

@@ -1,0 +1,120 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./11-WDT}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\setenglishformatting
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+\setcounter{secnumdepth}{4}
+\hypertarget{wdt}{}
+\chapter{Watchdog Timers (WDT)}
+\label{mod:wdt}
+
+\section{Introduction}
+The ESP32 has three watchdog timers: one in each of the two timer modules (called Main System Watchdog Timer, or MWDT) and one in the RTC module (which is called the RTC Watchdog Timer, or RWDT). These watchdog timers are intended to recover from an unforeseen fault, causing the application program to abandon its normal sequence. A watchdog timer has four stages. Each stage may take one out of three or four actions upon the expiry of a programmed period of time for this stage, unless the watchdog is fed or disabled. The actions are: interrupt, CPU reset, core reset and system reset. Only the RWDT can trigger the system reset, and is able to reset the entire chip and the main system including the RTC itself. A timeout value can be set for each stage individually.
+
+During flash boot, the RWDT and the first MWDT start automatically in order to detect and recover from booting problems.
+
+\section{Features}
+\begin{itemize}
+    \item Four stages, each of which can be configured or disabled separately 
+    \item Programmable time period for each stage
+    \item One out of three or four possible actions (interrupt, CPU reset, core reset and system reset) upon the expiry of each stage
+    \item 32-bit  expiry counter
+    \item Write protection, to prevent the RWDT and MWDT configuration from being inadvertently altered.
+    \item Flash boot protection\\
+    If the boot process from an SPI flash does not complete within a predetermined period of time, the watchdog will reboot the entire main system.
+\end{itemize}
+
+\section{Functional Description}
+\subsection{Clock}
+The RWDT is clocked from the RTC slow clock RTC\_SLOW\_CLK. The MWDT clock source is derived from the APB clock APB\_CLK via a pre-MWDT 16-bit configurable prescaler. For either watchdog, the clock source is fed into the 32-bit expiry counter. When this counter reaches the timeout value of the current stage, the action configured for the stage will execute, the expiry counter will be reset and the next stage will become active.
+
+\subsection{Operating Procedure}
+When a watchdog timer is enabled, it will proceed in loops from stage 0 to stage 3, then back to stage 0 and start again. The expiry action and time period for each stage can be configured individually.
+
+Every stage can be configured for one of the following actions when the expiry timer reaches the stage's timeout value:
+\begin{itemize}
+    \item Trigger an interrupt\\
+    When the stage expires an interrupt is triggered.
+    \item Reset a CPU core\\
+    When the stage expires the designated CPU core will be reset. MWDT0 CPU reset only resets the PRO CPU. MWDT1 CPU reset only resets the APP CPU. The RWDT CPU reset can reset either of them, or both, or none, depending on configuration.
+    \item Reset the main system\\
+    When the stage expires, the main system, including the MWDTs, will be reset. In this article, the main system includes the CPU and all peripherals. The RTC is an exception to this, and it will not be reset.
+    \item Reset the main system and RTC\\
+    When the stage expires the main system and the RTC will both be reset. This action is only available in the RWDT.
+    \item Disabled\\
+    This stage will have no effects on the system.
+\end{itemize}
+
+When software feeds the watchdog timer, it returns to stage 0 and its expiry counter restarts from 0.
+
+\subsection{Write Protection}
+Both the MWDTs, as well as the RWDT, can be protected from accidental writing. To accomplish this, they have a write-key register (\hyperref[regdesc:TIMERSWDTWPROTECTREG]{TIMG\textcolor{red}{\it{n}}\_WDTWPROTECT\_REG} for the MWDT, \hyperref[regdesc:RTCCNTLWDTWPROTECTREG]{RTC\_CNTL\_WDTWPROTECT\_REG} for the RWDT.) On reset, these registers are initialized to the value 0x50D83AA1. When the value in this register is changed from 0x50D83AA1, write protection is enabled. Writes to any WDT register, including the feeding register (but excluding the write-key register itself), are ignored. The recommended procedure for accessing a WDT is:
+\begin{enumerate}
+\item Disable the write protection
+\item Make the required modification or feed the watchdog
+\item Re-enable the write protection
+\end{enumerate}
+
+\subsection{Flash Boot Protection}
+During flash booting, the MWDT in timer group 0 (\hyperref[TIMG0]{TIMG0}), as well as the RWDT, are automatically enabled. Stage 0  for the enabled MWDT is automatically configured to reset the system upon expiry; stage 0 for the RWDT resets the RTC when it expires. After booting, the register TIMERS\_WDT\_FLASHBOOT\_MOD\_EN should be cleared to stop the flash boot protection procedure for the MWDT, and RTC\_CNTL\_WDT\_FLASHBOOT\_MOD\_EN should be cleared to do the same for the RWDT. After this, the MWDT and RWDT can be configured by software.
+
+\section{Registers}
+The MWDT registers are part of the timer submodule and are described in the \hyperref[timer_registers]{Timer Registers} section. The RWDT registers are part of the RTC submodule and are described in the \hyperref[register summary-chapter 30]{RTC Registers} section.
+
+\end{document}

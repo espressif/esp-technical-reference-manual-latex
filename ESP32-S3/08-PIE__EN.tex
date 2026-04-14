@@ -1,0 +1,691 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./08-PIE}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{pie}{}
+\chapter{Processor Instruction Extensions (PIE)}
+\label{mod:pie}
+
+
+\section{Overview}
+
+The \chipname{} adds a series of extended instruction set in order to improve the operation efficiency of specific AI and DSP (Digital Signal Processing) algorithms. This instruction set is designed from the TIE (Tensilica Instruction Extension) language, and adds general-purpose registers with large bit width, various special registers and processor ports. Based on the SIMD (Single Instruction Multiple Data) concept, this instruction set supports 8-bit, 16-bit, and 32-bit vector operations, which greatly increases data operation efficiency. In addition, the arithmetic instructions, such as multiplication, shifting, and accumulation, can perform data operations and transfer data at the same time, thus further increasing execution efficiency of a single instruction.
+
+
+
+
+\section{Features}
+
+The PIE (Processor Instruction Extensions) has the following features:
+
+\begin{itemize}
+    \item 128-bit general-purpose registers
+    \item 128-bit vector operations, e.g., multiplication, addition, subtraction, accumulation, shifting, comparison, etc.
+    \item Integration of data transfer into arithmetic instructions
+    \item Support for non-aligned 128-bit vector data
+    \item Support for saturation operation
+
+\end{itemize}
+
+\section{Structure Overview}
+
+A structure overview should help to understand list of available instructions, instructions possibilities, and limits. It is not intended to describe hardware details.
+
+The internal structure of PIE for multiplication-accumulation (MAC) instructions overview could be described as shown below:
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/pie_structure__EN.eps}}
+    \caption{PIE Internal Structure (MAC)}
+    \label{fig:pie_structure_en}
+\end{figure}
+
+The diagram above shows the data flow paths and PIE components.
+
+The PIE unit contains:
+
+\begin{itemize}
+    \item Address unit that reads 8/16/32/64/128-bit aligned data
+    \item Bank of eight 128-bit vector QR registers
+    \item Arithmetic logic unit (ALU) with
+    \begin{itemize}
+        \item sixteen 8-bit multipliers
+        \item eight 16-bit multipliers
+    \end{itemize}
+
+    \item QACC\_H/QACC\_L - 2 160-bit accumulators
+    \item ACCX - 40-bit accumulator
+
+\end{itemize}
+
+\subsection{Bank of Vector Registers}
+Bank of vector registers contains 8 vector registers (QR). Each register could be represented as an array of 16 x 8-bit data words, array of 8 x 16-bit data words, or array of 4 x 32-bit data words. Depending on the used instructions, 8, 16 or 32-bit data format will be chosen.
+
+\subsection{ALU}
+
+Arithmetic logic unit (ALU) could work for 8-bit input data, as 8-bit ALU, for 16-bit input data, as 16-bit ALU, or for 32-bit input data, as 32-bit ALU. 8-bit multiplication ALU contains 16 multipliers and is able to make up to 16 multiplications and accumulation in one instruction. With multiplication almost any other combinations of arithmetic operation are possible. For example, FFT instructions include multiplication, addition, and subtraction operations in one instruction. Also, ALU includes logic operations like AND, OR, shift, and so on.\\
+The input for ALU operation comes from QR registers. The result of operations could be saved to the QR registers or special accumulator registers (ACCX, QACC).
+
+\subsection{QACC Accumulator Register}
+
+The QACC accumulator register is used for multiplication-accumulation operations on 8-bit or 16-bit data. In the case of 8-bit data, QACC consists of 16 accumulator registers with 20-bit width. In the case of 16-bit data, QACC consists of 8 accumulator registers with 40-bit width. The following description reflects the case of 8-bit arithmetic. For 16-bit arithmetic, the logic is similar.\\
+After multiplication and accumulation on two vector QR registers, the result of 16 operations will be written to 16 20-bit accumulator registers. \\
+QACC is divided into two parts: 160-bit QACC\_H and 160-bit QACC\_L. The former stores the higher 160-bit data of QACC, and the latter stores the lower 160-bit data. To store the accumulator result in QR registers, it is possible to convert 20-bit result numbers to 8 bits by right-shifting it. For 16-bit multiplication-accumulation operation, convert the 40-bit result to 16-bit by right-shifting it.\\
+It is possible to load data from memory to QACC or reset the initial value to 0.
+
+\subsection{ACCX Accumulator Register}
+
+Some operations require accumulating the result of all multipliers to one value. In this case, the ACCX accumulator should be used.\\
+ACCX is a 40-bit accumulator register. The result of the accumulators could be shifted and stored in the memory as an 8-bit or 16-bit value.\\
+It is possible to load data from memory to ACCX or reset the initial value to 0.
+
+\subsection{Address Unit}
+
+Most of the instructions in PIE allow loading or storing data from/to 128-bit Q registers in parallel in one cycle. In most cases, the data should be 128-bit aligned, and the lower 4 bits of address will be ignored. The Address unit provides functionality to manipulate address registers in parallel, which saves the time to update address registers.\\
+It is possible to make address register operations like AR + signed constant, ARx + ARy, and AR + 16.\\
+The Address unit makes post-processing operations. It means that all operations with address registers are done after instructions are finished.
+
+
+
+\section{Syntax Description}
+
+This section provides introduction to the encoding order of instructions and the meaning of characters that appear in the instruction descriptions.
+
+\subsection{Bit/Byte Order}
+
+The encoding order of instructions is divided into two types based on the granularity, i.e., bit order and byte order. According to the located side of the least bit or byte, there are big-endian order and little-endian order. That is to say, the most common encoding types for instructions are: little-endian bit order, big-endian bit order, little-endian byte order and big-endian byte order.
+
+\begin{itemize}
+    \item Little-endian bit order: the instruction is encoded in bit order, with the least significant bit on the right.
+    \item Big-endian bit order: the instruction is encoded in bit order, with the least significant bit on the left.
+    \item Little-endian byte order: the instruction is encoded in byte order, with the least significant byte on the right.
+    \item Big-endian byte order: the instruction is encoded in byte order, with the least significant byte on the left.
+\end{itemize}
+
+Among them, the instruction encoding bit sequences obtained using little-endian byte order and little-endian bit order are identical. Taking the 24-bit instruction \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} as an example, Figure \ref{fig:pie_bit_little_endian_cn}, Figure \ref{fig:pie_bit_big_endian_cn}, Figure \ref{fig:pie_byte_little_endian_cn} and Figure \ref{fig:pie_byte_big_endian_cn} show the code of this instruction in little-endian bit order, big-endian bit order, little-endian byte order and big-endian byte order, respectively.
+
+Please note that all instructions and register descriptions appear in this chapter use little-endian bit order, which means the least significant bit is stored in the lowest addresses.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/bit_little_endian__EN.eps}}
+    \caption{\hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} in Little-Endian Bit Order}
+    \label{fig:pie_bit_little_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/bit_big_endian__EN.eps}}
+    \caption{\hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} in Big-Endian Bit Order}
+    \label{fig:pie_bit_big_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/byte_little_endian__EN.eps}}
+    \caption{\hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} in Little-Endian Byte Order}
+    \label{fig:pie_byte_little_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/byte_big_endian__EN.eps}}
+    \caption{\hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} in Big-Enidan Byte Order}
+    \label{fig:pie_byte_big_endian_cn}
+\end{figure}
+
+\subsection{Instruction Field Definition}
+
+Table \ref{tab:pie-instruction-field} provides the meaning of the characters covered in instruction descriptions. You can find such characters and corresponding descriptions in Section \ref{sec:pie-instruction-descrip}.
+
+\clearpage
+\input{\modulefiles/tables/08-pie-field-name-and-descrip__EN}
+
+Some instructions have multiple operands with the same function. Those operands are distinguished by adding numbers after field names. For example, the \hyperref[instruction:EELDF128IP]{EE.LDF.128.IP} instruction has four fu registers, fu0 \verb+~+ 3. They are used to store 128-bit data read from memory.
+
+\section{Components of Extended Instruction Set}
+
+\subsection{Registers}
+
+
+This section introduces all kinds of registers related to \chipname{}'s extended instruction set, including the original registers defined by Xtensa as well as customized registers. For register information, please refer to Table \ref{tab:pie-regs-list}.
+
+\input{\modulefiles/tables/08-pie-reg-list__EN}
+
+\subsubsection{General-Purpose Registers}
+
+When using general-purpose register as operands in instructions, you need to explicitly declare the number of the assigned register. For example:
+
+\begin{center}
+$\hyperref[instruction:EEVADDSS8]{EE.VADDS.S8} \hspace{1em} q2, q0, q1$
+\end{center}
+
+This instruction uses No.0 and No.1 QR registers as input vectors and stores the vector addition result in the No.2 QR register.
+
+\subparagraph{AR}
+
+Each AR register operand in the instruction will occupy a 4-bit code length. You can select any of the 16 AR registers as operands, and the 4-bit code value indicates the number to declare. The row "a*" in table \ref{tab:pie-instruction-field} lists various purposes of AR registers in the extended instruction set, including address storage and data storage.
+
+\subparagraph{FR}
+
+Each FR register operand in the instruction will occupy a 4-bit code length. You can select any of the 16 FR registers as operands, and the 4-bit code value indicates the number to declare. In \chipname{} extended instruction set, there are only read and write instructions for floating-point data. They are 4 times more efficient than the 32-bit floating-point data R/W instructions that are native to the Xtensa processor, thanks to the 128-bit access bandwidth.
+
+\subparagraph{QR}
+
+In order to improve the execution efficiency of the program, operands are usually stored in general-purpose registers to save time spent in reading from memory. The AR registers native to Xtensa only have 32-bit width, while \chipname{} can access 128-bit data at a time, so they can only use 1/4 bandwidth capacity of the existing data bus. For this reason, \chipname{} has added eight 128-bit customized general-purpose registers, i.e., QR registers. QR registers are mainly used to store the data acquired/used by the 128-bit data bus to read or write memory, as well as to temporarily store the operation results generated from 128-bit data operations.
+
+As the processor executes instructions, an individual QR register is treated as 16 8-bit or 8 16-bit or 4 32-bit operands depending on the vector operation bit width defined by the instruction, thus enabling a single instruction to perform operations on multiple operands.
+
+\subsubsection{Special Registers}
+\label{sec:pie-spec-reg}
+
+Different from general-purpose registers, special registers are implicitly called in specific instructions. You do not need to and cannot specify a certain special register when executing instructions. For example:
+
+\begin{center}
+    $\hyperref[instruction:EEVMULS16]{EE.VMUL.S16}\hspace{1em}q2, q0, q1$
+\end{center}
+
+This vector multiplication instruction uses q0 and q1 general-purpose registers as inputs. During the internal operation, the intermediate 32-bit multiplication result is shifted to the right, and then the lower 16-bit of the result is retained to form a 128-bit output to q2. The shift amount in the process is determined by the value in the Shift Amount Register (SAR) and this SAR register will not appear in the instruction operand list.
+
+
+\subparagraph{SAR}
+
+The Shift Amount Register (SAR) stores the shift value in bits. There are two types of instructions in \chipname{}'s extended instruction set that use SAR. One is the type of instructions to shift vector data, including \hyperref[instruction:EEVSR32]{EE.VSR.32} and \hyperref[instruction:EEVSL32]{EE.VSL.32.} The former uses the lower 5 bits of SAR as the right-shift value, and the latter uses the lower 5 bits of SAR as the left-shift value. The other type is multiplication instructions, including EE.VMUL.*, EE.CMUL.*, EE.FFT.AMS.* and EE.FFT.CMUL.*. This type of instructions uses the value in SAR as the value for the right shift of the intermediate multiplication result, which determines the accuracy of the final result.
+
+\subparagraph{SAR\_BYTE}
+
+The SAR\_BYTE stores the shift value in bytes. This special register is designed to handle the non-aligned 128-bit data (see Section \ref{sec:pie-data-align}). For vector arithmetic instructions, the data read or stored by extended instructions are forced to be 16-byte aligned, but in practice, there is no guarantee that the data addresses used are always 16-byte aligned.
+
+\hyperref[instruction:EELD128USARIP]{EE.LD.128.USAR.IP} and \hyperref[instruction:EELD128USARXP]{EE.LD.128.USAR.XP} instructions write the lower 4-bit values of the memory access register that represent non-aligned data to SAR\_BYTE while reading 128-bit data from memory.
+
+There are two types of instruction in \chipname{}'s extended instruction set that use SAR\_BYTE. One is dedicated to handling non-aligned data in QR registers, including EE.SRCQ.* and EE.SRC.Q*. This type of instruction will read two 16-byte data from two aligned addresses, before and after the non-aligned address, put them together, and then shift it by the byte size of SAR\_BYTE to get a 128-bit data from the non-aligned address. The other type of instruction handles non-aligned data while executing arithmetic operations, which usually has a suffix of ".QUP".
+
+\subparagraph{ACCX}
+
+Multiplier-accumulator. Instructions such as EE.VMULAS.*.ACCX* and \hyperref[instruction:EESRSACCX]{EE.SRS.ACCX} use this register during operations. The former uses ACCX to accumulate all vector multiplication results of two QR registers, and the latter right shifts the ACCX register.
+
+\subparagraph{QACC\_H,QACC\_L}
+
+Successive accumulators partitioned by segments. Instructions such as EE.VMULAS.*.QACC* and EE.SRCMB.*.QACC use this type of registers during operations. These registers are mainly used to accumulate vector multiplication results of two QR registers into the corresponding segments of QACC\_H and QACC\_L respectively. The 16-bit vector multiplication results are accumulated into the corresponding 16 20-bit segments respectively and the 32-bit results are accumulated into the corresponding 8 40-bit segment respectively.
+
+\subparagraph{FFT\_BIT\_WIDTH}
+
+This special register is dedicated to the \hyperref[instruction:EEBITREV]{EE.BITREV} instruction. The value inside this register is used to indicate the operating mode of \hyperref[instruction:EEBITREV]{EE.BITREV.} Its range is 0 \verb+~+ 7, indicating 3-bit \verb+~+ 10-bit operating mode respectively. For more details, please refer to instruction \hyperref[instruction:EEBITREV]{EE.BITREV.}
+
+\subparagraph{UA\_STATE}
+
+This special register is dedicated to the \hyperref[instruction:EEFFTAMSS16LDINCPUAUP]{EE.FFT.AMS.S16.LD.INCP.UAUP} instruction. This register is used to store the non-aligned 128-bit data read from memory. Next time when this instruction is called, the data in this register is concatenated to the newly read non-aligned data and then the result is shifted to obtain the 128-bit aligned data.
+
+\subsection{Fast GPIO Interface}
+
+\chipname{}'s Xtensa processor adds two signal ports, i.e., GPIO\_OUT and GPIO\_IN. You can route signals from the two ports to specified GPIO pins via the GPIO Matrix.
+
+\subsubsection{GPIO\_OUT}
+
+An 8-bit processor output interface. Firstly, configure the 8-bit port signals to specified pins via GPIO Matrix. For core0, their names are pro\_alonegpio\_out0\verb+~+7. For core1, their names are core1\_gpio\_out0\verb+~+7. Then you can set certain bits of GPIO\_OUT to 1 via instructions \hyperref[instruction:EEWRMASKGPIOOUT]{EE.WR\_MASK\_GPIO\_OUT} and \hyperref[instruction:EESETBITGPIOOUT]{EE.SET\_BIT\_GPIO\_OUT}, or set certain bits to 0 via instruction \hyperref[instruction:EECLRBITGPIOOUT]{EE.CLR\_BIT\_GPIO\_OUT}, so as to pull certain pins to high level or low level. Using this method, you can get faster response than pulling pins through register configurations.
+
+\subsubsection{GPIO\_IN}
+
+An 8-bit processor input interface. Firstly, configure the 8-bit port signals to specified pins via GPIO Matrix. For core0, their names are pro\_alonegpio\_in0\verb+~+7. For core1, their names are core1\_gpio\_in0\verb+~+7. Then you can read the eight GPIO pin levels and store them to the AR register through instruction \hyperref[instruction:EEGETGPIOIN]{EE.GET\_GPIO\_IN.} Using this method, you can get and handle the level changes on GPIO pins faster than reading registers to get pin level status.
+
+\subsection{Data Format and Alignment}
+\label{sec:pie-data-align}
+
+The current extended instruction set supports 1-byte, 2-byte, 4-byte, 8-byte and 16-byte data formats. Besides, there is also a 20-byte format: QACC\_H and QACC\_L. However, there is no direct way to switch the data between the two special registers and memory. You can read and write data of QACC\_H and QACC\_L via five 4-byte (AR) registers or two 16-byte (QR) registers.
+
+The table \ref{tab:pie_data_format_align} lists bit length and alignment information for common data format ('x' indicates that the bit is either 0 and 1). The Xtensa processor uses byte as the smallest unit for addresses stored in memory in all data formats. And little-endian byte order is used, with byte 0 stored in the lowest bit (the right side), as shown in Figure \ref{fig:pie_byte_little_endian_cn}.
+
+
+\begin{table}[H]
+\centering
+\caption{Data Format and Alignment}
+\label{tab:pie_data_format_align}
+\begin{tabular}{|l|c|c|}
+\hline
+    \rowcolor{lightgray}
+    \textbf{Data Format}  & \textbf{Length} & \textbf{Aligned Addresses in Memory} \\\hline
+
+    1-byte & 8 bits & xxxx \\\hline
+    2-byte & 16 bits & xxx0 \\\hline
+    4-byte & 32 bits & xx00 \\\hline
+    8-byte & 64 bits & x000 \\\hline
+    16-byte & 128 bit & 0000 \\\hline
+    \end{tabular}
+\end{table}
+
+However, if data is stored in memory at a non-aligned address, direct access to this address may cause it being split into two accesses, which in turn affects the performance of the code. For example, if you expect to read a 16-byte data from memory, as shown in Table \ref{tab:pie_data_format_align}, the data is stored in memory at 0000 when the data is aligned. But actually the data is not aligned, so the low nibble of its address may be any one between 0000 \verb+~+ 1111 (binary). Assuming the lowest bit of its address is 0\_0100, the processor will split the one-time access to this data into two accesses, i.e., to 0\_0000 and
+1\_0000 respectively. The processor then put together the obtained two 16-byte data to get the required 16-byte data.
+
+To avoid performance degradation caused by the above non-aligned access operations, all access addresses in the extended instruction set are forced to be aligned, i.e., the lowest bits will be replaced by 0. For example, if a read operation is initiated for 128-bit data at 0x{}3fc8\_0024, the lowest 4-bit of this access address will be forced to be set to 0. Eventually, the 128-bit data stored at 0x{}3fc8\_0020 will be read. Similarly, the lowest 3-bit of the access address for 64-bit data will be set to 0; the lowest 2-bit of the access address for 32-bit data will be set to 0; the lowest 1-bit of the access address for 16-bit data will be set to 0.
+
+The above design requires aligned addresses of the access operations initiated. Otherwise, the data read will not be what you expected. In application code, you need to explicitly declare the alignment of the variable or array in memory. 16-byte alignment can meet the needs of most application scenarios.
+
+The \begin{math}aligned(16)\end{math} parameter declares that the variable is stored in a 16-byte aligned memory address. You can also request a data space with its starting address 16-byte aligned via heap\_caps\_aligned\_alloc.
+
+Since the memory address of the data involved in some operations is uncertain in specific application scenarios, this extended instruction set provides a special register SAR\_BYTE and related instructions such as EE.LD.128.USAR.* and EE.SRC.*, to handle non-aligned data.
+
+Assume that the 128-bit non-aligned data address is stored in the general-purpose register a8. This 128-bit data can be read into the specified QR register (q2 in the following example) by the following code:\\
+$ \hyperref[instruction:EELD128USARIP]{EE.LD.128.USAR.IP}\hspace{1cm}q0,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:EEVLD128IP]{EE.VLD.128.IP}\hspace{1cm}q1,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:EESRCQ]{EE.SRC.Q}\hspace{1cm}q2,\hspace{0.5cm}q0,\hspace{0.5cm}q1 $
+
+\subsection{Data Overflow and Saturation Handling}
+
+Data overflow means that the size of the operation result exceeds the maximum value that can be stored in the result register. Take the \hyperref[instruction:EEVMULS8]{EE.VMUL.S8} instruction as an example, the result of two 8-bit multipliers is 16-bit, and it should still be 16-bit after right-shifting. However, the final result will be stored in the 8-bit register, which may cause the risk of data overflow.
+
+In the design of the \chipname{}'s instruction extensions, there are two ways to handle data overflow, namely taking saturation and truncating the least significant bit. The former controls the calculation result according the range of values that can be stored in the result register. If the result exceeds the maximum value of the result register, take the maximum value; if the result is smaller than the minimum value of the result register, take the minimum value. This approach will be explicitly indicated in the instruction descriptions. For example, the EE.VADDS.* instructions perform saturation to the results of addition operations. Regarding the data overflow handling for more instructions of their internal calculation results, the wraparound approach is used, i.e., only the lower bit of the result that is consistent with the bit width of the result register will be retained and stored in the result register.
+
+Please note that for instructions that do not mention saturation handling method, the wraparound approach will be used.
+
+\section{Extended Instruction List}\label{chp:pie_instruction_simple_introduction}
+
+Table \ref{tab:pie_instruction_summary} lists instruction types and corresponding instruction information included in the extended instruction set. This section gives brief introduction to all types of instructions.
+
+
+\clearpage
+\input{\modulefiles/tables/08-pie-instruction-summary__EN}
+
+\subsection{Read Instructions}
+
+\label{sec:pie-load-instrucitons}
+
+Read instructions tell the processor to issue a virtual address to access memory based on the AR register that stores access address information. Most read instructions read memory first, and then update the access address. \hyperref[instruction:EELDXQ32]{EE.LDXQ.32} is a special case where the instruction first selects a piece of 16-bit data in the QR register via an immediate value, adds it to the access address, and then issues the access operation.
+
+Since access to non-aligned addresses will cause slower response, all virtual addresses issued by read instructions in the extended instruction set are forced to be aligned according to data formats. Depending on the size of the access data format, corresponding length of data will be returned by memory as 1-byte, 2-byte, 4-byte, 8-byte or 16-byte. When the data read after forced alignment is not as expected, the desired data can be extracted from multiple QR registers using instructions such as \hyperref[instruction:EESRCQ]{EE.SRC.Q.}
+
+The table below briefly describes the access operations performed by read instructions. For detailed information about read instructions, please see Section \ref{sec:pie-instruction-descrip}.
+
+\clearpage
+\input{\modulefiles/tables/08-pie-read-instructions__EN}
+
+\subsection{Write Instructions}
+\label{sec:pie-write-instrucitons}
+
+
+The write instructions tells the processor to issue a virtual address to access memory based on the AR register that stores the information about access addresses. Most write instructions write memory first then update the access addresses, except for the \hyperref[instruction:EESTXQ32]{EE.STXQ.32} instruction, which selects a piece of 16-bit data first from the QR register via an immediate value, adds it to the access address, and then issues the access operation.
+
+Since access to non-aligned addresses will cause slower response, all virtual addresses issued by write instructions in the extended instruction set are forced to be aligned according to data format. Depending on the size of the access data format, corresponding length of data will be written to memory as 1-byte, 2-byte, 4-byte, 8-byte or 16-byte. When the data length to be written to memory is less than the access bit length, it is necessary to perform zero extension or sign extension on this data.
+
+The table below briefly describes the access operations performed by write instructions. For detailed information, please refer to Section \ref{sec:pie-instruction-descrip}.
+
+\input{\modulefiles/tables/08-pie-write-instructions__EN}
+
+\subsection{Data Exchange Instructions}
+\label{sec:pie-data-exchange-instrucitons}
+
+Data exchange instructions are mainly used to exchange data information between different registers. Considering the bit width of the exchange registers are different, the immediate value are added as the selection signal, and zero extension and sign extension instructions are provided also. A variety of data exchange instructions can meet the data exchange requirements for users under various scenarios.
+
+For detailed information about data exchange instructions, please refer to Section \ref{sec:pie-instruction-descrip}.
+
+\input{\modulefiles/tables/08-pie-data-exchange-instructions__EN}
+
+\subsection{Arithmetic Instructions}
+\label{sec:pie-arithmetic-instrucitons}
+
+Arithmetic instructions mainly use the SIMD (Single Instruction Multiple Data) principle for vector data operations, including vector addition, vector multiplication, vector complex multiplication, vector multiplication accumulation, vector and scalar multiplication accumulation, etc.
+
+\subparagraph{Vector Addition Instructions}
+
+\chipname{} provides vector addition and subtraction instructions for data in 1-byte, 2-byte and 4-byte units.
+
+Considering that the input and output operands required for vector operations are stored in memory, in order to reduce extra operations as reading memory and to improve the speed of code execution, vector addition instructions are designed to perform the addition and the 16-byte access at the same time, and the value in the address register is increased by 16 after the access, thus directly pointing to the next continuous 16-byte memory address. You can select the appropriate instruction according to the actual algorithm needs.
+
+In addition, vector addition instructions also saturate the result of addition and subtraction to ensure the accuracy of arithmetic operations.
+
+
+\input{\modulefiles/tables/08-pie-vector-addition-instruc__EN}
+
+\subparagraph{Vector Multiplication Instructions}
+
+\chipname{} provides vector multiplication instructions for data in 1-byte and 2-byte units, and supports unsigned and signed vector multiplication.
+
+Considering that the input and output operands required for vector operations are stored in memory, in order to reduce extra operations as reading memory and improve the speed of code execution, vector multiplication instructions are designed to perform the multiplication and access 16 bytes at the same time, and the access address is increased by 16 after the access, thus directly pointing to the next 16-byte memory address. You can select the appropriate instruction according to the actual algorithm needs.
+
+\input{\modulefiles/tables/08-pie-vector-multiplication-instruc__EN}
+
+
+\subparagraph{Vector Complex Multiplication Instructions}
+
+\chipname{} provides vector complex multiplication instructions for data in 2-byte unit. The instruction operands are executed as signed data.
+
+Considering that the input and output operands required for vector operations are stored in memory, in order to reduce extra operations as reading memory and improve the speed of code execution, vector complex multiplication instructions are designed to perform the multiplication and access 16 bytes at the same time, and the access address is increased by 16 after the access, thus directly pointing to the next 16-byte memory address. You can select the appropriate instruction according to the actual algorithm needs.
+
+
+\input{\modulefiles/tables/08-pie-vector-complex-multiplication-instruc__EN}
+
+
+\subparagraph{Vector Multiplication Accumulation Instructions}
+
+\chipname{} provides two types of vector multiplication accumulation instructions: one is based on the ACCX register, accumulating multiple vector multiplication results to a 40-bit ACCX register; and the other is based on QACC\_H and QACC\_L registers, accumulating vector multiplication results to the corresponding bit segments of QACC\_H and QACC\_L registers respectively. Both types of above-mentioned instructions support multiplication accumulation on 1-byte and 2-byte segments.
+
+In order to reduce extra operations as reading memory and improve the speed of code execution, vector multiplication accumulation instructions are designed to perform the multiplication accumulation and access 16 bytes at the same time, and the access address is increased by the value in the AR register or by the immediate value after the access.
+
+In addition, instructions with the "QUP" suffix in the vector multiplication accumulation instructions also support extracting 16-byte aligned data from the unaligned address.
+
+
+\input{\modulefiles/tables/08-pie-vector-multi-accum-instruc__EN}
+
+\subparagraph{Vector and Scalar Multiplication Accumulation Instructions}
+
+The function of this type of instructions is similar to that of the vector multiplication accumulation instructions based on QACC\_H and QACC\_L registers, except that one of the binocular operands is a vector and the other is a scalar. It also contains instructions that can execute access operation while vector operations are performed.
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{Vector and Scalar Multiplication Accumulation Instructions}
+    \label{tab:pie-vector-scalar-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEVSMULASS8QACC]{EE.VSMULAS.S[8/16].QACC} & Perform vector and scalar multiplication accumulation on signed data in 1-byte/2-byte segment.
+    \\\hline
+    \hyperref[instruction:EEVSMULASS8QACCLDINCP]{EE.VSMULAS.S[8/16].QACC.LD.INCP} & Perform vector and scalar multiplication accumulation on signed data in 1-byte/2-byte segment, and read 16-byte data from memory at the same time. Add 16 to address register.
+    \\\hline
+\end{longtable}
+
+\subparagraph{Other Instructions}
+
+This section contains instructions that perform arithmetic right-shifting on multiplication accumulation results in QACC\_H, QACC\_L and ACCX. You can set the shifting value to obtain the multiplication accumulation results within the expected accuracy range.
+
+In addition, it also contains vector multiplication instructions with enabling conditions.
+
+\begin{longtable}[c]{|l|m{11cm}|}
+    \caption{Other Instructions}
+    \label{tab:pie-others-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EESRCMBS8QACC]{EE.SRCMB.S[8/16].QACC} & Perform signed right-shifting on data in QACC\_H and QACC\_L registers in segment unit.
+    \\\hline
+    \hyperref[instruction:EESRSACCX]{EE.SRS.ACCX} & Perform signed right-shifting on data in the ACCX register.
+    \\\hline
+    \hyperref[instruction:EEVRELUS8]{EE.VRELU.S[8/16]} & Perform vector and scalar multiplication based on enabling conditions.
+    \\\hline
+    \hyperref[instruction:EEVPRELUS8]{EE.VPRELU.S[8/16]} & Perform vector-to-vector multiplication based on enabling conditions.
+    \\\hline
+\end{longtable}
+
+\subsection{Comparison Instructions}
+\label{sec:pie-comparison-instrucitons}
+
+Vector comparison instructions compare data in the unit of 1 byte, 2 bytes, or 4 bytes, including the instructions that take the larger/smaller one between the compared two values, that set all bits to 1 when the two values are equal and set them to 0 when they are not equal, that set all bits to 1 when the former value is larger than the latter and otherwise set them to 0, and that set all bits to 1 when the former value is smaller than the latter and otherwise set them to 0.
+
+Considering that the input and output operands required for vector operations are stored in memory, in order to
+reduce extra operations as reading memory and improve the speed of code execution, access instructions
+to 16-byte addresses are performed at the same time as vector operations, and the access address is
+increased by 16 after the access, thus directly pointing to the next 16-byte memory address. You can
+select the appropriate instruction according to the actual algorithm needs.
+
+\input{\modulefiles/tables/08-pie-comparison-instructions__EN}
+
+\subsection{Bitwise Logical Instructions}
+\label{sec:pie-bitwise-logic-instrucitons}
+
+Bitwise logical instructions include bitwise logical OR, bitwise logical AND, bitwise logical XOR and bitwise NOT instructions.
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{Bitwise Logical Instructions}
+    \label{tab:pie-bitwise-logic-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{Instructions} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEORQ]{EE.ORQ} & Bitwise logical OR $qa = qx | qy$
+    \\\hline
+    \hyperref[instruction:EEXORQ]{EE.XORQ} & Bitwise logical XOR $qa = qx$ \^{} $qy$
+    \\\hline
+    \hyperref[instruction:EEANDQ]{EE.ANDQ} & Bitwise logical AND $qa = qx \& qy$
+    \\\hline
+    \hyperref[instruction:EENOTQ]{EE.NOTQ} & Bitwise NOT$qa =\verb+~+ qx$
+    \\\hline
+\end{longtable}
+
+\subsection{Shift Instructions}
+\label{sec:pie-shift-instrucitons}
+
+Shift instructions include vector left-shift and vector right-shift instructions in 4-byte processing units as well as left-shift and right-shift instructions for spliced 16-byte data. The shift value of the former type is determined by the SAR register; while the shift value of the latter type can be determined by the SAR\_BYTE register, the immediate value, or the lower bits in the AR register. You can select appropriate instructions based on you application needs.
+
+All the shift instructions mentioned above are performed based on signed bits.
+
+\input{\modulefiles/tables/08-pie-shift-instructions__EN}
+
+\subsection{FFT Dedicated Instructions}
+\label{sec:pie-fft-instrucitons}
+
+FFT (Fast Fourier Transform) dedicated instructions include butterfly computation instructions, bit reverse instruction, and real number FFT instructions.
+
+\subparagraph{Butterfly Computation Instructions}
+
+Butterfly computation instructions support radix-2 butterfly computation.
+
+
+\input{\modulefiles/tables/08-pie-butterfly-instructions__EN}
+
+
+\subparagraph{Bit Reverse Instruction}
+
+The reverse bit width of this instruction is determined by the value in the FFT\_BIT\_WIDTH register.
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{Bit Reverse Instruction}
+    \label{tab:pie-bitrev-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Instruction} & \textbf{Description} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{Instruction} & \textbf{Description} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEBITREV]{EE.BITREV} & Bit reverse instruction.
+    \\\hline
+\end{longtable}
+
+\subparagraph{Real Number FFT Instructions}
+
+A single real number FFT instruction can perform a series of complex calculations including addition, multiplication, shifting, etc.
+
+\input{\modulefiles/tables/08-pie-real-fft-instructions__EN}
+
+
+\subsection{GPIO Control Instructions}
+\label{sec:pie-gpio-instrucitons}
+
+GPIO control instructions include instructions to drive GPIO\_OUT and get the status of GPIO\_IN.
+
+
+\input{\modulefiles/tables/08-pie-gpio-instructions__EN}
+
+\subsection{Processor Control Instructions}
+\label{sec:pie-processor-control-instrucitons}
+
+As illustrated in Section \ref{sec:pie-spec-reg}, there are various special registers inside the \chipname{} processor. In order to facilitate the read and write of the values in such special registers, the following types of processor control instructions are provided to realize the data transfer between the special registers and the AR registers.
+
+\textbf{RSR.* (Read Special register) } \\
+Can read the value from special registers that come with the processor to the AR register. ``$*$" stands for special registers, which only include the SAR register.
+
+\textbf{WSR.* (Write Special register) } \\
+Can modify the value in special registers that come with the processor via the AR register. ``$*$" stands for special registers, which only include the SAR register.
+
+\textbf{XSR.* (Exchange Special register) } \\
+Can exchange the values inside the AR register and special registers. ``$*$" stands for special registers, which only include the SAR register.
+
+\textbf{RUR.* (Read User-defined register) }\\
+Can read the value from user-defined special registers in the processor to the AR register. ``$*$" stands for special registers, which include SAR\_BYTE, ACCX, QACC\_H, QACC\_L, FFT\_BIT\_WIDTH and UA\_STATE registers.
+
+\textbf{WUR.* (Write User-defined register) }\\
+Can modify the value in user-defined special registers via the AR register. ``$*$" stands for special registers, which include SAR\_BYTE, ACCX, QACC\_H, QACC\_L, FFT\_BIT\_WIDTH and UA\_STATE registers.\\
+For special registers that exceed 32-bit width, the "\_n" suffix is used to distinguish the instructions that read or write different 32-bit segments from the same special register. Taking reading data from the ACCX register as an example, there are two RUR.* instructions, namely RUR.ACCX\_0 and RUR.ACCX\_1. The former reads the lower 32-bit data from the ACCX register and write it to the AR register; the latter read the left higher 8-bit data from the ACCX register, perform zero extension and write the result to the AR register. Accordingly, QACC\_H and QACC\_L registers realize data transfer via the five AR registers.
+
+
+
+
+\clearpage
+\section{Instruction Performance}\label{subsec:pie_pipeline}
+For processors designed based on a pipeline, it is ideal that CPU issues one instruction onto the pipeline per processor cycle. The \chipname{} Xtensa processor adopts the 5-stage pipeline technology: I (instruction fetch), R (decode), E (execute), M (memory access), and W (write back). Table \ref{tab:pie_processor_5stage} shows what the processor does at each pipeline stage. \\
+
+\begin{longtable}[c]{|l|c|l|}
+    \caption{Five-Stage Pipeline of Xtensa Processor}
+    \label{tab:pie_processor_5stage}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Pipeline Stage} & \textbf{Number} & \textbf{Operation} \\\hline
+    I & - & Align instructions (24-bit and 32-bit instructions supported)\\\hline
+    R & 0 & \makecell[l]{Read the general-purpose registers AR and QR\\Decode instructions, detect interlocks, and forward operands}\\\hline
+    E & 1 & \makecell[l]{For arithmetic instructions, the ALU (addition, subtraction, multiplication, etc.) works\\For read memory instructions, generate virtual addresses for memory access\\For branch jump instructions, select jump addresses}\\\hline
+    M & 2 & Issue read and write memory accesses \\\hline
+    W & 3 & Write back to registers the calculated results and the data read from memory\\\hline
+\end{longtable}
+
+The processor cannot issue an instruction to the pipeline until all the operands and hardware resources required for the operation are ready. However, there are the following hazards in the actual program running process, which can cause stopped pipeline and delayed implementation of instructions.
+
+\subsection{Data Hazard}
+When instruction A writes the result to register X (including explicit general-purpose registers and implicit special registers), and instruction B needs to use the same register as an input operand, this case is referred to as that instruction B depends on instruction A. If instruction A prepares the result to be written to register X at the end of the SA pipeline stage, and instruction B reads the data in register X at the beginning of the SB pipeline stage, then instruction A must be issued D=max(SA-SB+1, 0) cycles before instruction B.\\
+If the processor fetches instruction B less than D cycles after instruction A, the processor delays issuing instruction B until D cycles have passed. The act of a processor delaying an instruction because of pipeline interactions is called an interlock.\\
+Suppose the SA pipeline stage of instruction A is W and the SB pipeline stage of instruction B is E, instruction B is issued to the pipeline D=max(2-1+1, 0)=2 cycles later than instruction A as shown in Figure \ref{fig:pie_data_hazard}.\\
+When the output operand of an instruction is designed to be available at the end of a pipeline stage, it means that the operation of the instruction is over. Usually, instructions that depend on this result data must wait until the output operand is written to the corresponding register before retrieving it from the corresponding register. The Xtensa processor supports the "bypass" operation. It detects when the input operand of an instruction is generated at which pipeline stage of the instruction and does not need to wait for the data to be written to the register. It can directly forward the data from the pipeline stage where it is generated to the stage where it is needed.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/data_hazard__EN}}
+    \caption{Interlock Caused by Instruction Operand Dependency}
+    \label{fig:pie_data_hazard}
+\end{figure}
+
+
+Data dependencies between instructions are determined by the dependencies between operands and the pipeline stage at which reads and writes happen. Table \ref{tab:pie_inst_pipelining} lists all operands of the \chipname{} extended instructions, including implicit special register write (def) and read (use) pipeline stage information.
+
+\input{08-PIE/tables/08-pie-instructions-pipelining__EN}
+
+\subsection{Hardware Resource Hazard}
+When multiple instructions call the same hardware resource at the same time, the processor allows only one of the instructions to occupy the hardware resource, and the rest of them will be delayed. For example, there are only eight 16-bit multipliers in the processor; instruction C requires eight of them in pipeline stage M, and instruction D requires four of them in pipeline stage E. As shown in Figure \ref{fig:pie_resource_hazard}, instruction C is issued in cycle T+0, and instruction D is issued in cycle T+1, so four multipliers are applied to be occupied simultaneously in cycle T+3; at this time, the processor will delay the issue of instruction D into the pipeline by one cycle to avoid conflict with instruction C.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/resource_hazard__EN}}
+    \caption{Hardware Resource Hazard}
+    \label{fig:pie_resource_hazard}
+\end{figure}
+
+
+\subsection{Control Hazard}
+Data and hardware resource hazards can be optimized by adjusting the code order, but the control hazard is difficult to optimize. Program code usually has many conditional select statements that execute different code depending on whether the condition is met or not. The compiler will process the above conditional statements into branch and jump instructions: if the condition is satisfied, it will jump to the target address to execute the corresponding code; if not, the subsequent instructions will be processed in order. When the conditions are met, as shown in Figure \ref{fig:pie_control_hazard}, the processor will re-fetch the instruction from the new target address. At this time, the instructions at the R and E stages on the pipeline will be removed, which means the pipeline remains stagnant for 2 cycles.\\
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/control_hazard__EN}}
+    \caption{Control Hazard}
+    \label{fig:pie_control_hazard}
+\end{figure}
+
+
+\clearpage
+\section{Extended Instruction Functional Description}\label{sec:pie-instruction-descrip}
+
+Before reading this section, you are recommended to read the table \ref{tab:pie-instruction-field}, which introduces instruction field names and their meanings in instruction encoding.
+
+[N:M] is used to represent the field. It means the width of the field is (N-M+1), namely, both bits N and M are included. For example, qa[2:0] has a total of 3 bits, which are bit0, bit1 and bit2, and qa[1] represents the value of bit1.
+
+This chapter describes all the instructions mentioned in Section \ref{chp:pie_instruction_simple_introduction} in alphabetical order by the instruction name. Each instruction is encoded in little-endian bit order as shown in Figure \ref{fig:pie_bit_little_endian_cn}.\\
+
+\addtocontents{toc}{\protect\setcounter{tocdepth}{1}}
+
+\input{08-PIE/tables/08-pie-new-instructions__EN}
+
+\addtocontents{toc}{\protect\setcounter{tocdepth}{3}}
+
+\end{document}

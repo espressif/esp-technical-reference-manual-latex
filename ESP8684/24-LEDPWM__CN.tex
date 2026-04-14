@@ -1,0 +1,367 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./24-LEDPWM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{ledpwm}{}
+\chapter{LED PWM 控制器 (LEDC)}
+\label{mod:ledpwm}
+
+
+\section{概述}
+
+LED PWM 控制器用于生成控制 LED 的脉冲宽度调制信号 (PWM)，具有占空比自动渐变等专门功能。该外设也可成生成 PWM 信号用作其他用途。
+
+\section{特性}
+LED PWM 控制器具有如下特性:
+
+\begin{itemize}
+    \item 六个独立的 PWM 生成器（即六个通道）
+    \item PWM 占空比最大精度为 14 位
+    \item PWM 输出信号的相位和占空比可调节
+    \item PWM 占空比微调
+    \item 占空比自动渐变 — 即 PWM 信号占空比可逐渐增加或减小，无须处理器干预，渐变完成时产生中断
+    \item 低功耗模式(Light-sleep mode) 下可输出 PWM 信号
+    \item 三个可分频的时钟源：
+        \begin{itemize}
+            \item PLL\_F60M\_CLK
+            \item RC\_FAST\_CLK
+            \item XTAL\_CLK
+        \end{itemize}
+    \item 四个独立定时器，可实现小数分频
+\end{itemize}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.4\textwidth]{\modulefiles/figures/led2-1_726}
+    \caption{LED PWM 控制器架构}
+    \label{fig:ledc-architecture}
+\end{figure}
+
+四个定时器具有相同的功能和运行方式，下文将四个定时器统称为定时器\regindex{x}（\regindex{x} 的范围是 0 到 3）。六个 PWM 生成器的功能和运行方式也相同，下文将统称为 PWM\regindex{n}（n 的范围是 0 到 5）。
+
+\clearpage
+\section{功能描述}
+
+\subsection{架构}
+
+图 \ref{fig:ledc-architecture}为 LED PWM 控制器的架构。
+
+四个定时器可独立配置（即每个定时器可配置自己的时钟分频器和计数器最大值），每个定时器内部有一个时基计数器（即基于基准时钟周期计数的计数器）。每个 PWM 生成器在四个定时器中择一，以该定时器的计数值为基准生成 PWM 信号。
+
+图 \ref{fig:ledc-pwm-generator} 为定时器和 PWM 生成器的主要功能块。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/esp8684_ledc2-2_diagram}
+    \caption{定时器和 PWM 生成器功能块}
+    \label{fig:ledc-pwm-generator}
+\end{figure}
+
+\subsection{定时器}\label{sec:ledc-timers}
+
+LED PWM 控制器的每个定时器内部都有一个时基计数器。图 \ref{fig:ledc-pwm-generator} 中时基计数器使用的时钟信号称为 ref\_pulse\regindex{x}。所有定时器使用同一个时钟源信号 LEDC\_CLK\regindex{x}，该时钟源信号经分频器分频后产生 ref\_pulse\regindex{x} 供计数器使用。
+
+\subsubsection{时钟源}
+
+软件配置的 LED PWM 寄存器使用 APB\_CLK 时钟。更多关于 APB\_CLK 的信息，详见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。要使用 LED PWM 控制器，需使能 LED PWM 的 APB\_CLK 时钟信号，该时钟信号可通过置位 \hyperref[regdesc:SYSTEMPERIPCLKEN0REG]{SYSTEM\_PERIP\_CLK\_EN0\_REG} 寄存器的 \hyperref[fielddesc:SYSTEMLEDCCLKEN]{SYSTEM\_LEDC\_CLK\_EN} 使能，通过软件置位 \hyperref[regdesc:SYSTEMPERIPRSTEN0REG]{SYSTEM\_PERIP\_RST\_EN0\_REG} 寄存器的 \hyperref[fielddesc:SYSTEMLEDCRST]{SYSTEM\_LEDC\_RST} 位复位。更多信息，请参阅章节 \ref{mod:sysreg} \textit{\nameref{mod:sysreg}} 的表 \ref{tab:sysreg-mem-controlling-bit}。
+
+
+LED PWM 控制器的定时器有三个时钟源信号可以选择：PLL\_F60M\_CLK、RC\_FAST\_CLK 和 XTAL\_CLK（更多有关时钟源的信息详见章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}）。为 LEDC\_CLK\regindex{x} 选择时钟源信号的配置如下：
+
+\begin{itemize}
+    \item PLL\_F60M\_CLK：将 \hyperref[fielddesc:LEDCCLKSEL]{LEDC\_CLK\_SEL}[1:0] 置 1
+    \item RC\_FAST\_CLK：将 \hyperref[fielddesc:LEDCCLKSEL]{LEDC\_CLK\_SEL}[1:0] 置 2
+    \item XTAL\_CLK：将 \hyperref[fielddesc:LEDCCLKSEL]{LEDC\_CLK\_SEL}[1:0] 置 3
+\end{itemize}
+
+
+
+之后，LEDC\_CLK\regindex{x} 信号会进入时钟分频器。
+
+\subsubsection{时钟分频器配置}
+LEDC\_CLK\regindex{x} 信号传输到时钟分频器，产生 ref\_pulse\regindex{x} 信号供计数器使用。ref\_pulse\regindex{x} 的频率等于 LEDC\_CLK\regindex{x} 的频率经分频系数 LEDC\_CLK\_DIV 分频后的结果（见图 \ref{fig:ledc-pwm-generator}）。
+
+分频系数 LEDC\_CLK\_DIV 为小数，因此其值可为非整数，使频率更加精确。分频系数 LEDC\_CLK\_DIV 可根据下列等式配置：
+
+\begin{center}
+$LEDC\_CLK\_DIV= A + \frac{B}{256}$
+\end{center}
+
+\begin{itemize}
+    \item 整数部分 \textit{A} 为 \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} 字段的高 10 位（即 \hyperref[regdesc:LEDCTIMERXCONFREG]{LEDC\_TIMER\regindex{x}\_CONF\_REG}[21:12]）
+    \item 小数部分 \textit{B} 为 \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} 字段的低 8 位（即 \hyperref[regdesc:LEDCTIMERXCONFREG]{LEDC\_TIMER\regindex{x}\_CONF\_REG}[11:4]）
+\end{itemize}
+
+小数部分 \textit{B} 为 0 时，LEDC\_CLK\_DIV的值为整数（整数分频）。也就是说，每 \textit{A} 个 LEDC\_CLK\regindex{x} 时钟周期产生一个 ref\_pulse\regindex{x} 时钟脉冲。
+
+小数部分 \textit{B} 不为 0 时，LEDC\_CLK\_DIV 的值非整数。时钟分频器按照 \textit{A} 个 LEDC\_CLK\regindex{x} 时钟周期 和(\textit{A}+1) 个 LEDC\_CLK\regindex{x} 时钟周期轮流进行非整数分频。这样一来，ref\_pulse\regindex{x} 时钟脉冲的平均频率便会是理想值（非整数分频的频率）。每 256 个 ref\_pulse\regindex{x} 时钟脉冲中：
+
+\begin{itemize}
+    \item 有 \textit{B} 个以 (\textit{A}+1) 个 LEDC\_CLK\regindex{x} 时钟周期分频
+    \item 有 (256-\textit{B}) 个以 \textit{A} 个 LEDC\_CLK\regindex{x} 时钟周期分频
+    \item 以 (\textit{A}+1) 个 LEDC\_CLK\regindex{x} 时钟周期分频的时钟脉冲均匀分布在以 \textit{A} 分频的时钟脉冲中
+\end{itemize}
+
+图 \ref{fig:ledc-divider} 展示了 LEDC\_CLK\_DIV 分频系数非整数时，LEDC\_CLK\regindex{x} 时钟周期和 ref\_pulse\regindex{x} 时钟脉冲的关系。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=1\textwidth]{\modulefiles/figures/ledc_frag_div}}
+    \caption{LEDC\_CLK\_DIV 非整数时的分频}
+    \label{fig:ledc-divider}
+\end{figure}
+
+在运行时改变定时器时钟的分频系数，需先配置 \hyperref[fielddesc:LEDCCLKDIVTIMERX]{LEDC\_CLK\_DIV\_TIMER\regindex{x}} 字段，然后置位 \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 字段应用新配置。新配置会在计数器下次溢出时生效。\hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 字段由硬件自动清除。
+
+\subsubsection{14 位计数器}
+每个定时器有一个以 ref\_pulse\regindex{x} 为基准时钟的 14 位时基计数器（见图 \ref{fig:ledc-pwm-generator}）。 \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} 字段用于配置 14 位计数器的最大值。因此，PWM 信号的最大精确度为 14 位。
+计数器最大可计数至 $(2^{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}-1)$，然后溢出重新从 0 开始计数。软件可以读取、复位、暂停计数器。
+
+计数器可在每次溢出时触发 (\hyperref[int:ledc-timer-ovf]{LEDC\_TIMER\regindex{x}\_OVF\_INT}) 中断，这个中断为硬件自动产生，不需要配置。
+计数器也可配置为在溢出 $(\hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} + 1)$  次时触发 \hyperref[int:ledc-ovf-cnt]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT} 中断，该中断配置步骤如下：
+
+\begin{enumerate}
+    \item 配置 \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}} 为 PWM 生成器选择该计数器
+    \item 置位 \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}} 使能计数器
+    \item 把 \hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} 的值设为计数器触发中断的溢出次数减 1
+    \item 置位 \hyperref[fielddesc:LEDCOVFCNTCHNINTENA]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT\_ENA} 使能溢出中断
+    \item 置位 \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} 使能定时器，等待 \hyperref[int:ledc-ovf-cnt]{LEDC\_OVF\_CNT\_CH\regindex{n}\_INT} 中断产生
+\end{enumerate}
+
+如图 \ref{fig:ledc-pwm-generator} 所示，PWM 生成器输出信号 sig\_out\regindex{n} 的频率取决于定时器时钟源 LEDC\_CLK\regindex{x} 的频率、 时钟分频系数 LEDC\_CLK\_DIV 以及占空比精度（计数器位宽） \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}：
+
+    \[
+    f_{\textrm{PWM}}=\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+                        {\textrm{LEDC\_CLK\_DIV}\cdot 2^{\textrm{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}}}
+    \]
+
+上述公式变形后，可得到以下公式计算预期的占空比精度：
+
+    \[
+    \textrm{\hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES}}
+    =\log_2\left(\frac{f_{\textrm{LEDC\_CLK\regindex{x}}}}
+    {f_{\textrm{PWM}}\cdot \textrm{LEDC\_CLK\_DIV}}\right)
+    \]
+
+表 \ref{tab:ledc-common-freq-res} 列出了常用配置频率及其对应精度。
+
+\begin{ThreePartTable}
+
+    \begin{TableNotes}
+
+        \item[1] 最高精度指时钟分频系数 LEDC\_CLK\_DIV 为 1 时的精度，向下取整。如果经公式计算出的最高精度超过了计数器位宽 14 位，则最高精度为 14。
+
+        \item[2] 最低精度指时钟分频系数 LEDC\_CLK\_DIV 为 $1023+\frac{255}{256}$ 时的精度，向上取整。如果经公式计算出的最低精度小于 0，则最低精度为 1。
+
+    \end{TableNotes}
+
+\begin{longtable}[c]{ | l | l | l | l | }
+\caption{常用配置频率及精度}
+\label{tab:ledc-common-freq-res}
+\\\hline
+\rowcolor{lightgray}
+LEDC\_CLK\regindex{x} & PWM 频率 & 最高精度（位） \tnote{1} & 最低精度（位）\tnote{2} \\\hline
+
+\endhead
+\insertTableNotes
+\endfoot
+
+PLL\_F60M\_CLK (60 MHz) & 1 kHz & 14 & 6 \\\hline
+PLL\_F60M\_CLK (60 MHz) & 5 kHz & 13 & 4 \\\hline
+PLL\_F60M\_CLK (60 MHz) & 10 kHz & 12 & 3\\\hline
+XTAL\_CLK (40 MHz) & 1 kHz & 14 & 6 \\\hline
+XTAL\_CLK (26 MHz) & 1 kHz & 14 & 5 \\\hline
+XTAL\_CLK (40 MHz) & 4 kHz & 13 & 4 \\\hline
+XTAL\_CLK (26 MHz) & 4 kHz & 12 & 3 \\\hline
+RC\_FAST\_CLK (17.5 MHz) & 1 kHz & 14 & 5 \\\hline
+RC\_FAST\_CLK (17.5 MHz) & 1.75 kHz & 13 & 4\\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+
+在运行时改变计数器的最大值，需先置位  \hyperref[fielddesc:LEDCTIMERXDUTYRES]{LEDC\_TIMER\regindex{x}\_DUTY\_RES} 字段，然后置位 \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 字段。新的配置在计数器下一次溢出时生效。如果重新配置 \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}}
+字段，需置位 \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 应用新配置。总之，更改配置时需置位 \hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 或 \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 应用新配置。\\\hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 和 \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 字段由硬件自动清除。
+
+
+\subsection{PWM  生成器}\label{sec:ledc-pwm-generator}
+
+要生成 PWM 信号，PWM 生成器 (PWM\regindex{n}) 需选择一个定时器 (Timer\regindex{x})。每个 PWM 生成器均可通过置位\\ \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}} 单独配置，在四个定时器中选择一个输出 PWM 信号。
+
+如图 \ref{fig:ledc-pwm-generator} 所示，每个 PWM 生成器主要包括一个高低电平比较器和两个选择器。PWM 生成器将定时器的 14 位计数值 (Timer\regindex{x}\_cnt) 与高低电平比较器的值 Hpoint\regindex{n} 和 Lpoint\regindex{n} 比较。如果定时器的计数值等于 Hpoint\regindex{n} 或 Lpoint\regindex{n}，PWM 信号可以输出高低电平：
+
+\begin{itemize}
+\item 如果 Timer\regindex{x}\_cnt == Hpoint\regindex{n}，则 sig\_out\regindex{n} 为 1。
+\item 如果 Timer\regindex{x}\_cnt == Lpoint\regindex{n}，则 sig\_out\regindex{n} 为 0。
+\end{itemize}
+
+图 \ref{fig:ledc-fixed-duty} 展示了如何使用 Hpoint\regindex{n} 和 Lpoint\regindex{n} 生成占空比固定的 PWM 信号。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=1\textwidth]{\modulefiles/figures/ledc_2-3-1_723}}
+    \caption{LED PWM 输出信号图}
+    \label{fig:ledc-fixed-duty}
+\end{figure}
+
+每当所选定时器的计数器溢出时，PWM 生成器 (PWM\regindex{n}) 的 Hpoint\regindex{n} 值更新为 \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}}。Lpoint\regindex{n} 的值同样在计数器每次溢出时更新，为 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] 和 \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}} 的和。通过配置 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] 和 \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}} 两个字段，可设置 PWM 输出的相对相位和占空比。
+
+置位 \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}}，开启 PWM 信号（sig\_out\regindex{n}）输出；清除 \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}}，关闭 PWM 信号输出，输出信号 sig\_out\regindex{n} 输出恒定电平，电平值为 \hyperref[fielddesc:LEDCIDLELVCHN]{LEDC\_IDLE\_LV\_CH\regindex{n}}.
+
+\hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] 通过周期性改变 PWM 输出信号 sig\_out\regindex{n} 的占空比实现微调。如 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] 不为 0，那么 sig\_out\regindex{n} 每 16 个周期中，有 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] 个周期的 PWM 脉冲占空比要比 (16 - \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0]) 个周期的脉冲占空比多一个定时器的计数周期。
+比如，如果 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] 设为 10，\hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[3:0] 设为 5，则 16 个周期中，有 5 个周期的 PWM 脉冲占空比为 11，剩余 11 个周期的 PWM 脉冲占空比为 10。16 个周期的平均占空比为 10.3125。
+
+如果重新配置  \hyperref[fielddesc:LEDCTIMERSELCHN]{LEDC\_TIMER\_SEL\_CH\regindex{n}}、 \hyperref[fielddesc:LEDCHPOINTCHN]{LEDC\_HPOINT\_CH\regindex{n}}、 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}[18:4] 和 \hyperref[fielddesc:LEDCSIGOUTENCHN]{LEDC\_SIG\_OUT\_EN\_CH\regindex{n}}
+字段，需置位 \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 应用新配置。新配置在计数器下次溢出时生效。\hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 字段由硬件自动清除。
+
+\subsection{占空比渐变}
+
+PWM 生成器可以渐变 PWM 输出信号的占空比，即由一种占空比逐渐变为为另一种占空比。如果开启占空比渐变功能，Lpoint\regindex{n} 的值会在计数器溢出固定次数后递增或递减。图 \ref{fig:ledc-unfixed-duty} 展示了占空比渐变功能。
+
+\begin{figure}[ht]
+    \centering
+    \fbox{\includegraphics[width=1\textwidth]{\modulefiles/figures/ledc_f5}}
+    \caption{输出信号占空比渐变图}
+    \label{fig:ledc-unfixed-duty}
+\end{figure}
+
+占空比渐变功能可通过以下寄存器字段配置：
+\begin{itemize}
+    \item \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}} 用于设置 Lpoint\regindex{n} 的初始值。
+    \item \hyperref[fielddesc:LEDCDUTYSTARTCHN]{LEDC\_DUTY\_START\_CH\regindex{n}} 置 1 或清零，使能或关闭占空比渐变功能。
+    \item \hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}} 用于设置 Lpoint\regindex{n} 在计数器溢出多少次时递增或递减。也就是说，Lpoint\regindex{n} 会在计数器溢出 \hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}} 次时递增或递减。
+    \item \hyperref[fielddesc:LEDCDUTYINCCHN]{LEDC\_DUTY\_INC\_CH\regindex{n}} 置 1 或清零，Lpoint\regindex{n} 递增或递减。
+    \item \hyperref[fielddesc:LEDCDUTYSCALECHN]{LEDC\_DUTY\_SCALE\_CH\regindex{n}} 用于设置 Lpoint\regindex{n} 递增或递减的值。
+    \item \hyperref[fielddesc:LEDCDUTYNUMCHN]{LEDC\_DUTY\_NUM\_CH\regindex{n}} 用于设置占空比渐变停止前，Lpoint\regindex{n} 递增或递减的最大次数。
+\end{itemize}
+
+如果重新配置 \hyperref[fielddesc:LEDCDUTYCHN]{LEDC\_DUTY\_CH\regindex{n}}、 \hyperref[fielddesc:LEDCDUTYSTARTCHN]{LEDC\_DUTY\_START\_CH\regindex{n}}、\hyperref[fielddesc:LEDCDUTYCYCLECHN]{LEDC\_DUTY\_CYCLE\_CH\regindex{n}}、\hyperref[fielddesc:LEDCDUTYINCCHN]{LEDC\_DUTY\_INC\_CH\regindex{n}}、\hyperref[fielddesc:LEDCDUTYSCALECHN]{LEDC\_DUTY\_SCALE\_CH\regindex{n}} 和 \hyperref[fielddesc:LEDCDUTYNUMCHN]{LEDC\_DUTY\_NUM\_CH\regindex{n}}字段，需置位 \hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 应用新配置。\\\hyperref[fielddesc:LEDCPARAUPCHN]{LEDC\_PARA\_UP\_CH\regindex{n}} 置位后，
+新配置立即生效。\hyperref[fielddesc:LEDCTIMERXPARAUP]{LEDC\_TIMER\regindex{x}\_PARA\_UP} 字段由硬件自动清除。
+
+\subsection{中断}
+\begin{itemize}
+\item \label{int:ledc-ovf-cnt}LEDC\_OVF\_CNT\_CH\regindex{n}\_INT：定时器计数器溢出 (\hyperref[fielddesc:LEDCOVFNUMCHN]{LEDC\_OVF\_NUM\_CH\regindex{n}} + 1) 次且寄存器 \hyperref[fielddesc:LEDCOVFCNTENCHN]{LEDC\_OVF\_CNT\_EN\_CH\regindex{n}} 置 1 时触发中断。
+\item \label{int:ledc-duty-chng-end}LEDC\_DUTY\_CHNG\_END\_CH\regindex{n}\_INT：PWM 生成器渐变完成后触发中断。
+\item \label{int:ledc-timer-ovf}LEDC\_TIMER\regindex{x}\_OVF\_INT：定时器达到最大计数值时触发中断。
+\end{itemize}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{ledpwm-reg-summ}{}
+\section{寄存器列表}
+\label{sec:ledpwm-reg-summ}
+
+本小节的所有地址均为相对于 \textcolor{red}{LED PWM 控制器} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/24-LEDPWM-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 \textcolor{red}{LED PWM 控制器} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/24-LEDPWM-reg__CN}
+
+
+\end{document}

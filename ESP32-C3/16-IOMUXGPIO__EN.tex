@@ -1,0 +1,523 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./16-IOMUXGPIO}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+    
+    \usepackage{ctex}
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{iomuxgpio}{}
+\chapter{IO MUX and GPIO Matrix (GPIO, IO MUX)}
+\label{mod:iomuxgpio}
+
+\section{Overview}
+
+The \chipname{} chip features 22 physical GPIO pins. Each pin can be used as a general-purpose I/O, or be connected to an internal peripheral signal. Through GPIO matrix and IO MUX, peripheral input signals can be from any IO pins, and peripheral output signals can be routed to any IO pins. Together these modules provide highly configurable I/O. 
+
+{\bfseries Note that the GPIO pins are numbered from 0 \verb+~+ 21.}
+
+\section{Features}
+
+\textbf{GPIO Matrix Features}
+
+\begin{itemize}
+\item A full-switching matrix between the peripheral input/output signals and the pins. 
+\item 42 peripheral input signals can be sourced from the input of any GPIO pins. 
+\item The output of any GPIO pins can be from any of the 78 peripheral output signals. 
+\item Supports signal synchronization for peripheral inputs based on APB clock bus.
+\item Provides input signal filter.
+\item Supports sigma delta modulated output.
+\item Supports GPIO simple input and output.
+\end{itemize}
+
+\textbf{IO MUX Features}
+
+\begin{itemize}
+\item Provides one configuration register \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{n}\_REG} for each GPIO pin. The pin can be configured to
+    \begin{itemize}
+        \item perform GPIO function routed by GPIO matrix;
+        \item or perform direct connection bypassing GPIO matrix.
+    \end{itemize}
+\item Supports some high-speed digital signals (SPI, JTAG, UART) bypassing GPIO matrix for better high-frequency digital performance. In this case, IO MUX is used to connect these pins directly to peripherals. 
+\end{itemize}
+
+\section{Architectural Overview }
+This section provides an overview to the architecture of IO MUX and GPIO matrix with the following figures:
+\begin{itemize}
+    
+    \item Figure  \ref{fig:iomux-gpio-matrix-overview} shows the general work flow of IO MUX and GPIO matrix.
+    
+    \item Figure \ref{fig:iomux-gpio-matrix-overview-detail} shows in details how IO MUX and GPIO matrix route signals from pins to peripherals, and from peripherals to pins.
+    
+    \item Figure \ref{fig:pad-overview} shows the interface logic for a GPIO pin. 
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{16-IOMUXGPIO/figures/figure1-overview-simple-20210803}
+    \caption{Diagram of IO MUX and GPIO Matrix}
+    \label{fig:iomux-gpio-matrix-overview}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{16-IOMUXGPIO/figures/figure2-over-detailed-20250224}
+    \caption{Architecture of IO MUX and GPIO Matrix}
+    \label{fig:iomux-gpio-matrix-overview-detail}
+\end{figure}
+
+
+    \hspace{2em} \textcircled{\footnotesize 1} Only part of peripheral input signals (marked ``yes" in column ``Direct input through IO MUX" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) can bypass GPIO matrix. The other input signals can only be routed to peripherals via GPIO matrix. \\
+    \hspace{2em} \textcircled{\footnotesize 2} There are only 22 inputs from GPIO SYNC to GPIO matrix, since \chipname{} provides 22 GPIO pins in total. \\
+    \hspace{2em} \textcircled{\footnotesize 3} The pins supplied by VDD3P3\_CPU or by VDD3P3\_RTC are controlled by the signals: IE, OE, WPU, and WPD. \\
+    \hspace{2em} \textcircled{\footnotesize 4} Only part of peripheral outputs (marked ``yes" in column ``Direct output through IO MUX" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) can be routed to pins bypassing GPIO matrix. See Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}. \\
+    \hspace{2em} \textcircled{\footnotesize 5} There are only 22 outputs (GPIO pin X: 0 \verb+~+ 21) from GPIO matrix to IO MUX. \\
+
+
+Figure \ref{fig:pad-overview} shows the internal structure of a pad, which is an electrical interface between the chip logic and the GPIO pin. The structure is applicable to all 22 GPIO pins and can be controlled  using IE, OE, WPU, and WPD signals.
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.6\textwidth]{16-IOMUXGPIO/figures/pad-overview_20210815.eps}}
+    \caption{Internal Structure of a Pad}
+    \label{fig:pad-overview}
+\end{figure}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item IE: input enable
+    \item OE: output enable
+    \item WPU: internal weak pull-up
+    \item WPD: internal weak pull-down
+    \item Bonding pad: a terminal point of the chip logic used to make a physical connection from the chip die to GPIO pin in the chip package.
+\end{itemize}
+\end{tiplisting}
+
+\section{Peripheral Input via GPIO Matrix}\label{sec:peripheral-input-via-gpio-matrix}
+
+\subsection{Overview}
+
+To receive a peripheral input signal via GPIO matrix, the matrix is configured to source the peripheral input signal from one of the 22 GPIOs (0 \verb+~+ 21), see Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}. Meanwhile, register corresponding to the peripheral signal should be set to receive input signal via GPIO matrix.
+
+\subsection{Signal Synchronization}
+\label{sec:inputconfig}
+When signals are directed from pins using GPIO matrix, the signals will be synchronized to the APB bus clock by GPIO SYNC hardware, then go to GPIO matrix. This synchronization applies to all GPIO matrix signals but does not apply when using the IO MUX, see Figure \ref{fig:iomux-gpio-matrix-overview-detail}.
+
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.7\textwidth]{16-IOMUXGPIO/figures/gpio_input_sync}}
+    \caption{GPIO Input Synchronized on APB Clock Rising Edge or on Falling Edge}
+    \label{Figure:gpio_input_sync}
+\end{figure}
+
+Figure \ref{Figure:gpio_input_sync} shows the functionality of GPIO SYNC. In the figure, negative sync and positive sync mean GPIO input is synchronized on APB clock falling edge and on APB clock rising edge, respectively.
+
+\subsection{Functional Description}
+
+To read GPIO pin \regindex{X}\hyperref[input-note-1]{$^1$} into peripheral signal \regindex{Y}, follow the steps below:
+
+\begin{enumerate}
+    \item Configure register \hyperref[regdesc:GPIOFUNCNINSELCFGREG]{GPIO\_FUNC\regindex{y}\_IN\_SEL\_CFG\_REG} corresponding to peripheral signal \regindex{Y} in GPIO matrix:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG\regindex{y}\_IN\_SEL} to enable peripheral signal input via GPIO matrix.
+        \item Set \hyperref[fielddesc:GPIOFUNCNINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} to the desired GPIO pin, i.e. \regindex{X} here.        
+    \end{itemize}
+    {\bfseries Note that} some peripheral signals have no valid \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG\regindex{y}\_IN\_SEL} bit, namely, these peripherals can only receive input signals via GPIO matrix.
+    \item Optionally enable the filter for pin input signals by setting the register \hyperref[fielddesc:IOMUXGPIONFILTEREN]{IO\_MUX\_GPIO\regindex{n}\_FILTER\_EN}. Only the signals with a valid width of more than two clock cycles can be sampled, see Figure \ref{Figure:gpio_filter}.
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{16-IOMUXGPIO/figures/gpio_filter}}
+    \caption{Filter Timing of GPIO Input Signals}
+    \label{Figure:gpio_filter}
+\end{figure}
+
+    \item Synchronize GPIO input. To do so, please set \hyperref[regdesc:GPIOPINNREG]{GPIO\_PIN\regindex{x}\_REG} corresponding to GPIO pin \regindex{X} as follows:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:GPIOPINNSYNC1BYPASS]{GPIO\_PIN\regindex{x}\_SYNC1\_BYPASS} to enable input signal synchronized on rising edge or on falling edge in the first clock, see Figure \ref{Figure:gpio_input_sync}.
+        \item Set \hyperref[fielddesc:GPIOPINNSYNC2BYPASS]{GPIO\_PIN\regindex{x}\_SYNC2\_BYPASS} to enable input signal synchronized on rising edge or on falling edge in the second clock, see Figure \ref{Figure:gpio_input_sync}.
+    \end{itemize}
+    \item Configure IO MUX register to enable pin input. For this end, please set \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} corresponding to GPIO pin \regindex{X} as follows:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{x}\_FUN\_IE} to enable input\hyperref[input-note-2]{$^2$}.
+        \item Set or clear \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPU} and \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPD}, as desired, to enable or disable pull-up and pull-down resistors.
+    \end{itemize}
+\end{enumerate}
+
+For example, to connect I2S MCLK input signal\hyperref[input-note-3]{$^3$} (I2S\_MCLK\_in, signal index 12) to GPIO7, please follow the steps below. Note that GPIO7 is also named as MTDO pin.
+
+\begin{enumerate}
+\item Set \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG12\_IN\_SEL} in register \hyperref[regdesc:GPIOFUNCNINSELCFGREG]{GPIO\_FUNC12\_IN\_SEL\_CFG\_REG} to enable peripheral signal input via GPIO matrix.
+\item Set \hyperref[fielddesc:GPIOFUNCNINSEL]{GPIO\_FUNC12\_IN\_SEL} in register \hyperref[regdesc:GPIOFUNCNINSELCFGREG]{GPIO\_FUNC12\_IN\_SEL\_CFG\_REG} to 7.
+\item Set \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO7\_FUN\_IE} in register \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO7\_REG} to enable pin input.
+\end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+\item \label{input-note-1}  One input pin can be connected to multiple peripheral input signals.
+\item \label{input-note-2} The input signal can be inverted by configuring \hyperref[fielddesc:GPIOFUNCNININVSEL]{GPIO\_FUNC\regindex{y}\_IN\_INV\_SEL}.
+\item \label{input-note-3} It is possible to have a peripheral read a constantly low or constantly high input value without connecting this input to a pin. This can be done by selecting a special \hyperref[fielddesc:GPIOFUNCNINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} input, instead of a GPIO number:
+\begin {itemize}
+\item When \hyperref[fielddesc:GPIOFUNCNINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} is set to 0x1F, input signal is always 0.
+\item When \hyperref[fielddesc:GPIOFUNCNINSEL]{GPIO\_FUNC\regindex{y}\_IN\_SEL} is set to 0x1E, input signal is always 1.
+\end{itemize}
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Simple GPIO Input}\label{IOMUXSimpleGPIOInput}
+
+\hyperref[regdesc:GPIOINREG]{GPIO\_IN\_REG} holds the input values of each GPIO pin. The input value of any GPIO pin can be read at any time without configuring GPIO matrix for a particular peripheral signal. However, it is necessary to enable the input via IO MUX by setting \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{x}\_FUN\_IE} bit in register \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} corresponding to pin \regindex{X}, as mentioned in Section \ref{sec:inputconfig}.
+
+\section{Peripheral Output via GPIO Matrix}\label{sec:peripheral-output-via-gpio-matrix}
+
+\subsection{Overview}
+
+To output a signal from a peripheral via GPIO matrix, the matrix is configured to route peripheral output signals (only signals with a name assigned in the column "Output signal" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) to one of the 22 GPIOs (0 \verb+~+ 21). See Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}.
+
+The output signal is routed from the peripheral into GPIO matrix and then into IO MUX. IO MUX must be configured to set the chosen pin to GPIO function. This enables the output GPIO signal to be connected to the pin.
+
+\begin{tiplisting}
+There is a range of peripheral output signals (97 \verb+~+ 100) which are not connected to any peripheral, but to the input signals (97 \verb+~+ 100 in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) directly. These can be used to input a signal from one GPIO pin and output directly to another GPIO pin.
+\end{tiplisting}
+\vspace{-2em}
+\subsection{Functional Description}\label{IOMUXPeripheralOutput}
+
+Some of the 78 output signals (signals with a name assigned in the column "Output signal" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) can be set to go through GPIO matrix into IO MUX and then to a pin. Figure  \ref{fig:iomux-gpio-matrix-overview-detail} illustrates the configuration.
+
+To output peripheral signal \regindex{Y} to a particular GPIO pin \regindex{X}\hyperref[output-note-1]{$^1$}, follow these steps:
+
+\begin{enumerate}
+    \item Configure register \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} and \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}[\regindex{x}] corresponding to GPIO pin \regindex{X} in GPIO matrix. Recommended operation: use corresponding \hyperref[regdesc:GPIOENABLEW1TSREG]{W1TS} (write 1 to set) and \hyperref[regdesc:GPIOENABLEW1TCREG]{W1TC} (write 1 to clear) registers to set or clear \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}. 
+    \begin{itemize}
+        \item Set the \hyperref[fielddesc:GPIOFUNCNOUTSEL]{GPIO\_FUNC\regindex{x}\_OUT\_SEL} field in register \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} to the index of the desired peripheral output signal \regindex{Y}.
+        \item If the signal should always be enabled as an output, set the \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{x}\_OEN\_SEL} bit in register \hyperref[regdesc:GPIOFUNCNOUTSELCFGREG]{GPIO\_FUNC\regindex{x}\_OUT\_SEL\_CFG\_REG} and the bit in register \hyperref[regdesc:GPIOENABLEW1TSREG]{GPIO\_ENABLE\_W1TS\_REG}, corresponding to GPIO pin \regindex{X}. To have the output enable signal decided by internal logic (for example, the SPIQ\_oe in column ``Output enable signal when \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}), clear \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{x}\\\_OEN\_SEL} bit instead.
+       \item Set the corresponding bit in register \hyperref[regdesc:GPIOENABLEW1TCREG]{GPIO\_ENABLE\_W1TC\_REG} to disable the output from the GPIO pin.
+    \end{itemize}
+    \item For an open drain output, set the \hyperref[fielddesc:GPIOPINNPADDRIVER]{GPIO\_PIN\regindex{x}\_PAD\_DRIVER} bit in register \hyperref[regdesc:GPIOPINNREG]{GPIO\_PIN\regindex{x}\_REG} corresponding to GPIO pin \regindex{X}.
+    \item Configure IO MUX register to enable output via GPIO matrix. Set the \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_GPIO\regindex{x}\_REG} corresponding to GPIO pin \regindex{X} as follows:
+    \begin{itemize}
+        \item Set the field \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{x}\_MCU\_SEL} to desired IO MUX function corresponding to GPIO pin\regindex {X}. This is Function 1 (GPIO function), numeric value 1, for all pins.
+        \item Set the \hyperref[fielddesc:IOMUXGPIONFUNDRV]{IO\_MUX\_GPIO\regindex{x}\_FUN\_DRV} field to the desired value for output strength (0 \verb+~+ 3). 
+        \item If using open drain mode, set/clear the \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPU} and \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_GPIO\regindex{x}\_FUN\_WPD} bits to enable/disable the internal pull-up/pull-down resistors.
+    \end{itemize}
+\end{enumerate}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+\item \label{output-note-1} The output signal from a single peripheral can be sent to multiple pins simultaneously.
+\item \label{output-note-2} The output signal can be inverted by setting \hyperref[fielddesc:GPIOFUNCNOUTINVSEL]{GPIO\_FUNC\regindex{x}\_OUT\_INV\_SEL} bit.
+\end{enumerate}
+\end{tiplisting}
+
+\subsection{Simple GPIO Output}
+
+GPIO matrix can also be used for simple GPIO output. This can be done as below:
+
+\begin{itemize}
+    \item Set GPIO matrix \hyperref[fielddesc:GPIOFUNCNOUTSEL]{GPIO\_FUNC\regindex{n}\_OUT\_SEL} with a special peripheral index 128 (0x80);
+    \item Set the corresponding bit in \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG} register to the desired GPIO output value.
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize} 
+\item \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}[0] \verb+~+ \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}[21] correspond to GPIO0 \verb+~+ GPIO21, and \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}[25:22] are invalid.
+\item Recommended operation: use corresponding W1TS and W1TC registers, such as \hyperref[fielddesc:GPIOOUTW1TS]{GPIO\_OUT\_W1TS}/\hyperref[fielddesc:GPIOOUTW1TC]{GPIO\_OUT\\\_W1TC} to set or clear the registers \hyperref[regdesc:GPIOOUTREG]{GPIO\_OUT\_REG}.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Sigma Delta Modulated Output (SDM)}
+
+\subsubsection{Functional Description}
+
+Four out of the 125 peripheral outputs (output index: 55 \verb+~+ 58 in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}) support 1-bit second-order sigma delta modulation. By default output is enabled for these four channels. This modulator can also output PDM (pulse density modulation) signal with configurable duty cycle. The transfer function of this second-order SDM modulator is:
+
+\[
+    H(z)=\textrm{X(z)z$^{-1}$} + \textrm{E(z)(1-z$^{-1}$)$^{2}$}
+    \]
+
+E(z) is quantization error and X(z) is the input.\\
+Sigma Delta modulator supports scaling down of APB\_CLK by divider 1 \verb+~+ 256: 
+\begin{itemize}
+    \item Set \hyperref[fielddesc:GPIOSDFUNCTIONCLKEN]{GPIOSD\_FUNCTION\_CLK\_EN} to enable the modulator clock.
+    \item Configure register \hyperref[fielddesc:GPIOSDSDNPRESCALE]{GPIOSD\_SD\regindex{n}\_PRESCALE} (\regindex{n} is 0 \verb+~+ 3 for four channels).
+\end{itemize}
+
+After scaling, the clock cycle is equal to one pulse output cycle from the modulator.
+
+\hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN} is a signed number with a range of [-128, 127] and is used to control the duty cycle $^{1}$ of PDM output signal.
+
+\begin{itemize}
+    \item \hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN} = -128, the duty cycle of the output signal is \begin{math}0\% \end{math}.
+    \item \hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN} = 0, the duty cycle of the output signal is near \begin{math}50\% \end{math}.
+    \item \hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN} = 127, the duty cycle of the output signal is close to \begin{math}100\% \end{math}.
+\end{itemize}
+
+The formula for calculating PDM signal duty cycle is shown as below:
+
+    \[
+    Duty\_Cycle=\frac{\hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN} + 128} {256}
+    \]
+    
+\begin{tiplisting}
+For PDM signals, duty cycle refers to the percentage of high level cycles to the whole statistical period (several pulse cycles, for example 256 pulse cycles).
+\end{tiplisting}
+
+\subsubsection{SDM Configuration}
+
+The configuration of SDM is shown below:
+
+\begin{itemize}
+    \item Route one of SDM outputs to a pin via GPIO matrix, see Section \ref{IOMUXPeripheralOutput}.
+    \item Enable the modulator clock by setting the register \hyperref[fielddesc:GPIOSDFUNCTIONCLKEN]{GPIOSD\_FUNCTION\_CLK\_EN}.
+    \item Configure the divider value by setting the register \hyperref[fielddesc:GPIOSDSDNPRESCALE]{GPIOSD\_SD\regindex{n}\_PRESCALE}.
+    \item Configure the duty cycle of SDM output signal by setting the register \hyperref[fielddesc:GPIOSDSDNIN]{GPIOSD\_SD\regindex{n}\_IN}.
+\end{itemize}
+
+\section{Direct Input and Output via IO MUX}
+
+\subsection{Overview}
+
+Some high-speed signals (SPI and JTAG) can bypass GPIO matrix for better high-frequency digital performance. In this case, IO MUX is used to connect these pins directly to peripherals.
+
+This option is less flexible than routing signals via GPIO matrix, as the IO MUX register for each GPIO pin can only select from a limited number of functions, but high-frequency digital performance can be improved.
+
+\subsection{Functional Description}
+
+Two registers must be configured in order to bypass GPIO matrix for peripheral input signals:
+
+\begin{enumerate}
+\item \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} for the GPIO pin must be set to the required pin function. For the list of pin functions, please refer to Section \ref{sec:iomux_pads}.
+\item Clear \hyperref[fielddesc:GPIOSIGNINSEL]{GPIO\_SIG\regindex{n}\_IN\_SEL} to route the input directly to the peripheral.
+\end{enumerate}
+
+To bypass GPIO matrix for peripheral output signals, \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} for the GPIO pin must be set to the required pin function. For the list of pin functions, please refer to Section \ref{sec:iomux_pads}.
+
+\begin{tiplisting}
+Not all signals can be directly connected to peripheral via IO MUX. Some input/output signals can only be connected to peripheral via GPIO matrix.
+\end{tiplisting}
+
+\section{Analog Functions of GPIO Pins}
+
+Some GPIO pins in \chipname{} provide analog functions. When the pin is used for analog purpose, make sure that pull-up and pull-down resistors are disabled by following configuration:
+
+\begin{itemize}
+    \item Set \hyperref[fielddesc:IOMUXGPIONMCUSEL]{IO\_MUX\_GPIO\regindex{n}\_MCU\_SEL} to 1, and clear \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{n}\_FUN\_IE}, \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_MUX\_GPIO\regindex{n}\_FUN\_WPU}, \hyperref[fielddesc:IOMUXGPIONFUNIE]{IO\_\\MUX\_GPIO\regindex{n}\_FUN\_WPD}.
+    \item Write 1 to \hyperref[fielddesc:GPIOENABLEW1TC]{GPIO\_ENABLE\_W1TC\regindex{[n]}}, to clear output enable.
+\end{itemize}
+See Table \ref{tab:iomuxgpio-iomax-pins-analog-functions} for analog functions of \chipname{} pins.
+
+\section{Pin Functions in Light-sleep}
+
+Pins may provide different functions when \chipname{} is in Light-sleep mode. If \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_SLP\_SEL} in register \hyperref[regdesc:IOMUXGPIONREG]{IO\_MUX\_\regindex{n}\_REG} for a GPIO pin is set to 1, a different set of bits will be used to control the pin when the chip is in Light-sleep mode.
+
+\begin{longtable}[c]{|p{3.5cm}|p{4.5cm}|p{4.5cm}|}
+\caption{Bits Used to Control IO MUX Functions in Light-sleep Mode}
+\label{tab:iomuxgpio-pin-function-register-light-sleep-mode} \\
+    \hline
+    \rowcolor{lightgray}
+   & \textbf{Normal Execution} & \textbf{Light-sleep Mode} \\
+    \rowcolor{lightgray}
+   \multirow{-2}{*}{\textbf{IO MUX Functions}}  & \textbf{OR \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_SLP\_SEL} = 0} & \textbf{AND \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_SLP\_SEL} = 1} \\
+    \hline
+Output Drive Strength & \hyperref[fielddesc:IOMUXGPIONFUNDRV]{IO\_MUX\_FUN\_DRV} & \hyperref[fielddesc:IOMUXGPIONMCUDRV]{IO\_MUX\_MCU\_DRV} \\
+\hline
+Pull-up Resistor & \hyperref[fielddesc:IOMUXGPIONFUNWPU]{IO\_MUX\_FUN\_WPU} & \hyperref[fielddesc:IOMUXGPIONMCUWPU]{IO\_MUX\_MCU\_WPU} \\
+\hline
+Pull-down Resistor & \hyperref[fielddesc:IOMUXGPIONFUNWPD]{IO\_MUX\_FUN\_WPD} & \hyperref[fielddesc:IOMUXGPIONMCUWPD]{IO\_MUX\_MCU\_WPD} \\
+\hline
+Output Enable & \hyperref[fielddesc:GPIOFUNCNOENSEL]{OEN\_SEL} from GPIO matrix $^{*}$  & \hyperref[fielddesc:IOMUXGPIONMCUOE]{IO\_MUX\_MCU\_OE} \\
+\hline
+\end{longtable}
+
+
+\begin{tiplisting}
+If \hyperref[fielddesc:IOMUXGPIONSLPSEL]{IO\_MUX\_SLP\_SEL} is set to 0, pin functions remain the same in both normal execution and Light-sleep mode. Please refer to Section \ref{IOMUXPeripheralOutput} for how to enable output in normal execution. 
+\end{tiplisting}
+
+\section{Pin Hold Feature}\label{PadHold}
+
+Each GPIO pin (including the RTC pins: GPIO0 \verb+~+ GPIO5) has an individual hold function controlled by a RTC register. When the pin is set to hold, the state is latched at that moment and will not change no matter how the internal signals change or how the IO MUX/GPIO configuration is modified. Users can use the hold function for the pins to retain the pin state through a core reset triggered by watchdog time-out or Deep-sleep events.
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+\item For digital pins (GPIO6 \verb+~+21), to maintain pin input/output status in Deep-sleep mode, users can set \hyperref[fielddesc:RTCCNTLDIGPADHOLD]{RTC\_CNTL\_DIG\\\_PAD\_HOLD\regindex{n}} in register \hyperref[regdesc:RTCCNTLDIGPADHOLDREG]{RTC\_CNTL\_DIG\_PAD\_HOLD\_REG} to 1 before powering down. To disable the hold function after the chip is woken up, users can set \hyperref[fielddesc:RTCCNTLDIGPADHOLD]{RTC\_CNTL\_DIG\_PAD\_HOLD\regindex{n}} to 0. 
+
+\item For RTC pins (GPIO0 \verb+~+5), the input and output values are controlled by the corresponding bits of register \hyperref[regdesc:RTCCNTLPADHOLDREG]{RTC\_CNTL\\\_PAD\_HOLD\_REG}, and users can set it to 1 to hold the value or set it to 0 to unhold the value.
+\end{itemize}
+\end{tiplisting}
+
+\vspace{-2em}
+\section{Power Supplies and Management of GPIO Pins}\label{I/O Pad Power Supplies}
+
+\subsection{Power Supplies of GPIO Pins}
+For more information on the power supply for GPIO pins, please refer to Pin Definition in  {\it{\href{https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_en.pdf}{\chipname{} Datasheet}}}. All the pins can be used to wake up the chip from Light-sleep mode, but only the pins (GPIO0 \verb+~+ GPIO5) in VDD3P3\_RTC domain can be used to wake up the chip from Deep-sleep mode.
+
+\subsection{Power Supply Management}
+
+Each \chipname{} pin is connected to one of the two different power domains.
+
+\begin{itemize}
+    \item VDD3P3\_RTC: the input power supply for both RTC and CPU
+    \item VDD3P3\_CPU: the input power supply for CPU
+\end{itemize}
+
+\section{Peripheral Signal List}
+\label{sec:peripheral_signals}
+
+Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix} shows the peripheral input/output signals via GPIO matrix.
+
+Please pay attention to the configuration of the bit \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL}:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 1: the output enable is controlled by the corresponding bit \regindex{n} of \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG}:
+    \begin{itemize}
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 0: output is disabled;
+        \item \hyperref[regdesc:GPIOENABLEREG]{GPIO\_ENABLE\_REG} = 1: output is enabled;
+    \end{itemize}
+    \item \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0: use the output enable signal from peripheral, for example SPIQ\_oe in the column ``Output enable signal when \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0" of Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix}. Note that the signals such as SPIQ\_oe can be 1 (1'd1) or 0 (1'd0), depending on the configuration of corresponding peripherals. If it's 1'd1 in the ``Output enable signal when \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} = 0", it indicates that once the register \hyperref[fielddesc:GPIOFUNCNOENSEL]{GPIO\_FUNC\regindex{n}\_OEN\_SEL} is cleared, the output signal is always enabled by default.
+\end{itemize}
+
+\begin{tiplisting}
+Signals are numbered consecutively, but not all signals are valid.
+\vspace{-1em}
+\begin{itemize}
+    \item Only the signals with a name assigned in the column "Input signal" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix} are valid input signals. 
+    \item Only the signals with a name assigned in the column "Output signal" in Table \ref{tab:iomuxgpio-periph-signals-via-gpio-matrix} are valid output signals. 
+\end{itemize}
+\end{tiplisting}
+
+\begin{landscape}
+
+\input{16-IOMUXGPIO/tables/16-IOMUXGPIO-peripheral-signals__EN.tex}
+
+\end{landscape}
+\section{IO MUX Functions List}
+\label{sec:iomux_pads}
+Table \ref{tab:iomuxgpio-pin-functions} shows the IO MUX functions of each pin.
+
+\input{16-IOMUXGPIO/tables/16-IOMUXGPIO-iomux-pad-summary__EN.tex}
+
+\section{Analog Functions List}
+\label{sec:rtcmux_pins}
+
+Table \ref{tab:iomuxgpio-iomax-pins-analog-functions} shows the IO MUX pins with analog functions.
+
+\input{16-IOMUXGPIO/tables/16-IOMUXGPIO-rtcmux-analog-function-summary__EN.tex}
+
+
+
+
+\hypertarget{iomuxgpio-reg-summ}{}
+\section{Register Summary}
+
+\subsection{GPIO Matrix Register Summary}
+The addresses in this section are relative to the GPIO base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{16-IOMUXGPIO/tables/gpio_reg_summary__EN}
+
+
+\subsection{IO MUX Register Summary}
+The addresses in this section are relative to the IO MUX base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{16-IOMUXGPIO/tables/io_mux_reg_summary__EN}
+
+
+\subsection{SDM Register Summary}
+The addresses in this section are relative to (GPIO base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} + 0x0F00).
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{16-IOMUXGPIO/tables/gpiosd_reg_summary__EN}
+
+
+\section{Registers}
+
+\subsection{GPIO Matrix Registers}
+The addresses in this section are relative to the GPIO base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+\subfile{16-IOMUXGPIO/tables/gpio_reg__EN}
+
+\subsection{IO MUX Registers}
+The addresses in this section are relative to the IO MUX base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+\subfile{16-IOMUXGPIO/tables/io_mux_reg__EN}
+
+\subsection{SDM Output Registers}
+The addresses in this section are relative to (GPIO base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} + 0x0F00).
+\subfile{16-IOMUXGPIO/tables/gpiosd_reg__EN}
+
+
+\end{document}

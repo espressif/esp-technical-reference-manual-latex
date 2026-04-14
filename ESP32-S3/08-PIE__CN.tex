@@ -1,0 +1,656 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./08-PIE}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{pie}{}
+\chapter{处理器指令拓展 (PIE)}
+\label{mod:pie}
+
+\section{概述}
+为了提高特定 AI 和 DSP (Digital Signal Processing) 算法的运算效率，在 \chipname{} 中新增了一组扩展指令。该扩展指令集使用 TIE (Tensilica Instruction  Extension) 语言设计。新增了大位宽的通用寄存器、特殊寄存器、处理器端口。该扩展指令集主要采用单指令多数据 (SIMD, Single Instruction Multiple Data) 设计思想，支持 8-bit、16-bit 以及 32-bit 的向量运算，能显著提高数据运算效率；对于乘法、移位、累加等运算指令，在其进行数据计算的同时完成数据搬运操作，进一步提升单条指令的执行效率。
+
+
+\section{主要特性}
+
+处理器指令拓展 (PIE, Processor Instruction Extensions) 具有如下特性：
+
+\begin{itemize}
+    \item 增加 128-bit 位宽通用寄存器
+    \item 支持 128-bit 位宽的向量数据操作，包括：乘法、加法、减法、累加、移位、比较等
+    \item 合并数据搬运指令与运算指令
+    \item 支持非对齐 128-bit 带宽的向量数据
+    \item 支持取饱和操作
+
+\end{itemize}
+
+\section{结构概述}
+
+本章节有助于理解指令列表、指令可能性以及指令限制，但不提供硬件细节描述。
+
+PIE 内部结构中有关乘法累加 (multiplication-accumulation, MAC) 指令的概述如下文所示。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/pie_structure__EN.eps}}
+    \caption{PIE 内部描述 (MAC)}
+    \label{fig:pie_structure_en}
+\end{figure}
+
+上图展示了数据通路和 PIE 组件。
+
+PIE 模块包含：
+
+\begin{itemize}
+    \item 可读取 8/16/32/64/128-bit 对齐数据的地址单元
+    \item 8 个 128-bit 向量 QR 的寄存器组
+    \item 运算逻辑单元 (arithmetic logic unit, ALU) 支持
+    \begin{itemize}
+        \item 16 个 8-bit 乘法器
+        \item 8 个 16-bit 乘法器
+    \end{itemize}
+
+    \item QACC\_H/QACC\_L：2 个 160-bit 累加寄存器
+    \item ACCX：40-bit 累加寄存器
+
+\end{itemize}
+
+\subsection{向量寄存器组}
+向量寄存器组包含 8 个向量寄存器 (QR)。每个寄存器可以表示为 16 x 8-bit、8 x 16-bit 或 4 x 32-bit 的数据向量。根据使用的指令，处理器将按照 8-bit、16-bit 或 32-bit 数据格式进行相应的运算。
+
+\subsection{ALU}
+
+运算逻辑单元 (arithmetic logic unit, ALU) 可以作为 8-bit ALU 处理 8-bit 输入数据，也可作为 16-bit ALU 处理 16-bit 输入数据，或者作为 32-bit ALU 处理 32-bit 输入数据。例如 8-bit 乘法 ALU 包含 16 个 8-bit 乘法器，在一条指令中单个周期可完成 16 次乘法。考虑到对各种应用场景的支持，\chipname{} 的扩展指令集中 乘法运算几乎可以和任何其他运算进行组合，例如，FFT 指令在一条指令中包含乘法、加法和减法运算。此外，还支持 AND、OR、移位等 ALU 逻辑运算。\\
+ALU 的输入操作数来自 QR 寄存器，运算结果可以保存到 QR 寄存器或特殊的累加寄存器（ACCX、QACC）。
+
+\subsection{QACC 累加寄存器}
+
+QACC 累加寄存器可用于 8-bit 或 16-bit 数据的乘累加运算。对于 8-bit 数据，QACC 由 16 个 20-bit 宽度的累加寄存器组成。对于 16-bit 运算，QACC 由 8 个 40-bit 宽度的累加寄存器组成。下文描述了 8-bit 数据运算的情况，对于 16-bit 数据运算，逻辑类似。\\
+两个向量 QR 寄存器完成 16 次 8-bit 乘法和加法运算后，16 次运算的结果将写入 16 个 20-bit 累加器。\\
+QACC 累加寄存器由由两部分组成：160-bit QACC\_H 和 160-bit QACC\_L。前者存储 QACC 寄存器高 160 比特的数据，后者存储 QACC 寄存器低 160 比特数据。若需将 QACC 累加寄存器的数据存储到 QR 存储器中，可以通过右移操作将 20-bit 数据片段转换为 8-bit。对于 16-bit 乘累加运算，则是右移 40-bit 数据片段得到 16-bit。\\
+同时也支持从内存载入数据到 QACC 寄存器或将其数据重置为 0。
+
+\subsection{ACCX 累加寄存器}
+
+某些应用需要对所有乘法器的结果做累加操作。这种情况下，可以使用 ACCX 累加寄存器。\\
+ACCX 是一个 40-bit 寄存器，其存储的数据既可以是 8-bit 数据的乘累加结果，也可以是 16-bit 数据的乘累加结果，取决于使用的指令。\\
+同时也支持从内存载入数据到 ACCX 寄存器或将其数据重置为 0。
+
+\subsection{地址单元}
+
+PIE 中的大多数指令可以在一个周期内并行地从 128-bit Q 寄存器加载或存储数据。大多数情况下，数据应该为 128-bit 对齐，地址的低 4-bit 被忽略。地址单元可并行操作地址寄存器，从而节省更新地址寄存器的时间。\\
+可对地址寄存器进行的操作有 AR + 有符号常量、ARx + ARy 以及 AR + 16。\\
+地址单元在指令处理完成后再对寄存器进行操作，即所有对地址寄存器的操作都是在指令完成后完成的。
+
+\section{符号介绍}
+本章节将介绍指令描述时会涉及到的指令编码排序以及指令描述中出现的符号含义。
+\subsection{比特及字节序}
+指令编码的顺序根据颗粒度分为按字节排序和按比特排序两种。另外
+根据低位比特或者字节表示在左边或者右边分为：大端序和小端序。
+综上，常见的指令编码类型主要有小端比特序、大端比特序、小端字节序、大端字节序。
+
+\begin{itemize}
+    \item 小端比特序：指令编码时按照比特顺序，将低位的比特放在右边。
+    \item 大端比特序：指令编码时按照比特顺序，将低位的比特放在左边。
+    \item 小端字节序：指令编码时按照字节顺序，将低位字节放在右边。
+    \item 大端字节序：指令编码时按照字节顺序，将低位字节放在左边。
+\end{itemize}
+其中，采用小端字节序和小端比特序得到的指令编码比特序列是完全一致的。以指令编码长度为 24-bit 的指令 \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} 为例，图 \ref{fig:pie_bit_little_endian_cn}，\ref{fig:pie_bit_big_endian_cn}，\ref{fig:pie_byte_little_endian_cn}，\ref{fig:pie_byte_big_endian_cn} 分别给出了该指令在小端比特序、大端比特序、小端字节序以及大端字节序下的编码内容。
+
+\chipname{} 的 PIE 文档中所有指令以及寄存器的描述都是采用的小端比特序,即指令编码的最低位比特存放在地址的最低比特位置。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/bit_little_endian_cn.eps}}
+    \caption{指令 \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} 小端比特序}
+    \label{fig:pie_bit_little_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/bit_big_endian_cn.eps}}
+    \caption{指令 \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} 大端比特序}
+    \label{fig:pie_bit_big_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/byte_little_endian_cn.eps}}
+    \caption{指令 \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} 小端字节序}
+    \label{fig:pie_byte_little_endian_cn}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/byte_big_endian_cn.eps}}
+    \caption{指令 \hyperref[instruction:EEZEROQACC]{EE.ZERO.QACC} 大端字节序}
+    \label{fig:pie_byte_big_endian_cn}
+\end{figure}
+
+\subsection{指令域定义}
+
+表 \ref{tab:pie-instruction-field} 介绍了指令描述中涉及到的符号所代表的含义。可以在章节 \ref{sec:pie-instruction-descrip} 中找到相关符号及其所表示的操作数的用途。
+
+\clearpage
+\input{\modulefiles/tables/08-pie-field-name-and-descrip__CN}
+
+对于存在多个同样功能操作数的指令，通过在域名后增加数字编号加以区分。例如：指令 \hyperref[instruction:EELDF128IP]{EE.LDF.128.IP} 使用了 4 个 fu 寄存器，分别命名为 fu0 \verb+~+ 3，用于存放从内存中读取 128-bit 数据。
+
+\section{扩展指令集组件}
+
+\subsection{寄存器}
+
+本章节介绍了 \chipname{} 扩展指令集所有涉及到的寄存器，包括 Xtensa 初始定义的寄存器以及自定义的寄存器。寄存器信息如表 \ref{tab:pie-regs-list} 所示。
+
+\input{\modulefiles/tables/08-pie-reg-list__CN}
+
+\subsubsection{通用寄存器}
+
+用户在使用通用寄存器作为操作数的指令时，需要显性地声明所要指派的通用寄存器编号。例如：
+
+\begin{center}
+    $\hyperref[instruction:EEVADDSS8]{EE.VADDS.S8} \hspace{1em} q2, q0, q1$
+\end{center}
+
+上述指令使用 0 号和 1 号 QR 寄存器作为输入向量。向量加法的结果存放到 2 号 QR 寄存器中。
+
+\subparagraph{AR}
+
+指令中每有一个 AR 寄存器操作数，都将占用 4-bit 的编码长度。用户可以选择 16 个 AR 寄存器中任意一个作为操作数，4-bit 编码数值表明了用户选取编号。表 \ref{tab:pie-instruction-field} 中的 “a*” 行列出了
+AR 寄存器在扩展指令集中各种用途，既可以用于存储访问地址，也可以用于存储数据。
+
+\subparagraph{FR}
+
+指令中每有一个 FR 寄存器操作数，都将占用 4-bit 的编码长度。用户可以选择 16 个 FR 寄存器中任意一个作为操作数，4-bit 编码数值表明了用户选取编号。在 \chipname{} 扩展指令集中，浮点数据只有读写内存指令，凭借 128-bit 访存带宽，相比 Xtensa 处理器自带的 32-bit 浮点数读写指令，效率提升 4 倍。
+
+\subparagraph{QR}
+
+为了提高程序的执行效率，通常将操作的数据对象存储在通用寄存器中来实现数据的快速读写。Xtensa 自带的 AR 寄存器只有 32-bit 位宽，而 \chipname{} 一次数据访存的位宽为 128-bit，因此 AR 寄存器只能发挥现有数据总线 1/4 的带宽能力。为此 \chipname{} 新增了 8 个 128-bit 自定义通用寄存器（QR 寄存器）。QR 寄存器主要用来存储 128-bit 位宽数据总线对内存进行读/写操作所获取/使用的数据，也被用来暂存 128-bit 带宽的数据操作所产生的的运算结果。
+
+在处理器执行指令的过程中，根据该指令定义的向量运算位宽，将单个 QR 寄存器视作 16 个 8-bit 或者 8 个 16-bit 或者 4 个 32-bit 的操作数，从而实现单条指令完成多个操作数的运算操作。
+
+\subsubsection{特殊寄存器}
+\label{sec:pie-spec-reg}
+
+相比通用寄存器，特殊寄存器是在特定指令中被隐性地调用。用户无需也无法在执行指令时指定某个特殊寄存器参与运算。例如：
+
+\begin{center}
+    $\hyperref[instruction:EEVMULS16]{EE.VMUL.S16} \hspace{1em} q2, q0, q1$
+\end{center}
+
+上述向量乘法指令使用 q0 和 q1 通用寄存器作为输入，在内部运算过程中要对中间 32-bit 乘法结果进行右移处理，再截取移位后结果的低 16-bit 组成 128-bit 输出到 q2。中间右移大小就是由 SAR 特殊寄存器内数值决定，且 SAR 特殊寄存器并不会出现在指令操作数列表中。
+
+\subparagraph{SAR}
+
+移位数值寄存器 (Shift Amount Register) 存储以比特为单位的移位的位数大小。\chipname{} 扩展指令集中会用 SAR 寄存器的指令有两类。一类是向量数据移位指令，包括 \hyperref[instruction:EEVSR32]{EE.VSR.32}、\hyperref[instruction:EEVSL32]{EE.VSL.32}。前者使用 SAR 低 5 比特数值大小作为右移数值；后者使用 SAR 低 5 比特数值大小作为左移数值。另一类是乘法运算指令，包括 EE.VMUL.*、EE.CMUL.*、EE.FFT.AMS.*、EE.FFT.CMUL.*。这一类指令使用 SAR 寄存器内数值作为中间乘法运算结果右移的数值，数值的大小决定了最终计算结果的精度。
+
+\subparagraph{SAR\_BYTE}
+
+以字节为单位的移位数值寄存器。该特殊寄存器被设计用来处理数据非 128-bit 对齐的问题（章节 \ref{sec:pie-data-align} 中介绍了数据非对齐问题）。对于向量运算指令而言，通过扩展指令读取或存储的数据都是强制 16-字节对齐的，但实际应用中往往无法保证使用的数据地址一定是 16-字节对齐的。
+
+\hyperref[instruction:EELD128USARIP]{EE.LD.128.USAR.IP} 和 \hyperref[instruction:EELD128USARXP]{EE.LD.128.USAR.XP} 指令在从内存读取 128-bit 数据的同时会将代表非对齐的数据的访存地址寄存器的低 4-bit 数值内容写入 SAR\_BYTE。
+
+\chipname{} 扩展指令集中会用 SAR\_BYTE 寄存器的指令有两类。一类是专门用于处理 QR 内数据不对齐，包括 EE.SRCQ.*, EE.SRC.Q*。这类指令将分别从非对齐地址前后两个对齐地址读取出两个 16-字节 数据进行拼接，再右移 SAR\_BYTE 寄存器内数值的字节大小，从而得到一个来自非对齐地址的 128-bit 数据。另一类是在执行运算的同时进行非对齐数据的处理工作，该类指令的名称后缀带有“.QUP”。
+
+\subparagraph{ACCX}
+
+乘累加寄存器 (multiplier-accumulator)。调用该寄存器的指令包括 EE.VMULAS.*.ACCX*, \hyperref[instruction:EESRSACCX]{EE.SRS.ACCX}。前者利用 ACCX 寄存器存储累加上两个 QR 寄存器向量乘的结果；后者对 ACCX 寄存器进行右移处理。
+
+\subparagraph{QACC\_H,QACC\_L}
+
+按片分区的连续乘累加寄存器。调用该寄存器的指令包括 EE.VMULAS.*.QACC*, EE.SRCMB.*.QACC。该寄存器的主要应用场景是将两个 QR 寄存器向量乘的结果按照片区分别累加到 QACC\_H 和 QACC\_L 寄存器的对应片区中，其中 16-bit 的向量乘结果会分别累加到对应 16 个 20-bit 片区，32-bit 的向量乘结果则累加到对应 8 个 40-bit 片区。
+
+\subparagraph{FFT\_BIT\_WIDTH}
+
+\hyperref[instruction:EEBITREV]{EE.BITREV} 指令专用特殊寄存器。该寄存器内数值用于指示 \hyperref[instruction:EEBITREV]{EE.BITREV} 的工作模式。数值范围 0 \verb+~+ 7 分别代表 3-bit \verb+~+ 10-bit 工作模式，具体指令功能请查阅 \hyperref[instruction:EEBITREV]{EE.BITREV}。
+
+\subparagraph{UA\_STATE}
+
+\hyperref[instruction:EEFFTAMSS16LDINCPUAUP]{EE.FFT.AMS.S16.LD.INCP.UAUP} 指令专用特殊寄存器。该寄存器用于存储从内存中读取的非对齐 128-bit 数据，在下次调用该指令时通过与新读取的非对齐数据拼接后移位来获取 128-bit 对齐的数据。
+
+\subsection{快速 GPIO 端口}
+
+\chipname{} 的 Xtensa 处理器新增了两组端口信号：GPIO\_OUT 和 GPIO\_IN。用户可以通过 GPIO Matrix 模块将上述两组端口信号配置到芯片特定的 GPIO 管脚上。
+
+\subsubsection{GPIO\_OUT}
+
+8-bit 处理器输出端口。用户先通过 GPIO Matrix 将上述 8-bit 端口信号配置到指定的芯片管脚。core0 对应的 8 个输出端口号为 pro\_alonegpio\_out0\verb+~+7；core1 对应的 8 个输出端口号为 core1\_gpio\_out0\verb+~+7。随后可以通过指令 \hyperref[instruction:EEWRMASKGPIOOUT]{EE.WR\_MASK\_GPIO\_OUT}, \hyperref[instruction:EESETBITGPIOOUT]{EE.SET\_BIT\_GPIO\_OUT} 将 GPIO\_OUT 某些比特位置置 1，也可以通过指令 \hyperref[instruction:EECLRBITGPIOOUT]{EE.CLR\_BIT\_GPIO\_OUT} 将某些比特位的数据置 0，进而驱动相应的芯片管脚为高或低电平。相比通过配置寄存器来驱动芯片管脚，用户调用上述指令驱动芯片 GPIO 管脚可以获得更快的响应。
+
+\subsubsection{GPIO\_IN}
+
+8-bit 处理器输入端口。用户先通过 GPIO Matrix 将上述 8-bit 端口信号配置到指定的芯片管脚。core0 对应的 8 个
+输入端口号为 pro\_alonegpio\_in0\verb+~+7；core1 对应的 8 个输入端口号为 core1\_gpio\_in0\verb+~+7。随后可以通过指令 \hyperref[instruction:EEGETGPIOIN]{EE.GET\_GPIO\_IN} 读取 8 个芯片 GPIO 管脚的电平值到 AR 寄存器。相比读取寄存器来获取芯片管脚的状态，通过上述指令可以更快的获取并处理芯片 GPIO 管脚上的电平变化。
+
+\subsection{数据格式及对齐}
+\label{sec:pie-data-align}
+当前扩展指令集支持字节、2-字节、4-字节、8-字节、16-字节的数据格式。同时还存在 20-字节的数据格式： QACC\_H 和 QACC\_L，这两个特殊寄存器无法直接与内存进行数据交换。用户可以通过 5 个 4-字节（AR 寄存器）或者 2 个 16-字节 (QR) 寄存器与 QACC\_H 和 QACC\_L 进行数据传输。
+
+下表 \ref{tab:pie_data_format_align} 列出每种数据格式的比特位宽和对齐信息（"x" 表示该比特数据位可以是 "0" 值也可以是 "1" 值）。Xtensa 处理器使用字节作为所有数据格式存储在内存中地址的最小单位。字节顺序采用小端字节序，0 号字节存放在最低位（最右边），如图 \ref{fig:pie_byte_little_endian_cn} 所示。
+
+\begin{table}[H]
+\centering
+\caption{数据格式及对齐}
+\label{tab:pie_data_format_align}
+\begin{tabular}{|l|c|c|}
+\hline
+    \rowcolor{lightgray}
+    \textbf{数据格式}  & \textbf{长度} & \textbf{内存中对齐地址} \\\hline
+
+    1-字节 & 8 bits & xxxx \\\hline
+    2-字节 & 16 bits & xxx0 \\\hline
+    4-字节 & 32 bits & xx00 \\\hline
+    8-字节 & 64 bits & x000 \\\hline
+    16-字节 & 128 bit & 0000 \\\hline
+    \end{tabular}
+\end{table}
+
+若数据格式在内存中的存放位置是非对齐的地址，此时直接对该数据存储在内存中地址进行访问面临被拆分成二次访存的情况，进而影响到代码的性能。例如，用户期望从内存中读取一个 16-字节的数据，如表 \ref{tab:pie_data_format_align} 所示，对齐的情况下，该数据在内存中的存储地址地位为 0000。实际情况下该数据的地址低位可能是 0000 \verb+~+ 1111（二进制）中的任意一种情况。假设其存放在内存的地址低位是 0\_0100，处理器会将对该数据的一次访存操作变成两次，分别是对 0\_0000 和 1\_0000 地址的访问。随后处理器从得到的 2 个 16-字节中拼接出所需要的 16-字节。
+
+为了避免上述非对齐访存操作导致的代码性能降低的情况发生，扩展指令集中所有的访存指令发出的访问地址都被强制对齐了，即地址低位将被 0 值替换。例如，对 0x{}3fc8\_0024 发起 128-bit 数据读取操作，访问地址的低 4-bit 将被强制置 0，最终读取到的是地址 0x{}3fc8\_0020 处存放的 128-bit 数据。同理进行 64-bit 数据访问的地址的低 3-bit 将被置 0；进行 32-bit 数据访问的地址的低 2-bit 将被置 0；进行 16-bit 数据访问的地址的低 1-bit 将被置 0。
+
+上述设计特性要求用户保证代码中发起的访存操作的地址都是对齐的，否则读取到数据并不是期望的内容。用户需要显性地声明该变量或者数组在内存中的对齐方式。16 字节对齐能够满足绝大部分应用场景的需求。
+
+考虑到某些应用场景下，参与运算的数据的内存地址是不确定的。\chipname{} 扩展指令集提供了 SAR\_BYTE 特殊寄存器及 EE.LD.128.USAR.*、EE.SRC.* 等相关指令来处理非对齐的数据。
+
+假设通用寄存器 a8 中存储着 128-bit 非对齐数据地址。可以通过下列代码将该 128-bit 数据读取到指定 QR 寄存器（例子中以 q2 代替）：\\
+$ \hyperref[instruction:EELD128USARIP]{EE.LD.128.USAR.IP}\hspace{1cm}q0,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:EEVLD128IP]{EE.VLD.128.IP}\hspace{1cm}q1,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:EESRCQ]{EE.SRC.Q}\hspace{1cm}q2,\hspace{0.5cm}q0,\hspace{0.5cm}q1 $
+
+\subsection{数据溢出及饱和处理}
+
+数据溢出是指运算结果的数值大小超出了结果暂存寄存器所能存储的数值范围。以指令 \hyperref[instruction:EEVMULS8]{EE.VMUL.S8} 为例，两个 8-bit 乘数的结果是 16-bit，进行符号右移后的结果应该仍是 16-bit，但最终的结果将被存储到 8-bit 寄存器空间中，此时便存在数据溢出风险。
+
+在 \chipname{} 扩展指令的设计中，对于数据溢出，有两种处理方式：取饱和、截取低有效位。前者根据结果寄存器所能存储的数值范围对计算结果进行约束，超过结果寄存器所能表示的最大数值时取最大值；小于结果寄存器所能表示的最小数值时取最小值。这部分会在指令的描述中显性的表示出来，比如 EE.VADDS.* 系列指令对加法结果就进行了取饱和操作。对于更多指令内部运算结果的数据溢出处理，统一采用截断的方式处理，即只截取结果数据中与结果寄存器位宽一致的低位数据存入结果寄存器中。
+
+请用户注意：对于指令描述中没有提及取饱和处理的指令，数据溢出将按照截断处理。
+
+\section{扩展指令简介}\label{chp:pie_instruction_simple_introduction}
+
+表 \ref{tab:pie_instruction_summary} 列出了 \chipname{} 扩展指令集包含的指令类别及各类别包括的指令信息。本章节将对各指令类别做简要介绍。
+
+\clearpage
+\input{\modulefiles/tables/08-pie-instruction-summary__CN}
+
+\subsection{读内存指令}
+\label{sec:pie-load-instrucitons}
+
+读内存指令根据存储有访存地址信息的 AR 寄存器，让处理器发出虚地址访问内存。对于大部分指令而言，都是采用读内存后更新访存地址的策略。指令 \hyperref[instruction:EELDXQ32]{EE.LDXQ.32} 是特例，该指令先通过立即数选择 QR 寄存器中某片 16-bit 数据，加到访存地址上，随后再发出访存操作。
+
+由于不对齐的地址访问会导致访存行为变慢，扩展指令集中的所有读内存指令发出的虚地址都是根据数据格式强制对齐后的地址。根据访存数据格式的大小，内存返回相应位宽的数据：1-字节，2-字节，4-字节，8-字节或者 16-字节。当强制对齐后读取到的数据与预期不一致时，可以通过 \hyperref[instruction:EESRCQ]{EE.SRC.Q} 等指令从多个 QR 寄存器中提取出想要的数据。
+
+下表对读内存指令的访存行为进行了简要说明，更多信息参见 \ref{sec:pie-instruction-descrip}。
+
+\clearpage
+\input{\modulefiles/tables/08-pie-read-instructions__CN}
+
+
+\subsection{写内存指令}
+
+\label{sec:pie-write-instrucitons}
+
+写内存指令根据存储有访存地址信息的 AR 寄存器，让处理器发出虚地址访问内存。对于大部分指令而言，都是采用写内存后更新访存地址的策略。指令 \hyperref[instruction:EESTXQ32]{EE.STXQ.32} 是特例，该指令先通过立即数选择 QR 寄存器中某片 16-bit 数据，加到访存地址上，随后再发出访存操作。\\
+由于不对齐的地址访问会导致访存行为变慢，扩展指令集中的所有写内存指令发出的虚地址都是根据数据格式强制对齐后的地址。根据访存数据格式的大小，向内存写入相应位宽的数据：1-字节，2-字节，4-字节，8-字节或者 16-字节。当待写入内存的数据位宽小于访存位宽时，需要对待写入数据进行 0 扩展或者符号位扩展。\\
+下表对写内存指令的访存行为进行了简要说明，更多信息参见章节 \ref{sec:pie-instruction-descrip}。
+
+\input{\modulefiles/tables/08-pie-write-instructions__CN}
+
+\subsection{数据交换指令}\label{sec:pie_data_exchange_instrucitons}
+
+数据交换指令主要用于交换不同寄存器之间的数据信息。考虑到交换数据之间的寄存器位宽不匹配的情况，一方面通过增加立即数作为选择信号；另一方面提供 0 扩展和符号位扩展指令。多种数据交换指令，可以满足用户多种场景下的数据交换要求。
+
+更多有关数据交换指令的详细信息，请参见章节 \ref{sec:pie-instruction-descrip}。
+
+\input{\modulefiles/tables/08-pie-data-exchange-instructions__CN}
+
+
+\subsection{运算指令}
+\label{sec:pie-arithmetic-instrucitons}
+
+运算指令主要采用 SIMD（单指令多数据）设计原则，均是针对向量数据的运算指令，主要包括：向量加法、向量乘法、向量复数乘法、向量乘累加、向量和标量乘累加以及其他。
+
+\subparagraph{向量加法}
+
+\chipname{} 提供 1-字节、2-字节、4-字节为数据处理单位的向量加减法指令。考虑到向量运算所需的输入输出操作数都是存储在内存中，为了减少额外执行读取内存操作，提升代码执行速度，还设计了在向量运算同时执行 16-字节访存的向量加法指令，并在访存结束后，地址寄存器内数值增加 16，从而直接指向连续的下一个 16-字节的内存地址。用户可以根据实际算法需求，选择相应的指令。\\
+此外向量加法指令还对加减法结果进行了取饱和操作以保证运算精度。
+
+
+\input{\modulefiles/tables/08-pie-vector-addition-instruc__CN}
+
+
+\subparagraph{向量乘法}
+
+\chipname{} 提供 1-字节、2-字节为数据处理单位的向量乘法指令，并且支持无符号和有符号两种向量乘法。\\
+考虑到向量运算所需的输入输出操作数都是存储在内存中，为了减少额外执行读取内存操作，提升代码执行速度，还设计了在向量运算同时执行 16-字节访存的向量乘法指令，并在访存结束后将访存地址增加 16，使其指向下一个 16-字节的内存地址。用户可以根据实际算法需求，选择相应的指令。\\
+
+\input{\modulefiles/tables/08-pie-vector-multiplication-instruc__CN}
+
+
+\subparagraph{向量复数乘法}
+
+\chipname{} 提供 2-字节为数据处理单位的向量复数乘法指令。指令运算操作数都是按照符号数来执行的。
+
+考虑到向量运算所需的输入输出操作数都是存储在内存中，为了减少额外执行读取内存操作，提升代码执行速度，还设计了在向量运算同时执行 16-字节访存的指令，并在访存结束后将访存地址增加 16，使其指向下一个 16-字节的内存地址。用户可以根据实际算法需求，选择相应的指令。\\
+
+\input{\modulefiles/tables/08-pie-vector-complex-multiplication-instruc__CN}
+
+
+\subparagraph{向量乘累加}
+
+\chipname{} 提供两种类型的向量乘累加。一种是基于 ACCX 寄存器，将多个向量乘法的结果累加到一个 40-bit ACCX 寄存器中。一种是基于 QACC\_H 和 QACC\_L 寄存器，将向量乘法的结果分别累加到 QACC\_H 和 QACC\_L 对应的比特片区上。上述两种乘累加指令都支持 1-字节和 2-字节分片大小的乘累加。\\
+为了减少额外执行读取内存操作，提升代码执行速度，还设计了在向量运算同时执行 16-字节访存的指令，并在访存结束后将访存地址增加 AR 寄存器内数值或者立即数大小。\\
+除此之外，向量乘累加指令中带有 "QUP" 后缀的指令还支持从非对齐地址中提取出 16-byte 对齐数据的功能。
+
+\input{\modulefiles/tables/08-pie-vector-multi-accum-instruc__CN}
+
+
+
+\subparagraph{向量和标量乘累加}
+
+该类指令的功能与基于 QACC\_H 和 QACC\_L 寄存器的向量乘累加指令相似，区别在于双目操作数中一个是向量，一个是标量。另外同样包含在向量运算的同时执行访存操作的指令。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{运算指令}
+    \label{tab:pie-vector-scalar-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEVSMULASS8QACC]{EE.VSMULAS.S[8/16].QACC} & 有符号 1-字节/2-字节分片的向量与标量乘累加。
+    \\\hline
+    \hyperref[instruction:EEVSMULASS8QACCLDINCP]{EE.VSMULAS.S[8/16].QACC.LD.INCP} & 有符号 1-字节/2-字节分片的向量与标量乘累加。同时从内存读取 16-字节数据。并对地址增加 16。
+    \\\hline
+\end{longtable}
+
+
+\subparagraph{其他}
+
+这部分指令主要包含对 QACC\_H、QACC\_L 以及 ACCX 中乘累加结果进行算术右移处理的指令。用户通过设置移位数值来获得预期精度范围内的乘累加结果。\\
+此外还包含条件使能的向量乘法指令。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{运算指令}
+    \label{tab:pie-others-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EESRCMBS8QACC]{EE.SRCMB.S[8/16].QACC} & 对 QACC\_H, QACC\_L 寄存器内数值按片区进行符号右移。
+    \\\hline
+    \hyperref[instruction:EESRSACCX]{EE.SRS.ACCX} & 对 ACCX 寄存器内数值进行符号右移。
+    \\\hline
+    \hyperref[instruction:EEVRELUS8]{EE.VRELU.S[8/16]} & 条件使能的向量与标量乘法指令。
+    \\\hline
+    \hyperref[instruction:EEVPRELUS8]{EE.VPRELU.S[8/16]} & 条件使能的向量与向量乘法指令。
+    \\\hline
+\end{longtable}
+
+
+\subsection{比较指令}
+\label{sec:pie-comparison-instrucitons}
+
+向量比较指令，支持 1-字节，2-字节以及 4-字节为数据比较单位的多种比较指令。包括有取两者间较大值、取两者间较小值、前者等于后者置 1 反之 0、前者大于后者置 1 反之 0、前者小于后者置 1 反之 0。\\
+考虑到向量运算所需的输入输出操作数都是存储在内存中，为了减少额外执行读取内存操作，提升代码执行速度，还设计了在向量运算同时执行 16-字节访存的指令，并在访存结束后增加 16 到访存地址，使其指向下一个 16-字节的内存地址。用户可以根据实际算法需求，选择相应的指令。\\
+
+\input{\modulefiles/tables/08-pie-comparison-instructions__CN}
+
+
+\subsection{按位逻辑操作指令}\label{sec:pie-bitwise-logic-instrucitons}
+
+包含按位逻辑或、按位逻辑与、按位逻辑异或和按位取反指令。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{按位逻辑操作指令}
+    \label{tab:pie-bitwise-logic-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEORQ]{EE.ORQ} & 按位逻辑或$qa = qx | qy$
+    \\\hline
+    \hyperref[instruction:EEXORQ]{EE.XORQ} & 按位逻辑异或$qa = qx$ \^{} $qy$
+    \\\hline
+    \hyperref[instruction:EEANDQ]{EE.ANDQ} & 按位逻辑与$qa = qx \& qy$
+    \\\hline
+    \hyperref[instruction:EENOTQ]{EE.NOTQ} & 按位取反$qa =\verb+~+ qx$
+    \\\hline
+\end{longtable}
+
+
+\subsection{移位指令}
+
+\label{sec:pie-shift-instrucitons}
+
+包含 4-字节为数据处理单位的向量左移和向量右移指令，16-字节拼接后左移指令和右移指令。前者移位数值由 SAR 寄存器决定。后者移位数值既可以由 SAR\_BYTE 寄存器决定，也可以由立即数决定，还可以由 AR 寄存器低位比特数据决定。用户可以根据应用需求选择最合适的移位指令。\\
+上述指令都是按照有符号数移位来执行移位操作。
+
+\input{\modulefiles/tables/08-pie-shift-instructions__CN}
+
+
+\subsection{FFT（快速傅立叶变换）专用指令}
+
+\label{sec:pie-fft-instrucitons}
+
+FFT（Fast Fourier Transform, 快速傅立叶变换）专用指令，包括蝶形运算指令，比特反转指令以及实数 FFT 指令。
+\subparagraph{蝶形运算指令}
+支持基-2 蝶形运算。
+
+\input{\modulefiles/tables/08-pie-butterfly-instructions__CN}
+
+\subparagraph{比特反转指令}
+
+FFT\_BIT\_WIDTH 寄存器数值大小决定比特反转指令的反转位宽。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{比特反转指令}
+    \label{tab:pie-bitrev-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:EEBITREV]{EE.BITREV} & 比特反转指令
+    \\\hline
+\end{longtable}
+
+
+\subparagraph{实数 FFT 指令}
+
+单条实数 FFT 可以完成一系列复杂运算：加法、乘法、移位等。
+
+\input{\modulefiles/tables/08-pie-real-fft-instructions__CN}
+
+
+\subsection{GPIO 控制指令}
+\label{sec:pie-gpio-instrucitons}
+
+包含驱动 GPIO\_OUT 以及获取 GPIO\_IN 状态的指令。
+
+\input{\modulefiles/tables/08-pie-gpio-instructions__CN}
+
+\subsection{处理器控制指令}
+\label{sec:pie-processor-control-instrucitons}
+
+如章节 \ref{sec:pie-spec-reg} 所述，\chipname{} 处理器内部有多种特殊寄存器。为了方便用户读写这些特殊寄存器的数值，提供如下几种处理器控制指令实现特殊寄存器与 AR 寄存器之间的数据传输。
+
+\textbf{RSR.* (Read Special register)} \\ 指令可以读取处理器内自带的特殊寄存器内的数值到 AR 寄存器，“$*$”为特殊寄存器名，仅包括 SAR 寄存器。
+
+\textbf{WSR.*（Write Special register）} \\
+指令可以通过 AR 寄存器修改处理器内自带的特殊寄存器内的数值，“$*$”为特殊寄存器名，仅包括 SAR 寄存器。
+
+\textbf{XSR.*（Exchange Special register）} \\
+ 指令交换 AR 寄存器与特殊寄存器内的数值，“$*$”为特殊寄存器名，仅包括 SAR 寄存器。
+
+\textbf{RUR.* (Read User-defined register)}\\ 指令可以读取处理器内自定义的特殊寄存器内的数值到 AR 寄存器，“$*$”为特殊寄存器名，包括 SAR\_BYTE、ACCX、QACC\_H、QACC\_L、FFT\_BIT\_WIDTH、UA\_STATE 寄存器。
+
+\textbf{WUR.*（Write User-defined register）}\\
+指令可以通过 AR 寄存器修改自定义的特殊寄存器内的数值，“$*$”为特殊寄存器名，包括 SAR\_BYTE、ACCX、QACC\_H、QACC\_L、FFT\_BIT\_WIDTH、UA\_STATE 寄存器。\\
+对于位宽超过 32-bit 特殊寄存器，通过“\_n”后缀区分对同一个特殊寄存器的不同 32-bit 片区数据进行读写的指令。以读取 ACCX 寄存器数值指令为例，有两条 RUR.* 指令：RUR.ACCX\_0，RUR.ACCX\_1。前者读取 ACCX 低 32-bit 数据写入 AR 寄存器；后者读取 ACCX 余下的高 8-bit 数据 0 扩展后写入 AR 寄存器。相应地，QACC\_H 和 QACC\_L 通过 5 个 AR 寄存器进行数据传输。
+
+
+
+\clearpage
+\section{指令性能}\label{subsec:pie_pipeline}
+对于采用流水线设计的处理器而言，理想情况下，每个处理器周期发出一条指令到流水线上。\chipname{} Xtensa 处理器采用 5 级流水线技术，包含 I（取指令）、R（译码）、E（执行）、M（访存）、W（写回）。处理器在每个流水级工作内容如表 \ref{tab:pie_processor_5stage} 所示。\\
+
+\begin{longtable}[c]{|l|c|l|}
+    \caption{5 级 Xtensa 处理器流水线}
+    \label{tab:pie_processor_5stage}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{流水级} & \textbf{数字编号} & \textbf{执行操作} \\\hline
+    I & - & 指令对齐（同时支持 24-bit、32-bit 指令）\\\hline
+    R & 0 & \makecell[l]{读取通用寄存器 AR、QR \\ 指令译码、内部锁检测、操作数转发} \\\hline
+    E & 1 & \makecell[l]{对于运算指令，ALU 单元（加、减、乘等）工作\\对于读取内存指令，生成访存虚地址\\对于分支跳转指令，进行跳转地址选择}\\\hline
+    M & 2 & 发出读写内存访问 \\\hline
+    W & 3 & 计算结果及读取内存数据写回寄存器\\\hline
+\end{longtable}
+
+一条指令的所有操作数以及操作所需要的硬件资源都已经准备完成后才能被处理器发出到流水线上。但实际程序运行过程中存在如下几种冒险问题，导致流水线停顿，指令被延迟执行。
+
+\subsection{数据冒险}
+当指令 A 写结果到寄存器 X（包括显性的通用寄存器与隐性的特殊寄存器），而另一条指令 B 需要用到寄存器 X 作为输入操作数时。此时称指令 B 依赖于指令 A。如果指令 A 是在 SA 流水级（这一流水级的结尾）准备好写入寄存器 X 的结果，指令 B 是在 SB 流水级（这一流水级的开始）读取寄存器 X 中的数据。那么指令 A 必须早于指令 B D=max(SA－SB+1, 0) 个周期发出。\\
+如果处理器在指令 A 后小于 D 周期数内取到指令 B，处理器会延迟发出指令 B 直到满足 D 个周期数之后。处理器因为流水线相互作用延迟某条指令的行为被称之为内部锁。\\
+假设指令 A 的 SA 流水级为 W ，指令 B 的 SB 流水级为 E。如图 \ref{fig:pie_data_hazard} 所示，指令 B 最终发出到流水线上的时刻，晚于指令 A D=max(2-1+1, 0)=2 个周期。\\
+当指令的输出操作数被设计成在某个流水级的结尾时可获取时，意味着该指令的运算结束。通常情况下，对该结果数据有所依赖的指令必须等到输出操作数被写入相应的寄存器后，才能再从对应寄存器中获取更新后的数据。Xtensa 处理器支持 “bypass” 操作，它会检测指令的输入操作数在哪条指令的哪个流水级上被生成，不需要等该数据被写入寄存器，便可直接从生成流水级转发到需要用到的流水级上。
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/data_hazard__CN}}
+    \caption{指令操作数依赖导致内部锁}
+    \label{fig:pie_data_hazard}
+\end{figure}
+
+指令之间的数据依赖关系取决于操作数之间的依赖关系以及读写所处的流水级。表 \ref{tab:pie_inst_pipelining} 列出了 \chipname{} 扩展指令所有操作数，包括隐性的特殊寄存器的写 (def)，读 (use) 流水级信息。
+
+\input{08-PIE/tables/08-pie-instructions-pipelining__CN}
+
+\subsection{资源冒险}
+当多条指令同时调用相同的硬件资源时，处理器只能允许其中一条指令占用硬件资源，其余指令将被延迟。例如，处理器内只有 8 个 16-bit 乘法器。指令 C 在 M 流水级上需要用到这 8 个 16-bit 乘法器，指令 D 在它的 E 流水级上需要用到 4 个 16-bit 乘法器。如图 \ref{fig:pie_resource_hazard} 所示，指令 C 在第 T+0 周期发出，指令 D 在第 T+1 周期发出，有 4 个 16-bit 乘法器在第 T+3 周期同时被它们申请占用。此时处理器会延迟一个周期发出指令 D 到流水线上来避免与指令 C 的冲突。
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/resource_hazard__CN}}
+    \caption{硬件资源冒险}
+    \label{fig:pie_resource_hazard}
+\end{figure}
+
+\subsection{控制冒险}
+数据冒险、资源冒险可以通过调整代码顺序来优化，而控制冒险却很难优化。程序代码通常有许多条件选择语句，根据条件满足与否，执行不同的代码。编译器会将上述条件语句处理成分支跳转指令：条件满足就跳到目标地址执行相应的代码；条件不满足就按照顺序处理后续的指令。当条件满足时，如图 \ref{fig:pie_control_hazard} 所示，处理器将从新的目标地址重新取指，此时流水线上处于 R、E 流水级的指令将被刷新掉，相当于流水线停滞了 2 个周期。\\
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{./08-PIE/figures/control_hazard__CN}}
+    \caption{控制冒险}
+    \label{fig:pie_control_hazard}
+\end{figure}
+
+\clearpage
+\section{扩展指令功能描述}\label{sec:pie-instruction-descrip}
+
+建议在阅读本章节前，先阅读一下表 \ref{tab:pie-instruction-field}，该表介绍了指令编码中指令域名及其含义。
+
+[N:M] 是下文中采用的域的表达方式。比特上下限 N 和 M 都包含在内，表示域的位宽为 (N-M+1)。以 qa[2:0] 为例，qa 共有 3 (2-0+1) 个比特，分别是 bit0, bit1 和 bit2。qa[1] 表示 bit1 的值。
+
+本章节按照指令名称中首字母大小顺序描述了 \ref{chp:pie_instruction_simple_introduction} 章节中提到的所有指令。每条指令的编码序列都采用小端比特序，如图 \ref{fig:pie_bit_little_endian_cn} 所示。\\
+
+\addtocontents{toc}{\protect\setcounter{tocdepth}{1}}
+
+\input{08-PIE/tables/08-pie-new-instructions__CN}
+
+\addtocontents{toc}{\protect\setcounter{tocdepth}{3}}
+
+\end{document}

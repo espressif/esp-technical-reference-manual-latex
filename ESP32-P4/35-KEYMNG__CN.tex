@@ -1,0 +1,1018 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./35-KEYMNG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+% Define formatting of chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}第\, \thechapter\, 章}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{第\, \thechapter\, 章 \  \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{keymng}{}
+\chapter{密钥管理器}
+\label{mod:keymng}
+
+\section{概述}
+密钥管理是系统的安全核心，利用密钥管理器和硬件唯一密钥 (HUK) 生成器，实现了密钥的安全存储和部署。使用芯片的 HUK 作为信任根，芯片的任何区域均不存储明文密钥，因此提高了芯片的整体安全性。
+
+
+与使用 eFuse 存储密钥相比，密钥管理器和 HUK 生成器可以对系统进行以下改进：
+\begin{itemize}
+    \item 环境适应性：支持密钥的安全部署，即使外部环境不可信任，依然可以安全地完成密钥部署。
+    \item 抗攻击能力：每个芯片的 SRAM 都有一个独一无二的默认值，软件无法访问该默认值。明文密钥不存储在芯片的任何物理位置，因此可以抵御切片攻击和复制攻击。例如直接通过切片查看 eFuse 中密钥的方法将会失效。
+    \item 密钥管理灵活性：密钥管理器允许用户将密钥信息（非明文）存储在外部存储器中。与 eFuse 不同，密钥管理器允许用户创建无限数量的密钥，进行动态密钥更改、密钥替换等。
+
+\end{itemize}
+
+\section{密钥管理背景知识}
+
+SRAM PUF（物理不可克隆函数）利用 SRAM 单元上电时的天然初始状态，将这些初始状态用作芯片的“指纹”。芯片上电时，每个未初始化的 SRAM 位会因为晶体管在制造过程中的微小差异而倾向于变成 0 或 1。这些差异对每颗芯片都是独一无二的，因此生成的位模式也具有设备唯一性。
+
+利用这一特性可以在芯片上生成一个硬件唯一密钥（HUK），且无需在芯片上存储这个密钥：芯片可以在每次启动时依靠物理特性重新生成密钥，而不需要从 flash 或 eFuse 中读取。HUK 随后可用作安全启动、设备身份与认证、加密密钥以及封装其他密钥的信任根。
+
+但原始的 SRAM PUF 位并不完全稳定。大多数位在每次上电时都会产生相同的值，但某些位可能会因为温度、电压或噪声等因素而出现少量翻转。为了生成稳定的 HUK，芯片在 HUK 生成阶段，会生成具备纠错能力的辅助数据（huk\_info）用于恢复 HUK，用户需要将这个辅助数据存储在 flash 中。
+
+在后续的每次启动中，硬件会读取新的（带噪声的）PUF 响应，并利用辅助数据将任何翻转的位纠正回参考值，从而重新构造出部署阶段生成的完全相同的 HUK。随后，HUK 会被加载到加密硬件内部的隐藏密钥槽中（绝不会进入普通 RAM），使设备能够基于 SRAM PUF 获得一把可重复生成、每颗芯片唯一的秘密密钥，即使底层的 PUF 位在每次上电时并非 100\% 相同。
+
+
+\section{术语}
+
+为了更好地说明 HUK 生成器和密钥管理器的功能，本章使用了以下术语及参数。
+
+
+\begin{longtable}[c]{ R{6cm} p{10cm} }
+\multicolumn{2}{l}{\textbf{术语}} \\
+\textbf{HUK}\label{para:HUK} & 硬件唯一密钥 (Hardware Unique Key, HUK)，使用 SRAM PUF 从设备上电时的默认初始值中派生出来的硬件密钥。\\ 
+\textbf{PUF} & 物理不可克隆函数 (Physical Unclonable Function, PUF) 基于 SRAM，属于一种安全技术，利用 SRAM 在上电时的独特且不可预测的行为为设备生成唯一的指纹或加密密钥。\\
+\textbf{HUK 生成模式} & 在该模式下，HUK 生成器生成新的 HUK。\\
+\textbf{HUK 恢复模式} & 在该模式下，HUK 生成器恢复已部署的 HUK。\\
+\textbf{随机部署模式} & 在该模式下，密钥管理器部署随机私钥。随机私钥由随机数生成器生成。\\
+\textbf{AES 部署模式} & 在该模式下，密钥管理器部署指定私钥。\\
+\textbf{ECDH0 部署模式} & 在该模式下，密钥管理器部署协商私钥 (\begin{math}k1*k2*G\end{math})。该私钥由密钥 \begin{math}k1\end{math} 和 \begin{math}k2*G\end{math} 共同生成。\\
+\textbf{ECDH1 部署模式} & 在该模式下，密钥管理器部署协商私钥。该私钥由密钥 \begin{math}k1\end{math}、\begin{math}k2*G\end{math}、和 \begin{math}k2\_info\end{math} 共同生成。\\
+\textbf{私钥恢复模式} & 在该模式下，密钥管理器恢复已部署的私钥。\\
+\textbf{\begin{math}key\_info\end{math} 导出模式} & 在该模式下，密钥管理器重新生成 \begin{math}key\_info\end{math}，用户可将该 \begin{math}key\_info\end{math} 导出到密钥管理器的内部存储器中。\\
+\multicolumn{2}{l}{\textbf{参数}} \\
+\begin{math}huk\_info\end{math}\label{para:hukinfo} & 包含模糊提取信息和对 HUK 进行 RS 编码后的纠错码信息，不包含任何 HUK 本身的信息。该 \begin{math}huk\_info\end{math} 可用于恢复已部署的 HUK。\\
+\begin{math}key\_info\end{math}\label{para:keyinfo} & 在密钥管理器的所有模式下，\begin{math}key\_info\end{math} 均等于 AES\{AES\{key,rand\_num\}||rand\_num,HUK\}。\\
+\begin{math}AES\{a,b\}\end{math} & 以 \begin{math}b\end{math} 为密钥对明文 \begin{math}a\end{math} 进行加密，算法为 AES\_ECB，即 AES 模块的典型模式。\\
+\begin{math}rand\_num\end{math} & 随机数\\
+\begin{math}a||b\end{math} & 将两段数据连接成一段数据。\\
+\begin{math}k1\end{math}\label{para:k1} & 指定私钥 \\
+\begin{math}k2\end{math}\label{para:k2} & 辅助密钥，用于辅助密钥部署，在 AES 部署模式和 ECDH1 部署模式下使用。在 AES 部署模式下，其值不影响部署的密钥；在 ECDH1 部署模式下，其值会影响部署的协商密钥。\\ 
+\begin{math}k1\_encrypted\end{math}\label{para:k1enc} & 使用 \begin{math}k2\end{math} 对 \begin{math}k1\end{math} 进行加密而生成的密钥。 在 AES 部署模式和 ECDH1 部署模式下使用，\begin{math}k1\_encrypted\end{math} = AES\{k1,k2\}\\
+\begin{math}k2\_info\end{math}\label{para:k2info} & \begin{math}k2\end{math} 的恢复信息，对应辅助密钥 \begin{math}k2\end{math}。在 AES 部署模式和 ECDH1 部署模式下使用， \begin{math}k2\_info\end{math} = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}。\\
+\begin{math}init\_key\end{math}\label{para:initkey} & 用于 \begin{math}k2\_info\end{math} 的生成过程，以及从 \begin{math}k2\_info\end{math} 恢复为 \begin{math}k2\end{math} 的过程。其值可以存储在用途为 EFUSE\_KM\_INIT\_KEY 的 eFuse 块中，也可以来自于软件配置。\\
+\textbf{\begin{math}sw\_init\_key\end{math}}\label{para:swinitkey} & 软件配置的 \begin{math}init\_key\end{math}。\\
+\textbf{\begin{math}k1*k2*G\end{math}}\label{para:k1k2G} & 协商密钥，通过在椭圆曲线上计算 \begin{math}k1*k2*G\end{math} 生成。\\
+\textbf{\begin{math}k1*G\end{math}}\label{para:k1G} & 在椭圆曲线上计算 \begin{math}k1\end{math} 生成的密钥。\\
+\textbf{\begin{math}k2*G\end{math}}\label{para:k2G} & 辅助公钥，通过在椭圆曲线上计算 \begin{math}k2*G\end{math} 生成，该公钥用于生成 \begin{math}k1*k2*G\end{math}。\\
+\textbf{\begin{math}key\_purpose\end{math}} & 密钥的用途。\\
+\end{longtable}
+
+\section{主要特性}
+\label{sec:keymng-features}
+\textbf{HUK 生成器具有以下特性：}
+\begin{itemize}
+    \item HUK 生成模式：
+    \begin{itemize}
+        \item 生成新 HUK 及其对应的 HUK 恢复信息
+    \end{itemize}
+    \item HUK 恢复模式：
+    \begin{itemize}
+        \item 使用 HUK 恢复信息来恢复 HUK
+    \end{itemize}
+    \item HUK 恢复错误提示
+    \item HUK 风险等级提示
+\end{itemize}
+
+\textbf{密钥管理器具有以下特性：}
+\begin{itemize}
+    \item 密钥数量无限
+    \item 指定私钥部署（AES 部署模式）
+    \begin{itemize}
+        
+        \item 用户可指定密钥的值
+    \end{itemize}
+    \item 协商私钥部署（ECDH0 部署模式）
+    \begin{itemize}
+        \item 最高安全模式，无需担心外部渠道的数据泄露
+        \item 获取私钥需初始化芯片
+        \item 密钥值为芯片与用户协商所得
+    \end{itemize}
+    \item 协商私钥部署（ECDH1 部署模式）
+    \begin{itemize}
+        \item 利用辅助密钥部署协商私钥
+        \item 获取私钥无需启动芯片
+    \end{itemize}
+    \item 随机密钥部署（随机部署模式）
+    \begin{itemize}
+        \item 部署硬件生成的随机密钥，无人知道其确切值
+    \end{itemize}
+    \item 私钥恢复部署
+    \begin{itemize}
+        \item 输入部署时生成的密钥信息可恢复完全相同的密钥
+    \end{itemize}
+    \item 密钥信息导出
+    \begin{itemize}
+        \item 为同一个密钥每次生成不同的密钥信息
+    \end{itemize}
+\end{itemize}
+
+\section{结构概览}
+\label{sec:keymng-arch-overview}
+
+密钥管理器和 HUK 生成器的顶层架构如下图所示。
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/keymng_arch.png}
+    \caption{密钥管理器 \& HUK 生成器架构}
+    \label{fig:keymng-arch}
+\end{figure}
+密钥管理器与外部模块的交互路径如下：
+\begin{itemize}
+    \item \textbf{ eFuse 路径：}使用 eFuse 位来控制密钥管理器的配置。
+    \item \textbf{ HP APB 路径：}使用 HP APB 总线来配置寄存器和传输存储器数据。
+    \item \textbf{ HUK 路径：}从 HUK 生成器接收 HUK。
+    \item \textbf{ Crypto 路径：}使用 Crypto APB 总线控制 ECC/AES 等密码加速器实现密码运算。
+    \item \textbf{ TRNG 路径：}从 TRNG 接收真随机数据。
+
+\end{itemize}
+
+HUK 生成器与外部模块的交互路径如下：
+\begin{itemize}
+    \item \textbf{ eFuse 路径：}使用 eFuse 位来控制 HUK 生成器的配置。
+    \item \textbf{ LP APB 路径：} 使用 LP APB 总线来配置寄存器和传输存储器数据。
+    \item \textbf{ 密钥管理器路径：}发送 HUK 给密钥管理器。
+\end{itemize}
+
+\section{功能描述}
+\label{sec:keymng-func-descr}
+
+\subsection{HUK 生成器}
+HUK 生成器基于 SRAM 物理不可克隆函数 (PUF) 为每个芯片生成独一无二的 HUK。软件无法以任何方式访问此 HUK，因此密钥管理器使用此 HUK 可以保证其安全性可靠。
+
+\subsubsection{HUK 生成过程}
+HUK 生成器具有以下模式：
+\begin{itemize}
+    \item \textbf{HUK 生成模式：}生成新的 HUK 及其对应的 HUK 恢复信息 (\hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}})
+    \item \textbf{HUK 恢复模式：}根据 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 恢复 HUK
+\end{itemize}
+
+EFUSE\_KM\_HUK\_GEN\_STATE 和 \hyperref[fielddesc:HUKMODE]{HUK\_MODE} 共同控制 HUK 生成器的模式。
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[*] 这里指 EFUSE\_KM\_HUK\_GEN\_STATE 中所含 1 的总数。
+\end{TableNotes}
+\begin{longtable}[c]{| c | c | l |}
+\caption{HUK 生成器工作模式}
+\label{tab:huk-working-mode}
+\\\hline
+\rowcolor{lightgray}
+\textbf{\hyperref[fielddesc:HUKMODE]{HUK\_MODE}}  & \textbf{eFuse} \tnote{*} & \textbf{模式}\\\hline
+        \endfirsthead
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- 见下页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:HUKMODE]{HUK\_MODE}}  & \textbf{eFuse} \tnote{*} & \textbf{模式}\\\hline
+    \endhead
+    
+    \multicolumn{3}{r}{\textbf{接上页}} \\
+    \endfoot
+    
+    \insertTableNotes
+    \endlastfoot
+        \multirow{2}*{1} & 配置成 1 的比特数量为偶数  & HUK 生成模式      \\\cline{2-3}
+                         & 配置成 1 的比特数量为奇数  & HUK 恢复模式      \\\hline
+        0                & ---                     & HUK 恢复模式      \\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item HUK 生成模式结束后，建议向 EFUSE\_KM\_HUK\_GEN\_STATE 写入一个 1，此时 eFuse 中配置成 1 的比特数量为奇数。这样，芯片下次启动时，HUK 生成器只能进入 HUK 恢复模式。此时 HUK 恢复模式下恢复的 HUK 将与本次 HUK 生成模式中生成的 HUK 相同。
+    \item 如果在 HUK 生成模式结束后，芯片掉电前没有写入 EFUSE\_KM\_HUK\_GEN\_STATE，HUK 仍然可以配置为在下次上电时进入 HUK 生成模式，但新生成 HUK 的值不再与上次用于密钥部署的 HUK 相同。用户可以利用这一点来生成多个 HUK，同时利用其对应的 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 恢复所需要的 HUK。
+    \item \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 仅可被用于同一块芯片，即在芯片 A 生成的 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 无法在芯片 B 中恢复 HUK。
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{HUK 状态检查}
+用户可读取 \hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG} 来判断 HUK 的当前状态，并决定是否需要重新生成 HUK。\hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG} 中各个字段的功能如下：
+\begin{itemize}
+    \item \hyperref[fielddesc:HUKSTATUS]{HUK\_STATUS}：表示 HUK 当前的生成状态。
+    \begin{itemize}
+        \item 0：HUK 尚未生成。
+        \item 1：HUK 已成功生成且有效。
+        \item 2：HUK 已生成但无效。
+        \item 3：保留。
+    \end{itemize}
+    \item \hyperref[fielddesc:HUKRISKLEVEL]{HUK\_RISK\_LEVEL}：表示 HUK 的当前风险等级，值为 0$\sim$7，值越大，HUK 的风险越高。当值为 7 时，表示 HUK 不再可用。此时  \hyperref[fielddesc:HUKSTATUS]{HUK\_STATUS} 的值也将相应变为 2。
+\end{itemize}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item HUK 生成器使用 SRAM PUF 的默认值来生成 HUK。HUK 的风险等级指的是 SRAM PUF 的当前默认值与创建 HUK 时 SRAM PUF 的默认值之间的差值。
+    \item 在一些特殊的应用中，比如用户想弃用某个密钥，使对应的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 变为无效时，可以选择通过更新 HUK 的方式来实现上述目的。HUK 一旦变更，用户将无法用新的 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 结合之前的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 恢复密钥，即之前部署的密钥及其对应的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 均将变为无效。
+    \item 强烈建议软件监控风险等级，并在风险值达到 4–6 时重新生成 HUK。
+\end{itemize}
+\end{tiplisting}
+
+\subsection{密钥管理器}
+\label{sec:key-manager}
+\begin{tiplisting}
+每次使用密钥管理器进行密钥部署时，均需要确保 HUK 已经处于有效状态。可检查 \hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG} 来确定 HUK 的状态。
+\end{tiplisting}
+密钥管理器实现了包含四种模式的私钥部署流程、统一的私钥恢复流程以及 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出流程。
+\begin{itemize}
+    \item \textbf{四种私钥部署模式}
+    \begin{itemize}
+        \item 随机部署模式：部署随机私钥
+        \item AES 部署模式：部署指定私钥
+        \item ECDH0 部署模式：部署协商私钥
+        \item ECDH1 部署模式：部署协商私钥\\
+    \end{itemize}
+    四种部署模式可以让用户根据需求，在不同安全等级的环境中选择最便捷的部署流程。
+    \item \textbf{一种恢复模式}
+    \begin{itemize}
+        \item 私钥恢复模式：恢复已部署的私钥\\
+        该模式允许用户从任意数量的已部署的密钥中自由选择所需的密钥进行恢复。
+    \end{itemize}
+    \item \textbf{一种导出模式}
+    \begin{itemize}
+        \item 导出 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 模式：生成并输出已部署私钥的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}\\
+        该模式允许用户为已部署的密钥重新生成 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{随机部署模式}
+用户可使用该模式来部署随机密钥。该密钥由随机数生成器生成。
+\vspace{-0.5em}
+\begin{tiplisting}
+随机部署模式十分便捷，非常适用于不需要知道私钥具体值的应用场景。
+\end{tiplisting}
+
+\subsubsection{AES 部署方式}
+用户可使用该模式来部署指定私钥。该模式需要以下密钥及参数：
+
+\begin{itemize}
+    \item HUK：由 HUK 生成器生成，并发送给密钥管理器。
+    \item \hyperref[para:k1]{\begin{math}k1\end{math}}：指定的私钥，待部署到芯片。
+    \item \hyperref[para:k2]{\begin{math}k2\end{math}}：辅助密钥，用于加密 \hyperref[para:k1]{\begin{math}k1\end{math}}，保证在通讯链路上不存在 \hyperref[para:k1]{\begin{math}k1\end{math}} 的明文，保障数据安全。
+    \item \hyperref[para:initkey]{\begin{math}init\_key\end{math}}：初始辅助密钥，用于生成和解密 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 的密钥。
+    \item \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}：由 \hyperref[para:k2]{\begin{math}k2\end{math}} 和 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 生成，用于恢复得到 \hyperref[para:k2]{\begin{math}k2\end{math}}。计算公式为 \begin{math}k2\_info = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}\end{math}。
+\end{itemize}
+部署流程如下：
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/aes_deploy.png}
+    \caption{AES 部署模式}
+    \label{fig:keymng-aes-mode}
+\end{figure}
+\begin{enumerate}
+    \item 用户在本地生成私钥 \hyperref[para:k1]{\begin{math}k1\end{math}}，辅助密钥 \hyperref[para:k2]{\begin{math}k2\end{math}} 和初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}。
+    \item 用户本地计算得到 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}}。
+    \item 在\chipname{} 密钥管理器中完成密钥部署过程：
+    \begin{enumerate}
+        \item 根据使用场景，将 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 写入用途为 EFUSE\_KM\_INIT\_KEY 的 eFuse 块或 \begin{math}sw\_init\_key\end{math} 中。
+        \item 将 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}} 写入密钥管理器内部存储器。
+        \item 等待密钥管理器完成部署。
+        \item 用户通过指定地址从密钥管理器内部存储器中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+    \end{enumerate}
+\end{enumerate}
+
+\textbf{注意：}\\
+\begin{itemize}
+    \item 由于芯片每次上电都需要重新部署密钥，如果下次上电时要使用 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 进行密钥恢复，则必须确保芯片断电后 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 能够继续保存。一种常见的方法就是将其存储在 flash 中。
+    \item AES 部署模式适用于工厂生产：生产商可以向工厂端提供初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 
+    和使用 \hyperref[para:k1]{\begin{math}k1\end{math}} 加密的固件，并在固件中存储 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}}。
+    \begin{itemize}
+        \item 这种情况下，建议在固件中加入初次部署私钥的流程，存储 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}，并在后续芯片上电启动中使用恢复部署模式，而不是每次都使用 AES 部署模式，以有效抵御针对 eFuse 的切片攻击。
+        \item 注意，这种部署方式需要保证工厂端可信，因为工厂可以获得初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 的明文（用于烧录到 eFuse 中），如果工厂不可信，且知道如何使用 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 将 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 解密为 \hyperref[para:k2]{\begin{math}k2\end{math}}，就可能会导致 \hyperref[para:k1]{\begin{math}k1\end{math}} 的泄露。
+    \end{itemize}
+    \item 在每一次使用 AES 部署模式部署密钥时，都需要保证 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}， \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}} 的值不会同时泄露。
+    \begin{itemize}
+        \item 在使用 EFUSE\_KM\_INIT\_KEY eFuse 块中存储的 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 时，传输 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}} 时可以处于不可信环境。但这意味着用户必须在本地保留第一次写入 EFUSE\_KM\_INIT\_KEY eFuse 块中的 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}。
+        \item 在使用 \begin{math}sw\_init\_key\end{math} 时，传输 \begin{math}sw\_init\_key\end{math}， \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}} 时必须处于可信环境。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{ECDH0 部署模式}
+
+用户可使用该模式来部署协商私钥。该模式需要以下密钥及参数：
+
+\begin{itemize}
+    \item HUK：由 HUK 生成器生成，并发送给密钥管理器。
+    \item \hyperref[para:k1]{\begin{math}k1\end{math}}：根密钥，用户自己的私钥，只存在于用户本地。
+    \item \hyperref[para:k1G]{\begin{math}k1*G\end{math}}：在椭圆曲线上计算 \hyperref[para:k1]{\begin{math}k1\end{math}}*\begin{math}G\end{math} 生成的密钥。
+    \item \hyperref[para:k2G]{\begin{math}k2*G\end{math}}：辅助公钥，通过在椭圆曲线上计算 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 生成。
+    \item \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}}：待部署的协商私钥，密钥管理器使用 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 和 \hyperref[para:k2]{\begin{math}k2\end{math}} 生成协商私钥，用户本地则使用 \hyperref[para:k1]{\begin{math}k1\end{math}} 和 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 生成协商私钥。
+    \item \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}：\hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 的恢复信息。
+\end{itemize}
+
+该部署过程中，任何用户本地和芯片之外的信息泄露，均不会影响 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 的生成或产生泄露风险。
+部署流程如下：
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ecdh0_deploy.png}
+    \caption{ECDH0 部署模式}
+    \label{fig:keymng-ecdh0-mode}
+\end{figure}
+\begin{enumerate}
+    \item 用户本地生成 \hyperref[para:k1]{\begin{math}k1\end{math}} ，并计算得到 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}。
+    \item 在 \chipname{} 密钥管理器中完成密钥部署过程：
+    \begin{enumerate}
+        \item 将 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 写入密钥管理器的内部存储器。
+        \item 等待密钥管理器完成部署。
+        \item 用户通过指定地址从密钥管理器内部存储器中读取 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 和协商私钥 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 对应的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+    \end{enumerate}
+    \item 将读取的 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 与用户本地私钥 \hyperref[para:k1]{\begin{math}k1\end{math}} 一起生成协商密钥 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}}。
+\end{enumerate}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item ECDH0 部署模式采用 NIST-P256 曲线，所有椭圆曲线点乘运算均基于该曲线执行。
+    \item ECDH0 部署模式可以保证协商私钥只能在用户本地和密钥管理器内部生成，部署过程中的任何信息泄露都不会导致协商私钥的泄露。因此，使用 ECDH0 部署模式时，传输数据的过程可以处在不可信环境。
+    \item ECDH0 部署模式下，用户只能在运行 \chipname{} 密钥管理器后才能获得协商好的私钥。不适用于需要提前获知私钥具体值的应用场景。
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{ECDH1 部署模式}
+
+用户可使用该模式来部署协商私钥。该模式需要以下密钥及参数：
+
+\begin{itemize}
+    \item HUK：由 HUK 生成器生成，并发送给密钥管理器。
+    \item \hyperref[para:k1]{\begin{math}k1\end{math}}：根密钥，用户自己的私钥，在 ECDH1 部署模式中只存在于用户本地。
+    \item \hyperref[para:k1G]{\begin{math}k1*G\end{math}}：在椭圆曲线上计算 \hyperref[para:k1]{\begin{math}k1\end{math}}*\begin{math}G\end{math} 生成的密钥。
+    \item \hyperref[para:k2]{\begin{math}k2\end{math}}：辅助私钥，在 ECDH1 部署模式中只存在于用户本地和 \chipname{} 密钥管理器内部。
+    \item \hyperref[para:k2G]{\begin{math}k2*G\end{math}}：辅助公钥，通过在椭圆曲线上计算 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 生成。
+    \item \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}：由 \hyperref[para:k2]{\begin{math}k2\end{math}} 和 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 生成，用于恢复得到 \hyperref[para:k2]{\begin{math}k2\end{math}}。计算公式为 \begin{math}k2\_info = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}\end{math}。
+    \item \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}}：待部署的协商私钥，密钥管理器使用 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 和 \hyperref[para:k2]{\begin{math}k2\end{math}} 生成协商私钥，用户本地则使用 \hyperref[para:k1]{\begin{math}k1\end{math}} 和 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 生成协商私钥。
+    \item \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}：\hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 的恢复信息。
+\end{itemize}
+
+部署流程如下：
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ecdh1_deploy.png}
+    \caption{ECDH1 部署模式}
+    \label{fig:keymng-ecdh1-mode}
+\end{figure}
+\begin{enumerate}
+    \item 用户在本地生成私钥 \hyperref[para:k1]{\begin{math}k1\end{math}}，辅助密钥 \hyperref[para:k2]{\begin{math}k2\end{math}} 和初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}。
+    \item 用户本地计算得到 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}， \hyperref[para:k2G]{\begin{math}k2*G\end{math}}， \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}，以及协商私钥 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}}。
+    \item 在 \chipname{} 密钥管理器中完成密钥部署过程：
+    \begin{enumerate}
+        \item 根据使用场景（见下文说明），将 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 写入 EFUSE\_KM\_INIT\_KEY eFuse 块或 \begin{math}sw\_init\_key\end{math}中。
+        \item 将 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 和 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 写入密钥管理器的内部存储器。
+        \item 等待密钥管理器完成部署。
+        \item 用户通过指定地址从密钥管理器内部存储器中读取 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 和协商私钥 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 对应的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+    \end{enumerate}
+\end{enumerate}
+
+\textbf{说明：}\\
+
+\begin{itemize}
+    \item ECDH1 部署模式采用 NIST-P256 曲线，所有椭圆曲线点乘运算均基于该曲线执行。
+    \item ECDH1 部署模式适用于工厂生产：生产商可以向工厂端提供初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 
+    和使用 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 加密的固件，并在固件中存储 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}。
+    \begin{itemize}
+        \item 这种情况下，建议在固件中加入初次部署私钥的流程，存储 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}，并在后续芯片上电启动中使用恢复部署模式，而不是每次都使用 ECDH1 部署模式，以有效抵御针对 eFuse 的切片攻击。
+        \item 注意，这种部署方式需要保证工厂端可信，因为工厂可以获得初始辅助密钥 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 的明文（用于烧录到 eFuse 中），如果工厂不可信，且知道如何使用 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 将 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 解密为 \hyperref[para:k2]{\begin{math}k2\end{math}}，就可能会导致 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}} 的泄露。
+    \end{itemize}
+    \item 与 AES 部署模式类似，在每一次使用 ECDH1 部署模式部署密钥时，都需要保证 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}， \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 的值不会同时泄露。
+    \begin{itemize}
+        \item 在使用 EFUSE\_KM\_INIT\_KEY eFuse 块中存储的 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 时，传输 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 时可以处于不可信环境。但这意味着用户必须在本地保留第一次写入 EFUSE\_KM\_INIT\_KEY eFuse 块中的 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}。
+        \item 在使用 \begin{math}sw\_init\_key\end{math} 时，传输 \begin{math}sw\_init\_key\end{math}， \hyperref[para:k2info]{\begin{math}k2\_info\end{math}} 和 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 时必须处于可信环境。
+    \end{itemize}
+    \item 使用 ECDH1 部署模式更新密钥时，比使用 AES 部署模式拥有更高的安全性能。由于 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 的值与 \hyperref[para:k2]{\begin{math}k2\end{math}}、\hyperref[para:initkey]{\begin{math}init\_key\end{math}} 均无关，因此在使用 ECDH1 部署模式更新协商密钥时，可以只更新 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}，而不更新 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}。用户可以：
+    \begin{enumerate}
+        \item 在可信环境下将 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 写入固件。
+        \item 使用 ECDH1 部署模式更新密钥时，只传输 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 和 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}。这种情况下，用户可在不可信环境中使用 \begin{math}sw\_init\_key\end{math} 进行 ECDH1 模式部署密钥。
+    \end{enumerate}
+\end{itemize}
+
+\subsubsection{私钥恢复模式}
+私钥部署完成后，用户可通过部署时生成的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 来恢复该私钥。
+具体过程为：
+\begin{enumerate}
+    \item 读取外部存储器中的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 并将其存放到密钥管理器内部存储器的固定地址中。
+    \item 等待密钥管理器完成部署。
+    \item 重复上述步骤 1 $\sim$ 步骤 2，直到恢复所有需要的私钥。注意，如果恢复了两个或多个相同 \begin{math}key\_purpose\end{math} 的私钥，则最后一个私钥有效。关于 \begin{math}key\_purpose\end{math} 的说明，请参考小节 \ref{sec:keymng-key-purpose}。
+\end{enumerate}
+
+\subsubsection{\begin{math}key\_info\end{math} 导出模式}
+
+私钥部署成功后，用户可使用此模式重新生成并输出 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。\\
+具体过程为：
+\begin{enumerate}
+    \item 选择部署成功的 \begin{math}key\_purpose\end{math}，进入 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出模式。
+    \item 等待密钥管理器完成部署。
+    \item 用户通过指定地址从密钥管理器内部存储器中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+\end{enumerate}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 该模式可用于对同一个密钥输出不同的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。
+    \item 利用该模式也可以只更新 HUK，而不更新私钥。具体操作为：
+    \begin{itemize}
+        \item 先使用 HUK 生成模式更新 HUK
+        \item 再通过 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出模式更新 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}。\\
+        这样下次启动时可以使用新的 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 在新的 HUK 下恢复相同的私钥。
+    \end{itemize}
+\end{itemize}
+\end{tiplisting}
+
+
+
+
+\section{编程流程}
+\label{sec:keymng-prog-procedures}
+
+\subsection{HUK 生成器}
+\label{sec:huk-generate}
+
+HUK 生成过程分为六个阶段：
+\begin{enumerate}
+    \item \textbf{IDLE 阶段}：此阶段用户配置模式和静态参数。
+    \item \textbf{PREP 阶段}：此阶段 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} 处于 BUSY 状态，HUK 生成器执行 HUK 生成准备。用户只需等待此阶段结束，HUK 生成器将自动进入 LOAD 阶段。
+    \item \textbf{LOAD 阶段}：此阶段用户根据模式将 HUK 信息存入 HUK 生成器的内部存储器中。
+    \item \textbf{PROC 阶段}：此阶段  \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} 处于 BUSY 状态，HUK 生成器执行 HUK 生成操作。用户只需等待此阶段结束，HUK 生成器将自动进入 GAIN 阶段。
+    \item \textbf{GAIN 阶段}：此阶段用户根据模式从 HUK 生成器的内部存储器中读取所需的 HUK 信息。
+    \item \textbf{POST 阶段}：此阶段  \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} 处于 BUSY 状态，HUK 生成器执行 HUK 生成的后续工作。用户只需等待该阶段结束，HUK 生成器将自动回到 IDLE 阶段。
+\end{enumerate}
+
+\subsubsection{IDLE 阶段}
+
+用户检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，确认 HUK 生成器处于 IDLE 阶段。在 IDLE 阶段，用户需要进行如下配置：
+\begin{enumerate}
+    \item \textbf{配置工作模式}：参考表 \ref{tab:huk-working-mode} 配置 HUK 生成器的工作模式。
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:HUKSTART]{HUK\_START}，完成 IDLE 阶段，进入 PREP 阶段。
+\end{enumerate}
+
+\subsubsection{PREP 阶段}
+
+用户需要等待 PREP 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}}：持续检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:HUKPREPDONEINT]{HUK\_PREP\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+\subsubsection{LOAD 阶段}
+
+用户检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，确认 HUK 生成器处于 LOAD 阶段。在 LOAD 阶段，用户需要进行如下配置：
+\begin{enumerate}
+    \item \textbf{根据模式进行配置：}
+    \begin{itemize}
+        \item \textbf{HUK 生成模式}：无需配置。
+        \item \textbf{HUK 恢复模式}：将 HUK 恢复信息 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}（165 个字）写入 \hyperref[mem:huk-info]{HUK\_INFO\_MEM} 中。
+    \end{itemize}
+    \vspace{-0.5em}
+    \begin{tiplisting}
+    如果之前已经生成过多个 HUK 恢复信息并存储在外部存储器中，则在恢复模式下使用任意一个 HUK 恢复信息都会恢复当时对应的 HUK。
+    \end{tiplisting}
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}，完成 LOAD 阶段，进入 PROC 阶段。
+\end{enumerate}
+
+\subsubsection{PROC 阶段}
+
+用户需要等待 PROC 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}}：持续检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:HUKPROCDONEINT]{HUK\_PROC\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+\subsubsection{GAIN 阶段}
+
+用户检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，确认 HUK 生成器处于 GAIN 阶段。在 GAIN 阶段，用户根据选择的模式提取所需的密钥信息：
+\begin{enumerate}
+    \item \textbf{提取信息：}
+    \begin{itemize}
+        \item \textbf{HUK 生成模式：}从 \hyperref[mem:huk-info]{HUK\_INFO\_MEM} 中读取 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}（165 个字）。
+        \item \textbf{HUK 恢复模式：}根据 \hyperref[fielddesc:HUKUPDATEREQ]{HUK\_UPDATE\_REQ} 判断是否需要更新 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}。
+        \begin{itemize}
+            \item 需要更新：从 \hyperref[mem:huk-info]{HUK\_INFO\_MEM} 中读取 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}（165 个字）。
+            \item 无需更新：无需读取任何信息。
+        \end{itemize}
+    \end{itemize}
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}，完成 GAIN 阶段，进入 POST 阶段。
+\end{enumerate}
+
+\subsubsection{POST 阶段}
+
+用户需要等待 POST 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}}：持续检查 \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:HUKPOSTDONEINT]{HUK\_POST\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+
+\subsection{密钥管理器}
+
+密钥管理器的密钥部署过程分为六个阶段：
+\begin{enumerate}
+    \item \textbf{IDLE 阶段}：此阶段用户配置模式、密钥用途和静态参数。
+    \item \textbf{PREP 阶段}：此阶段 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} 处于 BUSY 状态，密钥管理器执行密钥部署准备工作。用户只需等待此阶段结束，密钥管理器将自动进入 LOAD 阶段。
+    \item \textbf{LOAD 阶段}：此阶段用户根据模式将密钥信息存入密钥管理器的内部存储器中。
+    \item \textbf{PROC 阶段}：此阶段 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} 处于 BUSY 状态，密钥管理器执行密钥部署操作。用户只需等待此阶段结束，密钥管理器将自动进入 GAIN 阶段。
+    \item \textbf{GAIN 阶段}：此阶段用户根据模式从密钥管理器的内部存储器中读取所需的密钥信息。
+    \item \textbf{POST 阶段}：此阶段 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} 处于 BUSY 状态，密钥管理器执行密钥部署的后续工作。用户只需等待该阶段结束，密钥管理器将自动回到 IDLE 阶段。
+\end{enumerate}
+
+\subsubsection{IDLE 阶段}
+
+用户检查 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，确认密钥管理器处于 IDLE 阶段。在 IDLE 阶段，用户需要进行如下配置：
+\begin{enumerate}
+    \item \textbf{完成 HUK 生成过程：}
+    \begin{enumerate}
+        \item 根据 HUK 是否已经生成，选择以下两种流程之一：
+        \label{proc:huk-gen}
+        \begin{itemize}
+            \item \textbf{HUK 尚未生成}：按照章节 \ref{sec:huk-generate} 所述完成 HUK 生成过程。
+            \item \textbf{HUK 已生成}：跳过 HUK 生成过程。
+        \end{itemize}
+        \item \textbf{验证 HUK 是否有效}：检查 \hyperref[fielddesc:KEYMNGHUKVALID]{KEYMNG\_HUK\_VALID}：
+        \begin{itemize}
+            \item 0，则 HUK 无效，返回步骤 \ref{proc:huk-gen}，直到其值为 1。
+            \item 1，HUK 有效。
+        \end{itemize}
+    \end{enumerate}
+    \item \textbf{正确初始化 TRNG}：用户需确保 TRNG 工作正常。
+    \item \textbf{配置静态参数}：包括 eFuse 位和静态参数寄存器及其对应的寄存器锁：
+    \begin{itemize}
+        \item \textbf{EFUSE\_KM\_INIT\_KEY eFuse 块}：256 位初始密钥，密钥管理器在 AES 和 ECDH1 部署模式中会用到该密钥。
+        \item \textbf{\hyperref[fielddesc:EFUSEKMDEPLOYONLYONCE]{EFUSE\_KM\_DEPLOY\_ONLY\_ONCE}}：控制对应的私钥是否只能在上电后部署一次。
+        \begin{itemize}
+            \item \textbf{Bit[0]}：配置 ECDSA 数字签名外设 (ECDSA\_DS) 密钥是否只能部署一次。
+            \begin{itemize}
+                \item 0：可以部署多次
+                \item 1：只能部署一次
+            \end{itemize}
+            \item \textbf{Bit[1]}：配置 XTS 密钥是否只能部署一次。
+            \begin{itemize}
+                \item 0：可以部署多次
+                \item 1：只能部署一次
+            \end{itemize}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY}}：控制相应的私钥是否只能来自密钥管理器。
+        \begin{itemize}
+            \item \textbf{Bit[0]}：表示 ECDSA\_DS 密钥是否只能来自密钥管理器。
+            \begin{itemize}
+                \item 0：不必来自密钥管理器
+                \item 1：必须来自密钥管理器
+            \end{itemize}
+            \item \textbf{Bit[1]}：表示 flash 加密密钥是否只能来自密钥管理器。
+            \begin{itemize}
+                \item 0：不必来自密钥管理器
+                \item 1：必须来自密钥管理器
+            \end{itemize}
+            \item \textbf{Bit[2]}：表示 HMAC 密钥是否只能来自密钥管理器。
+            \begin{itemize}
+                \item 0：不必来自密钥管理器
+                \item 1：必须来自密钥管理器
+            \end{itemize}
+            \item \textbf{Bit[3]}：表示 RSA 数字签名外设 (RSA\_DS) 的密钥是否只能来自密钥管理器。
+            \begin{itemize}
+                \item 0：不必来自密钥管理器
+                \item 1：必须来自密钥管理器
+            \end{itemize}
+            \item \textbf{Bit[4]}：表示 PSRAM 密钥是否只能来自密钥管理器。
+            \begin{itemize}
+                \item 0：不必来自密钥管理器
+                \item 1：必须来自密钥管理器
+            \end{itemize}
+        \end{itemize}
+        \item \hyperref[fielddesc:KEYMNGUSEEFUSEKEY]{KEYMNG\_USE\_EFUSE\_KEY}：配置密钥的来源为 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的相应位为 0 时有效。
+        \begin{itemize}
+            \item \textbf{Bit[0]}：配置 ECDSA\_DS 密钥是否来自 eFuse 块。
+            \begin{itemize}
+                \item 0：无效
+                \item 1：来自 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的 Bit[0] 为 0 时有效。
+            \end{itemize}
+            \item \textbf{Bit[1]}：配置 flash 加密密钥是否来自 eFuse 块
+            \begin{itemize}
+                \item 0：无效
+                \item 1：来自 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的 Bit[1] 为 0 时有效。
+            \end{itemize}
+            \item \textbf{Bit[2]}：配置 HMAC 密钥是否来自 eFuse 块
+            \begin{itemize}
+                \item 0：无效
+                \item 1：来自 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的 Bit[2] 为 0 时有效。
+            \end{itemize}
+            \item \textbf{Bit[3]}：配置 RSA\_DS 的密钥是否来自 eFuse 块
+            \begin{itemize}
+                \item 0：无效
+                \item 1：来自 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的 Bit[3] 为 0 时有效。
+            \end{itemize}
+            \item \textbf{Bit[4]}：配置 PSRAM 密钥是否来自 eFuse 块
+            \begin{itemize}
+                \item 0：无效
+                \item 1：来自 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} 中的 Bit[4] 为 0 时有效。
+            \end{itemize}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:EFUSEFORCEDISABLESWINITKEY]{EFUSE\_FORCE\_DISABLE\_SW\_INIT\_KEY}}：控制是否永久禁止使用软件源 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}。
+        \begin{itemize}
+            \item 0：不禁用
+            \item 1：禁用软件源 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:KEYMNGUSESWINITKEY]{KEYMNG\_USE\_SW\_INIT\_KEY}}：配置使用软件配置的 \begin{math}sw\_init\_key\end{math} 而不是用途为 EFUSE\_KM\_INIT\_KEY 的 eFuse 块，仅当 \hyperref[fielddesc:EFUSEFORCEDISABLESWINITKEY]{EFUSE\_FORCE\_DISABLE\_SW\_INIT\_KEY} 为 0 时有效。
+        \begin{itemize}
+            \item 0：使用用途为 EFUSE\_KM\_INIT\_KEY 的 eFuse 块
+            \item 1：使用软件写入的初始密钥，即 \begin{math}sw\_init\_key\end{math}
+        \end{itemize}
+
+        \item \textbf{\hyperref[fielddesc:EFUSEKMRNDSWITCHCYCLE]{EFUSE\_KM\_RND\_SWITCH\_CYCLE}}：配置密钥管理器切换随机数的周期。注意：此切换周期建议配置为 TRNG 模块的时钟周期所对应的密钥管理器时钟周期数。
+        \begin{itemize}
+            \item 0：切换周期由 \hyperref[fielddesc:KEYMNGRNDSWITCHCYCLE]{KEYMNG\_RND\_SWITCH\_CYCLE} 控制
+            \item 1：8 个密钥管理器时钟周期
+            \item 2：16 个密钥管理器时钟周期
+            \item 3：32 个密钥管理器时钟周期
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:KEYMNGRNDSWITCHCYCLE]{KEYMNG\_RND\_SWITCH\_CYCLE}}：配置密钥管理器切换随机数的周期，单位为密钥管理器时钟周期。仅当 \hyperref[fielddesc:EFUSEKMRNDSWITCHCYCLE]{EFUSE\_KM\_RND\_SWITCH\_CYCLE} 为 0 时生效。注意：此切换周期建议配置为 TRNG 模块的时钟周期所对应的密钥管理器时钟周期数。
+    \end{itemize}
+    \item \textbf{设置工作模式}：配置 \hyperref[fielddesc:KEYMNGKGENMODE]{KEYMNG\_KGEN\_MODE}，完成密钥管理器的工作模式配置，具体配置见章节 \ref{sec:key-manager}：
+    \begin{itemize}
+        \item 0：随机部署模式
+        \item 1：AES 部署模式
+        \item 2：ECDH0 部署模式
+        \item 3：ECDH1 部署模式
+        \item 4：私钥恢复模式
+        \item 5：\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出模式
+        \item 其他值：无效
+    \end{itemize}
+    \label{sec:keymng-key-purpose}
+    \item \textbf{配置密钥}：配置 \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} 完成密钥用途 (\begin{math}key\_purpose\end{math}) 的配置：
+    \begin{itemize}
+        \item 1: ecdsa\_key\_192
+        \item 2: ecdsa\_key\_256
+        \item 3: flash\_256\_1\_key
+        \item 4: flash\_256\_2\_key
+        \item 5: flash\_128\_key
+        \item 6: hmac\_key
+        \item 7: ds\_key
+        \item 8: psram\_256\_1\_key
+        \item 9: psram\_256\_2\_key
+        \item 10: psram\_128\_key
+        \item 11: ecdsa\_key\_384\_l
+        \item 12: ecdsa\_key\_384\_h
+        \item 其他值：无效
+    \end{itemize}
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START}，完成 IDLE 阶段，进入 PREP 阶段。
+\end{enumerate}
+
+\subsubsection{PREP 阶段}
+
+用户需要等待 PREP 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}}：持续检查 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:KEYMNGPREPDONEINT]{KEYMNG\_PREP\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+\subsubsection{LOAD 阶段}
+
+用户检查 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，确认密钥管理器处于 LOAD 阶段。在 LOAD 阶段，用户需要进行如下配置：
+\begin{enumerate}
+    \item \textbf{根据工作模式进行配置：}
+    \begin{itemize}
+        \item \textbf{随机部署模式}：无需配置。
+        \item \textbf{AES 部署模式}： 
+        \begin{enumerate}
+            \item 如果使用软件配置 \hyperref[para:initkey]{\begin{math}init\_key\end{math}} 的值：则将所需配置的值 \begin{math}sw\_init\_key\end{math}（256 位）写入 \hyperref[mem:keymng-sw-init-key]{KEYMNG\_SW\_INIT\_KEY\_MEM}。
+            \item 将 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}（512 位）写入 \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}。
+            \item 将 \hyperref[para:k1enc]{\begin{math}k1\_encrypted\end{math}}（256 位）写入 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}。
+        \end{enumerate}
+        \item \textbf{ECDH0 部署模式：}
+        \begin{enumerate}
+            \item 将 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}（512 位）写入 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}。
+        \end{enumerate}
+        \item \textbf{ECDH1 部署模式：}
+        \begin{enumerate}
+            \item 如果使用软件配置的 \hyperref[para:initkey]{\begin{math}init\_key\end{math}}：则将 \begin{math}sw\_init\_key\end{math}（256 位）写入 \hyperref[mem:keymng-sw-init-key]{KEYMNG\_SW\_INIT\_KEY\_MEM}；
+            \item 将 \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}（512 位）写入 \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}。
+            \item 将 \hyperref[para:k1G]{\begin{math}k1*G\end{math}}（512 位）写入 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}。
+        \end{enumerate}
+        \item \textbf{私钥恢复模式：}
+        \begin{enumerate}
+            \item 将 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）写入 \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}。
+        \end{enumerate}
+        \item \textbf{\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出模式}：无需配置。
+    \end{itemize}
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}，完成 LOAD 阶段，进入 PROC 阶段。
+\end{enumerate}
+
+\subsubsection{PROC 阶段}
+
+用户需要等待 PROC 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}}：持续检查  \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:KEYMNGPROCDONEINT]{KEYMNG\_PROC\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+\subsubsection{GAIN 阶段}
+
+用户检查 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，确认密钥管理器处于 GAIN 阶段。在 GAIN 阶段，用户根据选择的模式提取所需的密钥信息：
+\begin{enumerate}
+    \item \textbf{提取信息：}
+    \begin{itemize}
+        \item \textbf{随机部署模式：}
+        \begin{enumerate}
+            \item 从 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM} 中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）。
+        \end{enumerate}
+        \item \textbf{AES 部署模式：}
+        \begin{enumerate}
+            \item 从 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM} 中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）。
+        \end{enumerate}
+        \item \textbf{ECDH0 部署模式：}
+        \begin{enumerate}
+            \item 从 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM} 中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）。
+            \item 从 \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM} 中读取 \hyperref[para:k2G]{\begin{math}k2*G\end{math}}（512 位）。
+        \end{enumerate}
+        \item \textbf{ECDH1 部署模式：}
+        \begin{enumerate}
+            \item 从 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM} 中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）。
+        \end{enumerate}
+        \item \textbf{私钥恢复模式}：无需读取任何信息。
+        \item \textbf{\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 导出模式：}
+        \begin{enumerate}
+            \item 从 \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM} 中读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}（512 位）。
+        \end{enumerate}
+    \end{itemize}
+    \item \textbf{配置进入下一阶段}：置位 \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}，完成 GAIN 阶段，进入 POST 阶段。
+\end{enumerate}
+
+\subsubsection{POST 阶段}
+
+用户需要等待 POST 阶段结束。可以通过以下任一方式完成此操作：
+\begin{itemize}
+    \item \textbf{监测 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}}：持续检查 \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}，直到其不为 BUSY。
+    \item \textbf{使用中断}：使能中断信号 \hyperref[int:KEYMNGPOSTDONEINT]{KEYMNG\_POST\_DONE\_INT}，并通过中断函数进行处理。
+\end{itemize}
+
+
+
+\section{编程示例}
+通过以上章节的介绍，可以总结出一套完整的芯片部署流程。本节主要介绍 HUK 生成器和密钥管理器在两种芯片典型启动过程中所需的操作步骤。
+
+\vspace{-0.5em}
+\begin{tiplisting}
+在本节中，将以简化的方式描述所有配置过程。有关详细信息，请参考第 \ref{sec:keymng-prog-procedures} 小节。
+\end{tiplisting}
+
+\subsection{芯片私钥部署阶段的软件流程示例}
+
+芯片首次启动和部署私钥对外部存储器进行加密/解密的过程：
+
+\begin{enumerate}
+    \item 芯片进入下载模式。
+    \item \textbf{配置 HUK 生成器}：由于是第一次启动芯片，所以需要配置 HUK 生成器进入 HUK 生成模式：
+    \begin{enumerate}
+        \item 配置 IDLE 阶段，根据表 \ref{tab:huk-working-mode} 配置 HUK 工作模式为 HUK 生成模式，然后置位  \hyperref[fielddesc:HUKSTART]{HUK\_START}。
+        \item 进入 LOAD 阶段后，置位 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}。
+        \item 进入 GAIN 阶段后，读取 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}，然后置位 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}。
+        \item 等待 HUK 生成器回到 IDLE 阶段。
+    \end{enumerate}
+    \item \textbf{配置 HUK 生成状态}：写入 EFUSE\_KM\_HUK\_GEN\_STATE，使其 1 的个数为奇数，以便实现下次启动时只能进入 HUK 恢复模式。
+    \item \textbf{部署密钥}：以 ECDH0 模式下的密钥部署为例：
+    \begin{enumerate}
+        \item 配置 IDLE 阶段，配置  \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} 为 XTS，然后置位  \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START}。
+        \item 进入 LOAD 阶段后，将本地生成的 \hyperref[para:k1G]{\begin{math}k1*G\end{math}} 写入密钥管理器，然后置位  \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}。
+        \item 进入 GAIN 阶段后，读取 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 和 \hyperref[para:k2G]{\begin{math}k2*G\end{math}}，然后置位  \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}。
+        \item 等待密钥管理器回到 IDLE 阶段。
+    \end{enumerate}
+    \item \textbf{上传密钥}：通过通讯接口上传 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 给用户。
+    \item \textbf{生成并加密数据：}
+    \begin{itemize}
+    \item 用户根据获得的 \hyperref[para:k2G]{\begin{math}k2*G\end{math}} 和本地的 \hyperref[para:k1]{\begin{math}k1\end{math}}，生成协商私钥 \hyperref[para:k1k2G]{\begin{math}k1*k2*G\end{math}}。
+    \item 对数据进行本地加密，最后将密文写入 flash。
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{芯片正常启动阶段的软件流程示例}
+当芯片部署完成后，正常启动的完整流程如下：
+\begin{enumerate}
+    \item \textbf{芯片进入 SPI 启动模式：}\\
+    芯片以 SPI 启动模式启动，首先进入未加密的程序段。
+    \item \textbf{配置 HUK 恢复模式：}\\
+    由于 HUK 已经生成，下面配置 HUK 恢复模式：
+    \begin{enumerate}
+        \item 配置 IDLE 阶段，根据表 \ref{tab:huk-working-mode} 配置 HUK 生成器的工作模式为 HUK 恢复模式，然后置位 \hyperref[fielddesc:HUKSTART]{HUK\_START}。
+        \item 进入 LOAD 阶段后，将 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} 写入 HUK 生成器，然后配置 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}。
+        \item 进入 GAIN 阶段后，置位 \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}。
+        \item 等待 HUK 生成器回到 IDLE 阶段。
+    \end{enumerate}
+    \item \textbf{配置密钥管理器为私钥恢复模式：}
+    \begin{enumerate}
+        \item 配置 IDLE 阶段，配置  \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} 为 flash\_128\_key，然后置位 \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START}。
+        \item 进入 LOAD 阶段后，将 \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} 写入密钥管理器，然后置位 \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}。
+        \item 进入 GAIN 阶段后，置位 \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}。
+        \item 等待密钥管理器回到 IDLE 阶段。
+    \end{enumerate}
+    \item \textbf{进入加密程序段}：此时外部存储器中的的加/解密私钥已经生效，系统进入加密程序段。
+\end{enumerate}
+
+\section{中断}
+
+\chipname{} 的密钥管理器和 HUK 生成器可以生成以下中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item KEYMNG\_INTR
+        \item HUK\_INTR
+    \end{itemize}
+
+密钥管理器和 HUK 生成器有多个中断源可生成以上中断信号。表  \ref{tab:keymng-huk-int-sources} 列出了密钥管理器和 HUK 生成器内部的中断源及其触发条件。
+
+\begin{longtable}{ | L{4.5cm} | L{8cm} | L{3cm} | }
+\caption{密钥管理器和 HUK 生成器内部中断源} \label{tab:keymng-huk-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:KEYMNGPREPDONEINT}KEYMNG\_PREP\_DONE\_INT  & 密钥管理器 PREP 阶段完成  &  KEYMNG\_INTR  \\ \hline
+\label{int:KEYMNGPROCDONEINT}KEYMNG\_PROC\_DONE\_INT  &  密钥管理器 PROC 阶段完成 &  KEYMNG\_INTR  \\ \hline
+\label{int:KEYMNGPOSTDONEINT}KEYMNG\_POST\_DONE\_INT  &  密钥管理器 POST 阶段完成 &  KEYMNG\_INTR  \\ \hline
+\label{int:HUKPREPDONEINT}HUK\_PREP\_DONE\_INT  &  HUK 生成器 PREP 阶段完成 &  HUK\_INTR  \\ \hline
+\label{int:HUKPROCDONEINT}HUK\_PROC\_DONE\_INT  & HUK 生成器 PROC 阶段完成 &  HUK\_INTR  \\ \hline
+\label{int:HUKPOSTDONEINT}HUK\_POST\_DONE\_INT  & HUK 生成器 POST 阶段完成 &  HUK\_INTR  \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+\section{内存块}
+
+本小节的所有地址均为相对于密钥管理器或 HUK 生成器基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+
+\begin{longtable}{ | p{4.6cm} | p{4cm} | r | c | c | c | }
+\caption{密钥管理器内存块} \label{tab:keymng-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{名称} & \textbf{描述}  &  \textbf{容量（字节）} &  \textbf{起始地址}  &  \textbf{结束地址}  & \textbf{访问}   \\ \hline
+KEYMNG\_ASSIST\_INFO\_MEM\label{mem:keymng-assist-info} & 存储辅助信息 &   64  &  0x0100  &  0x013F  &  Varies  \\ \hline
+KEYMNG\_PUBLIC\_INFO\_MEM\label{mem:keymng-public-info} & 存储公共信息    &   64  &  0x0140  &  0x017F  &  Varies  \\ \hline
+KEYMNG\_SW\_INIT\_KEY\_MEM\label{mem:keymng-sw-init-key} & 存储 \begin{math}sw\_init\_key\end{math}  &   32  &  0x0180  &  0x019F  &  Varies  \\ \hline
+\end{longtable}
+
+\begin{longtable}{ | p{4.6cm} | p{4cm} | r | c | c | c | }
+\caption{HUK 生成器内存块} \label{tab:huk-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{名称} & \textbf{描述}  &  \textbf{容量（字节）} &  \textbf{起始地址}  &  \textbf{结束地址}  & \textbf{访问}  \\ \hline
+HUK\_INFO\_MEM\label{mem:huk-info} & 存储 \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}  &  660  &  0x0100  &  0x027F  &  Varies  \\ \hline
+\end{longtable}
+
+\hypertarget{keymng-reg-summ}{}
+\section{寄存器列表}
+\label{sec:keymng-reg-summ}
+
+\subsection{HUK 寄存器列表}
+本小节的所有地址均为相对于 HUK 基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+
+请查看章节  \hyperref[glossary-access-types]{\textit{Access 寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/35-KEYMNG-HUK-reg-summ__CN}
+
+
+\subsection{密钥管理器寄存器列表}
+本小节的所有地址均为相对于密钥管理器基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+请查看章节  \hyperref[glossary-access-types]{\textit{Access 寄存器的访问类型}}，了解\textbf{访问}列缩写的含义。
+
+\subfile{\modulefiles/35-KEYMNG-reg-summ__CN}
+
+\newpage
+\section{寄存器}
+
+\subsection{HUK 寄存器}
+本小节的所有地址均为相对于 HUK 基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/35-KEYMNG-HUK-reg__CN}
+
+\subsection{密钥管理器寄存器}
+本小节的所有地址均为相对于密钥管理器基地址的地址偏移量（相对地址），具体基地址请见章节  \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表  \ref{tab:sysmem-base-address}。
+
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/35-KEYMNG-reg__CN}
+
+
+\end{document}

@@ -1,0 +1,1058 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./35-KEYMNG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% Define formatting of parts and chapters in text
+\titleformat{\chapter}
+  [display]
+  {\LARGE\bfseries}
+  {\color{AllportsColor}Chapter \thechapter}
+  {1em}
+  {\color{AllportsColor}}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+
+% Define headers
+\usepackage{fancyhdr}
+\usepackage{lipsum}
+\renewcommand{\chaptermark}[1]{\markboth{Chapter\, \thechapter\, \ #1}{}}
+\fancypagestyle{plain}{%
+  \fancyhead{}%
+  %\fancyhead[R]{\Navigation}
+  \fancyhead[L]{%
+    \nouppercase{%
+      \ %
+      \normalsize\leftmark
+    }%
+  }%
+}
+\pagestyle{plain}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{keymng}{}
+\chapter{Key Manager}
+\label{mod:keymng}
+\section{Overview}
+This Key Management module is the security core of the system. It has a Key Manager and a Hardware Unique Key (HUK) Generator. They can store and deploy keys securely. By utilizing the HUK as the root of trust for each chip, the system ensures that no plaintext keys are ever stored on the chip, enhancing its overall security.
+
+Compared with using eFuse to store keys, the Key Manager and HUK Generator can improve the system in the following ways:
+\begin{itemize}
+    \item Environmental adaptability: It supports secure key deployment and can complete key deployment safely, even if the external environment is untrusted. 
+    \item Anti-attack ability: Each chip's SRAM has a unique default value that software cannot access. The chip stores no plaintext key. It resists slice and copy attacks. For example, observing the keys in eFuse directly by slicing will fail.
+    \item Key management flexibility: The Key Manager enables users to store key information (non-plaintext) in external memory. Unlike eFuse, which has limitations on the number of keys it can store, Key Manager allows users to create an unlimited number of keys, perform dynamic key changes, key replacements, and etc.
+\end{itemize}
+
+\section{Background Knowledge}
+
+An SRAM PUF (Physical Unclonable Function) uses the natural power-up state of SRAM cells as a kind of silicon “fingerprint.” When a chip powers on, each uninitialized SRAM bit tends to fall into 0 or 1 based on tiny manufacturing differences in its transistors, and because those differences are unique for every chip, the resulting bit pattern is device-unique.
+
+We use this behavior to create a Hardware Unique Key (HUK) without ever storing that key anywhere on chip: the chip can regenerate its secret from physics on each boot instead of reading it from flash or fuses. The HUK then acts as the root of trust for secure boot, device identity and attestation, encryption keys, and wrapping other keys.
+
+The raw SRAM PUF bits are not perfectly stable, though: most bits come up the same way on every power cycle, but some are noisy and occasionally flip due to temperature, voltage, or noise. In order to generate a stable HUK, the chip generates auxiliary data (huk\_info) with error correction capabilities during the HUK generation stage to recover the HUK. Users need to store this auxiliary data in flash memory.
+
+On every later boot, hardware reads the new (noisy) PUF response, uses the helper data to correct any flipped bits back to the reference pattern, and reconstructs exactly the same HUK as during enrollment. That HUK is loaded into hidden key slots inside crypto hardware (never into normal RAM), giving the device a repeatable, per-chip unique secret key derived from SRAM PUF, even though the underlying bits are not 100\% identical at every power-up.
+
+
+\section{Glossary}
+
+To better illustrate the functions of the HUK Generator and Key Manager, the following terms and parameters are used in this chapter.
+
+\begin{longtable}[c]{ R{6cm} p{10cm} }
+\multicolumn{2}{l}{\textbf{Terms}} \\
+\textbf{HUK}\label{para:HUK} & Hardware Unique Key (HUK), a hardware-generated key derived from the default power-on value using SRAM PUF.\\
+\textbf{SRAM PUF} & Physical Unclonable Function (PUF), based on SRAM, a security technology that leverages the unique, unpredictable power-up behavior of SRAM to generate a unique fingerprint or cryptographic key for a device. \\
+\textbf{HUK Generation Mode} & In this mode, the HUK Generator creates a new HUK.\\
+\textbf{HUK Recovery Mode} & In this mode, the HUK Generator recovers a previously deployed HUK.\\
+\textbf{Random Deploy Mode} & In this mode, the Key Manager deploys a random private key generated by the Random Number Generator.\\
+\textbf{AES Deploy Mode} & In this mode, the Key Manager deploys a specified private key (\begin{math}k1\end{math}) onto the chip.\\
+\textbf{ECDH0 Deploy Mode} & In this mode, the Key Manager deploys a negotiated private key (\begin{math}k1*k2*G\end{math}) onto the chip. \begin{math}k1*k2*G\end{math} is generated using \begin{math}k1\end{math} and \begin{math}k2*G\end{math}. \\
+\textbf{ECDH1 Deploy Mode} & In this mode, the Key Manager deploys a negotiated private key (\begin{math}k1*k2*G\end{math}) onto the chip. \begin{math}k1*k2*G\end{math} is generated using \begin{math}k1\end{math}, \begin{math}k2*G\end{math}, and \begin{math}k2\_info\end{math}.\\
+\textbf{Private Key Recovery Mode} & In this mode, the Key Manager recovers a previously deployed private key.\\
+\textbf{\begin{math}key\_info\end{math} Export Mode} & In this mode, the Key Manager regenerates the \begin{math}key\_info\end{math}. Users can export this \begin{math}key\_info\end{math} from the internal memory of the Key Manager.\\
+\multicolumn{2}{l}{\textbf{Parameters}} \\
+\textbf{\begin{math}huk\_info\end{math}}\label{para:hukinfo}& 
+Contains fuzzy extraction information and error-correcting code information after RS coding of HUK, but does not contain any information of HUK itself. This \begin{math}huk\_info\end{math} later can be used to recover the deployed HUK. \\
+\textbf{\begin{math}key\_info\end{math}} \label{para:keyinfo} & In any working mode of the Key Manager, this \begin{math}key\_info\end{math} is generated by calculating AES\{AES\{key,rand\_num\}||rand\_num,HUK\}.\\
+\begin{math}AES\{a,b\}\end{math} & Encrypt plaintext \begin{math}a\end{math} with \begin{math}b\end{math} as the key, using AES\_ECB algorithm, which is the typical mode of the AES module.\\
+\begin{math}rand\_num\end{math} & A random number\\
+\begin{math}a||b\end{math} & Concatenates two pieces of data into one.\\
+\textbf{\begin{math}k1\end{math}} \label{para:k1} & A specified
+private key \\
+\textbf{\begin{math}k2\end{math}} \label{para:k2} & Auxiliary key used to assist with key deployment, applicable in both AES Deploy Mode and ECDH1 Deploy Mode. In AES Deployment Mode, its value does not affect the deployed key. In ECDH1 deployment mode, its value affects the negotiated deployment key. \\ 
+\textbf{\begin{math}k1\_encrypted\end{math}}\label{para:k1enc} & A key generated by encrypting \begin{math}k1\end{math} with \begin{math}k2\end{math}. In AES Deploy Mode or ECDH1 Deploy Mode: \begin{math}k1\_encrypted\end{math} = AES\{k1,k2\}\\
+\textbf{\begin{math}k2\_info\end{math}}\label{para:k2info} & The recovery information of \begin{math}k2\end{math}. In AES Deploy Mode or ECDH1 Deploy Mode: \begin{math}k2\_info\end{math} = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}.\\
+\textbf{\begin{math}init\_key\end{math}}\label{para:initkey} & Used in the generation of \begin{math}k2\_info\end{math} as well as in the recovery process from \begin{math}k2\_info\end{math} to \begin{math}k2\end{math}. Its value can be stored in the eFuse block whose purpose is EFUSE\_KM\_INIT\_KEY or provided through software configuration. \\
+\textbf{\begin{math}sw\_init\_key\end{math}} \label{para:swinitkey} & Software configured  \begin{math}init\_key\end{math}\\
+\textbf{\begin{math}k1*k2*G\end{math}} \label{para:k1k2G} & A negotiated key generated by calculating \begin{math}k2*G\end{math} through ECC.\\
+\textbf{\begin{math}k1*G\end{math}} \label{para:k1G} & A key generated by calculating \begin{math}k1\end{math} through ECC.\\
+\textbf{\begin{math}k2*G\end{math}} & An auxiliary public key generated by calculating \begin{math}k2*G\end{math} through ECC. This key is used later to generate \begin{math}k1*k2*G\end{math}.\\
+\textbf{\begin{math}key\_purpose\end{math}} \label{para:k2G}& The intended usage of the key.\\
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:keymng-features}
+
+\textbf{The HUK Generator has the following features:}
+\begin{itemize}
+    \item HUK Generation Mode:
+    \begin{itemize}
+        \item Generates a new HUK and its recovery information
+    \end{itemize}
+    \item HUK Recovery Mode:
+    \begin{itemize}
+        \item Recovers a deployed HUK with its recovery information
+    \end{itemize}
+    \item Prompt for HUK recovery error
+    \item Prompt for HUK risk level
+\end{itemize}
+
+\textbf{The Key Manager has the following features:}
+\begin{itemize}
+    \item Unlimited number of keys
+    \item Specified private key deployment (AES Deploy Mode):
+    \begin{itemize}
+        \item Users specify the value of the key
+    \end{itemize}
+    \item Negotiated private key deployment (ECDH0 Deploy Mode):
+    \begin{itemize}
+        \item Highest security mode: there is no need to worry about the leaks of data in external channels
+        \item Requires chip initiation to obtain the private key
+        \item Negotiates the key value between each chip and the user
+    \end{itemize}
+    \item Negotiated private key deployment (ECDH1 Deploy Mode):
+    \begin{itemize}
+        \item Deploy the negotiated private key using the auxiliary key
+        \item No need to boot the chip to obtain the private key
+    \end{itemize}
+    \item Random key deployment (Random Deploy Mode):
+    \begin{itemize}
+        \item Deploys a hardware-generated random key with nobody knowing the exact value
+    \end{itemize}
+    \item Private key recovery deployment (Private Key Recovery Mode):
+    \begin{itemize}
+        \item Recovers exactly the same key by entering the key information generated during deployment
+    \end{itemize}
+    \item Key information export (\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode):
+    \begin{itemize}
+        \item Generates unique key information for the same key each time
+    \end{itemize}
+\end{itemize}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:keymng-arch-overview}
+
+The top-level architecture of the Key Manager and HUK Generator is shown in the figure below.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/keymng_arch.png}
+    \caption{Architecture of Key Manager and HUK Generator}
+    \label{fig:keymng-arch}
+\end{figure}
+The Key Manager has the following interaction paths with external modules:
+\begin{itemize}
+    \item \textbf{eFuse path:} Controls the configuration of Key Manager with the help of eFuse bits.
+    \item \textbf{HP APB path:} Configures registers and transmits memory data via HP APB bus.
+    \item \textbf{HUK path:} Receives HUK from HUK Generator.
+    \item \textbf{Crypto path:} Controls cryptographic accelerators such as ECC/AES to complete cryptographic operations via Crypto APB bus.
+    \item \textbf{TRNG path:} Receives true random data from the TRNG.
+
+\end{itemize}
+
+The HUK Generator has the following interaction paths with external modules.
+\begin{itemize}
+    \item \textbf{eFuse path:} Controls the configuration of HUK Generator with the help of eFuse bits.
+    \item \textbf{LP APB path:} Configures registers and transmits memory data via LP APB bus.
+    \item \textbf{Key Manager path:} Sends HUK to Key Manager.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:keymng-func-descr}
+
+\subsection{HUK Generator}
+
+HUK Generator generates unique HUKs for each chip based on SRAM Physical Unclonable Function (PUF). This HUK is completely inaccessible by software, ensuring robust security for the Key Manager, which relies on this HUK for secure operations later on.
+
+\subsubsection{HUK Generation Process}
+
+The HUK Generator has the following modes:
+\begin{itemize}
+    \item \textbf{HUK Generation Mode:} Creates a new HUK and generates corresponding HUK recovery information (\hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}).
+    \item \textbf{HUK Recovery Mode:} Recovers HUK according to \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}.
+\end{itemize}
+
+The modes above are jointly controlled by the eFuse field EFUSE\_KM\_HUK\_GEN\_STATE, and the register \hyperref[fielddesc:HUKMODE]{HUK\_MODE}, as shown in the following table.
+
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+    \item[*] Total number of bits set to 1 in EFUSE\_KM\_HUK\_GEN\_STATE.
+\end{TableNotes}
+\begin{longtable}[c]{| c | c | l |}
+\caption{HUK Generator Working Mode}
+\label{tab:huk-working-mode}
+\\\hline
+\rowcolor{lightgray}
+\textbf{\hyperref[fielddesc:HUKMODE]{HUK\_MODE}}  & \textbf{eFuse} \tnote{*} & \textbf{Mode}\\\hline
+        \endfirsthead
+    \multicolumn{3}{c}{\bfseries \tablename\ \thetable{} -- Cont’d on next page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:HUKMODE]{HUK\_MODE}}  & \textbf{eFuse} \tnote{*} & \textbf{Mode}\\\hline
+    \endhead
+    
+    \multicolumn{3}{r}{\textbf{cont’d from previous page}} \\
+    \endfoot
+    
+    \insertTableNotes
+    \endlastfoot
+        \multirow{2}*{1} & Total number of bits set to 1 is even  & HUK Generation Mode     \\\cline{2-3}
+                         & Total number of bits set to 1 is odd  & HUK Recovery Mode      \\\hline
+        0                & ---                     & HUK Recovery Mode      \\\hline
+\end{longtable}
+\end{ThreePartTable}
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item Once the process is completed in HUK Generation Mode, it is recommended to write a 1 to EFUSE\_KM\_HUK\_GEN\_STATE field, ensuring that the total number of bits set to 1 in EFUSE\_KM\_HUK\_GEN\_STATE is an odd number. With this, when the chip starts next time, the HUK Generator can only enter HUK Recovery Mode. The HUK restored in HUK Recovery Mode will be the same as the one generated this time in HUK Generation Mode.
+    \item If you do not update the eFuse bits EFUSE\_KM\_HUK\_GEN\_STATE field after completing the HUK Generation Mode and before powering off the chip, the HUK Generator can still be configured to enter HUK Generation Mode again when the chip is powered on next time. The newly generated HUK this time will have a different value from the previous one that is used in private keys. By this way, you can generate multiple HUKs and restore the one you need with its \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}.
+    \item \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} can only be used with the same chip; that is, an \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} generated on chip A can not be used to recover the HUK on chip B.
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{HUK Status Check}
+Users can read the register \hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG} to check the current status of the HUK and decide whether to regenerate the HUK. \hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG} has the following fields:
+\begin{itemize}
+    \item \hyperref[fielddesc:HUKSTATUS]{HUK\_STATUS}: Indicates the current status of the HUK.
+    \begin{itemize}
+        \item 0: The HUK has not been generated
+        \item 1: The HUK has been successfully generated and is valid
+        \item 2: The HUK has been generated but is invalid
+        \item 3: Reserved
+    \end{itemize}
+    \item \hyperref[fielddesc:HUKRISKLEVEL]{HUK\_RISK\_LEVEL}: Indicates the current risk level of the HUK. The value ranges from 0 to 7, with higher values indicating greater risk. When the value is 7, the HUK is no longer available. At this point, the \hyperref[fielddesc:HUKSTATUS]{HUK\_STATUS} will be set to 2.
+\end{itemize}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item HUK Generator uses the default value of SRAM PUF to generate HUK. The HUK risk level refers to the difference between the current default value of SRAM PUF and the default value of SRAM PUF at the time when the HUK was created.
+    \item In certain special applications, such as when users want to discard a key and invalidate the corresponding \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}, they can select to update the HUK. Once the HUK is changed, the previously deployed key, as well as its \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}, both become invalid, i.e., the new \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} together with the previous \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} can not be used to recover the key.
+    \item It is strongly recommended that software monitor the risk level and regenerate the HUK at the value 4-6.
+\end{itemize}
+\end{tiplisting}
+
+\subsection{Key Manager}
+\label{sec:key-manager}
+\begin{tiplisting}
+Each time before using the Key Manager for key deployment, please ensure that the HUK is valid by checking the register \hyperref[regdesc:HUKSTATUSREG]{HUK\_STATUS\_REG}.
+\end{tiplisting}
+
+Key Manager provides the following modes:
+\begin{itemize}
+    \item \textbf{Key Deployment Modes:}
+    \begin{itemize}
+        \item Random Deploy Mode: Deploys a random private key.
+        \item AES Deploy Mode: Deploys a specified private key.
+        \item ECDH0 Deploy Mode: Deploys a negotiated private key.
+        \item ECDH1 Deploy Mode: Deploys a negotiated private key.
+    \end{itemize}
+    These four deployment modes allow users to select the most convenient deployment process in environments with different security levels according to their own needs. 
+    \item \textbf{Key Recovery Mode:}
+        \begin{itemize}
+            \item Private Key Recovery Mode: Recovers the deployed private key.
+        \end{itemize}
+    This recovery mode allows users to freely select the key they want to recover from any number of the deployed keys.
+    \item \textbf{Export Mode:}
+    \begin{itemize}
+        \item \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode: Generates and outputs \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} of the deployed private key.
+    \end{itemize}
+    This export mode allows users to regenerate \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} for already deployed keys.
+\end{itemize}
+
+\subsubsection{Random Deploy Mode}
+Users can use this mode to deploy a random key generated with the help of the Random Number Generator.
+
+\begin{tiplisting}
+    The Random Deploy Mode is highly convenient and well-suited for application scenarios where the exact value of the private key does not need to be known.
+\end{tiplisting}
+
+
+\subsubsection{AES Deploy Mode}
+
+Users can use this mode to deploy a specified private key.
+
+This mode requires the following keys and parameters:
+\begin{itemize}
+    \item HUK: generated by the HUK Generator and passed to the Key Manager.
+    \item \begin{math}k1\end{math}: the specified private key to be deployed.
+    \item \begin{math}k2\end{math}: Auxiliary key used to encrypt \begin{math}k1\end{math}, ensuring that \begin{math}k1\end{math} is not transmitted in plaintext over the communication link, thereby enhancing data security.
+    \item \hyperref[para:initkey]{\begin{math}init\_key\end{math}}: Initial auxiliary key used for generating and decrypting the \begin{math}k2\_info\end{math} key.
+    \item \hyperref[para:k2info]{\begin{math}k2\_info\end{math}}: Generated from \hyperref[para:k2]{\begin{math}k2\end{math}} and \hyperref[para:initkey]{\begin{math}init\_key\end{math}}, and used to recover \hyperref[para:k2]{\begin{math}k2\end{math}}. The calculation formula is: \begin{math}k2\_info = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}\end{math}.
+\end{itemize}
+
+The deployment flow chart is as follows.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/aes_deploy.png}
+    \caption{AES Deploy Mode}
+    \label{fig:keymng-aes-mode}
+\end{figure}
+\textbf{Detailed Process}\\
+\begin{enumerate}
+    \item Generate locally \begin{math}k1\end{math}, \begin{math}k2\end{math}, and \begin{math}init\_key\end{math}.
+    \item Calculate locally \begin{math}k1\_encrypted\end{math} and \begin{math}k2\_info\end{math}.
+    \item Then complete the key deployment in Key Manager:
+    \begin{enumerate}
+        \item Write \begin{math}init\_key\end{math} into the eFuse block whose purpose is EFUSE\_KM\_INIT\_KEY, or to \begin{math}sw\_init\_key\end{math}, depending on your need.
+        \item Write \begin{math}k2\_info\end{math} and \begin{math}k1\_encrypted\end{math} into internal memory of the Key Manager.
+        \item Wait for the Key Manager to complete the deployment.
+        \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} from the internal memory of the Key Manager by specifying the address.
+    \end{enumerate}
+\end{enumerate}
+
+\textbf{Notes:}\\
+\begin{itemize}
+    \item Due to the necessity of re-deploying the key each time when the chip powers up, if \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} is to be used for key recovery upon the next power-up, ensure that \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} must persist after the chip powers off. A common method is to store it in the flash.
+    \item AES Deploy Mode is suitable for factory production: the manufacturer provides the factory with \begin{math}init\_key\end{math} and the firmware encrypted with \begin{math}k1\end{math}, and store \begin{math}k2\_info\end{math} and \begin{math}k1\_encrypted\end{math} in the firmware.
+    \begin{itemize}
+        \item In this case, it is recommended to include a private key first-time deployment process in the firmware, to store \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}. In the subsequent chip power-ups, use the recovery deployment mode, instead of deploying via AES mode each time. This helps effectively defend against eFuse slice attacks.
+        \item Note that this deployment method requires a trusted factory, as the factory will have access to the plaintext \begin{math}init\_key\end{math} (used to be burned into eFuse key block). If the factory is untrusted and knows how to use \begin{math}init\_key\end{math} to decrypt \begin{math}k2\_info\end{math} into \begin{math}k2\end{math}, it may result in a potential leakage of \begin{math}k1\end{math}.
+    \end{itemize}
+    \item When using AES Deploy Mode to deploy the key each time, it is essential to ensure that the values of \begin{math}init\_key\end{math}, \begin{math}k2\_info\end{math}, and \begin{math}k1\_encrypted\end{math} are not leaked simultaneously.
+    \begin{itemize}
+        \item If using \begin{math}init\_key\end{math} stored in the EFUSE\_KM\_INIT\_KEY eFuse block, \begin{math}k2\_info\end{math} and \begin{math}k1\_encrypted\end{math} may be transmitted in an untrusted environment. However, this requires to locally retain the \begin{math}init\_key\end{math} that was written to EFUSE\_KM\_INIT\_KEY eFuse block at the first time.
+        \item If using \begin{math}sw\_init\_key\end{math}, the transmission of \begin{math}sw\_init\_key\end{math}, \begin{math}k2\_info\end{math}, and \begin{math}k1\_encrypted\end{math} must occur in a trusted environment.
+    \end{itemize}
+\end{itemize}
+
+
+\subsubsection{ECDH0 Deploy Mode}
+Users can use this mode to deploy a negotiated private key.
+
+This mode requires the following keys and parameters:
+\begin{itemize}
+    \item HUK, generated by the HUK Generator and passed to the Key Manager.
+    \item \begin{math}k1\end{math}: root key, a private key from users.
+    \item \begin{math}k1*G\end{math}: obtained by calculating \begin{math}k1*G\end{math} using ECC.
+    \item \begin{math}k2*G\end{math}: a public auxiliary key, generated by calculating \begin{math}k2*G\end{math} using ECC.
+    \item \begin{math}k1*k2*G\end{math}: the negotiated private key to be deployed, generated by Key Manager using \begin{math}k1*G\end{math} and  \begin{math}k2\end{math} or by the user locally using \begin{math}k1\end{math} and \begin{math}k2*G\end{math}.
+    \item \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}: the recovery information of \begin{math}k1*k2*G\end{math}.
+\end{itemize}
+
+Any information disclosure during this deployment, occurring outside the users' local environment or the chip, will not affect the generation of \begin{math}k1*k2*G\end{math} or pose a risk of exposure.
+The deployment flow chart is as follows.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ecdh0_deploy.png}
+    \caption{ECDH0 Deploy Mode}
+    \label{fig:keymng-ecdh0-mode}
+\end{figure}
+\textbf{Detailed Process}\\
+\begin{enumerate}
+    \item Generate locally \begin{math}k1\end{math} and calculate \begin{math}k1*G\end{math}. 
+    \item Complete the key deployment in Key Manager:
+    \begin{enumerate}
+        \item Write \begin{math}k1*G\end{math} to the internal memory of the Key Manager.
+        \item Wait for the Key Manager to complete the deployment.
+        \item Read \begin{math}k2*G\end{math} and \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (corresponding to the negotiated private key \begin{math}k1*k2*G)\end{math} from the internal memory of the Key Manager by specifying the address.
+    \end{enumerate}
+    \item Generate the negotiated key \begin{math}k1*k2*G\end{math} by using \begin{math}k2*G\end{math} together with the local private key \begin{math}k1\end{math}.
+\end{enumerate}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item NIST-P256 curve is used in the ECDH0 mode, all the ECC point multiplication is calculated on NIST-P256 curve.
+    \item The ECDH0 Deploy Mode ensures that the negotiated private key is generated only locally by the user and internally by the Key Manager. Any data leakage during the deployment process will not result in the leakage of the negotiated private key. Therefore, data transmission in this mode can occur in an untrusted environment.
+    \item In ECDH0 Deploy Mode, the negotiated private key can only be obtained after running the Key Manager. This mode is not suitable for scenarios where the exact value of the private key needs to be known in advance.
+\end{itemize}
+\end{tiplisting}
+
+\subsubsection{ECDH1 Deploy Mode}
+Users can use this mode to deploy a negotiated private key.
+
+This mode requires the following keys and parameters:
+\begin{itemize}
+    \item HUK, generated by the HUK Generator and passed to the Key Manager.
+    \item \begin{math}k1\end{math}: root key, a private key from users.
+    \item \begin{math}k1*G\end{math}: obtained by calculating \begin{math}k1\end{math} using ECC.
+    \item \begin{math}k2\end{math}: an auxiliary private key, in ECDH1 Deploy Mode only existing locally or inside Key Manager.
+    \item \begin{math}k2*G\end{math}: an auxiliary public key, generated by using the chip supplier's software or script.
+    \item \begin{math}k2\_info\end{math}: generated by using \begin{math}k2\end{math} and \begin{math}init\_key\end{math}, and used to recover \begin{math}k2\end{math}. The calculation formula is: \begin{math}k2\_info = AES\{AES\{k2,rand\_num\}||rand\_num,init\_key\}\end{math}.
+    \item \begin{math}k1*k2*G\end{math}: the negotiated private key to be deployed. The chip generates the negotiated private key using \begin{math}k1*G\end{math} and \begin{math}k2\_info\end{math}, while the user generates the negotiated private key using \begin{math}k1\end{math} and \begin{math}k2*G\end{math}.
+    \item \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}: the recovery information of \begin{math}k1*k2*G\end{math}.
+\end{itemize}
+
+The deployment flow chart is as follows.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/ecdh1_deploy.png}
+    \caption{ECDH1 Deploy Mode}
+    \label{fig:keymng-ecdh1-mode}
+\end{figure}
+\textbf{Detailed Process}\\
+\begin{enumerate}
+    \item Generate locally \begin{math}k1\end{math}, \begin{math}k2\end{math} and \begin{math}init\_key\end{math}.
+    \item Calculate locally \begin{math}k1*G\end{math}, \begin{math}k2*G\end{math}, \begin{math}k2\_info\end{math}, and \begin{math}k1*k2*G\end{math}.
+    \item Complete the key deployment in Key Manager:
+    \begin{enumerate}
+        \item Write \begin{math}init\_key\end{math} into EFUSE\_KM\_INIT\_KEY eFuse block or into \begin{math}sw\_init_key\end{math}, depending on your needs. See the notes below.
+        \item Write \begin{math}k1*G\end{math} and \begin{math}k2\_info\end{math} to the internal memory of the Key Manager.
+        \item Wait for the Key Manager to complete the deployment.
+        \item Read \begin{math}k2*G\end{math} and \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (corresponding to the negotiated private key \begin{math}k1*k2*G)\end{math} from the internal memory of the Key Manager by specifying the address.
+    \end{enumerate}
+\end{enumerate}
+
+\textbf{Notes:}\\
+\begin{itemize}
+    \item NIST-P256 curve is used in the ECDH1 mode, all the ECC point multiplication is calculated on NIST-P256 curve.
+    \item ECDH1 Deploy Mode is suitable for factory production: the manufacturer provides the factory with \begin{math}init\_key\end{math} and the firmware encrypted with \begin{math}k1*k2*G\end{math}, and store \begin{math}k2\_info\end{math} and \begin{math}k1*G\end{math} in the firmware.
+    \begin{itemize}
+        \item In this case, it is recommended to include a private key first-time deployment process in the firmware, to store \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}}. In the subsequent chip power-ups, use the recovery deployment mode, instead of deploying via ECDH1 mode each time. This helps effectively defend against eFuse slice attacks.
+        \item Note that this deployment method requires a trusted factory, as the factory will have access to the plaintext \begin{math}init\_key\end{math} (used to be burned into eFuse). If the factory is untrusted and knows how to use \begin{math}init\_key\end{math} to decrypt \begin{math}k2\_info\end{math} into \begin{math}k2\end{math}, it may result in a potential leakage of \begin{math}k1*k2*G\end{math}.
+    \end{itemize}
+    \item Similar to AES Deploy Mode, when using ECDH1 Deploy Mode to deploy the key each time, it is essential to ensure that the values of \begin{math}init\_key\end{math}, \begin{math}k2\_info\end{math}, and \begin{math}k1*G\end{math} are not leaked simultaneously.
+    \begin{itemize}
+        \item If using \begin{math}init\_key\end{math} stored in EFUSE\_KM\_INIT\_KEY eFuse block, \begin{math}k2\_info\end{math} and \begin{math}k1*G\end{math} may be transmitted in an untrusted environment. However, this requires to locally retain the \begin{math}init\_key\end{math} that was written to EFUSE\_KM\_INIT\_KEY eFuse block at the first time.
+        \item If using \begin{math}sw\_init\_key\end{math}, the transmission of \begin{math}sw\_init\_key\end{math}, \begin{math}k2\_info\end{math}, and \begin{math}k1*G\end{math} must occur in a trusted environment.
+    \end{itemize}
+    \item When updating keys using the ECDH1 Deploy Mode, it provides higher security performance compared to the AES Deploy Mode. Since the value of \begin{math}k1*G\end{math} is independent of \begin{math}k2\end{math} and \begin{math}init\_key\end{math}, you can update the negotiated key in ECDH1 mode by updating only \begin{math}k2\_info\end{math} without changing k1*G. Users can:
+    \begin{itemize}
+        \item Write \begin{math}k1*G\end{math} into the firmware in a trusted environment.
+        \item When updating the key using the ECDH1 Deploy Mode, transmit only \begin{math}init\_key\end{math} and \begin{math}k2\_info\end{math}. In this case, users can deploy the key in ECDH1 mode using \begin{math}sw\_init\_key\end{math} even in an untrusted environment.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Private Key Recovery Mode}
+
+After deploying the private key, users can restore it using the \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} generated during deployment.\\
+The specific process is as follows.
+\begin{enumerate}
+    \item Read the \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} from the external memory and store it to the fixed address in the internal memory of Key Manager.
+    \item Wait for the Key Manager to complete the deployment.
+    \item Repeat Step 1 $\sim$ Step 2 above until all required private keys are restored.
+\end{enumerate}
+
+Note that if two or more private keys with the same \begin{math}key\_purpose\end{math} are restored, only the last one will take effect. For more information about \begin{math}key\_purpose\end{math}, see Section \ref{sec:keymng-key-purpose}.
+
+\subsubsection{\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode}
+
+After successfully deploying the private key, users can regenerate \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} and obtain it with the help of this mode.\\
+The specific process is as follows.
+\begin{enumerate}
+    \item Select the successfully deployed \begin{math}key\_purpose\end{math} to enter the \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} export mode.
+    \item Wait for the Key Manager process to complete.
+    \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} from the internal memory of the Key Manager.
+\end{enumerate}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item This mode can be used to output different \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} for the same key.
+    \item This mode can also only update HUK without updating the private key. The detailed operation is: 
+    \begin{itemize}
+        \item Update the HUK using the HUK Generation Mode.
+        \item Update the \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} through the \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode.
+    \end{itemize}
+    By such way, the chip in the next startup can use the new \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} to restore the same private key under the new HUK.
+\end{itemize}
+\end{tiplisting}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:keymng-prog-procedures}
+
+\subsection{HUK Generator}
+\label{sec:huk-generate}
+
+The HUK generation process is divided into six phases:
+\begin{enumerate}
+    \item \textbf{IDLE}: In this phase, users configure the mode and static parameters.
+    \item \textbf{PREP}: In this phase, \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} is BUSY. The HUK Generator prepares for HUK generation. Users need to wait for this phase to complete. The HUK Generator will automatically proceed to the LOAD phase.
+    \item \textbf{LOAD}: In this phase, users store the HUK information into the internal memory of the HUK Generator based on the selected mode.
+    \item \textbf{PROC}: In this phase, \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} is BUSY. The HUK Generator performs the HUK generation process. Users need to wait for the phase to complete. The HUK Generator will automatically proceed to the GAIN phase.
+    \item \textbf{GAIN}: In this phase, users read the required HUK information from the internal memory of the HUK Generator based on the selected mode.
+    \item \textbf{POST}: In this phase, \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} is BUSY. The HUK Generator completes the follow-up tasks for HUK generation. Users need to wait for this phase to complete. The HUK Generator will automatically return to the IDLE phase.
+\end{enumerate}
+
+\subsubsection{IDLE Phase}
+
+Users check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} to confirm that the HUK Generator is in the IDLE phase. In the IDLE phase, users need to perform the following configurations.
+\begin{enumerate}
+    \item \textbf{Set the Working Mode:} Configure the working mode of the HUK Generator as specified in Table \ref{tab:huk-working-mode}.
+    \item \textbf{Transition to PREP Phase:} Set \hyperref[fielddesc:HUKSTART]{HUK\_START} to complete the IDLE phase and enter the PREP phase.
+\end{enumerate}
+
+\subsubsection{PREP Phase}
+
+Users need to wait for the PREP phase to complete. This can be accomplished using one of the following methods:
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}:} Continuously check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupts:} Enable the interrupt \hyperref[int:HUKPREPDONEINT]{HUK\_PREP\_DONE\_INT} and handle the completion in the interrupt service routine.
+\end{itemize}
+
+
+\subsubsection{LOAD Phase}
+
+Users check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} to confirm that the HUK Generator is in the LOAD phase. In the LOAD phase, users need to perform the following configurations.
+\begin{enumerate}
+    \item \textbf{Configure Based on Mode}: Depending on the mode of the HUK Generator, configure as follows:
+    \begin{itemize}
+        \item \textbf{HUK Generation Mode:} No additional configuration is required.
+        \item \textbf{HUK Recovery Mode:} Write the HUK recovery information (\hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}, 165 words) into \hyperref[mem:huk-info]{HUK\_INFO\_MEM}.
+    \end{itemize}
+    \vspace{-0.5em}
+    \begin{tiplisting}
+    If multiple \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} have been generated and stored in external memory previously, using any \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} in the HUK Recovery Mode will restore its corresponding HUK.
+    \end{tiplisting}
+    \item \textbf{Transition to PROC Phase:} Set the bit \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE} to 1 to complete the LOAD phase and enter the PROC phase.
+\end{enumerate}
+
+
+\subsubsection{PROC Phase}
+
+Users need to wait for the PROC phase to complete. This can be done using one of the following methods.
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}:} Continuously check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupts:} Enable the interrupt \hyperref[int:HUKPROCDONEINT]{HUK\_PROC\_DONE\_INT} and handle the completion in the interrupt service routine.
+\end{itemize}
+
+
+\subsubsection{GAIN Phase}
+
+Users check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} to confirm that the HUK Generator is in the GAIN phase. In the GAIN phase, users extract the required key information based on the selected mode of the HUK Generator.
+\begin{enumerate}
+    \item \textbf{Extract Key Information:}
+    \begin{itemize}
+        \item \textbf{HUK Generation Mode:} Read \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} (165 words) from \hyperref[mem:huk-info]{HUK\_INFO\_MEM}.
+        \item \textbf{HUK Recovery Mode:} Update \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} (165 words), depending on \hyperref[fielddesc:HUKUPDATEREQ]{HUK\_UPDATE\_REQ}:
+        \begin{itemize}
+            \item 0: Do not need to update \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}, or read any information.
+            \item 1: Must update \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} by reading a new value (165 words) from \hyperref[mem:huk-info]{HUK\_INFO\_MEM}. 
+        \end{itemize}
+    \end{itemize}
+    \item \textbf{Transition to POST Phase:} Set the bit \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE} to complete the GAIN phase and enter the POST phase.
+\end{enumerate}
+
+
+\subsubsection{POST Phase}
+
+Users need to wait for the POST phase to complete. This can be done using one of the following methods.
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:HUKSTATE]{HUK\_STATE}:} Continuously check \hyperref[fielddesc:HUKSTATE]{HUK\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupts:} Enable the interrupt \hyperref[int:HUKPOSTDONEINT]{HUK\_POST\_DONE\_INT} and handle the completion in the interrupt service routine.
+\end{itemize}
+
+
+\subsection{Key Manager}
+
+The key deployment process of the Key Manager is divided into six phases:
+\begin{enumerate}
+    \item \textbf{IDLE}: In this phase, users configure the mode, key usage, and static parameters.
+    \item \textbf{PREP}: In this phase, \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} is BUSY. The Key Manager performs the necessary preparations for key deployment. Users need to wait for this phase to complete. The Key Manager will automatically proceed to the LOAD phase.
+    \item \textbf{LOAD}: In this phase, users store the key information into the internal memory of the Key Manager based on the selected mode.
+    \item \textbf{PROC}: In this phase, \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} is BUSY. The Key Manager performs the key deployment process. Users need to wait for this phase to complete. The Key Manager will automatically proceed to the GAIN phase.
+    \item \textbf{GAIN}: In this phase, users read the required key information from the internal memory of the Key Manager based on the selected mode.
+    \item \textbf{POST}: In this phase, \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} is BUSY. The Key Manager completes the follow-up tasks for key deployment. Users need to wait for this phase to complete. The Key Manager will automatically return to the IDLE phase.
+\end{enumerate}
+
+
+\subsubsection{IDLE Phase}
+
+Users check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} to confirm that the Key Manager is in the IDLE phase. In the IDLE phase, users need to perform the following configurations.
+\begin{enumerate}
+    \item \textbf{Complete HUK Generation Process:}
+    \begin{enumerate}
+        \item Select one of the following two processes, depending on whether the HUK has been generated or not:
+        \label{proc:huk-gen}
+        \begin{itemize}
+            \item \textbf{If HUK has not been generated:} Follow the HUK generation process described in Section \ref{sec:huk-generate}.
+            \item \textbf{If HUK has already been generated:} Skip this HUK generation process.
+        \end{itemize}
+        \item \textbf{Verify HUK Validity:} Check  \hyperref[fielddesc:KEYMNGHUKVALID]{KEYMNG\_HUK\_VALID}:
+        \begin{itemize}
+            \item 0: the HUK is invalid. Return to Step \ref{proc:huk-gen} until its value is 1.
+            \item 1: the HUK is valid.
+        \end{itemize}
+    \end{enumerate}
+    \item \textbf{Initialize TRNG correctly:} The user needs to make sure the TRNG is working correctly.
+    \item \textbf{Configure Static Parameters:} Set the following parameters, including eFuse bits, registers and their corresponding locks:
+    \begin{itemize}
+        \item \textbf{EFUSE\_KM\_INIT\_KEY eFuse block:} 256-bit initial key used by the Key Manager in AES Deploy Mode and ECDH1 Deploy Mode.
+        \item \textbf{\hyperref[fielddesc:EFUSEKMDEPLOYONLYONCE]{EFUSE\_KM\_DEPLOY\_ONLY\_ONCE}:} Controls whether the corresponding private key can only be deployed once after a power-on. 
+        \begin{itemize}
+            \item \textbf{Bit[0]:} Configures whether ECDSA Digital Signature Peripheral (ECDSA\_DS) key can be deployed only once.
+                \begin{itemize}
+                    \item 0: ECDSA\_DS key can be deployed more than once.
+                    \item 1: ECDSA\_DS key can be deployed only once.
+                \end{itemize}
+            \item \textbf{Bit[1]}: Configures whether XTS key can be deployed only once.
+                \begin{itemize}
+                    \item 0: XTS key can be deployed more than once.
+                    \item 1: XTS key can be deployed only once.
+                \end{itemize}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY}:} Controls whether the corresponding private key must come from the Key Manager. 
+        \begin{itemize}
+            \item \textbf{Bit[0]:} Configures whether ECDSA\_DS key must come from the Key Manager.
+                \begin{itemize}
+                    \item 0: ECDSA\_DS key does not have to come from the Key Manager.
+                    \item 1: ECDSA\_DS key must come from the Key Manager.
+                \end{itemize}
+            \item \textbf{Bit[1]:} Configures whether flash encryption key must come from the Key Manager.
+                \begin{itemize}
+                    \item 0: Flash key does not have to come from the Key Manager.
+                    \item 1: Flash key must come from the Key Manager.
+                \end{itemize}
+            \item \textbf{Bit[2]}: Configures whether HMAC key must come from the Key Manager.
+                \begin{itemize}
+                    \item 0: HMAC key does not have to come from the Key Manager.
+                    \item 1: HMAC key must come from the Key Manager.
+                \end{itemize}
+            \item \textbf{Bit[3]}: Configures whether RSA Digital Signature Peripheral (RSA\_DS) key must come from the Key Manager.
+                \begin{itemize}
+                    \item 0: RSA\_DS key does not have to come from the Key Manager.
+                    \item 1: RSA\_DS key must come from the Key Manager.
+                \end{itemize}
+            \item \textbf{Bit[4]}: Configures whether PSRAM key must come from the Key Manager.
+                \begin{itemize}
+                    \item 0: PSRAM key does not have to come from the Key Manager.
+                    \item 1: PSRAM key must come from the Key Manager.
+                \end{itemize}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:KEYMNGUSEEFUSEKEY]{KEYMNG\_USE\_EFUSE\_KEY}:} Configures whether the key bit comes from eFuse block, valid only when the corresponding bit in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+        \begin{itemize}
+            \item \textbf{Bit[0]:} Configures whether ECDSA\_DS key comes from eFuse block.
+                \begin{itemize}
+                    \item 0: No effect.
+                    \item 1: ECDSA\_DS key comes from eFuse block, valid only when bit[0] in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+                \end{itemize}
+            \item \textbf{Bit[1]:} Configures whether flash encryption key comes from eFuse block.
+                \begin{itemize}
+                    \item 0: No effect.
+                    \item 1: Flash key comes from eFuse block, valid only when bit[1] in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+                \end{itemize}
+            \item \textbf{Bit[2]:} Configures whether HMAC key comes from eFuse block.
+                \begin{itemize}
+                    \item 0: No effect.
+                    \item 1: Flash key comes from eFuse block, valid only when bit[2] in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+                \end{itemize}
+            \item \textbf{Bit[3]:} Configures whether RSA Digital Signature Peripheral (RSA\_DS) key comes from eFuse block.
+                \begin{itemize}
+                    \item 0: No effect.
+                    \item 1: RSA\_DS key comes from eFuse block, valid only when bit[3] in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+                \end{itemize}
+            \item \textbf{Bit[4]:} Configures whether PSRAM key comes from eFuse block.
+                \begin{itemize}
+                    \item 0: No effect.
+                    \item 1: PSRAM key comes from eFuse block, valid only when bit[4] in \hyperref[fielddesc:EFUSEFORCEUSEKEYMANAGERKEY]{EFUSE\_FORCE\_USE\_KEY\_MANAGER\_KEY} is 0.
+                \end{itemize}
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:EFUSEFORCEDISABLESWINITKEY]{EFUSE\_FORCE\_DISABLE\_SW\_INIT\_KEY}:} Controls whether the use of software-source \begin{math}init\_key\end{math} (\begin{math}sw\_init\_key\end{math}) is permanently disabled.
+        \begin{itemize}
+            \item 0: Not disabled.
+            \item 1: Permanently disabled.
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:KEYMNGUSESWINITKEY]{KEYMNG\_USE\_SW\_INIT\_KEY}:} Configures whether or not to use the software configured \begin{math}sw\_init\_key\end{math} instead of the eFuse block whose purpose is EFUSE\_KM\_INIT\_KEY, valid only when \hyperref[fielddesc:EFUSEFORCEDISABLESWINITKEY]{EFUSE\_FORCE\_DISABLE\_SW\_INIT\_KEY} is 0.
+        \begin{itemize}
+            \item 0: Use the eFuse block whose purpose is EFUSE\_KM\_INIT\_KEY.
+            \item 1: Use the software configured \begin{math}sw\_init\_key\end{math}.
+        \end{itemize}
+    \item \textbf{\hyperref[fielddesc:EFUSEKMRNDSWITCHCYCLE]{EFUSE\_KM\_RND\_SWITCH\_CYCLE}:} Configures the interval for the Key Manager to switch random numbers. It is recommended to set this switch cycle to the number of Key Manager clock cycles corresponding to the TRNG module clock cycles.
+        \begin{itemize}
+            \item 0: Switch cycle is controlled by \hyperref[fielddesc:KEYMNGRNDSWITCHCYCLE]{KEYMNG\_RND\_SWITCH\_CYCLE}.
+            \item 1: 8 cycles of Key Manager clock.
+            \item 2: 16 cycles of Key Manager clock.
+            \item 3: 32 cycles of Key Manager clock.
+        \end{itemize}
+        \item \textbf{\hyperref[fielddesc:KEYMNGRNDSWITCHCYCLE]{KEYMNG\_RND\_SWITCH\_CYCLE}:} Configures the interval for the Key Manager to switch random numbers, valid only when \hyperref[fielddesc:EFUSEKMRNDSWITCHCYCLE]{EFUSE\_KM\_RND\_SWITCH\_CYCLE} is 0. It is recommended to set this switch cycle to the number of Key Manager clock cycles corresponding to the TRNG module clock cycles.
+    \end{itemize}
+    \item \textbf{Configure Working Mode:} Configure \hyperref[fielddesc:KEYMNGKGENMODE]{KEYMNG\_KGEN\_MODE} to complete the working mode configuration of the Key Manager as described in Section \ref{sec:key-manager}.
+    \begin{itemize}
+        \item 0: Random Deploy Mode
+        \item 1: AES Deploy Mode
+        \item 2: ECDH0 Deploy Mode
+        \item 3: ECDH1 Deploy Mode
+        \item 4: Private Key Recovery mode
+        \item 5: \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode
+        \item Others: Not valid
+    \end{itemize}
+    \label{sec:keymng-key-purpose}
+    \item \textbf{Configure Target Key:} Configure \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} to the target \begin{math}key\_purpose\end{math}:
+    \begin{itemize}
+        \item 1: ecdsa\_key\_192
+        \item 2: ecdsa\_key\_256
+        \item 3: flash\_256\_1\_key
+        \item 4: flash\_256\_2\_key
+        \item 5: flash\_128\_key
+        \item 6: hmac\_key
+        \item 7: ds\_key
+        \item 8: psram\_256\_1\_key
+        \item 9: psram\_256\_2\_key
+        \item 10: psram\_128\_key
+        \item 11: ecdsa\_key\_384\_l
+        \item 12: ecdsa\_key\_384\_h
+        \item Other values: Not valid
+    \end{itemize}
+    \item \textbf{Transition to PREP Phase:} Configure \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START} to complete the IDLE phase and enter the PREP phase.
+\end{enumerate}
+
+
+\subsubsection{PREP Phase}
+
+Users need to wait for the PREP phase to complete. This can be done using one of the following methods:
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}:} Continuously check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupt:} Enable the interrupt \hyperref[int:KEYMNGPREPDONEINT]{KEYMNG\_PREP\_DONE\_INT} and handle the completion in the interrupt service routine.
+\end{itemize}
+
+
+\subsubsection{LOAD Phase}
+Users check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} to confirm that the Key Manager is in the LOAD phase. In the LOAD phase, users need to perform the following configurations.
+\begin{enumerate}
+    \item \textbf{Configure Based on Mode}: Depending on the mode of the Key Manager, configure as follows:
+    \begin{itemize}
+        \item \textbf{Random Deploy Mode:} No additional configuration is required.
+        \item \textbf{AES Deploy Mode:} 
+        \begin{enumerate}
+            \item If using software to configure \begin{math}init\_key\end{math}: write \begin{math}sw\_init\_key\end{math} (256 bits) into \hyperref[mem:keymng-sw-init-key]{KEYMNG\_SW\_INIT\_KEY\_MEM}.
+            \item Write \begin{math}k2\_info\end{math} (512 bits) into \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}.
+            \item Write \begin{math}k1\_encrypted\end{math} (256 bits) into \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{ECDH0 Deploy Mode:}
+        \begin{enumerate}
+            \item Write \begin{math}k1*G\end{math} (512 bits) into \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{ECDH1 Deploy Mode:}
+        \begin{enumerate}
+            \item If the software configured init\_key is used: write \begin{math}sw\_init\_key\end{math} (256 bits) into \hyperref[mem:keymng-sw-init-key]{KEYMNG\_SW\_INIT\_KEY\_MEM}.
+            \item Write \begin{math}k2\_info\end{math} (512 bits) into \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}.
+            \item Write \begin{math}k1*G\end{math} (512 bits) into \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{Private Key Recovery Mode:}
+        \begin{enumerate}
+            \item Write \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) into \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode:} No additional configuration is required.
+    \end{itemize}
+    \item \textbf{Transition to PROC Phase:}  Configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE} to complete the LOAD phase and enter the PROC phase.
+\end{enumerate}
+
+
+\subsubsection{PROC Phase}
+Users need to wait for the PROC phase to complete. This can be done using one of the following methods.
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}:} Continuously check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupt:} Enable the interrupt \hyperref[int:KEYMNGPROCDONEINT]{KEYMNG\_PROC\_DONE\_INT} and handle the completion in the interrupt service routine.
+\end{itemize}
+
+
+\subsubsection{GAIN Phase}
+Users check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} to confirm that the Key Manager is in the GAIN phase. In the GAIN phase, users extract the required key information based on the selected mode of the Key Manager.
+\begin{enumerate}
+    \item \textbf{Extract Key Information:}
+    \begin{itemize}
+        \item \textbf{Random Deploy Mode:}
+        \begin{enumerate}
+            \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) from \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{AES Deploy Mode:}
+        \begin{enumerate}
+            \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) from \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{ECDH0 Deploy Mode:}
+        \begin{enumerate}
+            \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) from \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+            \item Read \begin{math}k2*G\end{math} (512 bits) from \hyperref[mem:keymng-assist-info]{KEYMNG\_ASSIST\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{ECDH1 Deploy Mode:}
+        \begin{enumerate}
+            \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) from \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+        \item \textbf{Private Key Recovery Mode:} no need to read any information.
+        \item \textbf{\hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} Export Mode:}
+        \begin{enumerate}
+            \item Read \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} (512 bits) from \hyperref[mem:keymng-public-info]{KEYMNG\_PUBLIC\_INFO\_MEM}.
+        \end{enumerate}
+    \end{itemize}
+    \item \textbf{Transition to POST Phase:} Configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE} to complete the GAIN phase and enter the POST phase.
+\end{enumerate}
+
+
+\subsubsection{POST Phase}
+Users need to wait for the POST phase to complete. This can be done using one of the following methods.
+\begin{itemize}
+    \item \textbf{Monitor \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE}:} Continuously check \hyperref[fielddesc:KEYMNGSTATE]{KEYMNG\_STATE} until it is no longer BUSY.
+    \item \textbf{Use Interrupt:} Enable the interrupt \hyperref[int:KEYMNGPOSTDONEINT]{KEYMNG\_POST\_DONE\_INT} and handle the completion in the interrupt service routine. 
+\end{itemize}
+
+
+
+\section{Programming Examples}
+
+Based on the previous sections, we can outline a comprehensive chip deployment process. This section explains the operation procedures for the HUK Generator and Key Manager during two typical chip startup scenarios.
+
+
+\vspace{-0.5em}
+\begin{tiplisting}
+In this section, all configuration processes are described in a simplified manner. For detailed instructions, please refer to Section \ref{sec:keymng-prog-procedures}.
+\end{tiplisting}
+
+\subsection{Software Process in Chip Private Key Deploy Phase}
+
+The following steps outline the process for booting up the chip for the first time and deploying the private key for encrypting and decrypting external memory.
+
+\begin{enumerate}
+    \item \textbf{Enter Download Mode:} The chip enters the download mode.
+    \item \textbf{Configure HUK Generator:} Since it is the first time to start the chip, configure the HUK Generator to enter the HUK Generation Mode. 
+    \begin{enumerate}
+        \item Configure the IDLE phase and set the working mode as HUK Generation Mode as specified in Table \ref{tab:huk-working-mode}, then configure \hyperref[fielddesc:HUKSTART]{HUK\_START}.
+        \item After entering the LOAD phase, configure \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}.
+        \item After entering GAIN phase, read out \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}, then configure \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}.
+        \item Wait for the HUK Generator to return to the IDLE phase.
+    \end{enumerate}
+    \item \textbf{Set HUK Generation State:} Write EFUSE\_KM\_HUK\_GEN\_STATE to make the total number of bits set to 1 is odd, so that the HUK Generator will work only in HUK Recovery Mode during subsequent startups.
+    \item \textbf{Configure Key Deployment:} Take the key deployment in ECDH0 Deploy Mode as an example.
+    \begin{enumerate}
+        \item Configure the IDLE phase, set \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} as XTS, and configure \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START}.
+        \item After entering the LOAD phase, write the locally generated \begin{math}k1*G\end{math} to the Key Manager, then configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}.
+        \item After entering the GAIN phase, read out \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} and \begin{math}k2*G\end{math}, then configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}.
+        \item Wait for the Key Manager to return to the IDLE phase.
+    \end{enumerate}
+    \item \textbf{Upload Key:} Upload \begin{math}k2*G\end{math} to the user through the communication interface.
+    \item \textbf{Generate and Encrypt Data:} 
+    \begin{itemize}
+        \item Generate the negotiated private key \begin{math}k1*k2*G\end{math} based on the obtained \begin{math}k2*G\end{math} and the local \begin{math}k1\end{math}. 
+        \item Encrypt data locally and write the ciphertext to flash.
+    \end{itemize}
+\end{enumerate}
+
+
+\subsection{Software Process in Chip Normal Startup Phase}
+Once the chip has been deployed, the complete process for a normal startup is as follows.
+\begin{enumerate}
+    \item \textbf{Start in SPI Boot Mode:} 
+    
+    The chip begins in SPI boot mode and first enters the unencrypted program segment.
+
+    \item \textbf{Configure HUK Recovery Mode:}
+    
+    Since the HUK has been generated, configure the HUK Recovery Mode as follows:
+    \begin{enumerate}
+        \item Configure the IDLE phase and set the working mode as HUK Recovery Mode as specified in Table \ref{tab:huk-working-mode}, then configure \hyperref[fielddesc:HUKSTART]{HUK\_START}.
+        \item After entering the LOAD phase, write \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}} into the HUK Generator, then configure \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}.
+        \item After entering GAIN phase, configure \hyperref[fielddesc:HUKCONTINUE]{HUK\_CONTINUE}.
+        \item Wait for the HUK Generator to return to the IDLE phase.
+    \end{enumerate}
+    \item \textbf{Configure Key Manager for Private Key Recovery Mode:}
+    \begin{enumerate}
+        \item Configure the IDLE phase and set \hyperref[fielddesc:KEYMNGKEYPURPOSE]{KEYMNG\_KEY\_PURPOSE} as flash\_128\_key, then configure \hyperref[fielddesc:KEYMNGSTART]{KEYMNG\_START}.
+        \item After entering the LOAD phase, write \hyperref[para:keyinfo]{\begin{math}key\_info\end{math}} into the Key Manager, then configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}.
+        \item After entering the GAIN phase, configure \hyperref[fielddesc:KEYMNGCONTINUE]{KEYMNG\_CONTINUE}.
+        \item Wait for the Key Manager to return to the IDLE phase.
+    \end{enumerate}
+    \item \textbf{Enter Encrypted Program Segment:}
+    
+    At this point, the encryption/decryption private key in the external memory has taken effect, and the system enters the encrypted program segment.
+\end{enumerate}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s Key Manager and HUK Generator can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item KEYMNG\_INTR
+        \item HUK\_INTR
+    \end{itemize}
+
+There are several internal interrupt sources from Key Manager and HUK Generator that can generate the above interrupt signals. The interrupt sources from Key Manager and HUK Generator are listed with their trigger conditions and the resulted interrupt signals in Table \ref{tab:keymng-huk-int-sources}.
+
+\begin{longtable}{ | L{4.5cm} | L{8cm} | L{3cm} | }
+\caption{Key Manager and HUK Generator's Internal Interrupt Sources} \label{tab:keymng-huk-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+\label{int:KEYMNGPREPDONEINT}KEYMNG\_PREP\_DONE\_INT  &  Completion of Key Manager's PREP phase &  KEYMNG\_INTR  \\ \hline
+\label{int:KEYMNGPROCDONEINT}KEYMNG\_PROC\_DONE\_INT  &  Completion of Key Manager's PROC phase &  KEYMNG\_INTR  \\ \hline
+\label{int:KEYMNGPOSTDONEINT}KEYMNG\_POST\_DONE\_INT  &  Completion of Key Manager's POST phase &  KEYMNG\_INTR  \\ \hline
+\label{int:HUKPREPDONEINT}HUK\_PREP\_DONE\_INT  &  Completion of HUK Generator's PREP phase &  HUK\_INTR  \\ \hline
+\label{int:HUKPROCDONEINT}HUK\_PROC\_DONE\_INT  &  Completion of HUK Generator's PROC phase &  HUK\_INTR  \\ \hline
+\label{int:HUKPOSTDONEINT}HUK\_POST\_DONE\_INT  &  Completion of HUK Generator's POST phase &  HUK\_INTR  \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Memory Blocks %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Memory Blocks}
+
+The addresses in this section are relative to Key Manager or HUK Generator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\begin{longtable}{ | p{4.6cm} | p{4.3cm} | R{1cm} | R{1.5cm} | R{1.5cm} | R{1.2cm} | }
+\caption{Key Manager Memory Blocks} \label{tab:keymng-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Name} & \textbf{Description}  &  \textbf{Size (byte)}  &  \textbf{Starting Address}  &  \textbf{Ending Address}  & \textbf{Access}   \\ \hline
+KEYMNG\_ASSIST\_INFO\_MEM\label{mem:keymng-assist-info} & Stores assistant information &   64  &  0x0100  &  0x013F  &  Varies  \\ \hline
+KEYMNG\_PUBLIC\_INFO\_MEM\label{mem:keymng-public-info} & Stores public information    &   64  &  0x0140  &  0x017F  &  Varies  \\ \hline
+KEYMNG\_SW\_INIT\_KEY\_MEM\label{mem:keymng-sw-init-key} & Stores \begin{math}sw\_init\_key\end{math}  &   32  &  0x0180  &  0x019F  &  Varies  \\ \hline
+\end{longtable}
+
+\begin{longtable}{ | p{4.6cm} | p{4.3cm} | R{1cm} | R{1.5cm} | R{1.5cm} | R{1.2cm} | }
+\caption{HUK Generator Memory Blocks} \label{tab:huk-mem-blocks}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Name} & \textbf{Description}  &  \textbf{Size (byte)}  &  \textbf{Starting Address}  &  \textbf{Ending Address}  & \textbf{Access}   \\ \hline
+HUK\_INFO\_MEM\label{mem:huk-info} & Stores \hyperref[para:hukinfo]{\begin{math}huk\_info\end{math}}  &  660  &  0x0100  &  0x0393  &  Varies  \\ \hline
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\hypertarget{keymng-reg-summ}{}
+\section{Register Summary}
+\label{sec:keymng-reg-summ}
+
+\subsection{HUK Register Summary}
+The addresses in this section are relative to HUK Generator base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+\subfile{\modulefiles/35-KEYMNG-HUK-reg-summ__EN}
+
+\subsection{Key Manager Register Summary}
+The addresses in this section are relative to Key Manager base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+\subfile{\modulefiles/35-KEYMNG-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+\newpage
+\section{Registers}
+
+\subsection{HUK Registers}
+The addresses in this section are relative to HUK base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \ref{programming-reserved-field} \textit{\nameref{programming-reserved-field}}.
+
+\subfile{\modulefiles/35-KEYMNG-HUK-reg__EN}
+
+\subsection{Key Manager Registers}
+The addresses in this section are relative to Key Manager base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \ref{programming-reserved-field} \textit{\nameref{programming-reserved-field}}.
+\subfile{\modulefiles/35-KEYMNG-reg__EN}
+
+\end{document}

@@ -1,0 +1,467 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./19-PERMCTRL}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\hypertarget{permctrl}{}
+\chapter{Permission Control (PMS)}
+\label{mod:permctrl}
+
+\section{Overview}
+
+The permission management of \chipname{} can be divided into two parts: PMP (Physical Memory Protection) and APM (Access Permission Management).
+
+The areas managed by PMP and APM are shown in the table \ref{tab:pmp-apm}. The first column lists the masters and the first row lists the slaves. For the CPU, the permission management relation between PMP and APM is shown in Figure \ref{fig:pmp_apm}.
+
+For example, to access the ROM, the master HP CPU needs the permission from PMP; and to access the LP\_MEM, the master HP CPU needs permission from PMP and APM. It is worth noting that HP CPU passes the PMP permission management first and then the APM. If the PMP check fails, the APM permission management will not be triggered.
+
+For HP CPU, PMP manages the access permission of all address spaces, but APM can't manage HP CPU's access to HP\_MEM and ROM.
+
+
+\begin{ThreePartTable}
+
+\begin{TableNotes}
+            \item[1] Peripheral registers in the HP CPU, address range: 0x600C\_0000 – 0x600C\_FFFF
+            \item[2] Peripheral registers in the high-performance system, address range: 0x6000\_0000 – 0x600A\_FFFF
+            \item[3] Peripheral registers in the low-power system, address range: 0x600B\_0000 – 0x600B\_FFFF
+            \item[4] Masters that can request access to the bus, such as GDMA, MEM\_MONITOR. For a complete list of masters, please refer to Table \ref{tab:dma_source}.
+\end{TableNotes}
+
+
+\begin{longtable}[C]{|l|p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|p{2cm}|}
+    \caption{Management Area of PMP and APM}
+    \label{tab:pmp-apm}\\\hline 
+    
+    \rowcolor{lightgray}
+                                    &\multicolumn{1}{|c|}{\textbf{ROM}}
+                                    &\multicolumn{1}{|c|}{\textbf{HP\_MEM}}
+                                    &\multicolumn{1}{|c|}{\textbf{LP\_MEM}}
+                                    & \multicolumn{1}{|c|}{\textbf{CPU\_PERI}\tnote{1}}
+                                    & \multicolumn{1}{|c|}{\textbf{HP\_PERI}\tnote{2}}
+                                    & \multicolumn{1}{|c|}{\textbf{LP\_PERI}\tnote{3}} \\\hline
+    \endfirsthead
+    \insertTableNotes
+    \endlastfoot
+    
+    \textbf{HP CPU} & PMP & PMP & PMP + APM & PMP + APM & PMP + APM & PMP + APM\\ \hline 
+    \textbf{LP CPU} & N/A & APM & APM & N/A & APM & APM\\ \hline 
+    \textbf{SDIO slave} & N/A & APM & APM & APM & APM & APM\\ \hline 
+    \textbf{Others\tnote{4}} & N/A & APM & APM & N/A & N/A & N/A\\ \hline 
+\end{longtable}
+\end{ThreePartTable}
+
+
+\begin{figure}[H]
+\includegraphics{\modulefiles/figures/pmp_apm}
+\centering
+\caption{PMP-APM Management Relation}
+\label{fig:pmp_apm}
+\end{figure}
+
+
+PMP related registers are located inside HP CPU and can be read or configured by special instructions. For how to configure PMP, please refer to chapter \textit{\nameref{mod:riscvcpu}} > \hyperref[sec:riscvcpu-pmp]{Physical Memory Protection}.
+
+APM module contains two parts: TEE (Trusted Execution Environment) controller and APM controller. Each of them contains its own register module: TEE register module and APM register module.
+
+\begin{itemize}
+    \item The TEE controller is responsible for configuring the security mode of a particular master in \chipname{} (such as DMA, which can access memory as a master). There are four types of security mode: TEE, REE0 (Rich Execution Environment), REE1, REE2.
+    \item The APM controller is responsible for managing a master's access permissions (read/write/execute) when accessing memory and peripheral registers. By comparing the pre-configured address ranges and corresponding access permissions with the information carried on the bus, such as ID number (please refer to the table \ref{tab:dma_source} in Chapter \ref{mod:dbgassist} \nameref{mod:dbgassist}), security mode, access address, access permissions, etc, APM determines whether access is allowed.
+\end{itemize}
+
+TEE related registers are used to configure the security mode of each master, and the APM related registers are used to specify the access permission and access address range of each security mode. With TEE controller and APM controller, \chipname{} can precisely control the access permission of all masters to memory and peripheral registers.
+
+
+\section{Features}
+
+\chipname{}'s TEE controller has the following features:
+
+\begin{itemize}
+    \item Four security modes available for the masters
+    \item Security mode configuration for up to 32 masters
+
+\end{itemize}
+
+\chipname{}'s APM controller has the following features:
+
+\begin{itemize}
+    \item Access permission configuration for up to 16 address ranges
+    \item Access management to internal and external memory and peripheral registers
+    \item Interrupt function
+    \item Exception information record
+\end{itemize}
+
+\section{Functional Description}
+
+\subsection{TEE Controller Functional Description}
+
+\chipname{} provides four kinds of security mode: TEE, REEO, REE1, and REE2. 
+
+For the HP CPU to access memory or peripheral registers, first select the machine mode or user mode of the HP CPU, then configure its security mode. For the configuration of machine mode and user mode, please refer to RISC\-/V Instruction Set Manual, Volume II: Privileged Architecture, Version 1.10.
+
+\begin{itemize}
+    \item When the HP CPU is in machine mode, its security mode is TEE mode.
+    \item When the HP CPU is in user mode, its security mode is REE mode. To specify REE0, REE1 or REE2 mode, \hyperref[fielddesc:TEEM0MODE]{TEE\_M0\_MODE} of \hyperref[regdesc:TEEM0MODECTRLREG]{TEE\_M0\_MODE\_CTRL\_REG} should be configured: 
+    \begin{itemize}
+        \item If set \hyperref[fielddesc:TEEM0MODE]{TEE\_M0\_MODE} to 0, which is in TEE mode，its security mode is REE0。
+        \item if set \hyperref[fielddesc:TEEM0MODE]{TEE\_M0\_MODE} to 1,2 or 3, which is in REE mode, it security mode is REE0, REE1 and REE2 respectively.
+    \end{itemize}
+\end{itemize}
+
+For the LP CPU's access to memories or peripheral registers, security mode can be set by configuring the \hyperref[fielddesc:LPTEEM0MODE]{LP\_TEE\_M0\_MODE} of \hyperref[regdesc:LPTEEM0MODECTRLREG]{LP\_TEE\_M0\_MODE\_CTRL\_REG} register.
+
+As for other masters, security mode can be set by configuring the \hyperref[fielddesc:TEEM0MODE]{TEE\_M\regindex{n}\_MODE} of TEE registers. \regindex{n} here equals to the ID number of master in table \ref{tab:dma_source}.
+
+
+
+\subsection{APM Controller Functional Description}
+\subsubsection{Architecture}
+There are  3 register modules for APM registers:
+
+\begin{itemize}
+    \item \nameref{sec:permctrl-reg-hp}
+    \item \nameref{sec:permctrl-reg-lp0}
+    \item \nameref{sec:permctrl-reg-lp}
+\end{itemize}
+
+Figure \ref{fig:APM_Ctrl_Location} shows the access path managed by the APM controller.
+
+\begin{figure}[H]
+\includegraphics[width=1.0\textwidth]{\modulefiles/figures/APM_Ctrl_Location}
+\centering
+\caption{APM Controller Structure}
+\label{fig:APM_Ctrl_Location}
+\end{figure}
+
+\begin{tiplisting}
+For the difference between Low speed mode and High speed mode in the figure, please refer to \nameref{mod:sysmem}.
+\end{tiplisting}
+
+As shown in the Figure \ref{fig:APM_Ctrl_Location}, APM controller contains 3 functional modules: HP\_APM\_CTRL、LP\_APM0\_CTRL and LP\_APM\_CTRL, configured by the register modules \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG}, \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} and  \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} respectively.
+
+\begin{itemize}
+    \item HP\_APM\_CTRL manages 4 access paths, namely M0-M3 in the figure \ref{fig:APM_Ctrl_Location}. Permission management of each path can be enabled by configuring \hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_FUNC\_CTRL\_REG} (enabled by default).
+    
+    \item LP\_APM0\_CTRL manages one access path, namely M0 in the figure \ref{fig:APM_Ctrl_Location}. Permission management of this path can be enabled by configuring \hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} (enabled by default).
+    
+    \item LP\_APM\_CTRL manages 2 access paths, namely M0 and M1 in the figure \ref{fig:APM_Ctrl_Location}. Permission management of each path can be enabled by configuring \hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG} (enabled by default).
+\end{itemize}
+
+The table \ref{tab:apm-reg} below shows the detailed information of each functional module:
+
+\begin{longtable}[C]{|p{2.5cm}|p{2.5cm}|p{1.5cm}|p{3cm}|p{2cm}|p{4.5cm}|}
+    \caption{Configuring Access Path}
+    \label{tab:apm-reg}\\\hline 
+    \rowcolor{lightgray}
+    \textbf{Register Modules} & \textbf{Functional Modules} & \textbf{Access Path No.} & \textbf{Enable Permission Management} & \textbf{Configurable Address Ranges No.} & \textbf{Enable Address Ranges}\\ \hline 
+    \endfirsthead
+    \endlastfoot
+    
+    \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} & HP\_APM\_CTRL & 4 &\hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_ FUNC\_CTRL\_REG} & 16 & \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_ EN\_REG}\\ \hline 
+    
+    \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} & LP\_APM0\_CTRL & 1 & \hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} & 4 & \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_ EN\_REG}\\ \hline 
+    
+    \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} & LP\_APM\_CTRL & 2 & \hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG} & 4 & \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_ EN\_REG}\\ \hline 
+    
+\end{longtable}
+
+\subsubsection{Address Ranges}
+
+\begin{itemize}
+    \item \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} register module can configure up to 16 groups of address ranges for functional module HP\_APM\_CTRL. The start and end address for each region (address range) can be configured by setting  \hyperref[regdesc:HPAPMREGION0ADDRSTARTREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_START} and \hyperref[regdesc:HPAPMREGION0ADDRENDREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_END} respectively. Configure the bit \regindex{n} of \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN\_REG} to enable region \regindex{n}. The first group of address ranges is enabled by default.
+    
+
+    \item \hyperref[sec:permctrl-reg-lp0]{LP\_APM0\_REG} register module can configure up to 4 groups of address ranges for functional module LP\_APM0\_CTRL. The start and end address for each region can be configured by setting \hyperref[fielddesc:LPAPM0REGION0ADDRSTART]{LP\_APM0\_REGION\regindex{n}\_ADDR\_START} and \hyperref[fielddesc:LPAPM0REGION0ADDREND]{LP\_APM0\_REGION\regindex{n}\_ADDR\_END}. Configure the bit \regindex{n} of \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_EN\_REG} to enable region \regindex{n}. The first group of address ranges is enabled by default.
+    
+    \item \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG} register module can configure up to 4 groups of address ranges for functional module LP\_APM\_CTRL. The start and end address for region \regindex{n} can be configured by setting \hyperref[fielddesc:LPAPMREGION0ADDRSTART]{LP\_APM\_REGION\regindex{n}\_ADDR\_START} and \hyperref[fielddesc:LPAPMREGION0ADDREND]{LP\_APM\_REGION\regindex{n}\_ADDR\_END}. Configure the bit \regindex{n} of \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_EN\_REG} to enable region \regindex{n}. The first group of address ranges is enabled by default.
+   
+\end{itemize}
+
+When configuring the address ranges, the address requires 4-byte alignment (the lower two bits of the address are 0). For example, the address range could be set as 0x4080000C \verb+~+  0x40808774 or 0x600C0008 \verb+~+ 0x600CFF70.
+
+
+
+
+\subsubsection{Access Permissions of Address Ranges}
+
+Within each address range, access permissions (read/write/execute) can be configured for different security modes:
+
+\begin{itemize}
+
+    \item The master in TEE mode always has read, write, and execute permissions in the address range.
+
+    \item For master in REE0, REE1 or REE2 mode, access permissions can be configured in \hyperref[regdesc:HPAPMREGION0ATTRREG]{HP\_APM\_REGION\regindex{n}\_ATTR\_REG}, \hyperref[regdesc:LPAPMREGION0ATTRREG]{LP\_APM\_REGION\regindex{n}\_ATTR\_REG} or \hyperref[regdesc:LPAPM0REGION0ATTRREG]{LP\_APM0\_REGION\regindex{n}\_ATTR\_REG} based on the access path. 
+
+\end{itemize}
+
+Different access paths managed by the same register module share the configuration of address ranges and access permissions. For example, the permission management of data path HP\_APM M0-M3 shown in figure \ref{fig:APM_Ctrl_Location} should follow the address ranges and access permissions of each address range configured in the register module \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG}. Likewise, the permission management of data path LP\_APM M0-M1 shown in figure \ref{fig:APM_Ctrl_Location} should follow the address ranges and access permissions of each address range configured in the register module \hyperref[sec:permctrl-reg-lp]{LP\_APM\_REG}.
+
+For the access path HP\_APM M1, all masters except HP CPU and LP CPU access HP\_MEM through this data access path. Suppose that \hyperref[fielddesc:HPAPMM1FUNCEN]{HP\_APM\_M1\_FUNC\_EN} is enabled and a master in REE1 mode needs to access HP\_MEM through HP\_APM M1. The whole process is as follows:
+
+\begin{enumerate}
+    \item HP\_APM M1 will first determine whether the address requested to access is within the 16 address ranges configured in the \hyperref[sec:permctrl-reg-hp]{HP\_APM\_REG} register module. If  16 groups of address ranges are partially enabled, HP\_APM M1 will only determine whether the address requested to access is within the enabled address ranges.
+    
+    \item Assuming that the address requested to access is within second group of configured address ranges, then determine whether the address range of this group is enabled, that is, whether bit 1 of \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN} is 1.
+    
+    \item If the address range is enabled, judge whether the master has read permission for the second group of address ranges in REE1 mode, that is, whether \hyperref[fielddesc:HPAPMREGION0R1R]{HP\_APM\_REGION1\_R1\_R} in \hyperref[regdesc:HPAPMREGION0ATTRREG]{HP\_APM\_REGION1\_ATTR\_REG} is valid (that is, 1). If valid, the read request will be allowed. Otherwise it will return 0.
+    
+\end{enumerate}
+
+
+
+
+When the HP power domain (see chapter \textit{\nameref{mod:lowpowm}}) powered down and restarted, the LP CPU does not have access to HP\_MEM by default. The master must be in the TEE mode to configure  \hyperref[fielddesc:LPTEEFORCEACCHPMEMEN]{LP\_TEE\_FORCE\_ACC\_HPMEM\_EN} in the LP power domain. When \hyperref[fielddesc:LPTEEFORCEACCHPMEMEN]{LP\_TEE\_FORCE\_ACC\_HPMEM\_EN} is enabled, the LP CPU can access the HP\_MEM without the permission management of APM controller.
+
+The address ranges configured above may overlap. For example, region 1 and region 2 overlap. If region 1 is set to be unreadable and region 2 is set to be readable, in this case the overlapping area of region 1 and region 2 is readable. The same rules apply for write and execute permissions.
+
+\begin{tiplisting}
+
+\vspace{-2em}
+\begin{itemize}
+    \item When powered up, only the HP CPU is in TEE mode by default, and the other masters are in REE2 mode. By default, APM controller blocks access requests from all master in REE0, REE1, and REE2 modes.
+    \item All registers listed in \ref{sec:permctrl-reg-summ} \textit{\nameref{sec:permctrl-reg-summ}}  can only be configured by the master in TEE security mode.
+\end{itemize}
+\end{tiplisting}
+
+
+
+\section{Programming Procedure}
+
+
+\begin{itemize}
+
+    \item Configure the HP CPU to machine mode (ie. TEE mode).
+    \item Choose the security mode of the master by configuring \hyperref[fielddesc:TEEM0MODE]{TEE\_M\regindex{n}\_MODE} or \hyperref[fielddesc:LPTEEM0MODE]{LP\_TEE\_M\regindex{n}\_MODE}. \regindex{n} here equals to the master ID in Table \ref{tab:dma_source}. 
+    
+    \item Configure the start and end address for access address ranges by setting  \hyperref[regdesc:HPAPMREGION0ADDRSTARTREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_START}, \hyperref[regdesc:HPAPMREGION0ADDRENDREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_END}, or \hyperref[fielddesc:LPAPM0REGION0ADDRSTART]{LP\_APM0\_REGION\regindex{n}\_ADDR\_START}, \hyperref[fielddesc:LPAPM0REGION0ADDREND]{LP\_APM0\_REGION\regindex{n}\_ADDR\_END}, or \hyperref[fielddesc:LPAPMREGION0ADDRSTART]{LP\_APM\_REGION\regindex{n}\_ADDR\_START}, \hyperref[fielddesc:LPAPMREGION0ADDREND]{LP\_APM\_REGION\regindex{n}\_ADDR\_END}.
+    
+    \item Configure the access permissions of each region in different security mode by configuring \hyperref[regdesc:HPAPMREGION0ATTRREG]{HP\_APM\_REGION\regindex{n}\_ATTR\_REG} or \hyperref[regdesc:LPAPMREGION0ATTRREG]{LP\_APM\_REGION\regindex{n}\_ATTR\_REG} or \hyperref[regdesc:LPAPM0REGION0ATTRREG]{LP\_APM0\_REGION\regindex{n}\_ATTR\_REG}.
+    
+    \item Set the bit \regindex{n} of \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN\_REG} or \hyperref[fielddesc:LPAPMREGIONFILTEREN]{LP\_APM\_REGION\_FILTER\_ EN\_REG} or \hyperref[fielddesc:LPAPM0REGIONFILTEREN]{LP\_APM0\_REGION\_FILTER\_ EN\_REG} to enable region \regindex{n}.
+    
+    \item Configure \hyperref[regdesc:HPAPMFUNCCTRLREG]{HP\_APM\_ FUNC\_CTRL\_REG}、\hyperref[regdesc:LPAPMFUNCCTRLREG]{LP\_APM \_FUNC\_CTRL\_REG} or \hyperref[regdesc:LPAPM0FUNCCTRLREG]{LP\_APM0 \_FUNC\_CTRL\_REG} enable permission management of different access paths (enabled by default).
+    
+\end{itemize}
+
+Take I2S accessing HP\_MEM via GDMA as an example, assuming that it is only allowed to read and write in the fourth group address range 0x40805000 \verb+~+  0x4080F000 address range:
+
+
+\begin{itemize}
+
+    \item Configure the HP CPU to machine mode (ie. TEE mode).
+    
+    \item According to the ID number in the table \ref{tab:dma_source}, set the \hyperref[fielddesc:TEEM0MODE]{TEE\_M19\_MODE} to be 1, so as to set the security mode for I2S access via GDMA to REE0 mode.
+    
+    \item Configure the start address to 0x40805000 and end address to 0x4080F000 for the access address range by configuring  \hyperref[regdesc:HPAPMREGION0ADDRSTARTREG]{HP\_APM\_REGION3\_ADDR\_START} and \hyperref[regdesc:HPAPMREGION0ADDRSTARTREG]{HP\_APM\_REGION3\_ADDR\_END} respectively.
+    
+    \item Set \hyperref[fielddesc:HPAPMREGION0R0W]{HP\_APM\_REGION3\_R0\_W} and  \hyperref[fielddesc:HPAPMREGION0R0R]{HP\_APM\_REGION3\_R0\_R} to 1.
+    
+    \item Set the bit 3 of \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN} to 1.
+    
+    \item Set \hyperref[fielddesc:HPAPMM1FUNCEN]{HP\_APM\_M1\_FUNC\_EN} to 1.
+
+\end{itemize}
+
+Through the above configuration, I2S can read and write in the address range of 0x40805000 \verb+~+  0x4080F000 in HP\_MEM via GDMA.
+
+\section{Illegal access and interrupts}
+
+If the information carried on the bus is inconsistent with the configuration, \chipname{} will regard it as an illegal access and proceed as follows:
+
+\begin{itemize}
+    \item Deny the access request and return the default value:
+    \begin{itemize}
+        \item Returns 0 on instruction execution and read
+        \item Invalidate the write operation
+    \end{itemize}
+    \item Trigger interrupt
+\end{itemize}
+
+The APM controller module will automatically record relevant information about illegal access, including master ID, security mode, access address, reason for illegal access (address out of bounds or permission restrictions ), and permission management result of each access path. All these information can be obtained from relevant registers listed in the section \ref{sec:permctrl-reg-summ} \textit{\nameref{sec:permctrl-reg-summ}}.
+
+
+Take the access path HP\_APM M0 as an example. When illegal access occurs:
+
+\begin{itemize}
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONID]{HP\_APM\_M0\_EXCEPTION\_ID} records the master ID.
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONMODE]{HP\_APM\_M0\_EXCEPTION\_MODE} records the security mode.
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONADDR]{HP\_APM\_M0\_EXCEPTION\_ADDR} records the access address.
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONSTATUS]{HP\_APM\_M0\_EXCEPTION\_STATUS} records the reason for illegal access. 
+    \begin{itemize}
+        \item If the address requested to access is not among the enabled region of the 16 address ranges configured by \hyperref[regdesc:HPAPMREGION0ADDRSTARTREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_START}, \hyperref[regdesc:HPAPMREGION0ADDRENDREG]{HP\_APM\_REGION\regindex{n}\_ADDR\_END} and \hyperref[fielddesc:HPAPMREGIONFILTEREN]{HP\_APM\_REGION\_FILTER\_EN}, bit1 of \hyperref[fielddesc:HPAPMM0EXCEPTIONSTATUS]{HP\_APM\_M0\_EXCEPTION\_STATUS} will be set to 1, indicating address out of bounds.
+        \item If the address requested to access is among the enabled region/regions of the 16 address ranges，but the master doesn't have the read/write/execute permission within this region/regions, then the bit0 will be set to 1, indicating permission restrictions.
+    \end{itemize}
+
+    \item \hyperref[fielddesc:HPAPMM0EXCEPTIONREGION]{HP\_APM\_M0\_EXCEPTION\_REGION} records the permission management result of each address range. This register has a total of 16 bits, corresponding to 16 groups of address ranges, and bit0 corresponds to the first group of address ranges. When the address to access is within a particular enabled address range, but the master doesn't have the corresponding read/write/execute permission within this address range, the corresponding bit of this register will be set to 1 .
+
+\end{itemize}
+
+\chipname{}'s APM controller can generate seven interrupt signals, which will be sent to \textit{\nameref{mod:intmtrx}}:
+
+    \begin{itemize}
+    \item HP\_APM\_M0\_INTR
+    \item HP\_APM\_M1\_INTR
+    \item HP\_APM\_M2\_INTR
+    \item HP\_APM\_M3\_INTR
+    \item LP\_APM\_M0\_INTR
+    \item LP\_APM\_M1\_INTR
+    \item LP\_APM0\_M0\_INTR
+    \end{itemize}
+    
+These seven interrupt signals correspond to the controlled access paths shown in Figure \ref{fig:APM_Ctrl_Location}. If an illegal access occurs in a controlled access path, the corresponding interrupt will be generated.
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\hypertarget{permctrl-reg-summ}{}
+\section{Register Summary}
+\label{sec:permctrl-reg-summ}
+
+
+\subsection{High Performance APM Registers (HP\_APM\_REG)}
+\label{sec:permctrl-reg-hp}
+
+The addresses in this section are relative to the Access Permission Management Controller (HP\_APM) base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-hp_apm_reg_summary}
+
+\subsection{Low Power APM Registers (LP\_APM\_REG)}
+\label{sec:permctrl-reg-lp}
+
+The addresses in this section are relative to the Low-Power Access Permission Management (LP\_APM) base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-lp_apm_reg_summary}
+
+\subsection{Low Power APM0 Registers (LP\_APM0\_REG)}
+\label{sec:permctrl-reg-lp0}
+
+The addresses in this section are relative to the Access Permission Management Controller (HP\_APM) base address + 0x1000 provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-lp_apm0_reg_summary}
+
+\subsection{High Performance TEE Registers}
+
+The addresses in this section are relative to the Trusted Execution Environment (TEE) Register provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-tee_reg_summary}
+
+\subsection{Low Power TEE Registers}
+
+The addresses in this section are relative to the Low-power Trusted Execution Environment (LP\_TEE) provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/19-lp_tee_reg_summary}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+\clearpage
+\section{Registers}
+
+
+\subsection{High Performance APM Registers (HP\_APM\_REG)}
+\subfile{\modulefiles/19-hp_apm_reg_details.tex}
+
+\subsection{Low Power APM Registers (LP\_APM\_REG)}
+\subfile{\modulefiles/19-lp_apm_reg_details.tex}
+
+\subsection{Low Power APM0 Registers (LP\_APM0\_REG)}
+\subfile{\modulefiles/19-lp_apm0_reg_details.tex}
+
+\subsection{High Performance TEE Registers}
+\subfile{\modulefiles/19-tee_reg_details.tex}
+
+\subsection{Low Power TEE Registers}
+\subfile{\modulefiles/19-lp_tee_reg_details.tex}
+
+
+\end{document}

@@ -1,0 +1,593 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./42-SENSOR}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+\hypertarget{sensor}{}
+\chapter{On-Chip Sensor and Analog Signal Processing}
+\label{mod:sensor}
+
+
+\section{Overview}
+
+\chipname{} provides the following on-chip sensor and analog signal processing peripherals:
+
+\begin{itemize}
+    \item One 12-bit Successive Approximation ADC (SAR ADC) for measuring analog signals from seven channels;
+    \item One temperature sensor for measuring the internal temperature of the \chipname{} chip.
+\end{itemize}
+
+\section{SAR ADC}\label{sec:sensor-sar-adc}
+
+\subsection{Overview}
+
+\chipname{} integrates a 12-bit SAR ADC which is able to measure analog signals from up to seven pins. The SAR ADC is managed by the DIG ADC controller, which drives the \hyperref[other:sensor-item-read-data-from-sar-adc]{Digital\_reader} to sample channel voltages by SAR ADC. It supports high-performance multi-channel scanning and DMA continuous conversion.
+
+\subsection{Features}
+\begin{itemize}
+\item 12-bit sampling resolution
+\item Analog voltage sampling from up to seven pins
+\item DIG ADC controller:
+    \begin{itemize}
+        \item Separate control modules for one-time sampling and multi-channel scanning
+        \item Configurable channel scanning sequence in multi-channel scanning mode
+        \item Two filters with configurable filter coefficient
+        \item Threshold monitoring, which helps to trigger an interrupt when the sampled value is greater than the pre-set high threshold or less than the pre-set low threshold
+        \item DMA
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{Functional Description}
+
+The major components of SAR ADC and their interconnections are shown in Figure  \ref{fig:sensor-sar-adc-function-overview}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{\modulefiles/figures/adc_struct_20221115}
+    \caption{SAR ADCs Function Overview}
+    \label{fig:sensor-sar-adc-function-overview}
+\end{figure}
+
+As shown in Figure  \ref{fig:sensor-sar-adc-function-overview}, the SAR ADC module provides the following functions and consists of the following components:
+
+\begin{itemize}
+    \item Measures voltages from up to seven channels.
+    \item Clock management: selects clock sources and their dividers:
+        \begin{itemize}
+            \item Clock sources: can be XTAL\_CLK, RC\_FAST\_CLK, or PLL\_F80M\_CLK;
+            \item Divided Clocks:
+             \begin{itemize}
+                 \item SAR\_CLK: operating clock for SAR ADC and Digital\_reader (the control signal generator for analog circuit). Note that the divider (sar\_div) of SAR\_ADC must be no less than 15;
+                 \item ADC\_CTRL\_CLK: operating clock for DIG ADC FSM and other logic circuits except for APB interface and Digital\_reader.
+             \end{itemize}
+        \end{itemize}
+    \item \label{other:sensor-item-read-data-from-sar-adc} Digital\_reader (driven by DIG ADC FSM): reads data from SAR ADC. 
+    \item DIG ADC FSM: generates the signals required throughout the ADC sampling process.
+    \item Threshold monitor\regindex{x}: threshold monitor 1 and threshold monitor 2. The monitor\regindex{x} will trigger an interrupt when the sampled value is greater than the pre-set high threshold or less than the pre-set low threshold.
+\end{itemize}
+The following sections describe the individual components in details.
+
+\subsubsection{Input Signals}
+
+In order to sample an analog signal, the SAR ADC must first select the analog pin to measure via an internal multiplexer. A summary of all the analog signals that may be sent to the SAR ADC module for processing by ADC are presented in Table \ref{tab:sensor-sar-adc-input-signals}.
+
+\begin{longtable}{ |p{2.5cm}|r|c| }
+    \caption{SAR ADC Input Signals}
+    \label{tab:sensor-sar-adc-input-signals}
+    \\\hline
+    \rowcolor{lightgray}
+    Signal  & Channel  & ADC Selection \\ \hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}  
+    Signals  & Channels  & ADC Selection \\ \hline
+    \endhead
+    \hline
+    \endfoot
+    X32K\_P (GPIO0)       &  0  & \multirow{7}{*}{SAR ADC} \\ \cline{1-2}
+    X32K\_N (GPIO1)       &  1  & \\ \cline{1-2}
+    GPIO2         &  2  & \\ \cline{1-2}
+    GPIO3         &  3  & \\ \cline{1-2}
+    MTMS (GPIO4)          &  4  & \\ \cline{1-2}
+    MTDI (GPIO5)          &  5  & \\ \cline{1-2}
+    MTCK (GPIO6)          &  6  & \\ \cline{1-2}
+\end{longtable}
+
+\subsubsection{ADC Conversion and Attenuation}
+
+When the SAR ADC converts an analog voltage, the resolution (12-bit) of the conversion spans voltage range from 0 mV to \(V_{ref}\). \(V_{ref}\) is the SAR ADC's internal reference voltage (1100 mV by design). The output value of the conversion (data) is mapped to analog voltage \(V_{data}\) using the following formula:
+
+    \[
+    V_{data} = \frac{V_{ref}}{k}\times{\frac{data}{4095}}
+    \]
+
+\(k\) is the coefficient corresponding to the configured attenuation.
+
+In order to convert voltages larger than \(V_{ref}\), input signals can be attenuated before being input into the SAR ADC. The supported attenuation levels are:
+
+\begin{itemize}
+    \item 0 dB (k≈100\%)
+    \item 2.5 dB (k≈75\%)
+    \item 6 dB (k≈50\%)
+    \item 12 dB (k≈25\%)
+\end{itemize}
+
+\subsubsection{DIG ADC Controller}
+
+The clock of the DIG ADC controller is quite fast, thus the sample rate is high.
+This controller supports: 
+
+\begin{itemize}
+    \item up to 12-bit sampling resolution
+    \item software-triggered one-time sampling
+    \item timer-triggered multi-channel scanning
+\end{itemize}
+
+The configuration of a one-time sampling triggered by the software is as follows:
+\begin{itemize}
+    \item Set \hyperref[fielddesc:APBSARADCONETIMESAMPLE]{APB\_SARADC\_ONETIME\_SAMPLE} to select SAR ADC to perform a one-time sampling.
+    \item Configure \hyperref[fielddesc:APBSARADCONETIMECHANNEL]{APB\_SARADC\_ONETIME\_CHANNEL} to select a channel to sample.
+    \item Configure \hyperref[fielddesc:APBSARADCONETIMEATTEN]{APB\_SARADC\_ONETIME\_ATTEN} to set attenuation.
+    \item Configure \hyperref[fielddesc:APBSARADCONETIMESTART]{APB\_SARADC\_ONETIME\_START} to start the one-time sampling.
+    \item Upon completion of sampling, the \hyperref[fielddesc:APBSARADCDONEINTRAW]{APB\_SARADC\_ADC\_DONE\_INT\_RAW} interrupt is generated. Once this interrupt is detected, software can initiate reading of the sampled values from \hyperref[fielddesc:APBSARADCDATA]{APB\_SARADC\_ADC\_DATA}. 
+\end{itemize}
+
+If the timer-triggered multi-channel scanning is selected, follow the configuration below. Note that in this mode, the scan sequence is performed according to the configuration entered in the pattern table. 
+\begin{itemize} 
+        \item Configure \hyperref[fielddesc:APBSARADCTIMERTARGET]{APB\_SARADC\_TIMER\_TARGET} to set the trigger target for DIG ADC timer. When the timer counting reaches two times of the pre-configured cycle number, a sampling operation is triggered.
+        \item Configure \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} to enable the timer.
+        \item When the timer times out, it drives FSM to start sampling according to the pattern table.
+        \item Sampled data is automatically stored in memory via DMA. An interrupt is triggered once the scan is completed.
+\end{itemize}
+
+\begin{tiplisting}
+One-time sampling and multi-channel scanning can not be configured to perform at the same time.
+\end{tiplisting}
+
+\subsubsection{DMA Support}
+
+DIG ADC controller supports direct memory access via the peripheral DMA, which is triggered by DIG ADC timer. Users can switch the DMA data path to DIG ADC by configuring \hyperref[fielddesc:APBSARADCAPBADCTRANS]{APB\_SARADC\_APB\_ADC\_TRANS} via software. For specific DMA configuration, please refer to Chapter \ref{mod:dma} \textit{\nameref{mod:dma}}.
+
+\subsubsection{DIG ADC FSM}
+\textbf{Overview}
+
+Figure \ref{fig:sensor-diagram-dig-adc-fsm} shows the diagram of DIG ADC FSM.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/sensor_fsm_20221018.eps}
+    \caption{Diagram of DIG ADC FSM}
+    \label{fig:sensor-diagram-dig-adc-fsm}
+\end{figure}
+
+Wherein:
+\begin{itemize}
+    \item Timer: a dedicated timer for DIG ADC controller to generate a sample\_start signal.
+    \item pr: the pointer to pattern table entries. FSM sends out corresponding signals based on the configuration of the pattern table entry that the pointer points to.
+\end{itemize}
+
+Execution of the sampling process is as follows:
+\begin{itemize}
+\item Configure \hyperref[fielddesc:APBSARADCTIMEREN]{APB\_SARADC\_TIMER\_EN} to enable the DIG ADC timer. The timeout event of this timer triggers an sample\_start signal. This signal drives the FSM module to start sampling.
+\item When the FSM module receives the sample\_start signal, it starts the following operations:
+\begin{itemize}
+    \item Power up SAR ADC.
+    \item Configure the ADC channel and attenuation based on the pattern table entry that the current pr points to.
+    \item Output the corresponding en\_pad and atten signals to the analog side according to the configuration information.
+    \item Initiate the sar\_start signal and start sampling.
+\end{itemize}
+    \item When the FSM module receives the reader\_done signal from ADC Reader (Digital\_reader), it starts the following operations:
+    \begin{itemize}
+        \item Stop sampling.
+        \item Transfer the data to the filter, and then threshold monitor transfers the data to memory via DMA (see Figure \ref{fig:sensor-sar-adc-function-overview}).
+        \item Update the pattern table pointer pr and wait for the next sampling. Note that if the pointer pr is smaller than \hyperref[fielddesc:APBSARADCSARPATTLEN]{APB\_SARADC\_SAR\_PATT\_LEN} (table\_length), then pr = pr + 1. Otherwise, pr is cleared.
+    \end{itemize}
+\end{itemize}    
+    
+
+\textbf{Pattern Table}
+
+There is one pattern table in the controller, consisting of the \hyperref[regdesc:APBSARADCSARPATTTAB1REG]{APB\_SARADC\_SAR\_PATT\_TAB1\_REG} and \hyperref[regdesc:APBSARADCSARPATTTAB1REG]{APB\_SARADC\_SAR\_PATT\_TAB2\_REG} registers. See Figure \ref{fig:sensor-apb-saradc-sar-patt-tab1-reg-pattern-tab-entry0-entry3} and Figure \ref{fig:sensor-apb-saradc-sar-patt-tab2-reg-pattern-tab-entry4-entry7}:
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd0}{6}{18}{{0x0000}}%
+\regfield{cmd1}{6}{12}{{0x0000}}%
+\regfield{cmd2}{6}{6}{{0x0000}}%
+\regfield{cmd3}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{x}] represents pattern table entries. \regindex{x} here is the index numbered from 0 \verb+~+ 3.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR\_PATT\_TAB1\_REG and Pattern Table Entry 0 - Entry 3}
+    \label{fig:sensor-apb-saradc-sar-patt-tab1-reg-pattern-tab-entry0-entry3}
+\end{figure}
+
+\regfield{(reserved)}{8}{24}{00000000}%
+\regfield{cmd4}{6}{18}{{0x0000}}%
+\regfield{cmd5}{6}{12}{{0x0000}}%
+\regfield{cmd6}{6}{6}{{0x0000}}%
+\regfield{cmd7}{6}{0}{{0x0000}}%
+\begin{regdesc}\begin{reglist}
+\item [cmd \regindex{x}] represents pattern table entries. \regindex{x} here is the index number from 4 \verb+~+ 7.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{APB\_SARADC\_SAR\_PATT\_TAB2\_REG and Pattern Table Entry 4 - Entry 7}
+    \label{fig:sensor-apb-saradc-sar-patt-tab2-reg-pattern-tab-entry4-entry7}
+\end{figure}
+
+Each register consists of four 6-bit pattern table entries. Each entry is composed of three fields that contain the ADC channel and attenuation information, as shown in Table  \ref{fig:sensor-pattern-table-entry}.
+
+\begin{figure}[H]
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{xx}}%
+\regfield{atten}{2}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{Pattern Table Entry}
+    \label{fig:sensor-pattern-table-entry}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [atten] Attenuation:\\
+0: 0 dB\\
+1: 2.5 dB\\
+2: 6 dB\\
+3: 12 dB
+\item [ch\_sel] ADC channel, see Table \ref{tab:sensor-sar-adc-input-signals}.
+\end{reglist}\end{regdesc}
+
+\textbf{Configuration of multi-channel scanning}
+
+In this example, two channels are selected for multi-channel scanning:
+\begin{itemize}
+    \item Channel 0 of SAR ADC, with the attenuation of 2.5 dB
+    \item Channel 2 of SAR ADC, with the attenuation of 12 dB
+\end{itemize}
+
+The detailed configuration is as follows:
+
+\begin{itemize}
+    \item Configure the first pattern table entry (cmd0):
+
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{0}}%
+\regfield{atten}{2}{0}{1}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{cmd1 configuration}
+\end{figure}
+\vspace{-2em}
+\item [atten] write the value of 1 to this field, to set the attenuation to 2.5 dB.
+\item [ch\_sel] write the value of 0 to this field, to select channel 0 (see Table \ref{tab:sensor-sar-adc-input-signals}).
+\end{reglist}\end{regdesc}
+\end{itemize}
+
+\begin{itemize}
+    \item Configure the second pattern table entry (cmd1):
+
+\centering
+\regfield{(reserved)}{1}{5}{{0}}%
+\regfield{ch\_sel}{3}{2}{{2}}%
+\regfield{atten}{2}{0}{3}%
+\reglabel{}\regnewline%
+\begin{regdesc}\begin{reglist}
+\begin{figure}[H]
+    \centering
+    \caption{cmd0 Configuration}
+\end{figure}
+\vspace{-2em}
+\item [atten] write the value of 3 to this field, to set the attenuation to 12 dB.
+\item [ch\_sel] write the value of 2 to this field, to select channel 2 (see Table \ref{tab:sensor-sar-adc-input-signals}).
+\end{reglist}\end{regdesc}
+\end{itemize}
+
+
+\begin{itemize}
+    \item Configure \hyperref[fielddesc:APBSARADCSARPATTLEN]{APB\_SARADC\_SAR\_PATT\_LEN} to 1, i.e., set pattern table length to (this value + 1 = 2). Then pattern table entries cmd0 and cmd1 will be used. 
+    \item Enable the timer, then DIG ADC controller starts scanning the two channels in cycles, as configured in the pattern table entries.
+\end{itemize}
+
+\textbf{DMA Data Format}
+
+The ADC eventually passes 32-bit data to the DMA. See the figure below.
+
+\begin{figure}[H]
+\centering
+\regfield{(reserved)}{15}{17}{{xx}}%
+\regfield{(reserved)}{1}{16}{{x}}%
+\regfield{ch\_sel}{3}{13}{{xxx}}%
+\regfield{(reserved)}{1}{12}{{x}}%
+\regfield{data}{12}{0}{xx}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{DMA Data Format}
+    \label{fig:sensor-dma-data-format}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [data] SAR ADC read value; 12-bit
+\item [ch\_sel] Channel; 3-bit
+\end{reglist}\end{regdesc}
+
+
+\subsubsection{ADC Filters}
+The DIG ADC controller provides two filters for automatic filtering of sampled ADC data. Both filters can be configured to any channel of the SAR ADC and then filter the sampled data for the target channel. The filter's formula is shown below:
+
+\[data_{cur} = \frac{(k-1)data_{prev}}{k}+\frac{data_{in}}{k}+0.5\]
+
+\begin{itemize}
+    \item \(data_{cur}\): the filtered data value.
+    \item \(data_{in}\): the sampled data value from the ADC.
+    \item \(data_{prev}\): the last filtered data value.
+    \item \(k\): the filter coefficient.
+\end{itemize}
+
+The filters are configured as follows:
+\begin{itemize}
+\item Configure \hyperref[fielddesc:APBSARADCFILTERCHANNEL1]{APB\_SARADC\_FILTER\_CHANNEL\regindex{x}} to select the ADC channel for filter \regindex{x}.
+\item Configure \hyperref[fielddesc:APBSARADCFILTERCHANNEL1]{APB\_SARADC\_FILTER\_FACTOR\regindex{x}} to set the coefficient for filter \regindex{x}.
+\end{itemize}
+
+Note that \regindex{x} is used here as the placeholder of filter index. 0: filter 0; 1: filter 1.
+
+\subsubsection{Threshold Monitoring}
+DIG ADC controller contains two threshold monitors that can be configured to monitor on any channel of the SAR ADC. A high threshold interrupt is triggered when the ADC sample value is larger than the pre-configured high threshold, and a low threshold interrupt is triggered if the sample value is lower than the pre-configured low threshold.
+
+The configuration of threshold monitoring is as follows:
+\begin{itemize}
+    \item Set \hyperref[fielddesc:APBSARADCTHRESALLEN]{APB\_SARADC\_THRES\regindex{x}\_EN} to enable threshold monitor \regindex{x};
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_LOW} to set a low threshold;
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_HIGH} to set a high threshold;
+    \item Configure \hyperref[fielddesc:APBSARADCTHRES1LOW]{APB\_SARADC\_THRES\regindex{x}\_CHANNEL} to select the channel to monitor.
+\end{itemize}
+
+Note that \regindex{x} is used here as the placeholder of monitor index. 0 stands for monitor\regindex{0} and 1  for monitor \regindex{1}.
+
+
+\section{Temperature Sensor}\label{sec:sensor-temp-sensor}
+\subsection{Overview}
+\chipname{} provides a temperature sensor to monitor temperature changes inside the chip in real time. Figure \ref{fig:tsens_struct} shows the internal structure of the temperature sensor.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/tsens_struct_20221209}
+    \caption{Temperature Sensor Structure}
+    \label{fig:tsens_struct}
+\end{figure}
+
+\subsection{Features}
+The temperature sensor has the following features:
+\begin{itemize}
+    \item Software triggering, wherein the data can be read continuously once triggered 
+    \item Hardware automatic triggering and temperature monitoring
+    \item Configurable temperature offset based on the environment to improve the accuracy
+    \item Adjustable measurement range
+\end{itemize}
+
+\subsection{Functional Description}
+
+The temperature sensor can be started by software as follows:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:APBSARADCTSENSPU]{APB\_SARADC\_TSENS\_PU} to start XPD\_SAR and to enable the temperature sensor; Set \hyperref[fielddesc:PCRTSENSCLKEN]{PCR\_TSENS\_CLK\_EN} to enable the temperature sensor clock;
+        \item Wait for \hyperref[fielddesc:APBSARADCTSENSXPDWAIT]{APB\_SARADC\_TSENS\_XPD\_WAIT} clock cycles till the reset of the temperature sensor is released, then the sensor starts measuring the temperature;
+        \item Wait for a while and then read the data from \hyperref[fielddesc:APBSARADCTSENSOUT]{APB\_SARADC\_TSENS\_OUT}. The output value gradually approaches the actual temperature linearly as the measurement time increases.
+    \end{itemize}
+
+The temperature sensor can also be automatically triggered to continuously monitor the temperature as follows:
+    \begin{itemize}
+        \item Set \hyperref[fielddesc:APBSARADCTSENSPU]{APB\_SARADC\_TSENS\_PU} to start XPD\_SAR and to enable the temperature sensor; Set \hyperref[fielddesc:PCRTSENSCLKEN]{PCR\_TSENS\_CLK\_EN} to enable the temperature sensor clock;
+        \item Wait for \hyperref[fielddesc:APBSARADCTSENSXPDWAIT]{APB\_SARADC\_TSENS\_XPD\_WAIT} clock cycles till the reset of the temperature sensor is released, then the sensor starts measuring the temperature;
+        \item Configure \hyperref[fielddesc:APBSARADCTSENSSAMPLERATE]{APB\_SARADC\_TSENS\_SAMPLE\_RATE} to set sample rate;
+        \item Set \hyperref[fielddesc:APBSARADCWAKEUPMODE]{APB\_SARADC\_WAKEUP\_MODE} to enable temperature monitor mode;
+        \item Set \hyperref[fielddesc:APBSARADCWAKEUPEN]{APB\_SARADC\_WAKEUP\_EN} to enable temperature monitoring;
+        \item Set \hyperref[fielddesc:APBSARADCTSENSSAMPLEEN]{APB\_SARADC\_TSENS\_SAMPLE\_EN} to automatically start continuous temperature monitoring.
+    \end{itemize}
+
+There are two wake-up modes for the temperature sensor to start automatic monitor:
+   \begin{itemize}
+       \item Absolute value mode:
+           \begin{itemize}
+                \item Monitors the absolute value of the current temperature. Configure \hyperref[fielddesc:APBSARADCWAKEUPTHLOW]{APB\_SARADC\_WAKEUP\_TH\_LOW} and \hyperref[fielddesc:APBSARADCWAKEUPTHHIGH]{APB\_SARADC\_WAKEUP\_TH\_HIGH} to set the temperature thresholds. Wake-up will be triggered if the sampled value exceeds the high threshold or is less than the low threshold. 
+           \end{itemize}
+       \item Incremental value mode:
+            \begin{itemize}
+                \item Monitors the incremental value of the current temperature. If the temperature increment of two consecutive samplings exceeds the high threshold configured in \hyperref[fielddesc:APBSARADCWAKEUPTHHIGH]{APB\_SARADC\_WAKEUP\_TH\_HIGH} or the temperature decrement of two consecutive samplings exceeds the low threshold configured in \hyperref[fielddesc:APBSARADCWAKEUPTHLOW]{APB\_SARADC\_WAKEUP\_TH\_LOW}, a wake-up will be triggered. For example, when \hyperref[fielddesc:APBSARADCWAKEUPTHLOW]{APB\_SARADC\_WAKEUP\_TH\_LOW} is configured as 8, if two consecutive sampling values are 28 and 19 respectively, i.e., the temperature decrement is 9, then a wake-up will be triggered.
+            \end{itemize}
+    \end{itemize}
+
+
+The actual temperature (°C) can be obtained by converting the output of temperature sensor via the following formula:
+\[
+        T(°C) = 0.4386 * VALUE – 27.88 * offset – 20.52
+\]
+
+VALUE in the formula is the output of the temperature sensor, and the offset is determined by the temperature offset. The temperature offset varies in different actual environment (the temperature range). For details, refer to Table \ref{tab:tsensor-dac}.
+
+\begin{longtable}[c]{|p{4cm}|r|}
+    \caption{Temperature Offset}
+    \label{tab:tsensor-dac}
+    \\\hline
+    \rowcolor{lightgray}
+    Measurement Range (°C)  & Temperature Offset (°C) \\\hline
+    50 \verb+~+ 125 & -2 \\\hline
+    20 \verb+~+ 100 & -1 \\\hline
+    -10 \verb+~+ 80 & 0 \\\hline
+    -30 \verb+~+ 50 & 1 \\\hline
+    -40 \verb+~+ 20 & 2 \\\hline
+\end{longtable}
+
+
+\section{Event Task Matrix Feature}
+\label{sec:sensor-etm-func}
+
+The SAR ADC and temperature sensor on \chipname{} support the Event Task Matrix (ETM) function, which allows SAR ADC's/temperature sensor's ETM tasks to be triggered by any peripherals' ETM events, or SAR ADC's/temperature sensor's ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to SAR ADC and temperature sensor. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}.
+
+\subsection{SAR ADC's ETM Feature}
+
+The SAR ADC can receive the following ETM tasks:
+
+\begin{itemize}
+    \item ADC\_TASK\_SAMPLE0: ADC starts one-time sampling when this task is triggered.
+    \item ADC\_TASK\_START0: ADC starts continuous sampling when this task is triggered.
+    \item ADC\_TASK\_STOP0: ADC stops sampling when this task is triggered.
+\end{itemize}
+
+The SAR ADC can generate the following ETM events:
+
+\begin{itemize}
+    \item ADC\_EVT\_CONV\_CMPLT0: Generated when ADC completes a sampling.
+    \item ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{n} (n: 0 \verb+~+ 1): Generated when the ADC data is above the threshold. 
+    \item ADC\_EVT\_EQ\_BELOW\_THRESH\regindex{n} (n: 0 \verb+~+ 1): Generated when the ADC data is below the threshold.
+    \item ADC\_EVT\_STARTED0: Generated when ADC begins sampling; one-time sampling will not trigger this event.
+    \item ADC\_EVT\_STOPPED0: Generated when ADC stops sampling, one-time sampling will not trigger this event.
+\end{itemize}
+
+In practical applications, SAR ADC's ETM events can trigger its own ETM tasks. For example, the ADC\_EVT\_EQ\_ABOVE\_THRESH\regindex{n} event can trigger the ADC\_TASK\_STOP0 task.
+
+\subsection{Temperature Sensor's ETM Feature}
+
+The temperature sensor can receive the following ETM tasks:
+
+\begin{itemize}
+    \item TMPSNSR\_TASK\_START\_SAMPLE: The temperature sensor starts sampling when this task is triggered.
+    \item TMPSNSR\_TASK\_STOP\_SAMPLE: The temperature sensor stops sampling when this task is triggered.
+\end{itemize}
+
+The temperature sensor can generate the following ETM events:
+
+\begin{itemize}
+    \item TMPSNSR\_EVT\_OVER\_LIMIT: Generated when the temperature is beyond the threshold.
+\end{itemize}
+
+
+\section{Interrupts}
+\begin{itemize}
+   \item \label{interreupt:SARADCDONEINT1} APB\_SARADC\_ADC\_DONE\_INT: Triggered when SAR ADC completes one data conversion.
+   \item \label{interreupt:APBSARADCTHRESxHIGHINT} APB\_SARADC\_THRES\regindex{x}\_HIGH\_INT: Triggered when the sampling value is higher than the high threshold of monitor \regindex{x}.
+   \item \label{interreupt:APBSARADCTHRESxLOWINT} APB\_SARADC\_THRES\regindex{x}\_LOW\_INT: Triggered when the sampling value is lower than the low threshold of monitor \regindex{x}.
+   \item \label{interreupt:APBSARADCTSENSINT} APB\_SARADC\_TSENS\_INT: Triggered when the temperature sample value exceeds the threshold.
+\end{itemize}
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\clearpage
+\hypertarget{sensor-reg-summ}{}
+\section{Register Summary}
+\label{sec:sensor-reg-summ}
+
+The addresses in this section are relative to On-Chip Sensors and Analog Signal Processing base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+\subfile{\modulefiles/42-SENSOR-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\clearpage
+\section{Registers}
+
+The addresses in this section are relative to On-Chip Sensors and Analog Signal Processing base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/42-SENSOR-reg__EN}
+
+
+\end{document}
