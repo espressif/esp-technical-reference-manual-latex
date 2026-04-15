@@ -45,7 +45,7 @@ When preparing new TRM chapters:
 ## Components
 
 ### 1. `check_needs_backport.py`
-- Runs when an MR is merged.
+- Runs when an MR is merged to master.
 - Compares the MR’s changed files with `reused_chapter_list.txt`.
 - If any reused chapter is modified:
   - Automatically adds the **`needs backport`** label.
@@ -96,7 +96,5 @@ When preparing new TRM chapters:
 The `release/v0.1 branch` is not intended to maintain the source TRM’s formal revision history.
 
 Revision history files (`revision-history__*.tex`, `revision-history-latest__*.tex`, typically under `00-chip-spec-content/`) are therefore **not** carried over from `master` during backport. The `release/v0.1` branch retains its existing revision history content, while substantive documentation changes in reused chapters are still applied.
-
-The `create_backport_mr.py` script **excludes** any paths containing `revision-history__` or `revision-history-latest__`. For each cherry-picked commit, only non–revision history files are backported.
 
 If a cherry-pick encounters conflicts only in revision history files, those conflicts are resolved by keeping the release branch version. Conflicts in non–revision history files will still cause the cherry-pick to abort and must be resolved manually.

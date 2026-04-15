@@ -108,7 +108,7 @@ def main():
     mr.save()
     mr.notes.create({
         "body": (
-            "✅ This MR modifies reused chapter files and requires backport."
+            "✅ This MR modifies reused chapter files and requires backport.\n"
             "Label `needs backport` added automatically.\n"
             f"Triggered files:\n- " + "\n- ".join(triggered_files)
         )
