@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-LATEX_TRM_REPO_ID = "13284"
+TRM_REPO_ID = "14605"
 FIGURES_REPO_ID = "14109"

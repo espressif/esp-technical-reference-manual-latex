@@ -33,7 +33,8 @@ _env_loaded = False
 _OVERLEAF_TOKEN: str | None = None
 _GITLAB_TOKEN: str | None = None
 _GITLAB_URL: str | None = None
-_LATEX_TRM_REPO_ID: str | None = None
+_TRM_REPO_ID: str | None = None
+_FIGURES_REPO_ID: str | None = None
 
 
 # ============================================================
@@ -42,14 +43,15 @@ _LATEX_TRM_REPO_ID: str | None = None
 
 def _load_env():
     global _env_loaded, _OVERLEAF_TOKEN, _GITLAB_TOKEN
-    global _GITLAB_URL, _LATEX_TRM_REPO_ID
+    global _GITLAB_URL, _TRM_REPO_ID, _FIGURES_REPO_ID
     if _env_loaded:
         return
     values = _get_trm_env_values()
     _OVERLEAF_TOKEN = values["OVERLEAF_TOKEN"]
     _GITLAB_TOKEN = values["GITLAB_TOKEN"]
     _GITLAB_URL = values["GITLAB_URL"]
-    _LATEX_TRM_REPO_ID = values["LATEX_TRM_REPO_ID"]
+    _TRM_REPO_ID = values["TRM_REPO_ID"]
+    _FIGURES_REPO_ID = values.get("FIGURES_REPO_ID")
     _env_loaded = True
 
 
@@ -58,22 +60,22 @@ def _load_env():
 # ============================================================
 
 def _get_trm_clone_url() -> str:
-    """Build an authenticated latex-trm clone URL from GitLab API (project HTTP URL + token)."""
+    """Build an authenticated esp-technical-reference-manual-latex clone URL from GitLab API (project HTTP URL + token)."""
     _load_env()
-    if not (_GITLAB_URL and _LATEX_TRM_REPO_ID and _GITLAB_TOKEN):
+    if not (_GITLAB_URL and _TRM_REPO_ID and _GITLAB_TOKEN):
         sys.exit(
-            "❌ Cannot determine latex-trm clone URL. "
+            "❌ Cannot determine esp-technical-reference-manual-latex clone URL. "
             "Set GITLAB_URL and GITLAB_TOKEN in environment.py.",
         )
-    return _auth_clone_url_for_project_id(_GITLAB_URL, _LATEX_TRM_REPO_ID, _GITLAB_TOKEN)
+    return _auth_clone_url_for_project_id(_GITLAB_URL, _TRM_REPO_ID, _GITLAB_TOKEN)
 
 
-def clone_latex_trm(dest: Path):
-    """Clone the latex-trm repository. Returns ``git.Repo``."""
+def clone_trm(dest: Path):
+    """Clone the esp-technical-reference-manual-latex repository. Returns ``git.Repo``."""
     url = _get_trm_clone_url()
-    print("📥 Cloning latex-trm repository...")
+    print("📥 Cloning esp-technical-reference-manual-latex repository...")
     repo = gitpython.Repo.clone_from(url, dest)
-    print("✅ Cloned latex-trm")
+    print("✅ Cloned esp-technical-reference-manual-latex")
     return repo
 
 
@@ -82,8 +84,77 @@ def clone_overleaf(overleaf_id: str, dest: Path):
     return _clone_overleaf_repo_common(overleaf_id, _OVERLEAF_TOKEN, dest, depth=1)
 
 
+def clone_figures_repo(dest: Path):
+    """Clone the figures repository. Returns ``git.Repo``."""
+    _load_env()
+    if not (_GITLAB_URL and _FIGURES_REPO_ID and _GITLAB_TOKEN):
+        sys.exit(
+            "❌ Cannot determine figures repo clone URL. "
+            "Set GITLAB_URL, GITLAB_TOKEN and FIGURES_REPO_ID in environment.py.",
+        )
+    url = _auth_clone_url_for_project_id(_GITLAB_URL, _FIGURES_REPO_ID, _GITLAB_TOKEN)
+    print("📥 Cloning figures repository...")
+    repo = gitpython.Repo.clone_from(url, dest)
+    print("✅ Cloned figures repo")
+    return repo
+
+
+def copy_figures_sources(
+    fig_path: Path,
+    ol_path: Path,
+    base_project: str,
+    base_id_module: str,
+    target_id_module: str,
+) -> bool:
+    """Copy source figures from the figures repo into the Overleaf module's ``sources/`` folder.
+
+    Looks under ``fig_path/<base_project>/`` for a folder matching ``NN-<MODULE>``.
+    If both ``NN-MODULE`` and ``NN-MODULE-latest`` exist, the ``-latest`` variant is preferred.
+    Returns True if figures were copied, False if no matching source was found.
+    """
+    _, module = base_id_module.split("-", 1)
+    base_dir = fig_path / base_project
+    if not base_dir.is_dir():
+        print(f"   ℹ️  {base_project}/ not found in figures repo — skipping")
+        return False
+
+    pat_latest = re.compile(rf"^\d+-{re.escape(module)}-latest$", re.IGNORECASE)
+    pat_regular = re.compile(rf"^\d+-{re.escape(module)}$", re.IGNORECASE)
+
+    latest_dir: Path | None = None
+    regular_dir: Path | None = None
+    for item in sorted(base_dir.iterdir()):
+        if not item.is_dir():
+            continue
+        if pat_latest.match(item.name):
+            latest_dir = item
+        elif pat_regular.match(item.name):
+            regular_dir = item
+
+    src_dir = latest_dir or regular_dir
+    if src_dir is None:
+        print(f"   ℹ️  No folder matching *-{module} in figures/{base_project}/ — skipping")
+        return False
+
+    dest_sources = ol_path / target_id_module / "sources"
+    dest_sources.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for item in src_dir.iterdir():
+        dst = dest_sources / item.name
+        if item.is_dir():
+            shutil.copytree(item, dst, dirs_exist_ok=True)
+            count += sum(1 for f in dst.rglob("*") if f.is_file())
+        else:
+            shutil.copy2(item, dst)
+            count += 1
+
+    print(f"   ✅ Copied {count} file(s) from figures/{base_project}/{src_dir.name}/ → {target_id_module}/sources/")
+    return True
+
+
 # ============================================================
-# Chapter folder discovery (ID–Module tokens in latex-trm)
+# Chapter folder discovery (ID–Module tokens in esp-technical-reference-manual-latex)
 # ============================================================
 
 
@@ -199,7 +270,7 @@ def find_base_module_with_upstream(
     mu = module.upper()
     base_dir = trm_path / base_project
     if not base_dir.is_dir():
-        sys.exit(f"❌ Base project '{base_project}' not found in latex-trm")
+        sys.exit(f"❌ Base project '{base_project}' not found in esp-technical-reference-manual-latex")
 
     r = _try_find_base_module_in_dir(base_dir, module)
     if r is not None:
@@ -216,7 +287,7 @@ def find_base_module_with_upstream(
     up_dir = trm_path / up_project
     if not up_dir.is_dir():
         sys.exit(
-            f"❌ Upstream project '{up_project}' (from \\subfile) not found under latex-trm",
+            f"❌ Upstream project '{up_project}' (from \\subfile) not found under esp-technical-reference-manual-latex",
         )
     print(
         f"ℹ️  {base_project} reuses {mu} via \\subfile → {up_project}/{up_id_module} "
@@ -518,7 +589,7 @@ def _merge_copied_tex_with_templates(
     r"""For each copied ``.tex``, if the pre-copy template had chapter content, keep its preamble.
 
     Replaces only the chapter content region (``\hypertarget`` through ``\end{document}``) in
-    the template with the matching region from the latex-trm copy (after ID–Module renames).
+    the template with the matching region from the esp-technical-reference-manual-latex copy (after ID–Module renames).
 
     Returns the number of files merged.
     """
@@ -564,7 +635,7 @@ def copy_module_folder(
 
     If *dest_dir* already exists (Overleaf template), each ``*.tex`` whose pre-copy
     template contained ``\hypertarget`` keeps the template preamble; only the region from
-    that first ``\hypertarget`` through ``\end{document}`` is taken from the latex-trm source.
+    that first ``\hypertarget`` through ``\end{document}`` is taken from the esp-technical-reference-manual-latex source.
     """
     tex_snapshots = _snapshot_tex_under(dest_dir) if dest_dir.exists() else {}
 

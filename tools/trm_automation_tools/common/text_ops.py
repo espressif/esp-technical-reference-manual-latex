@@ -98,15 +98,18 @@ def resolve_tags(text: str, base_project: str) -> str:
         matches_tag = _tag_matches_project(tag_list, base_project)
 
         if cmd == "iftagged":
-            # Third brace group: false-branch
+            # Third brace group: false-branch (optional)
             g3 = _find_brace_group(result, g2[1])
-            if g3 is None:
-                continue
-            false_body = g3[2]
-            end = g3[1]
-            replacement = (
-                _extract_tag_body(body) if matches_tag else _extract_tag_body(false_body)
-            )
+            if g3 is not None:
+                false_body = g3[2]
+                end = g3[1]
+                replacement = (
+                    _extract_tag_body(body) if matches_tag else _extract_tag_body(false_body)
+                )
+            else:
+                # Two-argument \iftagged: no false-branch
+                end = g2[1]
+                replacement = _extract_tag_body(body) if matches_tag else ""
         elif cmd == "tagged":
             end = g2[1]
             replacement = _extract_tag_body(body) if matches_tag else ""
@@ -140,6 +143,47 @@ def resolve_tags_in_file(file_path: Path, base_project: str) -> bool:
     resolved = resolve_tags(original, base_project)
     if resolved != original:
         file_path.write_text(resolved, encoding="utf-8")
+        return True
+    return False
+
+
+def extend_tags(text: str, base_project: str, target_project: str) -> str:
+    r"""Add *target_project* to tag lists that match *base_project*.
+
+    For every ``\tagged``, ``\untagged``, and ``\iftagged`` whose tag list
+    matches *base_project* (via ``_tag_matches_project``), append
+    *target_project* to the comma-separated list.
+    """
+    result = text
+    matches = list(_TAG_CMD_RE.finditer(result))
+
+    for m in reversed(matches):
+        g1 = _find_brace_group(result, m.end())
+        if g1 is None:
+            continue
+        tag_list = g1[2]
+
+        if not _tag_matches_project(tag_list, base_project):
+            continue
+
+        existing_tags = {t.strip() for t in tag_list.split(",")}
+        if target_project in existing_tags:
+            continue
+
+        new_tag_list = f"{tag_list}, {target_project}"
+        result = result[: g1[0] + 1] + new_tag_list + result[g1[1] - 1 :]
+
+    return result
+
+
+def extend_tags_in_file(file_path: Path, base_project: str, target_project: str) -> bool:
+    """Extend tag macros in *file_path* in place. Returns True if changed."""
+    if not file_path.exists():
+        return False
+    original = file_path.read_text(encoding="utf-8")
+    extended = extend_tags(original, base_project, target_project)
+    if extended != original:
+        file_path.write_text(extended, encoding="utf-8")
         return True
     return False
 

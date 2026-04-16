@@ -22,6 +22,7 @@ def apply_normal_chapter_to_workdirs(
     target_id_module: str,
     source_lang: str,
     *,
+    fig_path: Path | None = None,
     module_pm: str = "",
     writer: str = "",
 ) -> tuple[str, str]:
@@ -135,6 +136,12 @@ def apply_normal_chapter_to_workdirs(
     else:
         print("   ℹ️  No -latest suffix found in \\subfile{} references")
 
+    print("\n📝 Step 10: Copying source figures from figures repo...")
+    if fig_path is not None:
+        wf.copy_figures_sources(fig_path, ol_path, base_project, base_id_module, target_id_module)
+    else:
+        print("   ℹ️  Figures repo not available — skipping")
+
     return (placeholder_folder or target_id_module), base_id_module
 
 
@@ -147,7 +154,7 @@ def setup_normal_chapter(
     module_pm: str = "",
     writer: str = "",
 ):
-    """Copy a chapter from latex-trm into an Overleaf project."""
+    """Copy a chapter from esp-technical-reference-manual-latex into an Overleaf project."""
     wf._load_env()
     require_trm_env("OVERLEAF_TOKEN", "GITLAB_TOKEN")
     chapter_id, module = parse_id_module(target_id_module)
@@ -171,8 +178,10 @@ def setup_normal_chapter(
         tmp = Path(tmp)
         trm_path = tmp / "trm"
         ol_path = tmp / "ol"
-        wf.clone_latex_trm(trm_path)
+        fig_path = tmp / "fig"
+        wf.clone_trm(trm_path)
         ol_repo = wf.clone_overleaf(overleaf_id, ol_path)
+        wf.clone_figures_repo(fig_path)
 
         _placeholder, base_mid = apply_normal_chapter_to_workdirs(
             ol_path,
@@ -180,6 +189,7 @@ def setup_normal_chapter(
             base_project,
             target_id_module,
             source_lang,
+            fig_path=fig_path,
             module_pm=module_pm,
             writer=writer,
         )

@@ -6,8 +6,13 @@ import subprocess
 from pathlib import Path
 
 
-def checkout_or_create_branch(repo, branch_name: str):
-    """Checkout existing branch or create new from master."""
+def checkout_or_create_branch(
+    repo,
+    branch_name: str,
+    *,
+    base_branch: str = "master",
+):
+    """Checkout existing branch or create new from ``origin/<base_branch>``."""
     repo.git.fetch("origin")
     remote_ref = f"origin/{branch_name}"
     try:
@@ -16,8 +21,9 @@ def checkout_or_create_branch(repo, branch_name: str):
         print(f"✅ Checked out existing branch: {branch_name}")
         return True
     except Exception:  # pylint: disable=broad-exception-caught
-        repo.git.checkout("-b", branch_name, "origin/master")
-        print(f"✅ Created new branch: {branch_name}")
+        base_ref = f"origin/{base_branch}"
+        repo.git.checkout("-b", branch_name, base_ref)
+        print(f"✅ Created new branch: {branch_name} from {base_branch}")
         return False
 
 

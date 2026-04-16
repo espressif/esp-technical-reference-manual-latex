@@ -1,6 +1,6 @@
 # Check LaTeX Links
 
-This script checks for broken links in latex-trm documentation:
+This script checks for broken links in esp-technical-reference-manual-latex documentation:
 - **Internal links**: by extracting undefined and multiply defined labels from the log file
 - **External links**: by scanning LaTeX source files for bad/malformed URLs
 
