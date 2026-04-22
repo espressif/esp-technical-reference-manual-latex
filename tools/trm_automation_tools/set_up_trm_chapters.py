@@ -32,8 +32,8 @@ def interactive_main() -> None:
     mode = _prompt_choice(
         "Select setup mode:",
         [
-            "No-changes chapter (reference base project's chapter in latex-trm)",
-            "Normal chapter (copy base chapter from latex-trm to Overleaf)",
+            "No-changes chapter (reference base project's chapter in esp-technical-reference-manual-latex)",
+            "Normal chapter (copy base chapter from esp-technical-reference-manual-latex to Overleaf)",
             "New chapter (set up from outline template in Overleaf)",
         ],
     )
@@ -66,7 +66,7 @@ def interactive_main() -> None:
     elif mode == 1:
         print("\n--- Normal Chapter Setup ---\n")
         ol_id = _prompt_input("Overleaf repo ID")
-        base = _prompt_input("Base project in latex-trm (e.g., ESP32-P4)")
+        base = _prompt_input("Base project in esp-technical-reference-manual-latex (e.g., ESP32-P4)")
         target_mid = _prompt_validated(
             "Target ID–Module (e.g., 45-I2S)",
             is_valid_id_module_format,
@@ -126,7 +126,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="mode")
 
-    p1 = sub.add_parser("no-changes", help="Set up a no-changes chapter in latex-trm")
+    p1 = sub.add_parser("no-changes", help="Set up a no-changes chapter in esp-technical-reference-manual-latex")
     p1.add_argument("base_project", help="Base project (e.g., ESP32-P4)")
     p1.add_argument("target_project", help="Target project (e.g., ESP32-S31)")
     p1.add_argument(
@@ -151,7 +151,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     p2 = sub.add_parser("normal", help="Set up a normal chapter in Overleaf from a base")
     p2.add_argument("overleaf_id", help="Overleaf project ID")
-    p2.add_argument("base_project", help="Base project in latex-trm (e.g., ESP32-P4)")
+    p2.add_argument("base_project", help="Base project in esp-technical-reference-manual-latex (e.g., ESP32-P4)")
     p2.add_argument(
         "target_id_module",
         metavar="target_id_module",

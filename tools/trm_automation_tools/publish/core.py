@@ -25,17 +25,17 @@ from tools.trm_automation_tools.common.trm_env import get_trm_env_values, requir
 
 from tools.trm_automation_tools.publish.repos import (
     publish_to_figures_repo,
-    publish_to_latex_trm_repo,
+    publish_to_trm_repo,
 )
 
 NO_EDITS_WARNING_TEMPLATE = """!NO EDITS IN PROJECT!
-THIS CHAPTER IS MAINTAINED IN GitLab latex-trm repository.
+THIS CHAPTER IS MAINTAINED IN GitLab esp-technical-reference-manual-latex repository.
 
 ！请不要在此项目中编辑！
-该章节已移至 GitLab latex-trm 仓库中。
+该章节已移至 GitLab esp-technical-reference-manual-latex 仓库中。
 
-latex-trm:
-{latex_trm_link}
+esp-technical-reference-manual-latex:
+{trm_link}
 """
 
 
@@ -98,7 +98,7 @@ def archive_overleaf_project(ol_repo: git.Repo, ol_path: Path) -> bool:
     warning_file = ol_path / "!NO-EDITS-IN-PROJECT!.txt"
     gitlab_url = get_trm_env_values()["GITLAB_URL"] or ""
     warning_content = NO_EDITS_WARNING_TEMPLATE.format(
-        latex_trm_link=f"{gitlab_url}/documentation/latex-trm",
+        trm_link=f"{gitlab_url}/documentation/esp-technical-reference-manual-latex",
     )
     warning_file.write_text(warning_content, encoding="utf-8")
     print(f"✅ Created {warning_file.name}")
@@ -131,7 +131,7 @@ def publish_trm_chapters(overleaf_id: str, jira_ticket_id: str) -> None:
     gitlab_url = ev["GITLAB_URL"]
     gitlab_token = ev["GITLAB_TOKEN"]
     figures_repo_id = ev["FIGURES_REPO_ID"]
-    latex_trm_repo_id = ev["LATEX_TRM_REPO_ID"]
+    trm_repo_id = ev["TRM_REPO_ID"]
 
     print(f"{'=' * 60}")
     print("Overleaf → GitLab Publisher")
@@ -190,7 +190,7 @@ def publish_trm_chapters(overleaf_id: str, jira_ticket_id: str) -> None:
         else:
             print("\nℹ️  No sources folder - skipping figures repo")
 
-        trm_mr = publish_to_latex_trm_repo(
+        trm_mr = publish_to_trm_repo(
             gl,
             ol_path,
             module_dir,
@@ -199,7 +199,7 @@ def publish_trm_chapters(overleaf_id: str, jira_ticket_id: str) -> None:
             overleaf_id,
             jira_ticket_id,
             tmp,
-            latex_trm_repo_id=latex_trm_repo_id or "",
+            trm_repo_id=trm_repo_id or "",
             gitlab_token=gitlab_token or "",
             assignee_id=assignee_id,
         )
@@ -216,11 +216,11 @@ def publish_trm_chapters(overleaf_id: str, jira_ticket_id: str) -> None:
         if figures_mr:
             print(f"\n📦 figures MR: {figures_mr.web_url}")
         if trm_mr:
-            print(f"📚 latex-trm MR: {trm_mr.web_url}")
+            print(f"📚 esp-technical-reference-manual-latex MR: {trm_mr.web_url}")
 
         print("\n⚠️  TODO:")
         if trm_mr:
-            print("Before merging latex-trm MR:")
+            print("Before merging esp-technical-reference-manual-latex MR:")
             print("   1. Review the pre-commit auto-fixes")
             print("   2. Add or remove any custom temporary labels as needed")
             print("   3. Update revision history if needed")

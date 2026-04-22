@@ -14,7 +14,7 @@ TRM_ENV_KEYS = [
     "OVERLEAF_TOKEN",
     "GITLAB_TOKEN",
     "GITLAB_URL",
-    "LATEX_TRM_REPO_ID",
+    "TRM_REPO_ID",
     "FIGURES_REPO_ID",
 ]
 
@@ -29,8 +29,8 @@ _cached: dict[str, str | None] | None = None
 def _apply_gitlab_repo_id_defaults(values: dict[str, str | None]) -> dict[str, str | None]:
     """Fill missing GitLab project IDs from ``gitlab_repo_ids`` (``environment.py`` may omit them)."""
     out = dict(values)
-    if not (out.get("LATEX_TRM_REPO_ID") or "").strip():
-        out["LATEX_TRM_REPO_ID"] = gitlab_repo_ids.LATEX_TRM_REPO_ID
+    if not (out.get("TRM_REPO_ID") or "").strip():
+        out["TRM_REPO_ID"] = gitlab_repo_ids.TRM_REPO_ID
     if not (out.get("FIGURES_REPO_ID") or "").strip():
         out["FIGURES_REPO_ID"] = gitlab_repo_ids.FIGURES_REPO_ID
     return out

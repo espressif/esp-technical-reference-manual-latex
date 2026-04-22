@@ -1,4 +1,4 @@
-"""Clone figures / latex-trm repos, copy content, push branches, open MRs."""
+"""Clone figures / esp-technical-reference-manual-latex repos, copy content, push branches, open MRs."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from tools.trm_automation_tools.common.git_ops import (
     get_or_create_mr,
     run_pre_commit,
 )
+from tools.trm_automation_tools.common.target_branch import resolve_target_branch
 from tools.trm_automation_tools.common.id_ops import module_from_id_module
 from tools.trm_automation_tools.common.repo_ops import (
     authenticated_https_clone_url_for_api_project as _auth_clone_url_for_api_project,
@@ -84,7 +85,8 @@ def publish_to_figures_repo(
 
     r = git.Repo(fig_path)
     branch_name = f"docs/publish_{project}_{id_module}_sources"
-    checkout_or_create_branch(r, branch_name)
+    # Figures repo always targets master branch
+    checkout_or_create_branch(r, branch_name, base_branch="master")
 
     target = fig_path / project / id_module
     if target.exists():
@@ -129,7 +131,7 @@ def publish_to_figures_repo(
     return mr
 
 
-def publish_to_latex_trm_repo(
+def publish_to_trm_repo(
     gl_instance,
     ol_path: Path,
     module_dir: Path,
@@ -139,34 +141,38 @@ def publish_to_latex_trm_repo(
     jira_ticket_id: str,
     tmp: Path,
     *,
-    latex_trm_repo_id: str,
+    trm_repo_id: str,
     gitlab_token: str,
     assignee_id: int | None = None,
 ):
-    """Publish chapter to latex-trm repo."""
+    """Publish chapter to esp-technical-reference-manual-latex repo."""
     print(f"\n{'=' * 60}")
-    print("📚 Publishing to latex-trm repo")
+    print("📚 Publishing to esp-technical-reference-manual-latex repo")
     print(f"{'=' * 60}")
 
     module = module_from_id_module(id_module)
     module_lower = module.lower()
     print(f"✅ Module: {module}")
 
-    trm_proj = gl_instance.projects.get(latex_trm_repo_id)
+    trm_proj = gl_instance.projects.get(trm_repo_id)
     trm_url = _auth_clone_url_for_api_project(trm_proj, gitlab_token)
     trm_path = tmp / "trm"
 
-    print("📥 Cloning latex-trm repository...")
+    print("📥 Cloning esp-technical-reference-manual-latex repository...")
     git.Repo.clone_from(trm_url, trm_path)
     print("✅ Cloned")
 
     r = git.Repo(trm_path)
+    cfg = trm_path / ".lbcf.yml"
+    mr_target, _pub, branch_note = resolve_target_branch(cfg, project)
+    print(f"📌 TRM branch: {branch_note}")
+
     branch_name = f"docs/publish_{project}_{module}"
-    checkout_or_create_branch(r, branch_name)
+    checkout_or_create_branch(r, branch_name, base_branch=mr_target)
 
     project_dir = trm_path / project
     if not project_dir.exists():
-        print(f"❌ Project folder '{project}' not found in latex-trm repo")
+        print(f"❌ Project folder '{project}' not found in esp-technical-reference-manual-latex repo")
         return None
     print(f"✅ Found project folder: {project}")
 
@@ -260,7 +266,7 @@ def publish_to_latex_trm_repo(
         return None
 
     r.git.add(A=True)
-    commit_msg = f"{project}/{module}: Publish {module} chapter"
+    commit_msg = f"{project}/{module}: Publish chapter"
     r.index.commit(commit_msg)
     print(f"✅ Committed: {commit_msg}")
 
@@ -296,7 +302,7 @@ def publish_to_latex_trm_repo(
         gl_instance,
         trm_proj,
         branch_name,
-        "master",
+        mr_target,
         commit_msg,
         description,
         labels=[project],
