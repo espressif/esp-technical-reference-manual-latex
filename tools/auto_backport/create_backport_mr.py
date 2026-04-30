@@ -225,12 +225,31 @@ for commit in mr_commits:
         failed_commits.append(commit_id)
         print(f"⚠️ Cherry-pick aborted for commit {commit_id}")
 
-# If nothing differs from the release branch, do not open an empty backport MR
+# If nothing differs from the release branch, remove `needs backport`, post an MR note, and exit
 diff_check = run(f"git diff --quiet {target_sha} HEAD", check=False)
 if diff_check.returncode == 0:
     print(
         f"Not creating a backport MR: no changes vs {BACKPORT_TARGET_BRANCH} ({target_sha[:8]})."
     )
+    old_labels = list(mr.labels or [])
+    new_labels = [
+        l for l in old_labels
+        if (l or "").strip().lower() != NEEDS_BACKPORT_LABEL
+    ]
+    removed_needs_backport = len(new_labels) != len(old_labels)
+    if removed_needs_backport:
+        mr.labels = new_labels
+        mr.save()
+        print(f"Removed '{NEEDS_BACKPORT_LABEL}' label from MR !{mr_iid}.")
+
+    note_body = (
+        "Automatic backport was skipped because the cherry-pick result has **no diff** "
+        f"against `{BACKPORT_TARGET_BRANCH}` at `{target_sha[:8]}`. The backport MR was not created."
+    )
+    if removed_needs_backport:
+        note_body += f"\n\nThe **`{NEEDS_BACKPORT_LABEL}`** label has been removed."
+    mr.notes.create({"body": note_body})
+    print(f"Posted explanation note on MR !{mr_iid}.")
     sys.exit(0)
 
 # Step 4: Configure remote URL with CI_JOB_TOKEN for push
