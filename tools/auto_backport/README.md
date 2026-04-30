@@ -71,7 +71,7 @@ When preparing new TRM chapters:
 - Conflicts are recorded in the pipeline log. Cherry-pick failures do **not block MR creation**.
 
 #### Step 4: Push Backport Branch
-- The branch is pushed to GitLab using `TRM_BACKPORT_GL_TOKEN` for authentication.
+- The branch is pushed to GitLab using `TRM_BACKPORT_GL_TOKEN` for authentication. Exit the workflow if the backport branch has no differences from the target branch.
 
 #### Step 5: Create Backport MR
 - Title: Copies the original MR title with `(v0.1)` suffix.
