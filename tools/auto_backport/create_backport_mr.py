@@ -13,7 +13,7 @@ Steps:
 1. Check backport labels
 2. Create new backport branch from target branch commit SHA (or use existing branch)
 3. Cherry-pick commit(s); paths matching revision-history file names are skipped (target branch kept) to reduce conflicts
-4. Push backport branch using TRM_BACKPORT_GL_TOKEN
+4. Push backport branch using TRM_BACKPORT_GL_TOKEN. Exit the workflow if the backport branch has no diff from the target branch
 5. Create backport MR
 6. Update original MR description with backport link
 7. Add 'backport created' label to original MR
@@ -224,6 +224,14 @@ for commit in mr_commits:
     else:
         failed_commits.append(commit_id)
         print(f"⚠️ Cherry-pick aborted for commit {commit_id}")
+
+# If nothing differs from the release branch, do not open an empty backport MR
+diff_check = run(f"git diff --quiet {target_sha} HEAD", check=False)
+if diff_check.returncode == 0:
+    print(
+        f"Not creating a backport MR: no changes vs {BACKPORT_TARGET_BRANCH} ({target_sha[:8]})."
+    )
+    sys.exit(0)
 
 # Step 4: Configure remote URL with CI_JOB_TOKEN for push
 remote_url = f"https://gitlab-ci-token:{TRM_BACKPORT_GL_TOKEN}@{os.environ['CI_SERVER_HOST']}:{os.environ['CI_SERVER_PORT']}/{CI_PROJECT_PATH}.git"
