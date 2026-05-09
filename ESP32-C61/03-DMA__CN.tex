@@ -147,7 +147,7 @@ GDMA 具有以下特性：
           \item 数据地址和长度：无要求
         \end{itemize}
     \item 支持链表
-    \item 访问存储器时，支持 INCR 突发传输
+    \item 访问存储器时，支持 INCR4 或 INCR8 突发传输
     \item 两个传输通道和两个接收通道
     \item 可配置支持 GDMA 的外设连接任一通道
     \item 支持通道间优先级和权重仲裁配置
@@ -327,8 +327,33 @@ GDMA 访问配置的存储器地址空间时，链表描述符参数无对齐要
 \end{tiplisting}
 
 
+\subsection{总线错误响应信息记录}\label{sec:dma-bus-error-resp}
 
+在 GDMA 搬运数据期间，如果总线上从机侧回复了错误响应 (Error Response)，数据传输不会中断，GDMA 依旧会按照已有的链表搬运数据搬运。这样可能会导致完成数据搬运后，实际得到的数据与预期不符。为了便于定位问题，GDMA 传输数据过程中，如果发生了错误相应，可以通过以下内部寄存器存储相关传输信息：
 
+\begin{itemize}
+    \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRADDR]{AHB\_DMA\_AHBINF\_RESP\_ERR\_ADDR}：记录本次总线传输对应的 32 位地址。
+    \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRCHID]{AHB\_DMA\_AHBINF\_RESP\_ERR\_CH\_ID}：记录本次总线传输使用的 GMDA 通道。
+    \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRID]{AHB\_DMA\_AHBINF\_RESP\_ERR\_ID}：记录本次总线上外设与存储器传输或存储器与存储器传输的传输 ID。
+    \item \hyperref[fielddesc:AHBDMAAHBINFRESPERRWR]{AHB\_DMA\_AHBINF\_RESP\_ERR\_WR}：记录本次总线传输对应的传输类型。
+\end{itemize}
+
+GDMA 作为主机发起 AHB 总线传输且收到错误响应时，还会产生错误相应中断来提醒 CPU。中断产生后，GDMA 仍不会中断数据传输。此外，GDMA 不会锁存第一笔发生错误响应的 AHB 总线传输相关寄存器信息。如果连续发生多笔错误响应传输，上述错误响应记录寄存器的内容会实时更新，最终寄存器中保留的信息是查询寄存器之前最后一笔发生错误响应的 AHB 总线传输。
+
+\subsection{自动时钟门控}\label{sec:dma-auto-clk-gating}
+
+GDMA 在工作时，某些场景只需要用到部分通道，此时可关闭未使用通道的时钟来降低功耗。同理，内部仲裁和总线接口模块仅在有数据传输时才需要工作，在空闲时也可以通过关闭时钟来降低功耗。目前 GDMA 内部有以下模块：
+\begin{itemize}
+    \item 总线接口处理模块
+    \item 仲裁模块
+    \item RX 数据处理模块
+    \item RX 描述符处理模块
+    \item TX 数据处理模块
+    \item TX 描述符处理模块
+    \item 寄存器配置同步模块
+\end{itemize}
+
+这些模块可以在空闲时自动关闭模块时钟，来更大限度的减小功耗，也支持通过寄存器配置强制保持时钟开启。例如，置位 \hyperref[fielddesc:AHBDMAAHBINFCLKEN]{AHB\_DMA\_AHBINF\_CLK\_EN} 可使总线接口处理模块时钟保持常开，其余模块时钟常开配置与其类似。
 
 
 \section{事件任务矩阵功能} \label{sec:dma-etm-func}
@@ -386,6 +411,7 @@ GDMA 可产生的 ETM 事件有：
     \item \label{int:GDMAINDSCRERRINT}AHB\_DMA\_IN\_DSCR\_ERR\_CH\regindex{n}\_INT：对于接收通道\textcolor{red}{\it{n}}，当接收链表描述符未通过任一描述符检查时触发此中断。
     \item \label{int:GDMAINFIFOOVFINT} AHB\_DMA\_INFIFO\_OVF\_CH\regindex{n}\_INT：当 GDMA 接收数据方向缓存溢出时触发此中断。
     \item \label{int:GDMAINFIFOUDFINT}AHB\_DMA\_INFIFO\_UDF\_CH\regindex{n}\_INT：当 GDMA 接收数据方向缓存无数据时触发此中断。
+    \item \label{int:GDMAINAHBINFRESPERRINT}AHB\_DMA\_IN\_AHBINF\_RESP\_ERR\_CH\regindex{n}\_INT：GDMA 接收通道\textcolor{red}{\it{n}} 进行数据传输时， AHB 总线上如果有错误相应，触发此中断。
 \end{itemize}
 
 以下中断源生成 GDMA\_OUT\_CH\regindex{n}\_INTR (\regindex{n} 为 0 \verb+~+ 1) 中断信号：
@@ -397,6 +423,7 @@ GDMA 可产生的 ETM 事件有：
     \item \label{int:GDMAOUTTOTALEOFINT}AHB\_DMA\_OUT\_TOTAL\_EOF\_CH\regindex{n}\_INT：对于发送通道\textcolor{red}{\it{n}}，当一个链表（可包含多个链表描述符）对应的所有数据都已发送完成时触发此中断。
     \item \label{int:GDMAOUTFIFOOVFINT} AHB\_DMA\_OUTFIFO\_OVF\_CH\regindex{n}\_INT：当 GDMA 发送数据方向缓存溢出时触发此中断。
     \item \label{int:GDMAOUTFIFOUDFINT}AHB\_DMA\_OUTFIFO\_UDF\_CH\regindex{n}\_INT：当 GDMA 发送数据方向缓存无数据时触发此中断。
+    \item \label{int:GDMAOUTAHBINFRESPERRINT}AHB\_DMA\_OUT\_AHBINF\_RESP\_ERR\_CH\regindex{n}\_INT：GDMA 发送通道\textcolor{red}{\it{n}} 进行数据传输时，AHB 总线上如果有错误相应，触发此中断。
 \end{itemize}
 
 
@@ -448,10 +475,10 @@ GDMA 可产生的 ETM 事件有：
 
 权重仲裁配置方法如下:
 \begin{enumerate}
-\item 配置 \hyperref[fielddesc:AHBDMAARBTIMEOUTTX]{AHB\_DMA\_ARB\_TIMEOUT\_TX} 和 \hyperref[fielddesc:AHBDMAARBTIMEOUTRX]{AHB\_DMA\_ARB\_TIMEOUT\_RX} 为 TX 和 RX 权重仲裁的时间片长度；
+\item 配置 \hyperref[fielddesc:AHBDMAARBTIMEOUT]{AHB\_DMA\_ARB\_TIMEOUT} 为权重仲裁的时间片长度；
 \item 配置 \hyperref[fielddesc:AHBDMATXCHARBWEIGHCHN]{AHB\_DMA\_TX\_CH\_ARB\_WEIGH\_CH\regindex{n}} 和 \hyperref[fielddesc:AHBDMARXCHARBWEIGHCHN]{AHB\_DMA\_RX\_CH\_ARB\_WEIGH\_CH\regindex{n}} 为各个通道的令牌值；
-\item 清除 \hyperref[fielddesc:AHBDMATXARBWEIGHOPTDIRCHN]{AHB\_DMA\_TX\_ARB\_WEIGH\_OPT\_DIR\_CH\regindex{n}}，使能 TX 和 RX 方向的权重仲裁优化；
-\item 置位 \hyperref[fielddesc:AHBDMAWEIGHTENTX]{AHB\_DMA\_WEIGHT\_EN\_TX} 和 \hyperref[fielddesc:AHBDMAWEIGHTENRX]{AHB\_DMA\_WEIGHT\_EN\_RX}，使能权重仲裁。
+\item 清除 \hyperref[fielddesc:AHBDMATXARBWEIGHOPTDISCHN]{AHB\_DMA\_TX\_ARB\_WEIGH\_OPT\_DIS\_CH\regindex{n}} 和\hyperref[fielddesc:AHBDMARXARBWEIGHOPTDISCHN]{AHB\_DMA\_RX\_ARB\_WEIGH\_OPT\_DIS\_CH\regindex{n}}，使能 TX 和 RX 方向的权重仲裁优化；
+\item 置位 \hyperref[fielddesc:AHBDMAWEIGHTEN]{AHB\_DMA\_WEIGHT\_EN}，使能权重仲裁。
 \end{enumerate}
 
 
