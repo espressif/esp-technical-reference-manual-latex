@@ -58,9 +58,9 @@ git checkout -b feature/add_gdma_chapter_to_esp32-c5_trm
 git commit -m "Chip/short name of TRM module: Add/Update/Remove..."
 ```
 
-1. **Keywords**: Start the branch name with chip or chip/short name of TRM module, for example, `ESP32-H2` or `ESP32-S3/UART`.
+1. **Keywords**: Start with chip or chip/short name of TRM module, for example, `ESP32-H2` or `ESP32-S3/UART`.
 
-   > **Note**: When updating the same TRM module for multiple TRMs, or updating multiple TRM modules for the same TRM in one MR, please separate different chip or module names with a comma (e.g. `ESP32-S3, ESP32-H2/UART`).
+   > **Note**: When updating the same TRM module for multiple TRMs, or updating multiple TRM modules for the same TRM, please separate different chip or module names with a comma (e.g. `ESP32-S3, ESP32-H2/UART`).
 
 2. **Summarize the purpose in one line**: Try to keep each commit focused on a single logical change.
 
