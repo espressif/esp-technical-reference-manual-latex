@@ -1,0 +1,516 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./67-AXIMON}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10ptx]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{aximon}{}
+\chapter{AXI 性能监测器}
+\label{mod:aximon}
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{概述}
+\label{sec:aximon-overview}
+
+AXI 总线性能监测器 (Advanced eXtensible Interface Performance Monitor, AXI Perf Mon) 用于实时监测 AXI 总线上正在进行的传输行为，并根据监测的指标反馈监测结果。软件可根据监测结果了解总线传输当前状态，包括带宽、延迟等性能相关的数据，用于软件测试或开发时的调试。
+
+AXI Perf Mon 有 9 个监测端口，每个端口对应一个 AXI matrix 上的设备，包括 cache、vdma\_mst1、vdma\_mst2、2d-dma、h264-dma\_mst1、h264-dma\_mst2、psram、camera 和 lcd。AXI Perf Mon 内部有 2 个监测单元，各监测单元完全相同且完全独立，同时被 9 个监测端口共享。监测启动前，用户可将各监测单元与任意一个监测端口绑定，监测对应端口的总线行为。
+
+
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+\section{术语}
+\label{sec:aximon-term}
+
+为了更好地说明 AXI Perf Mon 的功能，本章使用了以下术语。
+
+\begin{longtable}[c]{ R{2.5cm} p{13.5cm} }
+    \textbf{AXI} & 高级可扩展接口 (Advanced eXtensible Interface)，AMBA 3（Advanced Microcontroller Bus Architecture，高级微控制器总线架构）协议的一部分，为存储器和外设之间、存储器和存储器之间提供了高宽带、低延迟的数据传输。\\
+    \textbf{agent} & AXI 总线上的设备，包括 AXI 总线上的主机接口 (Master) 和从机接口 (Slave)。\\
+    \textbf{outstanding} & AXI 协议中，当一个 AXI 事务的地址已被从设备 (Slave) 接收，但最终响应 (BRESP/RRESP) 尚未返回主设备 (Master) 时，该事务即处于 Outstanding（未完成/在途）状态。\\
+    \textbf{burst} & 在 AXI 协议中，Burst 传输是指在一次地址握手之后，通过连续的数据拍 (beat) 完成多次数据传输的机制。Burst 的引入旨在减少地址通道的重复开销，提高总线带宽利用率和传输效率。一次 Burst 传输由一个地址阶段和多个数据阶段组成，其中地址阶段仅在 Burst 开始时发生一次，后续每个数据拍按照既定规则连续传输，直到 Burst 结束。\\
+    \textbf{AWVALID/AWREADY} & AXI 协议中的地址通道传输握手信号。AWVALID 拉高代表上游发起写命令传输请求，AWREADY 拉高代表下游响应了上游的写命令传输请求，握手成功即完成一笔写命令传输。ARVALID/ARREADY 同理，代表读传输命令的握手。 \\
+    \textbf{WVALID/WREADY} & AXI 协议中的数据通道传输握手信号。WVALID 拉高代表上游发起写数据传输请求，WREADY 拉高代表下游响应了上游的写数据传输请求，握手成功即完成一拍写数据传输。RVALID/RREADY 同理，但是读数据来源于下游，上游接收数据，握手成功即完成一拍读数据传输。\\
+    \textbf{APB} & Advanced Peripheral Bus 是一种低带宽、低功耗的总线协议，主要用于连接低速外设（如 GPIO、定时器、UART、ADC 等）与系统的主处理器或其他高性能模块。APB 是 ARM AMBA (Advanced Microcontroller Bus Architecture) 总线家族的一部分，与 AHB (Advanced High-performance Bus) 和 AXI (Advanced eXtensible Interface) 一起组成了 AMBA 系统中的总线架构。\\
+    \textbf{端口} & 模块边界上的逻辑接口，用于与外部逻辑进行信号通信。\\
+    \textbf{单元} & 在较大的设计中实现特定功能的硬件模块。在本文中，特指负责性能监测的单元。\\
+    \textbf{\regindex{n}/\regindex{m}} & 在有关寄存器的章节中，经常使用 \regindex{n}/\regindex{m} 来统一表示同类寄存器。\regindex{n} 表示监测单元 0 或 1；\regindex{m} 表示每个监测单元拥有多个同类寄存器，具体数量请参阅寄存器章节相关描述。\\
+    \textbf{region} & 本文中 region 的含义与地址范围相关，但有所区别。在监测瞬时带宽时，可以通过定义 region 来过滤掉不相关的带宽统计信息。region 必须基于完整的从设备地址来定义，可以包含一个或多个完整的从设备地址范围，但不支持仅对单个从设备地址范围中的部分区间进行过滤。
+\end{longtable}
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+
+AXI Perf Mon 具有以下特性：
+
+\begin{itemize}
+    \item 适配 AXI3 总线接口
+    \item 2 个监测单元完全相同且独立
+    \item 9 个监测端口
+    \item 可通过软件配置各监测单元对应的监测端口
+    \item 监测时支持传输事务通过传输 ID 进行过滤，被过滤的传输 ID 代表的传输事务将不再被统计
+    \item 支持多个测量指标，用户根据需求选择对应指标进行监测
+        \begin{itemize}
+          \item 读/写地址通道当前传输事务 outstanding 数
+          \item 读/写地址通道延迟
+          \item 读/写数据通道延迟   
+          \item 单次传输事务中写数据通道空隙 cycle 总数
+          \item 读传输事务延迟
+          \item 写传输事务延迟     
+          \item 平均带宽测量
+          \item 瞬时带宽测量
+          \item 瞬时带宽区间统计及异常瞬时带宽记录
+        \end{itemize}
+    
+    \item 每个监测单元最大支持 6 个测量指标计数器
+    \item 各监测单元内部，每个指标计数器可配置统计任一指标，不允许多个指标计数器同时统计同一指标
+    \item 每个监测单元最大支持 6 个区间统计指标计数器，即最大支持分成 6 个区间对瞬时带宽指标监测结果进行统计\\ 
+
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:aximon-arch-overview}
+
+图 \ref{fig:axi_perf_mon} 为 AXI Perf Mon 的基本架构图。
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/axi_perf_mon.pdf}
+\centering
+\caption{AXI Perf Mon 的架构}
+\label{fig:axi_perf_mon}
+\end{figure}
+
+
+AXI Perf Mon 主要包含以下功能模块：
+\begin{itemize}
+    \item \textbf{待监测端口选择}：从接入 AXI Perf Mon 的端口中选出接入监测单元的端口
+    \item \textbf{ID 过滤}：对监测事件进行分类
+    \item \textbf{计数使能生成器}：将用户通过寄存器配置选择的统计指标信息转换成计数器的开启和关闭指示
+    \item \textbf{计数器}：执行统计计数。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:aximon-func-descr}
+
+\subsection{时钟}
+AXI Perf Mon 在 2 个独立的时钟域下运行，每个时钟域对应特定的接口：
+
+\begin{itemize}
+    \item APB\_CLK：用于配置 AXI Perf Mon 寄存器的 APB 总线时钟
+    \item AXI\_CLK：SoC 系统 AXI 总线时钟
+\end{itemize}
+    AXI Perf Mon 属于系统辅助 debug 组件，因此在正常工作状态时会默认关闭时钟使能。如果要使用 AXI Perf Mon，需要先在时钟复位模块中打开时钟使能。AXI Perf Mon 监测单元的工作时钟与被监测总线的时钟完全同频同相，下文提到的时钟 cycle 均基于 AXI Perf Mon 的 AXI\_CLK。
+
+有关时钟的更多信息，请查看章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+时钟的详细配置流程，请查看章节 \ref{sec:aximon-prog-procedures} \textit{\nameref{sec:aximon-prog-procedures}}。
+
+
+\subsection{复位}
+
+AXI Perf Mon 支持软件复位，可复位整个模块，包括所有监测单元和寄存器。
+
+可通过向 \hyperref[fielddesc:fielddesc:HPSYSCLKRSTREGAXIPERFMONSYSRSTEN]{HP\_SYS\_CLKRST\_REG\_AXI\_PERF\_MON\_SYS\_RST\_EN} 字段先写 1 后写 0 实现复位。
+
+\subsection{传输 ID 过滤}
+\begin{itemize}
+    \item 在 AXI 传输事务中，每笔传输事务都存在一个对应的传输 ID，用于标记此笔传输事务。部分 Master 侧会将不同种类的传输事务分成不同的传输 ID。传输 ID 过滤器用于屏蔽一些用户不关注的传输事务，避免统计结果受到干扰。
+    \item ID 过滤可通过配置 \hyperref[fielddesc:AXIPERFMONSELAGNRDIDMASK]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ID\_MASK} 或 \hyperref[fielddesc:AXIPERFMONSELAGNWRIDMASK]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_WR\_ID\_MASK}（ID 掩码）和 \hyperref[fielddesc:AXIPERFMONSELAGNRDIDFILTER]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ID\_FILTER} 或 \hyperref[fielddesc:AXIPERFMONSELAGNWRIDFILTER]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_WR\_ID\_FILTER} （ID 过滤值）来实现。
+    \item ID 掩码中，0 表示可忽略的位，1 表示用于过滤的位。若传输 ID 在掩码为 1 的位上与过滤值不符，则该传输事务被屏蔽，不计入统计。
+    \item ID 过滤既可以作用于 Master 侧也可以作用于 Slave 侧。Master 侧 AXI 传输事务 ID 为 4 bit， Slave 侧传输事务 ID 为 8 bit。
+\end{itemize}
+
+\subsection{监测指标}
+
+AXI Perf Mon 的端口监测功能由软件通过配置 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 指标选择寄存器实现。其中：
+\begin{itemize}
+    \item \regindex{n} 表示该寄存器所属的 AXI Perf Mon 监测单元编号，取值范围为 0 到 1。
+    \item \regindex{m} 表示该寄存器在每个监测单元内的索引编号，取值范围为 1 到 2。
+\end{itemize}
+
+每个寄存器被划分为四个 8-bit 的段，以 \regindex{i} 作为索引（取值范围为 0 到 3）。在每个段中，位 [8*\regindex{i}+4:8*\regindex{i}] 用于选择测量指标，位 [8*\regindex{i}+7:8*\regindex{i}+5] 用于选择区间统计指标。
+
+指标选择寄存器的配置值与测量指标以及区间统计指标的对应关系见表 \ref{tab:aximon-metric-configuration} 和表 \ref{tab:aximon-range-metric-configuration}。
+
+\begin{longtable}[c]{|p{5.5cm}|p{7.5cm}|}
+\caption{指标选择寄存器中的测量指标配置}  
+\label{tab:aximon-metric-configuration}\\   
+\hline
+    \rowcolor{lightgray}    
+    \textbf{指标选择寄存器[8*\regindex{i}+4:8*\regindex{i}]配置值} & \multirow{-1}{*}{\textbf{测量指标}}\\\hline 
+    \endfirsthead
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- 接上页}\\\hline
+    \rowcolor{lightgray}
+    \textbf{指标选择寄存器[8*\regindex{i}+4:8*\regindex{i}]配置值} & \multirow{-1}{*}{\textbf{测量指标}}\\\hline 
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{见下页}} \\
+    \endfoot
+
+    \endlastfoot
+
+    0   & 无效值 \\ \hline
+    1   & 写事务 outstanding 数量统计 \\ \hline
+    2   & 读事务 outstanding 数量统计  \\ \hline
+    3   & 写地址通道延迟统计  \\ \hline   
+    4   & 读地址通道延迟统计 \\ \hline
+    5   & 写数据通道延迟统计 \\ \hline
+    6   & 读数据通道延迟统计  \\ \hline
+    7   & 写数据通道 WVALID 空隙统计 \\ \hline
+    8   & 读事务传输延迟统计  \\ \hline
+    9   & 写事务传输延迟统计  \\ \hline
+    10  & 平均带宽测量中读事务有效数据传输次数统计  \\ \hline
+    11  & 平均带宽测量中读传输时间长度统计  \\ \hline
+    12  & 平均带宽测量中写事务有效数据传输次数统计  \\ \hline
+    13  & 平均带宽测量中写传输时间长度统计  \\ \hline
+    14  & 瞬时带宽测量中读事务有效数据传输次数统计  \\ \hline
+    15  & 瞬时带宽测量中读传输时间长度统计  \\ \hline
+    16  & 瞬时带宽测量中写事务有效数据传输次数统计  \\ \hline
+    17  & 瞬时带宽测量中写传输时间长度统计  \\ \hline
+    18\textasciitilde31 & 无效值 \\\hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|p{5cm}|}
+\caption{指标选择寄存器中的区间统计指标配置}  
+\label{tab:aximon-range-metric-configuration}\\   
+\hline
+    \rowcolor{lightgray}
+    \textbf{指标选择寄存器[8*\regindex{i}+7:8*\regindex{i}+5]配置值} & 
+    \multirow{-1}{*}{\textbf{区间统计指标}} \\ \hline
+\endfirsthead
+
+\hline
+    \rowcolor{lightgray}
+    \textbf{指标选择寄存器[8*\regindex{i}+7:8*\regindex{i}+5]配置值} &
+    \multirow{-1}{*}{\textbf{区间统计指标}} \\ \hline
+\endhead
+
+\hline
+\endfoot
+
+\hline
+\endlastfoot
+
+    0   & 无效值 \\ \hline
+    1   & 读事务瞬时带宽区间统计 \\ \hline
+    2   & 写事务瞬时带宽区间统计  \\ \hline
+    3\textasciitilde7 & 无效值 \\
+\end{longtable}
+
+
+通过配置 agent 选择寄存器 （\hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG}），可以选择 AXI Perf Mon 各监测单元所监测的端口。
+
+该寄存器被划分为两个段，以 \regindex{i} 作为索引（取值范围为 0 到 1），分别对应监测单元 \regindex{i} 的端口选择配置：
+
+\begin{itemize}
+    \item 位 [4:0] 用于选择监测单元 0 所监测的 agent。
+    \item 位 [9:5] 用于选择监测单元 1 所监测的 agent。
+\end{itemize}
+
+寄存器的配置值与实际 agent 的对应关系见表 \ref{tab:aximon-agent-num-peri}。
+
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{agent 选择寄存器配置值与实际 agent 对应关系表}
+\label{tab:aximon-agent-num-peri}\\   
+\hline     
+    \rowcolor{lightgray}    
+    \textbf{agent 选择寄存器[5*\regindex{i}+4:5*\regindex{i}]配置值} & \multirow{-1}{*}{\textbf{agent}}\\\hline
+\endfirsthead
+\hline
+    \rowcolor{lightgray}    
+    \textbf{agent 选择寄存器[5*\regindex{i}+4:5*\regindex{i}]配置值} & \multirow{-1}{*}{\textbf{agent}}\\\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+    0   & 无效值 \\ \hline    
+    1   & cache \\ \hline
+    2   & vdma\_mst1  \\ \hline
+    3   & vdma\_mst2  \\ \hline
+    4   & 2d-dma  \\ \hline
+    5   & h264-dma\_mst1  \\ \hline
+    6   & h264-dma\_mst2  \\ \hline
+    7   & psram  \\ \hline
+    8   & camera  \\ \hline
+    9   & lcd  \\ \hline
+    10\textasciitilde31 & 无效值 \\\hline
+\end{longtable}
+
+\subsubsection{读/写地址通道传输事务最大 outstanding 数量}
+outstanding 能力反映了 Master 侧发送 AXI 传输事务的并发能力，outstanding 能力越强，传输延迟越小。在实际传输过程中，outstanding 能力不仅取决于 Master 的配置，还受到总线组件以及上下游设备 outstanding 能力的限制。AXI Perf Mon 支持测量当前监测端口传输事务的 outstanding 数量。
+\begin{itemize}
+    \item 对于读传输，当地址通道信息有效发出后，数据通道对应此传输的最后一笔数据传输未完成，则累加一笔 outstanding 传输；如数据传输完成，则 outstanding 数量减一。
+    \item 对于写传输，当地址通道信息有效发出后，写响应通道对应此笔传输事务的响应没有完成，则累加一笔 outstanding 传输；如得到对应写传输的写响应，则 outstanding 数量减一。
+    \item 传输过程中，outstanding 值一般会一直发生变化。AXI Perf Mon 会将出现的最大 outstanding 值写入结果寄存器中，供软件参考分析。
+\end{itemize}
+
+\subsubsection{读/写地址通道延迟}
+地址通道延迟代表一笔传输命令发出后多长时间会被接收。AXI Perf Mon 支持对当前监测端口传输事务的读/写地址通道延迟进行测量。
+\begin{itemize}
+    \item 对于读传输，当地址通道 ARVALID 拉高后，表示 Master 侧准备发出一笔读传输事务的命令，Slave 侧根据当前空闲情况选择是否拉高 ARREADY。ARREADY 拉高后，地址通道完成一笔传输命令的握手。读地址通道延迟是指该监测端口 ARVALID 拉高至 ARREADY 拉高的 cycle 数。
+    \item 写地址通道延迟的测量方式和读地址通道延迟测量方式一致。
+    \item 传输过程中，对于同一个监测端口，其延迟值一般也会一直发生变化。AXI Perf Mon 会将出现的最大/最小读/写地址通道延迟值写入结果寄存器中，供软件参考分析。
+\end{itemize}
+
+\subsubsection{读/写数据通道延迟}
+对于 AXI 传输，一笔 burst 传输开始后不可中断。但在实际传输过程中，数据通道并非完全的背靠背传输，传输中可能存在空闲周期。AXI Perf Mon 支持测量当前监测端口传输事务的读/写数据通道延迟。
+\begin{itemize}
+    \item 对于读传输，当数据通道 RVALID 拉高后，表示 Slave 侧准备发出一拍读传输事务的数据，Master 侧根据当前空闲情况选择是否拉高 RREADY。RREADY 拉高后，读数据通道完成一拍数据传输的握手。读数据通道延迟是指该监测端口 RVALID 拉高至 RREADY 拉高的 cycle 数。
+    \item 写数据通道延迟的测量方式和读数据通道延迟测量方式一致。
+    \item 传输过程中，对于同一个监测端口，其延迟值一般也会一直发生变化，AXI Perf Mon 会将出现的最大/最小读/写数据通道延迟值写入结果寄存器中，供软件参考分析。
+\end{itemize}
+
+\subsubsection{写数据通道 WVALID 空隙}
+当 Master 侧开始发送一笔 burst 数据传输后，数据传输之间的空闲周期可能来源于 Slave 侧接收数据的等待、Master 侧 WVALID 的空隙，以及经过转换桥时产生的显著空隙。AXI Perf Mon 支持对当前监测端口传输事务中一笔传输事务的 WVALID 空隙进行统计。
+\begin{itemize}
+    \item 一笔写传输事务中，如果传输还未完成，WVALID 一旦拉低，统计 WVALID 拉低的 cycle 总数。 
+    \item 传输过程中，对于同一个监测端口，其写数据通道 WVALID 空隙统计数量一般也会一直发生变化，AXI Perf Mon 会将出现的最大/最小写数据通道 WVALID 空隙写入结果寄存器中，供软件参考分析。
+\end{itemize}
+
+\subsubsection{读/写事务传输延迟}
+在传输过程中，不仅关注地址通道和数据通道各自的延迟，还会关注传输事务中地址通道命令准备发送时到数据通道准备接收数据时的延迟。该延迟反映了从发出传输命令到开始数据传输的时间间隔，可辅助决定 Master 侧 AXI 传输缓存 buffer 的大小。AXI Perf Mon 支持统计当前监测端口传输事务中一笔传输事务的读/写事务传输延迟。
+\begin{itemize}
+    \item 对于读传输，当一笔传输的 ARVALID 拉高后，指标测量计数器会开始统计延迟，直到这笔传输第一拍数据的 RVALID 信号拉高，计数器停止计数，得到读事务传输延迟。
+    \item 对于写传输，当一笔传输的 AWVALID 拉高后，指标测量计数器会开始统计延迟，直到这笔传输的第一拍数据完成传输(统计终点与读传输有区别)，计数器停止计数，得到写事务传输延迟。
+    \item 监测端口可能存在多笔 outstanding 传输，但在统计读/写传输事务延迟指标中，指标计数器只有一个，因此每次只能统计一笔事务的延迟。当开始统计某笔事务后，其他并发事务将被忽略，直到该笔统计完成。为使统计数据具有代表性，优先选择传输时间较长的事务进行统计。
+    \item 传输过程中，对于同一个监测端口，其传输事务延迟统计值一般也会一直发生变化，AXI Perf Mon 会将出现的最大/最小传输事务延迟值写入结果寄存器中，供软件参考分析。
+\end{itemize}
+
+\subsubsection{平均带宽测量}
+带宽是评估总线性能最直观的指标之一。AXI Perf Mon 支持测量平均带宽。
+\begin{itemize}
+    \item AXI Perf Mon 内部没有计算单元，并不直接计算带宽值，而是通过统计时间（总线 cycle 数量）和传输数据量（data 数量）来间接统计带宽。
+    \item 由于需要观测时间和数据量，平均带宽测量需要同时使用两个指标计数器。带宽统计会忽略 data strobe 的影响，只统计数据量，即使是无效数据，也会被统计。
+    \item 当使能平均带宽测量时，时间计数器将跟随总线 cycle 一起递增，而数据量根据当前数据通道握手情况递增。每完成一笔 burst 传输，会将当前时间和数据量统计结果刷新到结果寄存器中。如果数据传输完成后没有关闭平均带宽测量，数据通道一直处于 idle 状态，那么统计结果将一直保持在最后一笔 burst 传输结束时的时间和数据量统计结果，不会增加空白时间。软件需要根据总线频率，一个 beat 代表的数据 byte 数量来计算得到实际的平均带宽。
+\end{itemize}
+
+\subsubsection{瞬时带宽测量}
+平均带宽体现了在较长一段时间内设备对带宽的需求，但是在评估总线性能时，还应关注较短时间窗口内的设备带宽变化，即瞬时带宽。AXI Pref Mon 也支持测量瞬时带宽。
+\begin{itemize}
+    \item 瞬时带宽通过时间窗口滑动的方式来进行测量。当配置好时间窗口的长度（以总线 cycle 为基本单位）并使能瞬时带宽测量后，测量会以软件无感的方式进行。测量的起始和终止行为完全由硬件操作，当一个时间窗口测量结束后，下一个时间窗口的测量开始，进行连续的测量。
+    \item 瞬时带宽的测量和平均带宽测量方法基本一致，都需要两个指标计数器，分别对时间长度和数据量进行测量。当时间计数器达到寄存器配置的时间窗口值时，表示一次瞬时带宽测量结束，将统计的数据量反馈给下一级的极值比较器，并清空数据量计数器和时间计数器，开始下一轮计数。
+    \item 区间统计。瞬时带宽如果仅记录极值，不足以反映总线传输情况，因此引入区间统计。区间统计基于区间统计计数器，会有由软件配置的区间上限和区间下限，其数量和指标计数器一样。当指标计数器结果统计完成后，会将其结果与区间计数器对应的区间对比，进行分类统计，更能反映系统情况。
+    \item 事件记录。瞬时带宽测量时，会将监测端口最近 4 次瞬时带宽测量值（当前未完成测量的瞬时带宽值不做统计）和最近 4 笔 AXI 接口传输信息（ID/Burst length）信息写入寄存器中。地址通道信息在地址通道握手时记录，而瞬时带宽测量值在测量窗口结束时记录，存在记录时间差异。这些信息是根据传输实际情况同步更新的，方便软件了解当前传输的基本情况。
+    \item 异常反馈。瞬时带宽测量时还会对异常的带宽变化进行反馈。对监测端口设立最小瞬时带宽阈值（基于数据量），代表传输过程中认为此端口处于非异常情况的最小瞬时带宽值，一旦指标计数器统计结果小于此阈值时，触发中断标志信号，并广播到所有的 AXI Perf Mon 监测单元 ，停止所有端口瞬时带宽的测量，事件记录停止，保持现场，根据事件记录的结果，辅助判断哪个设备抢占了带宽。软件也可以通过配置 \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_EN} 或 \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_EN} 来暂停对应监测单元的事件记录。
+    \item 地址过滤。一般情况下，访问内部存储不需要额外关注带宽。在瞬时带宽测量时，如果需要对于异常进行进行反馈，一般是多 Master 对于同一个外部存储如 PSRAM 同时发起访问。那么在异常结果分析时，需要排除其余 Master 对于其余 Slave 的访问，这种带宽对分析的场景属于无效带宽。因此增加地址过滤的功能，可以根据访问地址进行过滤，从而获得真正有竞争关系的多 Master 的瞬时带宽。地址过滤的基本单位是 Slave，即支持对不同 Slave 进行地址过滤，但不支持对同一个 Slave 的部分地址空间进行过滤。
+    \item 监测恢复。在异常带宽行为被发现且广播后，各 AXI Perf Mon 会暂停对瞬时带宽的测量。当软件对当前现场结果分析完毕后，若希望在不对系统复位的情况下重新保持对瞬时带宽的监测，可通过配置  \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_CLR} 或 \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_CLR} 的动作来清除停滞状态测。
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+
+\chipname{} 的 AXI Perf Mon 可以生成以下中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item AXI\_PERF\_MON\_INTR
+    \end{itemize}
+
+此中断信号由 AXI Perf Mon 的内部中断源生成。表 \ref{tab:aximon-int-sources} 列出了 AXI Perf Mon 的内部中断源、中断触发条件、以及生成的中断信号。
+
+\begin{longtable}{ | L{6cm} | L{5cm} | L{4cm} | }
+\caption{AXI PERF MON 的内部中断源} \label{tab:aximon-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+{AXI\_\-PERF\_\-MON\_\-SEL\_\-AG\regindex{n}\_\-RECORD\_\-CNT\_\-UNDER\_\-LIMIT\_\-INT (\regindex{n} = 0, 1)}\label{int:AXIPERFMONSELAGNRECORDCNTUNDERLIMITINT}  &  瞬时带宽测量值小于设置的最小瞬时带宽阈值 &  AXI\_PERF\_MON\_INTR  \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:aximon-reg-summ} \textit{\nameref{sec:aximon-reg-summ}}。
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:aximon-prog-procedures}
+
+
+\subsection{使用 AXI Perf Mon 测量 outstanding}
+利用 AXI Perf Mon 监测某待监测端口的 outstanding 能力：
+\begin{enumerate}
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG}，每 5 bit 代表一个 agent 被对应的监测单元选中，即 [4:0] 表示监测单元 0 选择的待监测端口，[9:5] 代表监测单元 1 选择的待监测端口。
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} (\regindex{n} 代表监测单元 0 或 1；\regindex{m} 代表每个监测单元存在多个此寄存器，可参照寄存器小节查看具体寄存器数量，此处 \regindex{m} = 1, 2)选择监测的指标，每 8 bit 代表一个指标计数器对应的指标，  \hyperref[fielddesc:AXIPERFMONSELAGNMETRICSELECTM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT1} [4:0]的值代表测量指标计数器 0 对应的监测指标，其[7:5]的值代表区间指标计数器 0 对应的监测指标。\hyperref[fielddesc:AXIPERFMONSELAGNMETRICSELECTM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT2} [4:0]的值代表测量指标计数器 4 对应的监测指标，其 [7:5] 的值代表区间指标计数器 4 对应的监测指标，以此类推。
+    配置完成后，监测开始。
+    \item 通过读取结果寄存器中 \hyperref[fielddesc:AXIPERFMONSELAGNCOUNTERMRESULT]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_COUNTER\regindex{m}\_RESULT} 的值获取状态信息，[15:0]是统计的最小值，[31:16]是统计的最大值。结果计数器序号与选择的指标计数器对应。 
+    \item 将寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 中对应指标计数器的 8 bit 字段配置为 0 ，停止该指标计数器对此端口这一指标的监测，并将计数器复位。
+\end{enumerate}
+
+outstanding 数量、地址通道延迟、数据通道延迟、读写事务传输延迟等均可以通过这个配置流程进行监测，配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 到期望监测的指标即可。
+
+\subsection{使用 AXI Perf Mon 测量读平均带宽}
+利用 AXI Perf Mon 监测某待监测端口在一段时间内的平均带宽：
+\begin{enumerate}
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG} 选择待监测端口。
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 选择监测的指标为读平均带宽时间长度测量和数据量测量。
+    \item 配置 \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWTIMECNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_TIME\_CNT\_VALID\_STROBE\_NUM} 和 \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWDATACNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_DATA\_CNT\_VALID\_STROBE\_NUM}，选择时间和数据的计量步长。计量步长如果配成 3，那么每 4 个有效 cycle 使计数器加 1，每 4 个有效数据使计数器加 1。
+    \item 配置 \hyperref[fielddesc:AXIPERFMONSELAG0RDBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_BANDW\_TEST\_EN} 或 \hyperref[fielddesc:AXIPERFMONSELAG1RDBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_BANDW\_TEST\_EN} 使能平均带宽测量，配置 \hyperref[fielddesc:AXIPERFMONSELAG0RDBANDWTESTSTOP]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_BANDW\_TEST\_STOP} 或 \hyperref[fielddesc:AXIPERFMONSELAG1RDBANDWTESTSTOP]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_BANDW\_TEST\_STOP} 停止平均带宽测量。
+    \item 测量结果可通过寄存器 \hyperref[regdesc:AXIPERFMONSELAGNCOUNTERMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_COUNTER\regindex{m}\_RESULT\_REG} 读取，结果计数器序号与选择的指标计数器对应。结果寄存器中高 16 bit 代表平均带宽数据/时间统计量，如果为 16'hFFFF，代表结果统计溢出，结果失效，需配置 \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWTIMECNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_TIME\_CNT\_VALID\_STROBE\_NUM} 和 \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWDATACNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_DATA\_CNT\_VALID\_STROBE\_NUM} 增大统计步长，或减少统计时间和数据量。
+\end{enumerate}
+
+\subsection{使用 AXI Perf Mon 测量读瞬时带宽}
+利用 AXI Perf Mon 监测某待监测端口的瞬时带宽：
+\begin{enumerate}
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG} 选择待监测端口。
+    \item 配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 选择监测的指标为读瞬时带宽时间长度测量和数据量测量。
+    \item 测量瞬时带宽时，由软件规定每一段测量的时间长度。达到测量时长后，读取数据统计结果寄存器里的值可得到该时间长度内传输的数据量，同时开始重新统计下一段测量时间内的数据量。配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNINSBANDWTIMETHRREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_INS\_BANDW\_TIME\_THR\_REG} 决定测量时间长度。配置 \hyperref[fielddesc:AXIPERFMONSELAG0RDINSBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_INS\_BANDW\_TEST\_EN} 或 \hyperref[fielddesc:AXIPERFMONSELAG1RDINSBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_INS\_BANDW\_TEST\_EN} 可以使能瞬时带宽测量。
+    \item 测量瞬时带宽时，若希望反馈端口在密集数据传输场景下带宽陡降的异常情况，可以配置 \hyperref[fielddesc:AXIPERFMONSELAGNSWRECORDSTOPRDDATALIMIT]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_SW\_RECORD\_STOP\_RD\_DATA\_LIMIT} 填写带宽数据量下限阈值。一旦统计的瞬时带宽数据量小于该下限，AXI Perf Mon 会产生中断并停止测量 AXI Perf Mon 监测单元瞬时带宽。
+    \item 瞬时带宽的事件记录信息可查询寄存器 \hyperref[regdesc:AXIPERFMONSELAGNINSBANDWDATAMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_INS\_BANDW\_DATA\regindex{m}\_REG} 和 \hyperref[regdesc:AXIPERFMONSELAGNRDAXIINFORECORDMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_AXI\_INFO\_RECORD\regindex{m}\_REG}。这些寄存器的值根据实时统计情况刷新，当中断产生时，这些寄存器将暂停更新，以保留现场。可通过 \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_EN} 或 \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_EN} 来停止寄存器更新。通过 \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_CLR} 或 \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_CLR} 来清除停滞状态，恢复记录更新。
+    \item 测量瞬时带宽时，允许对数据进行地址过滤。地址过滤以 region 为单位，由 \hyperref[fielddesc:AXIPERFMONSELAGNRDADDRMASKM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ADDR\_MASK\regindex{m}} 和 \hyperref[fielddesc:AXIPERFMONSELAGNRDADDRFILTERM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ADDR\_FILTER\regindex{m}} 过滤出三个 region，由 \hyperref[fielddesc:AXIPERFMONSELAG0RDADDRREGIONSEL]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_ADDR\_REGION\_SEL} 或 \hyperref[fielddesc:AXIPERFMONSELAG1RDADDRREGIONSEL]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_ADDR\_REGION\_SEL} 来选择哪些 region 是有效目的地址。
+    \item 瞬时带宽统计支持以区间统计的方式来系统地呈现带宽分布状态。配置寄存器 \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} 每 8 bit 的后 3 bit 用于指定区间计数器的统计指标。\hyperref[fielddesc:AXIPERFMONSELAGNMETRICRANGEMCNTLOW]{AXI\_PERF\_MON\_\_SEL\_AG\regindex{n}\_METRIC\_RANGE\_CNT\_LOW} 和 \hyperref[fielddesc:AXIPERFMONSELAGNMETRICRANGEMCNTHIGH]{AXI\_PERF\_MON\_\_SEL\_AG\regindex{n}\_METRIC\_RANGE\_CNT\_HIGH} 
+    用于指定每个区间的上下限。瞬时带宽的区间统计结果可以通过寄存器 \hyperref[regdesc:AXIPERFMONSELAGNRANGEMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RANGE\regindex{m}\_REG} 查询。
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{aximon-reg-summ}{}
+\section{寄存器列表}
+\label{sec:aximon-reg-summ}
+
+
+本小节的所有地址均为相对于 AXI 性能监测器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/67-AXIMON-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 AXI 性能监测器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subfile{\modulefiles/67-AXIMON-reg__CN}
+
+\end{document}
