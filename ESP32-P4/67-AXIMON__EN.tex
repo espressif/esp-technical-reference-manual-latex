@@ -1,0 +1,514 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./67-AXIMON}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{aximon}{}
+\chapter{AXI Performance Monitor}
+\label{mod:aximon}
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+\label{sec:aximon-overview}
+
+The Advanced eXtensible Interface Performance Monitor (AXI Perf Mon) is used to monitor AXI bus transfer activities in real time and provide monitoring results based on measured metrics. Software can use these results to evaluate the current status of bus transfers, including performance-related data such as bandwidth and latency, for software testing or debugging.
+
+AXI Perf Mon has nine monitoring ports, each corresponding to a device on the AXI matrix, including cache, vdma\_mst1, vdma\_mst2, 2d-dma, h264-dma\_mst1, h264-dma\_mst2, psram, camera, and lcd. AXI Perf Mon contains two monitoring units internally. Each monitoring unit is identical and completely independent, and is shared by all monitoring ports. Before starting monitoring, users can assign each unit to any port to monitor the bus behavior of the corresponding port.
+
+
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+\section{Terminology}
+\label{sec:aximon-term}
+
+To better illustrate the functionality of AXI Perf Mon, the following terms are used in this chapter.
+
+
+
+\begin{longtable}[c]{ R{3.1 cm} p{13.5 cm} }
+    \textbf{AXI} & Advanced eXtensible Interface, a part of the AMBA 3 (Advanced Microcontroller Bus Architecture) protocol that provides high-bandwidth, low-latency data transfer between memory and peripherals, or between memory blocks.\\
+    \textbf{agent} & A device on the AXI bus, including both AXI Master interfaces and Slave interfaces.\\
+    \textbf{outstanding} & In the AXI protocol, when the address of an AXI transaction has been accepted by the Slave, but the final response (BRESP/RRESP) has not yet been returned to the Master, the transaction is in the outstanding (pending/in-flight) state.\\
+    \textbf{burst} & In the AXI protocol, burst transfer refers to a mechanism that completes multiple data transfers through consecutive data beats after a single address handshake. Burst is introduced to reduce the repeated overhead of the address channel and improve bus bandwidth utilization and transfer efficiency. A burst transfer consists of one address phase and multiple data phases, where the address phase occurs only once at the beginning of the burst, and subsequent data beats are consecutively transferred according to established rules until the burst ends.\\
+    \textbf{AWVALID/AWREADY} & Handshake signals for address channel transfer in the AXI protocol. AWVALID asserted high indicates that the upstream initiates a write command transfer request, AWREADY asserted high indicates that the downstream responds to the upstream write command transfer request, and a successful handshake completes one write command transfer. ARVALID/ARREADY work similarly, representing read transfer command handshake. \\
+    \textbf{WVALID/WREADY} & Handshake signals for data channel transfer in the AXI protocol. WVALID asserted high indicates that the upstream initiates a write data transfer request; WREADY asserted high indicates that the downstream responds to the upstream write data transfer request, and a successful handshake completes one beat of write data transfer. RVALID/RREADY work similarly, but read data originates from the downstream and the upstream receives the data, and a successful handshake completes one beat of read data transfer.\\
+    \textbf{APB} & Advanced Peripheral Bus (APB) is a low-bandwidth, low-power bus protocol mainly used to connect low-speed peripherals (such as GPIO, timers, UART, ADC, etc.) with the system's main processor or other high-performance modules. APB is part of the ARM AMBA (Advanced Microcontroller Bus Architecture) bus family, forming the bus architecture of AMBA systems together with AHB (Advanced High-performance Bus) and AXI (Advanced eXtensible Interface).\\
+    \textbf{port} & A logical interface at the boundary of a module for signal communication with external logic.\\
+    \textbf{unit} & A hardware block that implements a specific function within a larger design. In this article, this refers to the unit responsible for performance monitoring.\\
+    \textbf{\regindex{n}/\regindex{m}} & In the section on registers, the notation \regindex{n}/\regindex{m} is frequently used for indexing. \regindex{n} represents monitoring unit 0 or 1; \regindex{m} represents that each monitoring unit has multiple such registers. Refer to the register section for specific register quantities.\\
+    \textbf{region} & In this design, a “region” is related to the concept of an address range, but with some distinctions. When monitoring instantaneous bandwidth, regions can be used to filter out irrelevant bandwidth statistics. A region must be defined based on complete slave addresses. It may include one or more entire slave address ranges, but it cannot filter only a portion of a single slave's address range.
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+
+AXI Perf Mon has the following features:
+
+
+\begin{itemize}
+    \item AXI3 bus interface compliance
+    \item Two identical and independent monitoring units
+    \item Nine monitoring ports
+    \item Software-configurable mapping between monitoring units and monitoring ports
+    \item Transaction ID filtering to exclude specific transactions from statistics
+    \item Multiple measurement metrics available for user selection
+        \begin{itemize}
+          \item Current outstanding transaction count for read/write address channels
+          \item Read/write address channel latency
+          \item Read/write data channel latency   
+          \item Total idle cycles on write data channel within a single transaction
+          \item Read transaction latency
+          \item Write transaction latency     
+          \item Average bandwidth measurement
+          \item Instantaneous bandwidth measurement
+          \item Instantaneous bandwidth range statistics and abnormal bandwidth recording
+        \end{itemize}
+    
+    \item Up to 6 measurement metric counters per monitoring unit
+    \item Each counter can be configured independently, and each metric can be assigned to at most one counter within a monitoring unit
+    \item Up to 6 range statistics metric counters per monitoring unit, i.e., supporting up to 6 range divisions for statistical analysis of instantaneous bandwidth monitoring results
+
+
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:aximon-arch-overview}
+
+Figure \ref{fig:axi_perf_mon} shows the basic architecture of AXI Perf Mon.
+
+\begin{figure}[H]
+\includegraphics[width=1\textwidth]{\modulefiles/figures/axi_perf_mon.pdf}
+\centering
+\caption{Architecture of AXI Perf Mon}
+\label{fig:axi_perf_mon}
+\end{figure}
+
+AXI Perf Mon consists of the following functional modules:
+\begin{itemize}
+    \item \textbf{Port Selection}: Selects which port to connect to the monitoring unit from the ports connected to AXI Perf Mon
+    \item \textbf{ID Filtering}: Classifies monitoring events
+    \item \textbf{Count Enable Generator}: Converts the metric information configured by users through registers into counter enable/disable controls
+    \item \textbf{Counters}: Performs statistical counting
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:aximon-func-descr}
+
+\subsection{Clock}
+
+The AXI Perf Mon operates using two independent clock domains, each serving a specific interface:
+
+\begin{itemize}
+    \item APB\_CLK: APB bus clock used to configure AXI Perf Mon registers
+    \item AXI\_CLK: SoC system AXI bus clock
+\end{itemize}
+    AXI Perf Mon is a system auxiliary debug component, so the clock is disabled by default during normal operation. To use AXI Perf Mon, the clock must be enabled first in the clock and reset module. The operating clock of the AXI Perf Mon monitoring unit is fully synchronous (same frequency and phase) with the clock of the monitored bus. All clock cycles mentioned in the following sections are based on the AXI\_CLK of AXI Perf Mon.
+
+For more information on clocks, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+For detailed clock programming procedures, see Section \ref{sec:aximon-prog-procedures} \textit{\nameref{sec:aximon-prog-procedures}}.
+
+
+\subsection{Reset}
+
+AXI Perf Mon supports software reset, which can reset the entire module, including all monitoring units and registers.
+
+Reset is performed by writing 1 and then 0 to the \hyperref[fielddesc:fielddesc:HPSYSCLKRSTREGAXIPERFMONSYSRSTEN]{HP\_SYS\_CLKRST\_REG\_AXI\_PERF\_MON\_SYS\_RST\_EN} field.
+
+\subsection{Transaction ID Filtering}
+\begin{itemize}
+    \item In AXI transfer transactions, each transaction has a corresponding ID used to mark that transaction. Some Masters assign different transaction IDs to different types of transactions. The transaction ID filter is used to mask some transactions that the user is not concerned about, avoiding interference with statistical results.
+    \item ID filtering can be configured through \hyperref[fielddesc:AXIPERFMONSELAGNRDIDMASK]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ID\_MASK} or \hyperref[fielddesc:AXIPERFMONSELAGNWRIDMASK]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_WR\_ID\_MASK} (ID mask) and \hyperref[fielddesc:AXIPERFMONSELAGNRDIDFILTER]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ID\_FILTER} or \hyperref[fielddesc:AXIPERFMONSELAGNWRIDFILTER]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_WR\_ID\_FILTER} (ID filter value).
+    \item In the ID mask, 0 indicates an ignorable bit, and 1 indicates a bit used for filtering. If the transaction ID does not match the filter value on the bits where mask is 1, the transaction is masked and not included in statistics.
+    \item ID filtering can be applied to both Master side and Slave side. Master-side AXI transaction IDs are 4 bits, while Slave-side transaction IDs are 8 bits.
+\end{itemize}
+
+\subsection{Monitoring Metrics}
+
+
+
+
+AXI Perf Mon's port monitoring functionality is implemented by configuring the Metric Select Register (\hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG}), where:
+\begin{itemize}
+    \item \regindex{n} represents which AXI Perf Mon unit does it belong to, ranging from 0 to 1.
+    \item \regindex{m} represents the serial number of this register in each unit, ranging from 1 to 2.
+\end{itemize}
+
+Each register is divided into four 8-bit segments, indexed by \regindex{i} (ranging from 0 to 3). Within each segment, bits [8*\regindex{i}+4:8*\regindex{i}] are used to select a measurement metric, and bits [8*\regindex{i}+7:8*\regindex{i}+5] are used to select a range statistics metric. 
+
+The following tables show the correspondence between register configuration values and the two types of metrics: measurement metrics and range statistics metrics.
+
+\begin{longtable}[c]{|p{6.5cm}|p{7cm}|}
+\caption{Setting of Measurement Metrics in Metric Select Registers}
+\label{tab:aximon-metric-configuration}
+\\\hline
+\rowcolor{lightgray}
+\textbf{Metric Select Register [8*\regindex{i}+4:8*\regindex{i}] Value} & \textbf{Measurement Metric}\\\hline
+    \endfirsthead
+    \multicolumn{2}{c}{\bfseries \tablename\ \thetable{} -- Continued from the previous page}\\\hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} [8*\regindex{i}+4:8*\regindex{i}] Value} & \textbf{Measurement Metric}\\\hline
+    \endhead
+
+    \multicolumn{2}{r}{\textbf{Continued on the next page}} \\
+    \endfoot
+
+    \endlastfoot
+
+    0   & Invalid value \\ \hline
+    1   & Write transaction outstanding count \\ \hline
+    2   & Read transaction outstanding count  \\ \hline
+    3   & Write address channel latency  \\ \hline
+    4   & Read address channel latency \\ \hline
+    5   & Write data channel latency \\ \hline
+    6   & Read data channel latency  \\ \hline
+    7   & Write data channel WVALID idle cycles \\ \hline
+    8   & Read transaction transfer latency  \\ \hline
+    9   & Write transaction transfer latency  \\ \hline
+    10  & Valid data transfer count for read transaction in average bandwidth measurement  \\ \hline
+    11  & Time duration for read transfers in average bandwidth measurement  \\ \hline
+    12  & Valid data transfer count for write transaction in average bandwidth measurement  \\ \hline
+    13  & Time duration for write transfers in average bandwidth measurement  \\ \hline
+    14  & Valid data transfer count for read transaction in instantaneous bandwidth measurement  \\ \hline
+    15  & Time duration for read transfers in instantaneous bandwidth measurement  \\ \hline
+    16  & Valid data transfer count for write transaction in instantaneous bandwidth measurement  \\ \hline
+    17  & Time duration for write transfers in instantaneous bandwidth measurement  \\ \hline
+    18\textendash31 & Invalid values \\ \hline
+\end{longtable}
+
+\begin{longtable}[c]{|l|m{7cm}|}
+\caption{Correspondence between Metric Select Registers and Range Statistics Metrics}
+\label{tab:aximon-range-metric-configuration}\\ 
+\hline
+    \rowcolor{lightgray}    
+    \textbf{Metric Select Register [8*\regindex{i}+7:8*\regindex{i}+5] Value}& \multirow{-1}{*}{\textbf{Range Statistics Metric}}\\\hline
+\endfirsthead
+
+\hline
+    \rowcolor{lightgray}    
+    \textbf{Metric Select Register [8*\regindex{i}+7:8*\regindex{i}+5] Value} & 
+    \multirow{-1}{*}{\textbf{Range Statistics Metric}} \\ \hline
+\endhead
+
+\hline
+\endfoot
+
+\hline
+\endlastfoot
+
+    0   & Invalid value \\ \hline
+    1   & Instantaneous bandwidth range distribution for read transactions  \\ \hline
+    2   & Instantaneous bandwidth range distribution for write transactions  \\ \hline
+    3\textendash7 & Invalid values \\
+\end{longtable}
+
+
+By configuring the Agent Select Register (\hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG}), the monitoring port for each monitoring unit can be selected.
+
+This register is divided into two segments, indexed by \regindex{i} (ranging from 0 to 1), each corresponding to the port selection configuration of monitoring unit \regindex{i}:
+
+\begin{itemize}
+    \item Bits [4:0] select the agent monitored by monitoring unit 0.
+    \item Bits [9:5] select the agent monitored by monitoring unit 1.
+\end{itemize}
+
+The correspondence between the register configuration values and actual agents is shown in the following table \ref{tab:aximon-agent-num-peri}.
+
+\begin{longtable}[c]{|l|p{3cm}|}
+\caption{Correspondence between Agent Select Register Configuration Values and Actual Agents}
+\label{tab:aximon-agent-num-peri}\\   
+\hline
+\rowcolor{lightgray}    
+\textbf{Agent Select Register [5*\regindex{i}+4:5*\regindex{i}] Value} & \multirow{-1}{*}{\textbf{Agent}}\\\hline
+\endfirsthead
+\hline
+\rowcolor{lightgray}    
+\textbf{Agent Select Register [5*\regindex{i}+4:5*\regindex{i}] Value} & \multirow{-1}{*}{\textbf{Agent}}\\\hline
+\endhead
+\hline
+\endfoot
+\hline
+\endlastfoot
+
+    0   & Invalid value \\ \hline    
+    1   & cache \\ \hline
+    2   & vdma\_mst1  \\ \hline
+    3   & vdma\_mst2  \\ \hline
+    4   & 2d-dma  \\ \hline
+    5   & h264-dma\_mst1  \\ \hline
+    6   & h264-dma\_mst2  \\ \hline
+    7   & psram  \\ \hline
+    8   & camera  \\ \hline
+    9   & lcd  \\ \hline
+    10\textendash16 & Invalid values \\\hline
+\end{longtable}
+
+
+\subsubsection{Maximum Outstanding Count for Read/Write Address Channel Transactions}
+Outstanding capability reflects the Master's concurrent capability for issuing AXI transfer transactions. The stronger the outstanding capability, the lower the transfer latency. In actual transfer processes, outstanding capability depends not only on the Master configuration, but also on the outstanding capability of bus components and upstream/downstream devices. AXI Perf Mon supports measuring the outstanding count of transactions on the current monitored port.
+\begin{itemize}
+    \item For read transfers, after the address channel information is validly issued and before the data channel completes the last beat of data transfer corresponding to this transaction, one outstanding transfer is accumulated. If the data transfer completes, the outstanding count decreases by one.
+    \item For write transfers, after the address channel information is validly issued and before the write response channel completes the response for this transaction, one outstanding transfer is accumulated. If the corresponding write response is received, the outstanding count decreases by one.
+    \item During transfer, the outstanding value generally changes continuously. AXI Perf Mon writes the maximum outstanding value into the result register for software analysis.
+\end{itemize}
+
+\subsubsection{Read/Write Address Channel Latency}
+Address channel latency represents how long it takes for a transfer command to be received after it is issued. AXI Perf Mon supports measuring the read/write address channel latency of transactions on the current monitored port.
+\begin{itemize}
+    \item For read transfers, when the address channel ARVALID is asserted high, it indicates that the Master is ready to issue a read transaction command. The Slave asserts ARREADY high according to its current idle status. After ARREADY is asserted high, the address channel completes a transfer command handshake. The read address channel latency is the number of cycles from ARVALID asserted high to ARREADY asserted high on the monitored port.
+    \item The measurement method for write address channel latency is the same as for read address channel latency.
+    \item During transfer, for the same monitored port, the latency value generally changes continuously. AXI Perf Mon writes the maximum/minimum read/write address channel latency values into the result register for software analysis.
+\end{itemize}
+
+\subsubsection{Read/Write Data Channel Latency}
+For AXI transfers, after a burst transfer begins, it cannot be interrupted. However, in actual transfer processes, the data channel does not always perform back-to-back transfers, and idle cycles may exist during transfer. AXI Perf Mon supports measuring the read/write data channel latency of transactions on the current monitored port.
+\begin{itemize}
+    \item For read transfers, when the data channel RVALID is asserted high, it indicates that the Slave is ready to send one beat of read transaction data. The Master asserts RREADY high according to its current idle status. After RREADY is asserted high, the read data channel completes one beat of data transfer handshake. The read data channel latency is the number of cycles from RVALID asserted high to RREADY asserted high on the monitored port.
+    \item The measurement method for write data channel latency is the same as for read data channel latency.
+    \item During transfer, for the same monitored port, the latency value generally changes continuously. AXI Perf Mon writes the maximum/minimum read/write data channel latency values into the result register for software analysis.
+\end{itemize}
+
+\subsubsection{Write Data Channel WVALID Idle Cycles}
+When the Master begins sending a burst data transfer, idle cycles between data transfers may come from the Slave's wait time to receive data, idle cycles in the Master's WVALID, and significant idle cycles generated when passing through a conversion bridge. AXI Perf Mon supports measuring WVALID idle cycles within a transaction on the current monitored port.
+\begin{itemize}
+    \item Within a write transaction, if the transfer is not yet complete and WVALID is deasserted, the total number of cycles that WVALID remains low is counted. 
+    \item During transfer, for the same monitored port, the statistics of WVALID idle cycles on the write data channel generally change continuously. AXI Perf Mon writes the maximum/minimum number of WVALID idle cycles on the write data channel into the result register for software analysis.
+\end{itemize}
+
+\subsubsection{Read/Write Transaction Transfer Latency}
+During transfer processes, the latencies of the address channel and data channel are individually important. Additionally, the latency from address command issue to data channel ready is also important within a transaction. The transaction latency reflects the time interval from issuing a transfer command to starting data transfer, and can assist in determining the size of the Master-side AXI transfer buffer. AXI Perf Mon supports measuring the read/write transaction transfer latency for a transaction on the current monitored port.
+\begin{itemize}
+    \item For read transfers, when ARVALID of a transaction is asserted high, the metric measurement counter starts counting latency until the RVALID signal of the first beat of data for this transaction is asserted high, at which point the counter stops counting, obtaining the read transaction transfer latency.
+    \item For write transfers, when AWVALID of a transaction is asserted high, the metric measurement counter starts counting latency until the first beat of data for this transaction completes transfer (the counting end point differs from read transfers), at which point the counter stops counting, obtaining the write transaction transfer latency.
+    \item A monitored port may have multiple outstanding transfers, but in read/write transaction transfer latency metrics, there is only one metric counter, so only one transaction's latency can be counted at a time. After starting to count a certain transaction, other concurrent transactions will be ignored until that count completes. To make statistics representative, transactions with longer transfer times are preferentially selected.
+    \item During transfer, for the same monitored port, the transfer latency statistics generally change continuously. AXI Perf Mon writes the maximum/minimum transfer latency values into the result register for software analysis.
+\end{itemize}
+
+\subsubsection{Average Bandwidth Measurement}
+Bandwidth is one of the most intuitive metrics for evaluating bus performance. AXI Perf Mon supports measuring average bandwidth.
+\begin{itemize}
+    \item AXI Perf Mon does not have internal calculation units and does not directly calculate bandwidth values. Instead, it indirectly measures bandwidth by counting time (number of bus cycles) and data transfer amount (number of data units).
+    \item Since both time and data amount need to be observed, average bandwidth measurement requires using two metric counters simultaneously. Bandwidth statistics ignore the impact of data strobes and count all data, including invalid data.
+    \item When average bandwidth measurement is enabled, the time counter increments with the bus cycle, while the data amount increments according to the current data channel handshake status. After each burst transfer completes, the current time and data amount statistics are updated to the result register. If average bandwidth measurement is not turned off after data transfer completes and the data channel remains idle, the statistical results will remain at the time and data amount statistics from the end of the last burst transfer, without adding idle time. Software needs to calculate the actual average bandwidth based on the bus frequency and the number of data bytes per beat.
+\end{itemize}
+
+\subsubsection{Instantaneous Bandwidth Measurement}
+Average bandwidth reflects device bandwidth demand over a longer period, but when evaluating bus performance, device bandwidth changes within shorter time windows (instantaneous bandwidth) should also be considered. AXI Perf Mon also supports measuring instantaneous bandwidth.
+\begin{itemize}
+    \item Instantaneous bandwidth is measured through sliding time windows. After configuring the time window length (in basic units of bus cycles) and enabling instantaneous bandwidth measurement, measurement proceeds in a manner invisible to software. The start and stop behavior of measurement is completely controlled by hardware. When one time window measurement ends, the next time window measurement begins, performing continuous measurement.
+    \item Instantaneous bandwidth measurement is basically the same as average bandwidth measurement and also requires two metric counters to measure time duration and data amount respectively. When the time counter reaches the register-configured time window value, it indicates that one instantaneous bandwidth measurement is complete. The counted data amount is fed back to the next-level extreme value comparator, and both the data amount counter and time counter are cleared to begin the next round of counting.
+    \item Range statistics. If instantaneous bandwidth only records extreme values, it is insufficient to reflect bus transfer conditions. Therefore, range statistics are introduced. Range statistics are based on range statistics counters with software-configured range upper and lower limits. The number of these counters is the same as metric counters. After a metric counter completes its measurement, its result is compared against the ranges defined by the range counters for classification. This provides a better reflection of system behavior.
+    \item Event recording. During instantaneous bandwidth measurement, the most recent four instantaneous bandwidth measurement values (the current uncompleted instantaneous bandwidth value is not counted) and the most recent four AXI interface transfer information (ID/Burst length) are written to registers. Address channel information is recorded during address channel handshake, while instantaneous bandwidth measurement values are recorded at the end of measurement windows, creating a time difference in recording. This information is updated synchronously according to actual transfer conditions, facilitating software understanding of current transfer basics.
+    \item Abnormal feedback. During instantaneous bandwidth measurement, abnormal bandwidth changes are also reported. A minimum instantaneous bandwidth threshold (based on data amount) is set for the monitored port, representing the minimum instantaneous bandwidth value considered non-abnormal for this port during transfer. Once the metric counter result is less than this threshold, an interrupt flag signal is triggered and broadcast to all AXI Perf Mon Units, stopping instantaneous bandwidth measurement for all ports. Event recording stops and the scene is preserved. Based on event recording results, it assists in determining which device seized bandwidth. Software can also configure \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_EN} or \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_EN} to pause event recording for the corresponding monitoring unit.
+    \item Address filtering. Generally, accessing internal storage does not require additional bandwidth attention. During instantaneous bandwidth measurement, if abnormal feedback is needed, it is generally when multiple Masters simultaneously access the same external storage such as PSRAM. When analyzing abnormal results, other Masters' access to other Slaves needs to be excluded, as this bandwidth is invalid for the analyzed scenario. Therefore, address filtering functionality is added to filter based on access addresses, obtaining the true instantaneous bandwidth of competing multiple Masters. The basic unit of address filtering is Slave, meaning it supports address filtering for different Slaves, but does not support filtering partial address spaces of the same Slave.
+    \item Monitoring recovery. After abnormal bandwidth behavior is discovered and broadcast, each AXI Perf Mon will pause instantaneous bandwidth measurement. After software completes analysis of the current scene results, if continued instantaneous bandwidth monitoring is desired without system reset, it can be configured through \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_CLR} or \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_CLR} to clear the stagnation state.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+\chipname{}'s AXI Perf Mon can generate the following interrupt signal that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item AXI\_PERF\_MON\_INTR
+    \end{itemize}
+
+This interrupt signal is generated by AXI Perf Mon's internal interrupt sources. Table \ref{tab:aximon-int-sources} lists AXI Perf Mon's internal interrupt sources, interrupt trigger conditions, and the generated interrupt signal.
+
+
+\begin{longtable}{ | L{6cm} | L{6.5cm} | L{3.5cm} | }
+\caption{AXI PERF MON Internal Interrupt Sources} \label{tab:aximon-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+{AXI\_\-PERF\_\-MON\_\-SEL\_\-AG\regindex{n}\_\-RECORD\_\-CNT\_\-UNDER\_\-LIMIT\_\-INT (\regindex{n} = 0, 1)}\label{int:AXIPERFMONSELAGNRECORDCNTUNDERLIMITINT} &  Instantaneous bandwidth measurement value is less than the set minimum instantaneous bandwidth threshold &  AXI\_PERF\_MON\_INTR  \\ \hline
+\end{longtable}
+
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:aximon-reg-summ} \textit{\nameref{sec:aximon-reg-summ}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:aximon-prog-procedures}
+
+\subsection{Using AXI Perf Mon to Measure Outstanding Transactions}
+To use AXI Perf Mon to monitor the outstanding capability of a port:
+\begin{enumerate}
+    \item Configure register \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG}, where every 5 bits represent an agent selected by the corresponding monitoring unit. Bits [4:0] indicate the port to be monitored selected by AXI Perf Mon Unit 0, and bits [9:5] represent the port to be monitored selected by AXI Perf Mon Unit 1.
+    \item Configure register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} (\regindex{n} represents monitoring unit 0 or 1; \regindex{m} represents that each monitoring unit has multiple such registers, refer to the register section for specific register quantities, here \regindex{m} = 1, 2) to select the monitoring metric. Every 8 bits represent the metric corresponding to a metric counter. The value of \hyperref[fielddesc:AXIPERFMONSELAGNMETRICSELECTM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT1} [4:0] represents the monitoring metric corresponding to measurement metric counter 0, and its [7:5] value represents the monitoring metric corresponding to range statistics metric counter 0. The value of \hyperref[fielddesc:AXIPERFMONSELAGNMETRICSELECTM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT2} [4:0] represents the monitoring metric corresponding to measurement metric counter 4, and its [7:5] value represents the monitoring metric corresponding to range statistics metric counter 4, and so on.
+    After configuration is complete, monitoring begins.
+    \item Obtain status information by reading \hyperref[fielddesc:AXIPERFMONSELAGNCOUNTERMRESULT]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_COUNTER\regindex{m}\_RESULT}. Bits [15:0] are the counted minimum value, and bits [31:16] are the counted maximum value. The result counter number corresponds to the selected metric counter. 
+    \item Configure the 8 bits of the corresponding metric counter in register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} to 0 to stop that metric counter from monitoring this metric on this port and reset the counter.
+\end{enumerate}
+
+Outstanding count, address channel latency, data channel latency, and read/write transaction transfer latency can all be monitored through this programming procedure—simply set register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} to the desired monitoring metric.
+
+\subsection{Using AXI Perf Mon to Measure Read Average Bandwidth}
+To use AXI Perf Mon to monitor the average bandwidth of a port over a period of time:
+\begin{enumerate}
+    \item Configure register \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG} to select the port to be monitored.
+    \item Configure register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} to select the following metrics for read average bandwidth measurement: time duration and data amount.
+    \item Configure \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWTIMECNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_TIME\_CNT\_VALID\_STROBE\_NUM} and \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWDATACNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_DATA\_CNT\_VALID\_STROBE\_NUM} to select the counting interval for time and data. If the counting interval is configured as 3, then every 4 valid cycles increment the counter by 1, and every 4 valid data beats increment the counter by 1.
+    \item Configure \hyperref[fielddesc:AXIPERFMONSELAG0RDBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_BANDW\_TEST\_EN} or \hyperref[fielddesc:AXIPERFMONSELAG1RDBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_BANDW\_TEST\_EN} to enable average bandwidth measurement. Configure \hyperref[fielddesc:AXIPERFMONSELAG0RDBANDWTESTSTOP]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_BANDW\_TEST\_STOP} or \hyperref[fielddesc:AXIPERFMONSELAG1RDBANDWTESTSTOP]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_BANDW\_TEST\_STOP} to stop average bandwidth measurement.
+    \item Measurement results can be read from register \hyperref[regdesc:AXIPERFMONSELAGNCOUNTERMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_COUNTER\regindex{m}\_RESULT\_REG}. The result counter number corresponds to the selected metric counter. The high 16 bits in the result register represent the average bandwidth data/time statistics. A value of 16'hFFFF indicates that the counter has overflowed and the result is invalid. Configure \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWTIMECNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_TIME\_CNT\_VALID\_STROBE\_NUM} and \hyperref[fielddesc:AXIPERFMONSELAGNRDBANDWDATACNTVALIDSTROBENUM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_BANDW\_DATA\_CNT\_VALID\_STROBE\_NUM} to increase the counting interval, or reduce the counting time and data amount.
+\end{enumerate}
+
+\subsection{Using AXI Perf Mon to Measure Read Instantaneous Bandwidth}
+To use AXI Perf Mon to monitor the instantaneous bandwidth of a port:
+\begin{enumerate}
+    \item Configure register \hyperref[regdesc:AXIPERFMONAGENTSELECTREG]{AXI\_PERF\_MON\_AGENT\_SELECT\_REG} to select the port to be monitored.
+    \item Configure register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} to select the following metrics for read instantaneous bandwidth measurement: time duration and data amount.
+    \item When measuring instantaneous bandwidth, software specifies the time duration for each measurement segment. After reaching the measurement duration, software can read the data statistics result register to obtain the data amount transferred during that time duration. At the same time, counting for the next measurement segment begins. Configure register \hyperref[regdesc:AXIPERFMONSELAGNINSBANDWTIMETHRREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_INS\_BANDW\_TIME\_THR\_REG} to determine the measurement time duration. Configure \hyperref[fielddesc:AXIPERFMONSELAG0RDINSBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_INS\_BANDW\_TEST\_EN} or \hyperref[fielddesc:AXIPERFMONSELAG1RDINSBANDWTESTEN]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_INS\_BANDW\_TEST\_EN} to enable instantaneous bandwidth measurement.
+    \item When measuring instantaneous bandwidth, if you wish to report abnormal conditions where port bandwidth drops sharply in dense data transfer scenarios, configure \hyperref[fielddesc:AXIPERFMONSELAGNSWRECORDSTOPRDDATALIMIT]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_SW\_RECORD\_STOP\_RD\_DATA\_LIMIT} to set the data amount lower threshold for bandwidth. Once the counted instantaneous bandwidth data amount is less than this lower limit, AXI Perf Mon will generate an interrupt and stop measuring instantaneous bandwidth in the AXI Perf Mon Unit.
+    \item Recorded event information for instantaneous bandwidth can be queried from registers \hyperref[regdesc:AXIPERFMONSELAGNINSBANDWDATAMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_INS\_BANDW\_DATA\regindex{m}\_REG} and \hyperref[regdesc:AXIPERFMONSELAGNRDAXIINFORECORDMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_AXI\_INFO\_RECORD\regindex{m}\_REG}. These register values are updated according to real-time counting conditions. When an interrupt occurs, these registers will pause updating to preserve the scene. \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_EN} or \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPEN]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_EN} can be used to stop register updates. \hyperref[fielddesc:AXIPERFMONSELAG0SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG0\_SW\_RECORD\_STOP\_CLR} or \hyperref[fielddesc:AXIPERFMONSELAG1SWRECORDSTOPCLR]{AXI\_PERF\_MON\_SEL\_AG1\_SW\_RECORD\_STOP\_CLR} can be used to clear the stagnation state and resume recording updates.
+    \item When measuring instantaneous bandwidth, address filtering for data is supported. Address filtering is performed on a per-region basis. Three regions are filtered using \hyperref[fielddesc:AXIPERFMONSELAGNRDADDRMASKM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ADDR\_MASK\regindex{m}} and \hyperref[fielddesc:AXIPERFMONSELAGNRDADDRFILTERM]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RD\_ADDR\_FILTER\regindex{m}}. The valid destination addresses among these regions are then selected via \hyperref[fielddesc:AXIPERFMONSELAG0RDADDRREGIONSEL]{AXI\_PERF\_MON\_SEL\_AG0\_RD\_ADDR\_REGION\_SEL} or \hyperref[fielddesc:AXIPERFMONSELAG1RDADDRREGIONSEL]{AXI\_PERF\_MON\_SEL\_AG1\_RD\_ADDR\_REGION\_SEL}.
+    \item Instantaneous bandwidth statistics support presenting bandwidth distribution systematically through range statistics. Configure the latter 3 bits of every 8 bits in register \hyperref[regdesc:AXIPERFMONSELAGNMETRICSELECTMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_METRIC\_SELECT\regindex{m}\_REG} to specify the statistics metric for range counters. \hyperref[fielddesc:AXIPERFMONSELAGNMETRICRANGEMCNTLOW]{AXI\_PERF\_MON\_\_SEL\_AG\regindex{n}\_METRIC\_RANGE\_CNT\_LOW} and \hyperref[fielddesc:AXIPERFMONSELAGNMETRICRANGEMCNTHIGH]{AXI\_PERF\_MON\_\_SEL\_AG\regindex{n}\_METRIC\_RANGE\_CNT\_HIGH} 
+    are used to specify the upper and lower limits for each range. Range statistics for instantaneous bandwidth can be queried through register \hyperref[regdesc:AXIPERFMONSELAGNRANGEMREG]{AXI\_PERF\_MON\_SEL\_AG\regindex{n}\_RANGE\regindex{m}\_REG}.
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{aximon-reg-summ}{}
+\section{Register Summary}
+\label{sec:aximon-reg-summ}
+
+The addresses in this section are relative to AXI Perf Mon base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/67-AXIMON-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to AXI Perf Mon base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+
+\subfile{\modulefiles/67-AXIMON-reg__EN}
+
+\end{document}
