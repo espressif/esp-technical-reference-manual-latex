@@ -125,6 +125,25 @@ def cherry_pick_commit_skip_revision_history(commit_id: str) -> bool:
     return True
 
 
+def commit_exists(commit_id: str) -> bool:
+    return run(f"git cat-file -e {commit_id}^{{commit}}", check=False).returncode == 0
+
+
+def ensure_mr_commits_available(source_branch: str, commit_ids: list[str]) -> list[str]:
+    """Fetch MR-related refs so cherry-pick can resolve commit objects in shallow CI clones."""
+    run(f"git fetch origin {shlex.quote(source_branch)}", check=False)
+    if CI_COMMIT_SHA:
+        run(f"git fetch origin {CI_COMMIT_SHA}", check=False)
+    missing = []
+    for commit_id in commit_ids:
+        if commit_exists(commit_id):
+            continue
+        run(f"git fetch origin {commit_id}", check=False)
+        if not commit_exists(commit_id):
+            missing.append(commit_id)
+    return missing
+
+
 def get_merged_mr_iid(project, commit_sha):
     """Resolve merged MR IID from merge commit message (See merge request ... !IID)."""
     commit = project.commits.get(commit_sha)
@@ -216,6 +235,21 @@ run(f'git config user.email "{assignee_email}"')
 
 # Cherry-pick all commits of the MR (oldest first for correct history; GitLab API returns newest first)
 mr_commits = list(mr.commits())[::-1]
+commit_ids = [c.id for c in mr_commits]
+missing_commits = ensure_mr_commits_available(mr.source_branch, commit_ids)
+if missing_commits:
+    missing_list = "\n".join(f"* `{c}`" for c in missing_commits)
+    print(f"Could not fetch MR commit(s) locally: {missing_commits}")
+    mr.notes.create({
+        "body": (
+            "Automatic backport **failed**: MR commit object(s) could not be fetched in CI. "
+            "The backport MR was not created.\n\n"
+            f"Missing commit(s):\n{missing_list}\n\n"
+            f"The **`{NEEDS_BACKPORT_LABEL}`** label was kept. Please backport manually or re-run the pipeline."
+        )
+    })
+    sys.exit(1)
+
 for commit in mr_commits:
     commit_id = commit.id
     print(f"Attempting to cherry-pick {commit_id} (revision-history files skipped)...")
@@ -228,6 +262,21 @@ for commit in mr_commits:
 # If nothing differs from the release branch, remove `needs backport`, post an MR note, and exit
 diff_check = run(f"git diff --quiet {target_sha} HEAD", check=False)
 if diff_check.returncode == 0:
+    if failed_commits:
+        failed_list = "\n".join(f"* `{c}`" for c in failed_commits)
+        print(
+            f"Not creating a backport MR: cherry-pick failed for {len(failed_commits)} commit(s)."
+        )
+        mr.notes.create({
+            "body": (
+                "Automatic backport **failed**: cherry-pick could not be applied. "
+                "The backport MR was not created.\n\n"
+                f"Failed commit(s):\n{failed_list}\n\n"
+                f"The **`{NEEDS_BACKPORT_LABEL}`** label was kept. Please backport manually or re-run the pipeline."
+            )
+        })
+        sys.exit(1)
+
     print(
         f"Not creating a backport MR: no changes vs {BACKPORT_TARGET_BRANCH} ({target_sha[:8]})."
     )
