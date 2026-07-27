@@ -1,0 +1,712 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./03-PIE-latest}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    \documentclass[10pt, openany]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+\setcounter{secnumdepth}{4}
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned, comment out for full justification
+\raggedright
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese-hans}
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    {\let\clearpage\relax \listoftodos}
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{pie}{}
+\chapter{处理器指令扩展 (PIE)}
+\label{mod:pie}
+
+\section{概述}
+\chipname{} 高性能 (HP)32 位 RISC-V 双核处理器支持标准 RV32IMAFCZcZb 扩展。同时提供自定义扩展 Xesploop（硬件循环），可在硬件中执行 \texttt{for} 循环以提升性能。详见 \ref{mod:riscvcpu}\nameref{mod:riscvcpu} 章节。此外还提供面向 AI 与 DSP 的自定义扩展 Xespv2p2，用于加速相关算法。
+
+本章介绍基于 SIMD（单指令多数据）架构的 Xespv2p2 扩展。该扩展支持 8 位、16 位和 32 位向量运算，可提高数据吞吐量。乘法、移位、累加等算术指令还能在运算的同时完成数据传输，从而进一步提高执行效率。
+
+
+
+
+\section{主要特性}
+
+Xespv2p2 扩展具有以下特性：
+
+\begin{itemize}
+    \item 128 位通用寄存器
+    \item 128 位向量运算，例如乘法、加法、减法、累加、移位和比较
+    \item 将数据传输合并到算术指令中
+    \item 支持非对齐的 128 位向量数据
+    \item 可配置的舍入与饱和模式
+
+\end{itemize}
+
+\section{结构概述}
+
+\subsection{内部结构示意图}
+
+本节有助于理解可用指令、其能力与限制，并不描述硬件实现细节。
+
+下图给出 Xespv2p2 扩展面向乘累加 (multiply-accumulate, MAC) 指令的内部结构：
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.8\textwidth]{\modulefiles/figures/pie_structure__EN.eps}}
+    \caption{Xespv2p2 内部结构 (MAC)}
+    \label{fig:pie_structure_en}
+\end{figure}
+
+上图展示了数据通路及 Xespv2p2 组件。
+
+Xespv2p2 单元包含：
+
+\begin{itemize}
+    \item 读取 8/16/32/64/128 位对齐数据的地址单元
+    \item 8 个 128 位向量寄存器 QR 组成的寄存器组
+    \item 运算逻辑单元 (ALU)，其中包括
+    \begin{itemize}
+        \item 16 个 8 位乘法器
+        \item 8 个 16 位乘法器
+    \end{itemize}
+    \item QACC\_H/QACC\_L：两个 256 位累加器
+    \item XACC：40 位累加器
+\end{itemize}
+
+\subsection{向量寄存器组}
+Xespv2p2 提供 8 个 128 位向量寄存器 (QR)。每个寄存器可视为 16 个 8 位元素、8 个 16 位元素或 4 个 32 位元素的数组。元素位宽由所执行指令决定。
+
+\subsection{运算逻辑单元 (ALU)}
+
+ALU 可按输入数据宽度工作于 8 位、16 位或 32 位：8 位输入对应 8 位 ALU，16 位输入对应 16 位 ALU，32 位输入对应 32 位 ALU。ALU 支持加法、减法等算术运算，以及与、或、移位等位运算。\\
+ALU 操作数来自 QR 寄存器，结果可写回 QR 寄存器。
+
+\subsection{乘法累加 (MAC) 单元}
+乘累加 (MAC) 单元执行乘累加运算，包含 8 个 16 位乘法器和 16 个 8 位乘法器。MAC 结果保存在专用累加寄存器 XACC 与 QACC 中。
+
+\subsubsection{QACC 累加寄存器}
+
+QACC 用于保存 16 个 8 位 MAC 结果或 8 个 16 位 MAC 结果，由 256 位 QACC\_H 和 256 位 QACC\_L 两部分组成。在 8 位 MAC 中，每个 256 位 QACC 寄存器视为 8 个 32 位元素；在 16 位 MAC 中，视为 4 个 64 位元素。
+
+将累加结果写回 QR 寄存器时，可通过右移把 32 位结果压缩为 8 位；对于 16 位 MAC，可通过右移把 64 位结果压缩为 16 位。
+
+数据可从内存加载到 QACC，也可将 QACC 清零。
+
+\subsubsection{XACC 累加寄存器}
+
+XACC 是 40 位累加器，用于保存各乘法器输出之和。\\
+数据可从内存加载到 XACC，也可将 XACC 清零。
+
+\subsection{地址单元}
+
+多数 Xespv2p2 指令可在运算的同时并行访问 128 位 QR 寄存器。地址单元可并行更新地址寄存器，减少显式更新地址的开销。\\
+支持的地址更新包括 AR + 有符号立即数、ARx + ARy 以及 AR + 16。
+
+
+\section{扩展指令集组件}
+
+\subsection{寄存器}
+
+本节介绍 \chipname{} 扩展指令集所使用的寄存器。
+寄存器一览见表 \ref{tab:pie-regs-list}。
+
+\input{\modulefiles/tables/08-pie-reg-list__CN}
+
+
+\subsubsection{通用寄存器}
+\paragraph{AR}
+
+
+尽管 HP 核有 32 个通用寄存器，但仅 16 个可用于 Xespv2p2 扩展指令：x8–x15 和 x24–x31（对应 s0–s1、a0–a5、s8–s11、t3–t6）。
+
+
+
+\subsubsection{向量寄存器}
+
+\paragraph{QR}
+
+通用寄存器仅为 32 位宽，而 \chipname{} 一次可访问 128 位数据，因此通用寄存器只能利用数据总线带宽的约四分之一。为此，\chipname{} 提供了 8 个 128 位向量寄存器 (QR)。QR 主要用于承载经 128 位总线的访存数据，以及暂存 128 位向量运算结果。
+
+执行指令时，单个 QR 寄存器按指令定义的向量位宽被视为 16 个 8 位、8 个 16 位或 4 个 32 位操作数，从而在一条指令中处理多个元素。
+
+将 QR 用作指令操作数时，必须显式指定寄存器编号。例如：
+
+\begin{center}
+    $\hyperref[instruction:ESPVADDS8]{ESP.VADD.S8} \hspace{1em} q2, q0, q1$
+    \end{center}
+
+该指令以 q0、q1 为输入，并将向量加法结果写入 q2。
+
+\subsubsection{专用寄存器}
+\label{sec:pie-spec-reg}
+
+与通用寄存器不同，专用寄存器由特定指令隐式使用，既不需要也无法在指令中显式指定。例如：
+
+\begin{center}
+    $\hyperref[instruction:ESPVMULS16]{ESP.VMUL.S16} \hspace{1em} q2, q0, q1$
+\end{center}
+
+该向量乘法以 q0、q1 为输入。内部对各 32 位中间乘积右移后，保留低 16 位并组成写入 q2 的 128 位结果。移位量由移位量寄存器 (SAR) 决定，且 SAR 不会出现在操作数列表中。
+
+
+\paragraph{SAR}
+
+移位量寄存器 (Shift Amount Register, SAR) 以比特为单位保存移位量。\chipname{} 扩展指令中使用 SAR 的指令分两类：向量移位指令，包括 \hyperref[instruction:ESPVSRS32]{ESP.VSR.S32}、\hyperref[instruction:ESPVSLS32]{ESP.VSL.S32} 和 \hyperref[instruction:ESPVSLU32]{ESP.VSL.U32}；以及乘法相关指令，包括 ESP.VMUL.*、ESP.CMUL.*、ESP.FFT.AMS.* 和 ESP.FFT.CMUL.*。
+
+向量移位指令使用 SAR 低 5 位作为右移或左移量。乘法相关指令使用 SAR 对中间乘积右移，从而影响最终结果精度。
+
+\paragraph{SAR\_BYTE}
+
+SAR\_BYTE 以字节为单位保存移位量，用于处理非对齐的 128 位数据（参见章节 \ref{sec:pie-data-align}）。向量算术指令的读写地址会被强制为 16 字节对齐，但应用中的数据地址未必始终满足该对齐要求。
+
+\hyperref[instruction:ESPLD128USARIP]{ESP.LD.128.USAR.IP} 与 \hyperref[instruction:ESPLD128USARXP]{ESP.LD.128.USAR.XP} 在从内存读取 128 位数据时，会将访存地址的低 4 位（非对齐偏移）写入 SAR\_BYTE。
+
+使用 SAR\_BYTE 的指令同样分为两类。第一类处理 QR 中的非对齐数据，包括 ESP.SRCQ.* 与 ESP.SRC.Q*：它们从非对齐地址前后的两个对齐地址各读 16 字节，拼接后按 SAR\_BYTE 中的字节数右移，得到该非对齐地址处的 128 位数据。第二类在运算过程中处理非对齐数据，指令名通常带有 ``.QUP'' 后缀。
+
+
+
+
+
+\paragraph{FFT\_BIT\_WIDTH}
+
+该专用寄存器仅供 \hyperref[instruction:ESPFFTBITREV]{ESP.FFT.BITREV} 使用。其取值选择 \hyperref[instruction:ESPFFTBITREV]{ESP.FFT.BITREV} 的工作模式：0 至 7 分别对应 3 位至 10 位模式。详见 \hyperref[instruction:ESPFFTBITREV]{ESP.FFT.BITREV}。
+
+\paragraph{UA\_STATE}
+
+该专用寄存器仅供 \hyperref[instruction:ESPFFTAMSS16LDINCPUAUP]{ESP.FFT.AMS.S16.LD.INCP.UAUP} 使用，用于保存此前从内存读入的非对齐 128 位数据。每次执行该指令时，寄存器内容与新读入的非对齐数据拼接，再经移位得到 128 位对齐结果。
+
+\paragraph{内核配置与状态寄存器}
+
+\begin{register}{H}{CFG}{}\label{regdesc:ESPCFG}
+\regfield{(reserved)}{23}{9}{0x000000}%
+\regfield{vxsat\_en}{1}{8}{0}%
+\regfield{vxrm}{4}{4}{0000}%
+\regfield{rm\_exc}{1}{3}{0}%
+\regfield{vxsat}{1}{2}{0}%
+\regfield{mis\_ld}{1}{1}{0}%
+\regfield{mis\_st}{1}{0}{0}%
+\reglabel{Reset}\regnewline%
+\begin{regdesc}\begin{reglist}
+\label{vxsat_en}\item [vxsat\_en] 使能饱和状态标志。\\
+(R/W)
+\label{vxrm}\item [vxrm] 配置舍入模式。参见表 \ref{tab:ESP-rounding-mode-config}。\\
+(R/W)
+\label{rm_exc}\item [rm\_exc] UNNECESSARY 舍入异常状态（当指令 \lstinline{rm} 字段与 \hyperref[vxrm]{vxrm} 均为 DYNAMIC 时）。\\
+(RO)
+\label{vxsat}\item [vxsat] 饱和状态标志。\\
+(RO)
+\label{mis_ld}\item [mis\_ld] 使能硬件处理非对齐加载。\\
+(R/W)
+\label{mis_st}\item [mis\_st] 使能硬件处理非对齐存储。\\ (R/W)
+\end{reglist}\end{regdesc}
+\end{register}
+
+
+
+
+
+
+
+
+\subsection{数据格式及对齐}
+\label{sec:pie-data-align}
+
+扩展指令集支持 1 字节、2 字节、4 字节、8 字节和 16 字节数据格式。QACC\_H 与 QACC\_L 还使用 32 字节格式，但这两个专用寄存器与内存之间没有直接通路。可通过 5 个 4 字节 AR 寄存器或 2 个 16 字节 QR 寄存器读写 QACC\_H/QACC\_L。
+
+表 \ref{tab:pie_data_format_align} 列出常见格式的位宽与对齐要求（`x' 表示该位可为 0 或 1）。在所有格式中，HP 核以字节作为内存的最小可寻址单位。
+
+\begin{table}[H]
+\centering
+\caption{数据格式及对齐}
+\label{tab:pie_data_format_align}
+\begin{tabular}{|l|c|c|}
+\hline
+    \rowcolor{lightgray}
+    \textbf{数据格式}  & \textbf{长度} & \textbf{内存中对齐地址低四位} \\\hline
+
+    1 字节 & 8 位 & xxxx \\\hline
+    2 字节 & 16 位 & xxx0 \\\hline
+    4 字节 & 32 位 & xx00 \\\hline
+    8 字节 & 64 位 & x000 \\\hline
+    16 字节 & 128 位 & 0000 \\\hline
+    \end{tabular}
+\end{table}
+
+\subsection{非对齐访存处理}
+
+\chipname{} HP 核 Xespv2p2 扩展的非对齐加载/存储可通过 \hyperref[mis_ld]{mis\_ld} 与 \hyperref[mis_st]{mis\_st} 配置为以下两种模式：
+\begin{itemize}
+    \item 0: 强制对齐模式
+    \item 1: 硬件非对齐模式
+\end{itemize}
+
+
+
+\subsubsection{强制对齐模式}
+
+在此模式下，扩展指令集的所有访存地址都会被强制对齐，即最低若干位被清零。例如，从 0x3fc8\_0024 发起 128 位读取时，地址最低 4 位被清零，实际读出的是 0x3fc8\_0020 处的数据。同理，64 位访问清除最低 3 位，32 位访问清除最低 2 位，16 位访问清除最低 1 位。
+
+因此访存地址必须正确对齐，否则读回的数据与预期不符。应用代码中应显式声明变量或数组的对齐要求；16 字节对齐可覆盖大多数场景。
+
+当地址是否对齐无法事先保证时，扩展提供 SAR\_BYTE 以及 ESP.LD.128.USAR.*、ESP.SRC.* 等相关指令，用于重组非对齐的 128 位数据。
+
+假设寄存器 a8 保存非对齐 128 位数据的地址，可用下列序列将其加载到 QR 寄存器 q2：\\
+$ \hyperref[instruction:ESPLD128USARIP]{ESP.LD.128.USAR.IP}\hspace{1cm}q0,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:ESPVLD128IP]{ESP.VLD.128.IP}\hspace{1cm}q1,\hspace{0.5cm}a8,\hspace{0.5cm}16 $ \\
+$ \hyperref[instruction:ESPSRCQ]{ESP.SRC.Q}\hspace{1cm}q2,\hspace{0.5cm}q0,\hspace{0.5cm}q1 $
+
+\subsubsection{硬件非对齐模式}
+
+在此模式下，硬件自动将非对齐访问拆分为多次对齐访问，结果与预期数据一致。
+
+\subsection{数据溢出与饱和}
+
+数据溢出是指结果无法放入目标寄存器。以 \hyperref[instruction:ESPVMULS8]{ESP.VMUL.S8} 为例，两个 8 位数相乘得到 16 位结果，右移后仍为 16 位，但最终写入宽度为 8 位，因而可能溢出。
+
+\chipname{} 扩展以两种方式处理溢出：饱和与环绕（仅保留低位）。饱和将结果钳制到目标寄存器可表示的最小或最大值；使用饱和的指令会在描述中明确说明，例如 ESP.VADDS.* 会对加法结果取饱和。其余内部溢出一般采用环绕：只保留与目标位宽匹配的低位并写入结果寄存器。
+
+1 位状态标志 \hyperref[vxsat]{vxsat} 表示上一次运算是否发生饱和（仅在 \hyperref[vxsat_en]{vxsat\_en} 使能时有效）。读取 \hyperref[regdesc:ESPCFG]{CFG} 寄存器会自动清除该标志。
+
+\subsection{数据舍入}
+
+部分指令包含 \lstinline{rm} 字段，用于选择右移时的舍入模式。表~\ref{tab:ESP-rounding-mode-config} 列出 8 种模式及其编码。
+
+当 \lstinline{rm} 为 DYNAMIC (7) 时，指令使用 \hyperref[regdesc:ESPCFG]{CFG} 中的 4 位 \hyperref[vxrm]{vxrm}。若 \lstinline{rm} 与 \hyperref[vxrm]{vxrm} 均为 DYNAMIC，则按 UNNECESSARY 处理：行为同 FLOOR，并在右移结果非精确时置位 \hyperref[rm_exc]{rm\_exc}。
+
+\begin{longtable}[c]{|l|l|m{10cm}|}
+    \caption{舍入模式配置}
+    \label{tab:ESP-rounding-mode-config}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{模式} & \texttt{rm}/\hyperref[vxrm]{vxrm} 的值 & \textbf{描述} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{模式} & \texttt{rm}/\hyperref[vxrm]{vxrm} 的值 & \textbf{描述} \\\hline
+    \endhead
+    \endfoot
+
+FLOOR & 0 & 向负无穷舍入 \\\hline
+
+CEILING & 1 & 向正无穷舍入 \\\hline
+
+UP & 2 & 远离零舍入 \\\hline
+
+DOWN & 3 & 向零舍入 \\\hline
+
+HALF\_UP & 4 & 舍入到最近值；若等距则向上舍入 \\\hline
+
+HALF\_DOWN & 5 & 舍入到最近值；若等距则向下舍入 \\\hline
+
+HALF\_EVEN & 6 & 舍入到最近值；若等距则舍入到偶数邻居 \\\hline
+
+DYNAMIC & 7 & 使用 \hyperref[vxrm]{vxrm} 中的模式。若 \hyperref[vxrm]{vxrm} 也为 DYNAMIC，则按 UNNECESSARY（行为同 FLOOR，并由 \hyperref[rm_exc]{rm\_exc} 报告）。 \\\hline
+
+    \end{longtable}
+
+下表给出各舍入模式的示例结果。
+
+
+\begin{longtable}[c]{|l|l|l|l|l|l|l|l|l|}
+    \caption{舍入操作结果}
+    \label{tab:ESP-rounding-mode-results}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{输入值} & \textbf{FLOOR} & \textbf{CEILING} & \textbf{UP} & \textbf{DOWN}  & \textbf{HALF\_UP} & \textbf{HALF\_DOWN} & \textbf{HALF\_EVEN} & \textbf{UNNECESSARY}\\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+        \textbf{输入值} & \textbf{FLOOR} & \textbf{CEILING} & \textbf{UP} & \textbf{DOWN}  & \textbf{HALF\_UP} & \textbf{HALF\_DOWN} & \textbf{HALF\_EVEN} & \textbf{UNNECESSARY} \\\hline
+    \endhead
+    \endfoot
+    5.5 & 5 & 6& 6 &5 & 6 & 5 & 6 & Exception \\\hline
+    2.5 & 2 & 3& 3& 2& 3& 2& 2& Exception \\\hline
+    1.6 & 1 & 2& 2& 1& 2& 2& 2& Exception \\\hline
+    1.1 & 1 & 2& 2& 1& 1& 1& 1& Exception \\\hline
+    1.0 & 1 & 1& 1& 1& 1& 1& 1& 1 \\\hline
+    -1.0 & -1 & -1 & -1 & -1 & -1 & -1 & -1 & -1 \\\hline
+    -1.1 & -2 & -1 & -2 & -1 & -1 & -1 & -1 & Exception \\\hline
+    -1.6 & -2 & -1 &-2 & -1 & -2 & -2& -2& Exception \\\hline
+    -2.5 & -3 & -2 & -3 & -2 & -3 & -2 & -2 & Exception \\\hline
+    -5.5 & -6 & -5 & -6 & -5 & -6 & -5 & -6 & Exception \\\hline
+\end{longtable}
+
+\section{扩展指令列表}\label{sec:pie-instruction-simple-introduction}
+
+表 \ref{tab:pie_instruction_summary} 列出了扩展指令集中的指令类别。本节对各类别作简要说明。
+
+
+\newpage
+\input{\modulefiles/tables/08-pie-instruction-summary__CN.tex}
+
+\subsection{读内存指令}
+\label{sec:pie-load-instructions}
+
+读内存指令依据保存访存地址的 AR 寄存器发出虚地址访问。多数指令先读内存，再更新地址。\hyperref[instruction:ESPLDXQ32]{ESP.LDXQ.32} 是例外：它先用立即数从 QR 中选取 16 位元素加到地址上，再执行加载。
+
+
+下表概述读内存指令的访存行为。详情见章节 \ref{sec:pie-instruction-descrip}。
+\newpage
+\input{\modulefiles/tables/08-pie-read-instructions__CN}
+
+\subsection{写内存指令}
+\label{sec:pie-write-instructions}
+
+写内存指令依据保存访存地址的 AR 寄存器发出虚地址访问。多数指令先写内存，再更新地址。\hyperref[instruction:ESPSTXQ32]{ESP.STXQ.32} 是例外：它先用立即数从 QR 中选取 16 位元素加到地址上，再执行存储。
+
+
+下表概述写内存指令的访存行为。详情见章节 \ref{sec:pie-instruction-descrip}。
+
+\input{\modulefiles/tables/08-pie-write-instructions__CN}
+
+\subsection{数据交换指令}
+\label{sec:pie-data-exchange-instructions}
+
+数据交换指令用于在寄存器之间传递数据。因寄存器位宽不同，立即数用于选择元素或字段，并提供零扩展与符号扩展指令。
+
+详情见章节 \ref{sec:pie-instruction-descrip}。
+
+\input{\modulefiles/tables/08-pie-data-exchange-instructions__CN.tex}
+
+
+\subsection{运算指令}
+\label{sec:pie-arithmetic-instructions}
+
+运算指令执行 SIMD 向量运算，包括向量加法、乘法、复数乘法、乘累加以及向量–标量乘累加等。
+
+\subsubsection{向量加法指令}
+
+\chipname{} 提供以 1 字节、2 字节和 4 字节为元素宽度的向量加减法指令。
+
+由于向量操作数常存放在内存中，部分向量加法指令将运算与 16 字节访存合并，并在访存后将地址寄存器加 16，指向下一块连续的 16 字节数据。请按算法需求选择指令。
+
+这些指令还对加减法结果取饱和，以保持数值范围。
+
+\input{\modulefiles/tables/08-pie-vector-addition-instruc__CN}
+
+\subsubsection{向量乘法指令}
+
+\chipname{} 提供有符号与无符号的 1 字节、2 字节向量乘法指令。
+
+部分向量乘法指令将乘法与 16 字节访存合并，并在访存后将地址加 16。请按算法需求选择指令。
+
+\input{\modulefiles/tables/08-pie-vector-multiplication-instruc__CN}
+
+
+\subsubsection{向量复数乘法指令}
+
+\chipname{} 提供 1 字节与 2 字节有符号数据的向量复数乘法指令。
+
+部分复数乘法指令将运算与 16 字节访存合并，并在访存后将地址加 16。请按算法需求选择指令。
+
+\input{\modulefiles/tables/08-pie-vector-complex-multiplication-instruc__CN}
+
+
+\subsubsection{向量乘累加指令}
+
+\chipname{} 提供两类向量乘累加指令：一类累加到 40 位 XACC；另一类累加到 QACC\_H 与 QACC\_L 的对应分段。两类均支持 1 字节与 2 字节分段。
+
+部分指令还并行执行 16 字节访存，并在其后按 AR 值或立即数更新地址。
+
+\input{\modulefiles/tables/08-pie-vector-multi-accum-instruc__CN}
+
+
+\subsubsection{向量和标量乘累加指令}
+
+此类指令与基于 QACC 的向量乘累加类似，但一个操作数为向量、另一个为标量。同样提供可在运算同时访存的变体。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{向量与标量乘累加指令}
+    \label{tab:pie-vector-scalar-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:ESPVSMULASS8QACC]{ESP.VSMULAS.S[8/16].QACC} & 有符号 1 字节 或有符号 2 字节分片的向量与标量乘累加。
+    \\\hline
+    \hyperref[instruction:ESPVSMULASS8QACCLDINCP]{ESP.VSMULAS.S[8/16].QACC.LD.INCP} & 有符号 1 字节或有符号 2 字节分片的向量与标量乘累加。同时从内存读取 16 字节数据，并对地址寄存器增加 16。
+    \\\hline
+\end{longtable}
+
+
+\subsubsection{其他指令}
+
+本组指令包括对 QACC\_H、QACC\_L 与 XACC 中乘累加结果的算术右移；可通过设置移位量得到所需精度。还包括带使能条件的向量乘法。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{其他指令}
+    \label{tab:pie-others-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:ESPSRCMBS8QACC]{ESP.SRCMB.S[8/16].QACC} & 对 QACC\_H 和 QACC\_L 寄存器内数值按段进行符号右移。
+    \\\hline
+    \hyperref[instruction:ESPSRCMBU8QACC]{ESP.SRCMB.U[8/16].QACC} & 对 QACC\_H 和 QACC\_L 寄存器内数值按段进行无符号右移。
+    \\\hline
+    \hyperref[instruction:ESPSRCMBS8QQACC]{ESP.SRCMB.S[8/16].Q.QACC} & 对 QACC\_H 和 QACC\_L 寄存器内数值按段进行符号右移。
+    \\\hline
+    \hyperref[instruction:ESPSRCMBU8QQACC]{ESP.SRCMB.U[8/16].Q.QACC} & 对 QACC\_H 和 QACC\_L 寄存器内数值按段进行无符号右移。
+    \\\hline
+    \hyperref[instruction:ESPSRSSXACC]{ESP.SRS.S.XACC} & 对 XACC 寄存器内数值进行符号右移。
+    \\\hline
+    \hyperref[instruction:ESPSRSUXACC]{ESP.SRS.U.XACC} & 对 XACC 寄存器内数值进行无符号右移。
+    \\\hline
+    \hyperref[instruction:ESPVRELUS8]{ESP.VRELU.S[8/16]} & 根据使能条件执行向量与标量乘法。
+    \\\hline
+    \hyperref[instruction:ESPVPRELUS8]{ESP.VPRELU.S[8/16]} & 根据使能条件执行向量与向量乘法。
+    \\\hline
+    \hyperref[instruction:ESPSAT]{ESP.SAT} & 对 32 位通用寄存器进行饱和操作，限制在 rs1 和 rs2 之间。
+    \\\hline
+    \hyperref[instruction:ESPADDX2]{ESP.ADDX2} & 对 rs1 和 rs2 执行加法运算。
+    \\\hline
+    \hyperref[instruction:ESPADDX4]{ESP.ADDX4} & 对 rs1 和 rs2 执行加法运算。
+    \\\hline
+    \hyperref[instruction:ESPSUBX2]{ESP.SUBX2} & 对 rs1 和 rs2 执行减法运算。
+    \\\hline
+    \hyperref[instruction:ESPSUBX4]{ESP.SUBX4} & 对 rs1 和 rs2 执行减法运算。
+    \\\hline
+    \hyperref[instruction:ESPVABS8]{ESP.VABS.[8/16/32]} & 对有符号数取绝对值。
+    \\\hline
+
+\end{longtable}
+
+\subsection{比较指令}
+\label{sec:pie-comparison-instructions}
+
+向量比较指令以 1 字节、2 字节或 4 字节为元素宽度。包括取较大值/较小值，以及等于、大于、小于比较时生成全 1 或全 0 掩码。
+
+部分比较指令还会执行 16 字节访存，并在其后将地址加 16。请按算法需求选择指令。
+
+\input{\modulefiles/tables/08-pie-comparison-instructions__CN}
+
+
+\subsection{按位逻辑操作指令}
+\label{sec:pie-bitwise-logic-instructions}
+
+按位逻辑指令包括按位逻辑或 (OR)、按位逻辑与 (AND)、按位逻辑异或 (XOR) 和按位取反 (NOT) 指令。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{按位逻辑操作指令}
+    \label{tab:pie-bitwise-logic-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:ESPORQ]{ESP.ORQ} & 按位逻辑或 $qa = qx | qy$
+    \\\hline
+    \hyperref[instruction:ESPXORQ]{ESP.XORQ} & 按位逻辑异或 $qa = qx$ \^{} $qy$
+    \\\hline
+    \hyperref[instruction:ESPANDQ]{ESP.ANDQ} & 按位逻辑与 $qa = qx \& qy$
+    \\\hline
+    \hyperref[instruction:ESPNOTQ]{ESP.NOTQ} & 按位取反 $qa =\verb+~+ qx$
+    \\\hline
+\end{longtable}
+
+\subsection{移位指令}
+\label{sec:pie-shift-instructions}
+
+移位指令包括以 4 字节为单位的向量左移/右移，以及对拼接后 16 字节数据的移位。向量移位的移位量由 SAR 提供；拼接数据移位的移位量可由 SAR\_BYTE、立即数或 AR 低位提供。请按应用选择指令。在适用情形下，这些移位遵循有符号移位语义。
+
+
+\input{\modulefiles/tables/08-pie-shift-instructions__CN}
+
+\subsection{快速傅里叶变换 (FFT) 指令}
+\label{sec:pie-fft-instructions}
+
+FFT 指令包括蝶形运算、比特反转以及实数 FFT 辅助指令。
+
+\subsubsection{蝶形运算指令}
+
+这些指令支持基数为 2 的蝶形运算。
+
+\input{\modulefiles/tables/08-pie-butterfly-instructions__CN}
+
+\subsubsection{比特反转指令}
+
+比特反转位宽由 FFT\_BIT\_WIDTH 决定。
+
+\begin{longtable}[c]{|l|m{10cm}|}
+    \caption{比特反转指令}
+    \label{tab:pie-bitrev-instructions}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endfirsthead
+    \rowcolor{lightgray}
+    \textbf{指令} & \textbf{定义} \\\hline
+    \endhead
+    \endfoot
+
+    \hyperref[instruction:ESPFFTBITREV]{ESP.FFT.BITREV} & 按 FFT\_BIT\_WIDTH 进行比特反转
+    \\\hline
+\end{longtable}
+
+\subsubsection{实数 FFT 指令}
+
+单条实数 FFT 指令可组合加法、乘法、移位等相关运算。
+
+\input{\modulefiles/tables/08-pie-real-fft-instructions__CN}
+
+
+
+
+
+
+
+
+
+
+
+
+\section{指令性能}\label{subsec:pie_pipeline}
+理想情况下，流水线处理器每个周期发出一条指令。\chipname{} 处理器采用五级流水线：F（取指）、D（译码）、E（执行）、M（访存）和 W（写回）。表 \ref{tab:pie_processor_5stage} 概述各级操作。\\
+
+\begin{longtable}[c]{|l|c|l|}
+    \caption{\chipname{} 处理器五级流水线}
+    \label{tab:pie_processor_5stage}\\
+    \hline
+    \rowcolor{lightgray}
+    \textbf{流水级} & \textbf{编号} & \textbf{操作} \\\hline
+    F & - & 取指令 \\\hline
+    D & 0 & \makecell[l]{读取通用寄存器 AR、QR \\ 译码、检测内部锁并转发操作数}\\\hline
+    E & 1 & \makecell[l]{对算术指令，ALU 执行加、减、乘等运算\\对读内存指令，生成虚地址\\对分支指令，选择跳转目标}\\\hline
+    M & 2 & 发出内存读写 \\\hline
+    W & 3 & 将计算结果与读入数据写回寄存器\\\hline
+\end{longtable}
+
+只有当指令操作数与所需硬件资源就绪时，指令才能进入流水线。实际运行中，下列冒险可能导致流水线停顿并推迟发射。
+
+\subsection{数据冒险}
+若指令 A 向寄存器 X（显式通用寄存器或隐式专用寄存器）写结果，而指令 B 以同一寄存器为输入，则称 B 依赖于 A。若 A 在流水级 SA 结束时产生结果，B 需在流水级 SB 开始时读取，则 A 必须比 B 提前 $D = max(SA - SB + 1, 0)$ 个周期发射。\\
+若在 A 之后不足 $D$ 个周期就取到 B，处理器会推迟发射 B，直到满足 $D$ 个周期。这种因流水线交互造成的延迟称为内部锁 (interlock)。\\
+例如，若 A 的 SA 为 W、B 的 SB 为 E，则 $D = max(2 - 1 + 1, 0) = 2$，如图 \ref{fig:pie_data_hazard} 所示。\\
+当结果在某级末可用时，相关指令通常需等待其写回寄存器后再读取。处理器也支持旁路 (bypass)：可将产生级的数据直接转发到消费级，而无需等待写回。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/data_hazard__CN}}
+    \caption{操作数依赖导致的内部锁}
+    \label{fig:pie_data_hazard}
+\end{figure}
+
+指令间的数据依赖取决于所用操作数及其读/写所处流水级。章节 \ref{sec:pie-instruction-descrip} 列出各指令操作数的 use/def 流水级。 
+
+
+\subsection{硬件资源冒险}
+若多条指令在同一周期争用同一硬件资源，则仅允许一条占用，其余被延迟。例如处理器仅有 8 个 16 位乘法器。若指令 C 在 M 级需要全部 8 个、指令 D 在 E 级需要其中 4 个，且如图 \ref{fig:pie_resource_hazard} 所示分别在 T+0、T+1 发射，则在 T+3 会争用 4 个乘法器；处理器将把 D 推迟一个周期以避免冲突。
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/resource_hazard__CN}}
+    \caption{硬件资源冒险}
+    \label{fig:pie_resource_hazard}
+\end{figure}
+
+\subsection{控制冒险}
+数据冒险与资源冒险常可通过重排代码缓解，控制冒险则更难隐藏。条件语句会编译为分支/跳转：条件成立则从目标地址取指，否则顺序取指。当分支跳转发生时，如图 \ref{fig:pie_control_hazard} 所示，已位于 F、D 级的指令被丢弃，相当于流水线损失 2 个周期。\\
+
+\begin{figure}[H]
+    \centering
+    \fbox{\includegraphics[width=0.9\textwidth]{\modulefiles/figures/control_hazard__CN}}
+    \caption{控制冒险}
+    \label{fig:pie_control_hazard}
+\end{figure}
+
+\newpage
+\section{扩展指令功能描述}\label{sec:pie-instruction-descrip}
+
+\subsection{指令符号与域定义}
+
+表 \ref{tab:pie-instruction-field} 介绍了指令描述中涉及到的符号所代表的含义。阅读下文各条指令的功能描述时，请对照该表理解操作数与编码域。
+
+\texttt{[N:M]} 表示一个字段中的位范围。比特上下限 N 和 M 都包含在内，表示该字段的位宽为 \texttt{(N-M+1)}。例如，\texttt{Qx[2:0]} 共有 3 个比特，分别是 bit0、bit1 和 bit2；\texttt{Qx[1]} 表示 bit1 的值。
+
+\input{\modulefiles/tables/08-pie-field-name-and-descrip__CN}
+
+\subsection{指令列表}
+
+\setcounter{tocdepth}{1}%
+\addtocontents{toc}{\protect\setcounter{tocdepth}{1}}%
+\captionsetup{list=false}%
+\hypersetup{bookmarksdepth=1}%
+
+\input{\modulefiles/tables/pie_instruction__CN.tex}
+
+\captionsetup{list=true}%
+\hypersetup{bookmarksdepth=4}%
+\setcounter{tocdepth}{4}%
+\addtocontents{toc}{\protect\setcounter{tocdepth}{4}}%
+
+\end{document}
