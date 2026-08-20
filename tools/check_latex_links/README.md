@@ -63,6 +63,7 @@ pip install requests
 
 ### Internal Link Checking
 - Parses the LaTeX build log file (`.log`) for warnings
+- Joins TeX 79-column wrapped lines (e.g. `undef` / `ined`) before matching
 - Identifies undefined references and multiply-defined labels
 - Filters out register/field-related warnings by default (unless `-reg` is specified)
 

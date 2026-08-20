@@ -61,19 +61,47 @@ def check_url_parallel(urls):
                 results.append((url, str(e)))
     return results
 
-# Parse LaTeX warnings from the log file, omitting known suppressed lines
+# TeX wraps log lines at ~79 columns, often mid-word
+# (e.g. "undef" / "ined"). Continuation lines are not new messages.
+_NEW_LOG_MESSAGE = re.compile(
+    r'^(LaTeX |Package |Class |! |Overfull |Underfull |'
+    r'File: |Package: |Document Class: |\\openout|\[|\()'
+)
+
+
 def extract_warnings(log_path):
+    """Parse LaTeX warnings from the log, joining wrapped continuation lines."""
     pattern = re.compile(r'LaTeX Warning: (.+)')
     suppressed = {
         "Label `tab:release-status' multiply defined.",
         "There were undefined references.",
         "There were multiply-defined labels.",
     }
+    warnings = []
     with open(log_path, 'r', encoding='utf-8') as f:
-        return [
-            m.group(1) for line in f
-            if (m := pattern.search(line)) and m.group(1) not in suppressed
-        ]
+        lines = f.readlines()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip('\n')
+        match = pattern.search(line)
+        if not match:
+            i += 1
+            continue
+
+        text = match.group(1)
+        i += 1
+        while i < len(lines):
+            nxt = lines[i].rstrip('\n')
+            if not nxt.strip() or _NEW_LOG_MESSAGE.match(nxt) or pattern.search(nxt):
+                break
+            text += nxt
+            i += 1
+
+        if text not in suppressed:
+            warnings.append(text)
+
+    return warnings
 
 # Classify a warning's type
 def classify_warning(warning):
