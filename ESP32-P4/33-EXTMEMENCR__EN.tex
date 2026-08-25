@@ -92,6 +92,7 @@ The \chipname{} integrates an External Memory Encryption and Decryption module t
     \item High-speed auto encryption and decryption without software's participation
     \item Encryption and decryption functions jointly enabled/disabled by registers configuration, eFuse parameters, and boot mode
     \item Configurable Anti-DPA
+    \tagged{ESP32-P4-latest}{\item Configurable pseudo-round Anti-DPA}
 \end{itemize}
 
 \section{Module Structure}
@@ -176,16 +177,16 @@ For Auto Encryption/Decryption blocks, these parameters are automatically define
 \subsection{Data Writing}
 \label{sec:extmemncr-data-writing}
 
-For Auto Encryption/Decryption blocks, data writing is automatically applied in hardware. For Manual Encryption blocks, data writing should be applied by users. The Manual Encryption block has a register block which consists of 16 registers, i.e., \hyperref[regdesc:XTSAESPLAINNREG]{XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG} (\textcolor{red}{\it{n}}: 0 \verb+~+ 15), that are dedicated to data writing and can store up to 512 bits of plaintext at a time.
+For Auto Encryption/Decryption blocks, data writing is automatically applied in hardware. For Manual Encryption blocks, data writing should be applied by users. The Manual Encryption block has a plaintext memory region starting at \hyperref[regdesc:SPIMEMXTSPLAINBASEREG]{SPI\_MEM\_XTS\_PLAIN\_BASE\_REG}, which provides 16 consecutive 32-bit words dedicated to data writing and can store up to 512 bits of plaintext at a time.
 
-Actually, the Manual Encryption block does not care where the plaintext comes from, but only where the ciphertext will be stored. Because of the strict correspondence between plaintext and ciphertext, in order to better describe how the plaintext is stored in the register block, we assume that the plaintext is stored in the target memory space in the first place and replaced by ciphertext after encryption. Therefore, the following description in this section no longer has the concept of ``plaintext", but uses ``target memory space" instead.
+Actually, the Manual Encryption block does not care where the plaintext comes from, but only where the ciphertext will be stored. Because of the strict correspondence between plaintext and ciphertext, in order to better describe how the plaintext is stored in this memory region, we assume that the plaintext is stored in the target memory space in the first place and replaced by ciphertext after encryption. Therefore, the following description in this section no longer has the concept of ``plaintext", but uses ``target memory space" instead.
 
-{\bfseries How mapping between target memory space and registers works:}
+{\bfseries How mapping between target memory space and the plaintext memory region works:}
 
 \newcommand{\f}{\mkern-2mu f\mkern-2mu}
-Assume a word in the target memory space is stored in \begin{math} address \end{math}, define $o{\f}{\f}set$ = \begin{math} address \% 64 \end{math}, \textcolor{red}{\it{$n$}} =  $o{\f}{\f}set$/\begin{math}{4}\end{math}, then the word will be stored in register XTS\_AES\_PLAIN\_\textcolor{red}{\it{$n$}}\_REG.
+Assume a word in the target memory space is stored in \begin{math} address \end{math}, define $o{\f}{\f}set$ = \begin{math} address \% 64 \end{math}, then the word will be stored at \hyperref[regdesc:SPIMEMXTSPLAINBASEREG]{SPI\_MEM\_XTS\_PLAIN\_BASE\_REG} + $o{\f}{\f}set$.
 
-For example, when the \begin{math} size \end{math} is 64, all registers in the register block will be used. The mapping between $o{\f}{\f}set$ and registers now is shown in Table \ref{tab:extmemencr-data-padding}.
+For example, when the \begin{math} size \end{math} is 64, all 16 words in the plaintext memory region will be used. The mapping between $o{\f}{\f}set$ and addresses in the plaintext memory region is shown in Table \ref{tab:extmemencr-data-padding}.
 
 \input{\modulefiles/tables/33-EXTMEMENCR-data-padding__EN}
 
@@ -280,25 +281,25 @@ When the Manual Encryption block operates, software needs to be involved in the 
 
     \item Configure XTS\_AES:
     \begin{itemize}
-        \item Set register \hyperref[regdesc:XTSAESDESTINATIONREG]{XTS\_AES\_DESTINATION\_REG} to \begin{math}type\end{math} = 0.
-        \item Set register \hyperref[regdesc:XTSAESPHYSICALADDRESSREG]{XTS\_AES\_PHYSICAL\_ADDRESS\_REG} to \begin{math}base\_addr\end{math}.
-        \item Set register \hyperref[regdesc:XTSAESLINESIZEREG]{XTS\_AES\_LINESIZE\_REG} to \begin{math}\frac{size}{32}\end{math}.
+        \item Set register \hyperref[regdesc:SPIMEMXTSDESTINATIONREG]{SPI\_MEM\_XTS\_DESTINATION\_REG} to \begin{math}type\end{math} = 0.
+        \item Set register \hyperref[regdesc:SPIMEMXTSPHYSICALADDRESSREG]{SPI\_MEM\_XTS\_PHYSICAL\_ADDRESS\_REG} to \begin{math}base\_addr\end{math}.
+        \item Set register \hyperref[regdesc:SPIMEMXTSLINESIZEREG]{SPI\_MEM\_XTS\_LINESIZE\_REG} to \begin{math}\frac{size}{32}\end{math}.
     \end{itemize}
     For definitions of \begin{math} base\_addr\end{math} and \begin{math}size\end{math}, please refer to Section \ref{sec:extmemencr-target-space}.
 
-    \item Write plaintext instructions/data to the registers block XTS\_AES\_PLAIN\_\textcolor{red}{\it{n}}\_REG (\textcolor{red}{\it{n}}: 0-15). For detailed information, please refer to Section \ref{sec:extmemncr-data-writing}. \\Please write data to registers according to your actual needs, and the unused ones could be set to arbitrary values.
+    \item Write plaintext instructions/data to the plaintext memory region starting at \hyperref[regdesc:SPIMEMXTSPLAINBASEREG]{SPI\_MEM\_XTS\_PLAIN\_BASE\_REG}. For detailed information, please refer to Section \ref{sec:extmemncr-data-writing}. \\Please write data according to your actual needs, and the unused words could be set to arbitrary values.
 
-    \item Wait for Manual Encryption block to be idle. Poll register \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} until it reads 0 which indicates the Manual Encryption block is idle.
+    \item Wait for Manual Encryption block to be idle. Poll register \hyperref[regdesc:SPIMEMXTSSTATEREG]{SPI\_MEM\_XTS\_STATE\_REG} until it reads 0 which indicates the Manual Encryption block is idle.
 
-    \item Trigger manual encryption by writing 1 to register \hyperref[regdesc:XTSAESTRIGGERREG]{XTS\_AES\_TRIGGER\_REG}.
+    \item Trigger manual encryption by writing 1 to register \hyperref[regdesc:SPIMEMXTSTRIGGERREG]{SPI\_MEM\_XTS\_TRIGGER\_REG}.
 
-    \item Wait for the encryption process completion. Poll register \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} until it reads 2. \\ \textit{Step 1 to 5 are the steps of encrypting plaintext instructions/data with the Manual Encryption block using the ${\K}ey$.}
+    \item Wait for the encryption process completion. Poll register \hyperref[regdesc:SPIMEMXTSSTATEREG]{SPI\_MEM\_XTS\_STATE\_REG} until it reads 2. \\ \textit{Step 1 to 5 are the steps of encrypting plaintext instructions/data with the Manual Encryption block using the ${\K}ey$.}
 
-    \item Write 1 to register \hyperref[regdesc:XTSAESRELEASEREG]{XTS\_AES\_RELEASE\_REG} to grant SPI1 the access to the encrypted ciphertext. After this, the value of register \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} will become 3.
+    \item Write 1 to register \hyperref[regdesc:SPIMEMXTSRELEASEREG]{SPI\_MEM\_XTS\_RELEASE\_REG} to grant SPI1 the access to the encrypted ciphertext. After this, the value of register \hyperref[regdesc:SPIMEMXTSSTATEREG]{SPI\_MEM\_XTS\_STATE\_REG} will become 3.
 
     \item Call SPI1 to write the ciphertext in the external flash (see Section \href{https://docs.espressif.com/projects/esp-idf/en/latest/esp32p4/api-reference/peripherals/spi_flash/index.html#api-reference-flash-encrypt}{API Reference - Flash Encrypt} in \href{https://docs.espressif.com/projects/esp-idf/en/latest/esp32p4/index.html}{ESP-IDF Programming Guide}).
 
-    \item Write 1 to register \hyperref[regdesc:XTSAESDESTROYREG]{XTS\_AES\_DESTROY\_REG} to destroy the ciphertext. After this, the value of register \hyperref[regdesc:XTSAESSTATEREG]{XTS\_AES\_STATE\_REG} will become 0.
+    \item Write 1 to register \hyperref[regdesc:SPIMEMXTSDESTROYREG]{SPI\_MEM\_XTS\_DESTROY\_REG} to destroy the ciphertext. After this, the value of register \hyperref[regdesc:SPIMEMXTSSTATEREG]{SPI\_MEM\_XTS\_STATE\_REG} will become 0.
 
 \end{enumerate}
 
@@ -307,20 +308,26 @@ Repeat the above steps according to the amount of plaintext instructions/data th
 
 
 \section{Anti-DPA}
-DPA (Differential Power Analysis) is a side-channel attack method in cryptography, through which an attacker can statistically analyze data collected from multiple encryption operations to calculate intermediate values in the encryption computation. \chipname{} XTS\_AES supports Anti-DPA to defend against external DPA attacks. \\
+DPA (Differential Power Analysis) is a side-channel attack method in cryptography, through which an attacker can statistically analyze data collected from multiple encryption operations to calculate intermediate values in the encryption computation. \iftagged{ESP32-P4-latest}{\chipname{} XTS\_AES supports two Anti-DPA methods to defend against external DPA attacks.}{\chipname{} XTS\_AES supports Anti-DPA to defend against external DPA attacks.} \\
 The XTS-AES algorithm can be divided into two steps, according to \href{https://ieeexplore.ieee.org/document/4493450}{IEEE Std 1619-2007}:
 \begin{itemize}
     \item Step 1: Calculating T value. In this section, we define this step as "calculating T".
     \item Step 2: Calculating Cipher/Plain text. In this section, we define this step as "calculating D".
 \end{itemize}
+\tagged{ESP32-P4-latest}{%
+\chipname{} allows users to enable Anti-DPA separately during the above-mentioned two steps to enhance security. See details in the following sections.
+
+\subsection{Clock Anti-DPA Function}
+Clock Anti-DPA is the first method to defend against external DPA attacks.
+}
 Different security levels can be configured through registers:
 \begin{itemize}
     \item First we define the below parameters for a better description:
     \begin{itemize}
-        \item $select\_reg     = \textrm{\hyperref[fielddesc:XTSAESCRYPTDPASELECTREGISTER]{XTS\_AES\_CRYPT\_DPA\_SELECT\_REGISTER}}$
-        \item $reg\_d\_dpa\_en = \textrm{\hyperref[fielddesc:XTSAESCRYPTCALCDDPAEN]{XTS\_AES\_CRYPT\_CALC\_D\_DPA\_EN}}$
+        \item $select\_reg     = \textrm{\hyperref[fielddesc:SPIMEMCRYPTDPASELECTREGISTER]{SPI\_MEM\_CRYPT\_DPA\_SELECT\_REGISTER}}$
+        \item $reg\_d\_dpa\_en = \textrm{\hyperref[fielddesc:SPIMEMCRYPTCALCDDPAEN]{SPI\_MEM\_CRYPT\_CALC\_D\_DPA\_EN}}$
         \item $efuse\_dpa\_en  = \textrm{\iftagged{ESP32-P4-latest}{\hyperref[fielddesc:EFUSEXTSDPACLKENABLE]{EFUSE\_XTS\_DPA\_CLK\_ENABLE}}{\hyperref[fielddesc:EFUSECRYPTDPAENABLE]{EFUSE\_CRYPT\_DPA\_ENABLE}}}$
-        \item $reg\_anti\_dpa\_level = \textrm{\hyperref[fielddesc:XTSAESCRYPTSECURITYLEVEL]{XTS\_AES\_CRYPT\_SECURITY\_LEVEL}}$
+        \item $reg\_anti\_dpa\_level = \textrm{\hyperref[fielddesc:SPIMEMCRYPTSECURITYLEVEL]{SPI\_MEM\_CRYPT\_SECURITY\_LEVEL}}$
         \item $efuse\_anti\_dpa\_level = \textrm{3}$
     \end{itemize}
     \item Configure the security level of Anti-DPA for the XTS\_AES module:
@@ -344,6 +351,70 @@ Different security levels can be configured through registers:
     \end{itemize}
 \end{tiplisting}
 
+\tagged{ESP32-P4-latest}{%
+\subsection{Pseudo-round Anti-DPA Function}
+
+The pseudo-round function of \chipname{}'s XTS-AES is the second method to achieve higher anti-attack performance.
+When the pseudo-round function is enabled, XTS-AES randomly adds pseudo-rounds before and after the original operation rounds. In a pseudo-round, XTS-AES uses a pseudo-key, which is automatically generated by the hardware, to perform a round of fake operations. The operations in the pseudo-round do not affect the original XTS-AES operation results.
+
+The configuration related to the pseudo-round function is as follows:
+
+\textbf{Mode of the pseudo-round function}
+
+Users can choose to enable the pseudo-round function in different calculation steps of XTS-AES:
+\begin{itemize}
+    \item 0: Do not enable the pseudo-round function during calculation
+    \item 1: Enable the pseudo-round function when calculating T
+    \item 2: Enable the pseudo-round function when calculating T and some rounds of calculating D
+    \item 3: Enable the pseudo-round function when calculating T and all rounds of calculating D
+\end{itemize}
+
+\textbf{Total number of pseudo-rounds}
+
+The total number of pseudo-rounds that will be randomly inserted into each XTS-AES operation round is controlled by:
+\begin{itemize}
+    \item pseudo\_base: configures the basic round number of the pseudo-round function.
+    \item pseudo\_inc: configures the random incremental round number of the pseudo-round function.
+\end{itemize}
+The total number of pseudo-rounds is randomly generated in the range $$[pseudo\_base,pseudo\_base+(2^{pseudo\_inc}-1)]$$
+
+\textbf{Random number update frequency}
+
+pseudo\_rnd\_cnt configures the frequency of random key updates in the pseudo-round function. The higher the configured value, the higher the update frequency. This value is usually recommended to be set to the maximum (7).
+
+\textbf{Configuration}
+
+The parameters mentioned above can be configured through eFuse bits or XTS\_AES related registers, depending on the value of \hyperref[fielddesc:EFUSEXTSDPAPSEUDOLEVEL]{EFUSE\_XTS\_DPA\_PSEUDO\_LEVEL}:
+
+\begin{itemize}
+    \item 0: The user can configure using XTS\_AES related registers.
+    \item 1, 2, or 3: User configuration is not allowed.
+\end{itemize}
+See Table \ref{tab:xts-aes-pseudo-config} for details.
+
+\begin{table}[H]
+    \centering
+    \caption{Configuration of XTS\_AES Pseudo-round Anti-DPA}
+    \scriptsize
+    \label{tab:xts-aes-pseudo-config}
+    \begin{tabular}{|>{\columncolor{lightgray}}C{3.9cm}|C{3cm}|C{3cm}|C{3cm}|C{3.4cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{\hyperref[fielddesc:EFUSEXTSDPAPSEUDOLEVEL]{EFUSE\_XTS\_DPA\_PSEUDO\_LEVEL}} &
+    \textbf{pseudo\_mode} &
+    \textbf{pseudo\_base} &
+    \textbf{pseudo\_inc}  &
+    \textbf{pseudo\_rnd\_cnt} \\ \hline
+    0 & \hyperref[fielddesc:SPIMEMMODEPSEUDO]{SPI\_MEM\_MODE\_PSEUDO} &
+    \hyperref[fielddesc:SPIMEMPSEUDOBASE]{SPI\_MEM\_PSEUDO\_BASE} &
+    \hyperref[fielddesc:SPIMEMPSEUDOINC]{SPI\_MEM\_PSEUDO\_INC} &
+    \hyperref[fielddesc:SPIMEMPSEUDORNGCNT]{SPI\_MEM\_PSEUDO\_RNG\_CNT} \\ \hline
+    1 & 1 & 4 & 2 & 7 \\ \hline
+    2 & 2 & 4 & 2 & 7 \\ \hline
+    3 & 3 & 4 & 2 & 7 \\ \hline
+    \end{tabular}
+\end{table}
+}
 
 % >>> If your module has no registers, delete sample text
 %       for Sections Register Summary and Registers below <<<
