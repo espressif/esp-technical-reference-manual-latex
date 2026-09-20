@@ -1,0 +1,456 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./61-ANACOM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{anacom}{}
+\chapter{模拟电压比较器}
+\label{mod:anacom}
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+
+\chipname{} 芯片集成了一个模拟电压比较器，通过比较输入电压与参考电压来监测电压变化。比较器提供多个芯片焊盘 (PAD) 用于接入电压信号，支持多通道比较。比较结果可生成 ETM（事件任务矩阵）事件或触发中断。
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:anacom-features}
+
+模拟电压比较器具有以下主要特性：
+
+\begin{itemize}
+    \item 提供 4 个芯片焊盘 (PAD) 接口，用于接入电压信号
+    \item 支持内部或外部参考电压，内部参考电压支持迟滞功能
+    \item 支持多通道电压比较：
+    \begin{itemize}
+        \item 最多支持 3 个通道
+        \item 通过轮询扫描方式依次比较不同 PAD 的输入电压与参考电压
+        \item 扫描可由软件启动或由 ETM 任务触发
+    \end{itemize}
+    \item 每个通道提供以下功能：
+    \begin{itemize}
+        \item 毛刺过滤
+        \item 状态变化可产生 ETM 事件或触发中断
+        \item 通道计时，用于记录中断间隔
+    \end{itemize}
+\end{itemize}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{系统架构}
+\label{sec:anacom-arch-overview}
+
+图 \ref{fig:anacom-architecture} 展示了模拟电压比较器的系统架构。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/anacom_arch.png}
+    \caption{模拟电压比较器系统框图}
+    \label{fig:anacom-architecture}
+\end{figure}
+
+
+
+
+如上图所示，模拟电压比较器的结构如下：
+
+\begin{itemize}
+    \item 四个 PAD 接口：PAD0\textasciitilde PAD3，用于接入电压信号，可作为通道输入或外部参考电压源。
+    \item Voltage Comparator（电压比较器）：比较输入电压 (V\_IN) 与参考电压 (VREF)，并通过 PAD\_COMP\_OUT 输出比较结果。参考电压可选内部产生或由外部 PAD 提供。
+    \item PAD COMP Controller（模拟电压比较器控制器）：控制通道扫描，处理比较结果并生成中断及 ETM 事件。
+    \item Channel Timer（通道计时器）：为各通道中断间隔提供计时参考。
+\end{itemize}
+
+表 \ref{tab:anacom-pad-gpio-mapping} 列出了 PAD 与 GPIO 管脚之间的映射关系。
+
+\begin{table}[H]
+    \centering
+    \caption{模拟电压比较器 PAD 和 GPIO 之间的映射关系}
+    \label{tab:anacom-pad-gpio-mapping}
+    \begin{tabular}{ | L{2cm} | L{2cm} | L{2cm} | L{2cm} | L{2cm} | }
+    \hline
+    \rowcolor{lightgray}
+    & \textbf{PAD0}  &  \textbf{PAD1}&  \textbf{PAD2 }&  \textbf{PAD3}\\ \hline
+    GPIO 管脚 & GPIO37 & GPIO38 & GPIO39 &  GPIO40  \\ \hline
+    \end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:anacom-func-descr}
+
+\subsection{参考电压配置}
+\label{subsec:anacom-vref-config}
+
+模拟电压比较器的参考电压可选内部参考电压或者外部参考电压。根据参考电压来源不同，比较模式分为以下两种：
+\begin{itemize}
+    \item \textbf{内部参考电压模式}：设置 \hyperref[fielddesc:PADCOMPMODE]{PAD\_COMP\_MODE} = 0，将输入电压与内部参考电压进行比较。
+
+    在此模式下，4 个 PAD 均可分配给通道作为输入，但由于硬件仅支持 3 个通道，因此最多使用 3 个 PAD。
+
+    内部参考电压由 \hyperref[fielddesc:PADCOMPDREF]{PAD\_COMP\_DREF} 配置：
+    \begin{itemize}
+        \item 计算公式：VREF = PAD\_COMP\_DREF × 0.1 × VDDPST\_3 (V)
+        \item 范围：0 \verb+~+ (0.7 × VDDPST\_3) V
+        \item 步长：(0.1 × VDDPST\_3) V
+    \end{itemize}
+    其中 VDDPST\_3 为比较器 PAD 所在数字 HP IO 电源域的供电电压，由 VDDPST\_3 管脚输入，通常为 3.3 V。
+    内部参考电压支持迟滞功能，可提高比较器在临界区域的稳定性。当 \hyperref[fielddesc:PADCOMPHYSEN]{PAD\_COMP\_HYS\_EN} = 1 时启用迟滞。\hyperref[fielddesc:PADCOMPHYS]{PAD\_COMP\_HYS} 配置迟滞电压 V\_HYS。
+    
+    当 PAD\_COMP\_OUT 为低电平时，内部参考电压为 VREF + V\_HYS；当 PAD\_COMP\_OUT 为高电平时，内部参考电压为 VREF。表 \ref{tab:anacom-hys-values} 列出了 V\_HYS 与 \hyperref[fielddesc:PADCOMPHYS]{PAD\_COMP\_HYS} 的对应关系。
+    \begin{table}[H]
+    \centering
+    \caption{V\_HYS 取值}
+    \label{tab:anacom-hys-values}
+    \begin{tabular}{ | L{4cm} | L{4cm} | }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{PAD\_COMP\_HYS} & \textbf{V\_HYS} \\ \hline
+    0 & 0 V \\ \hline
+    1 & 0.04 V \\ \hline
+    2 & 0.08 V \\ \hline
+    4 & 0.12 V \\ \hline
+    3、5、6、7 & 保留 \\ \hline
+    \end{tabular}
+    \end{table}
+
+    \item \textbf{外部参考电压模式}：设置 \hyperref[fielddesc:PADCOMPMODE]{PAD\_COMP\_MODE} = 1，将输入电压与外部参考电压进行比较。
+
+    在此模式下，需要从 4 个 PAD 中选择 1 个作为外部参考电压源，剩余 3 个 PAD 可分配给 3 个通道作为输入。
+
+    通过 \hyperref[fielddesc:PADCOMPVREFCHANNELSEL]{PAD\_COMP\_VREF\_CHANNEL\_SEL} 选择外部参考电压源 PAD。该字段为 4-bit bitmap，由高到低依次对应 PAD3、PAD2、PAD1、PAD0，且仅允许一个 bit 为 1。
+
+    \begin{tiplisting}
+    用作外部参考电压源的 PAD 不应同时分配给任何通道作为输入 PAD。
+    \end{tiplisting}
+
+\end{itemize}
+
+\subsection{控制器}
+\label{subsec:anacom-controller}
+             
+控制器 (PAD COMP Controller) 支持轮询扫描，按通道编号顺序（1 → 2 → 3）依次扫描已启用的通道。
+
+
+\begin{itemize}
+    \item \textbf{输入 PAD 分配}：通过 \hyperref[fielddesc:PADCOMPCHANNEL1SEL]{PAD\_COMP\_CHANNEL\_X\_SEL} (X = 1, 2, 3) 为每个通道选择输入 PAD。
+    
+    该字段为 4-bit bitmap，由高到低依次对应 PAD3、PAD2、PAD1、PAD0，且仅允许一个 bit 为 1。
+    
+    \begin{tiplisting}
+    各通道必须选择不同的 PAD。在外部参考电压模式下，用作外部参考电压源的 PAD 不可同时分配给任何通道。
+    \end{tiplisting}
+
+    \item \textbf{启用通道}：通过 \hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK} 选择哪些通道参与扫描。
+    
+    该字段为 3-bit bitmap，由高到低依次对应通道 3、通道 2、通道 1。对应 bit 为 1 表示启用该通道，未启用的通道将在扫描过程中被跳过。
+
+    \item \textbf{扫描触发与模式}：扫描可由软件通过 \hyperref[fielddesc:PADCOMPSTART]{PAD\_COMP\_START} 触发，或由 ETM 任务 PAD\_COMP\_TASK\_START 触发。扫描行为由 \hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} 控制：
+      \begin{itemize}
+        \item 0：全扫描模式。每次触发时，依次扫描所有已启用通道。
+        \item 1：单步轮询模式。每次触发时，仅扫描下一个已启用通道。
+      \end{itemize}
+            
+
+    \item \textbf{通道切换等待时间}：由于 Voltage Comparator 为复用模块，切换输入通道时需要一定的稳定时间，由 \hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD} 控制，单位为 PAD\_COMP\_CLK 时钟周期，通常为 1 $\mu$s。
+            
+    \item \textbf{通道状态与毛刺过滤}：为避免输入通道处于参考电压临界区时产生毛刺，模块支持毛刺过滤。稳定时间结束后，根据通道状态 \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS} 对 PAD\_COMP\_OUT 进行毛刺过滤。
+
+    若当前状态为高电平，则需要连续采集到 \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} 个低电平，才会切换为低电平。反之，若当前状态为低电平，则需连续采集到 \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} 个高电平，通道状态才会切换为高电平。
+
+    PAD\_COMP\_OUT 发生一次跳变并触发中断后，\hyperref[fielddesc:PADCOMPFILTERCNT]{PAD\_COMP\_FILTER\_CNT} 配置一段以 PAD\_COMP\_CLK 时钟周期为单位的去抖时间，在此期间不再触发新的中断，从而抑制输入电压在参考电压附近抖动导致的重复中断。\hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} 与 \hyperref[fielddesc:PADCOMPFILTERCNT]{PAD\_COMP\_FILTER\_CNT} 配合使用：前者在采样阶段过滤毛刺，后者在中断触发后抑制重复中断。
+
+    \item \textbf{通道中断}：中断由通道状态的变化触发：
+            \begin{itemize}
+                \item 当 \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS} 发生低到高的变化时，触发 \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} 和 \hyperref[int:PADCOMPnPOSINT]{PAD\_COMP\_CHANNEL\_X\_POS\_INT}
+                \item 当 \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS} 发生高到低的变化时，触发 \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} 和 \hyperref[int:PADCOMPnNEGINT]{PAD\_COMP\_CHANNEL\_X\_NEG\_INT}
+            \end{itemize}
+            
+   \item \textbf{通道 ETM 事件}：当 \hyperref[fielddesc:PADCOMPCHANNEL1EVENTTIMEREN]{PAD\_COMP\_CHANNEL\_X\_EVENT\_TIMER\_EN} = 1 时，ETM 事件在中断触发后延迟 \hyperref[fielddesc:PADCOMPDELAYEVENTTIME]{PAD\_COMP\_DELAY\_EVENT\_TIME} 个 PAD\_COMP\_CLK 时钟周期产生：
+            \begin{itemize}
+                \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_POS：对应 \hyperref[int:PADCOMPnPOSINT]{PAD\_COMP\_CHANNEL\_X\_POS\_INT}
+                \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_NEG：对应 \hyperref[int:PADCOMPnNEGINT]{PAD\_COMP\_CHANNEL\_X\_NEG\_INT}
+            \end{itemize} 
+
+    \item \textbf{通道计时器 (Channel Timer)}：当 \hyperref[fielddesc:PADCOMPCHANNELTIMEREN]{PAD\_COMP\_CHANNEL\_TIMER\_EN} = 1 时，通道计时器按照 PAD\_COMP\_CLK 持续计数。每当 \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} 产生时，当前计数值会保存到 \hyperref[fielddesc:PADCOMPCHANNEL1TIMER0]{PAD\_COMP\_CHANNEL\_X\_TIMER0}，同时将之前的 TIMER0 值保存到 \hyperref[fielddesc:PADCOMPCHANNEL1TIMER1]{PAD\_COMP\_CHANNEL\_X\_TIMER1}，从而记录两次中断的时间间隔。
+        
+\end{itemize}
+
+图 \ref{fig:anacom-full-scan-timing} 展示了全扫描模式下的多通道扫描时序。本例配置为：\hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} = 0，\hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK} = 3'b111（3 个通道全部启用），\hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD} = 4，\hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} = 5，\hyperref[fielddesc:PADCOMPCHANNEL1SEL]{PAD\_COMP\_CHANNEL\_1\_SEL} = 4'b0001，\hyperref[fielddesc:PADCOMPCHANNEL2SEL]{PAD\_COMP\_CHANNEL\_2\_SEL} = 4'b0010，\hyperref[fielddesc:PADCOMPCHANNEL3SEL]{PAD\_COMP\_CHANNEL\_3\_SEL} = 4'b0100。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/anacom_full_scan_timing.png}
+    \caption{模拟电压比较器全扫描模式时序图}
+    \label{fig:anacom-full-scan-timing}
+\end{figure}
+
+\begin{itemize}
+    \item 图中蓝色底色区域为 WAIT\_x 阶段：PAD 通道已切换，等待 \hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD} 个周期让比较器输出稳定。
+    \item 红色底色区域为 CHANNEL\_x 阶段：采样比较器输出，持续 \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} 个周期，正/负方向独立计数。
+    \item 黄色高亮值表示定时器匹配值（触发状态转换）。
+\end{itemize}
+
+全扫描模式下，状态机依次遍历所有 \hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK} 使能的通道（WAIT $\rightarrow$ CHANNEL），全部完成后返回 IDLE。单步轮询模式（\hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} = 1）下，每次触发仅完成一个通道后即返回 IDLE，下次触发继续轮询下一个使能通道。
+
+
+\subsection{时钟}
+
+模拟电压比较器有两种时钟：
+
+\begin{itemize}
+    \item APB\_CLK：用于寄存器访问的总线时钟，由 \hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_CLK\_EN} 使能
+    \item PAD\_COMP\_CLK：用于模块功能运行的时钟，由 \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_EN} 使能
+\end{itemize}
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{\modulefiles/figures/anacom_clk.png}
+    \centering
+    \caption{模拟电压比较器时钟图}
+    \label{fig:anacom-clk}
+\end{figure}
+
+
+如图 \ref{fig:anacom-clk} \textit{\nameref{fig:anacom-clk}} 所示，PAD\_COMP\_CLK 的时钟源通过 \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKSRCSEL]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_SRC\_SEL} 选择，可选时钟源包括：
+
+\begin{itemize}
+    \item XTAL\_CLK
+    \item RC\_FAST\_CLK
+    \item PLL\_F80M\_CLK
+\end{itemize}
+
+有关时钟的更多信息，请查看章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+
+\subsection{复位}
+模拟电压比较器有两种复位控制。向相应字段写 1 发起复位，写 0 解除复位：
+
+\begin{itemize}
+    \item APB 复位：\hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBRSTEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_RST\_EN}
+    \item 内核复位：\hyperref[fielddesc:HPSYSCLKRSTPADCOMPCORERSTEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CORE\_RST\_EN}
+\end{itemize}
+
+有关复位的更多信息，请查看章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{事件任务矩阵}
+\label{sec:anacom-etm-func}
+
+在 \chipname{} 中，模拟电压比较器支持 ETM 功能。该模块可产生 ETM 事件，用于触发其他外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}。这里仅介绍与模拟电压比较器相关的 ETM 事件与任务。
+
+模拟电压比较器可产生的 ETM 事件包括：
+
+\begin{itemize}
+    \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_POS：通道 X 的 PAD\_COMP\_OUT（经毛刺过滤）由低电平变为高电平，即输入电压从低于参考电压变为高于参考电压。
+    \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_NEG：通道 X 的 PAD\_COMP\_OUT（经毛刺过滤）由高电平变为低电平，即输入电压从高于参考电压变为低于参考电压。
+\end{itemize}
+
+模拟电压比较器可接收的 ETM 任务包括：
+\begin{itemize}
+        \item PAD\_COMP\_TASK\_START：触发通道扫描。根据 \hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} 配置：当其为 0 时，每次触发对所有已启用通道完成一次扫描；当其为 1 时，每次触发仅对下一个已启用通道完成一次扫描。
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+\chipname{} 的模拟电压比较器可生成 \hyperref[int:PADCOMPINT]{PAD\_COMP\_INT} 中断信号，并通过\hyperref[mod:intmtrx]{中断矩阵}输出。
+
+该中断由模拟电压比较器内部中断源产生。表 \ref{tab:anacom-int-sources} 列出了内部中断源、触发条件以及对应的中断信号。
+
+\begin{table}[H]
+\centering
+\caption{模拟电压比较器的内部中断源}
+\label{tab:anacom-int-sources}
+\begin{tabular}{ | L{6cm} | L{5.5cm} | L{4cm} | }
+\hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:PADCOMPnALLINT}PAD\_COMP\_CHANNEL\_X\_INT  & 经过毛刺过滤的 PAD\_COMP\_OUT 信号发生跳变  &  \label{int:PADCOMPINT}PAD\_COMP\_INT  \\ \hline
+\label{int:PADCOMPnNEGINT}PAD\_COMP\_CHANNEL\_X\_NEG\_INT  & 经过毛刺过滤的 PAD\_COMP\_OUT 信号由高电平变为低电平   & PAD\_COMP\_INT \\ \hline
+\label{int:PADCOMPnPOSINT}PAD\_COMP\_CHANNEL\_X\_POS\_INT & 经过毛刺过滤的 PAD\_COMP\_OUT 信号由低电平变为高电平  & PAD\_COMP\_INT \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{tiplisting}
+有关“中断、中断源、中断信号”等术语的解释及其关系，请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:anacom-reg-summ} \textit{\nameref{sec:anacom-reg-summ}}。
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:anacom-prog-procedures}
+
+软件配置模拟电压比较器功能的流程如下：
+
+
+\begin{enumerate}
+    \item 将 \hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_CLK\_EN} 设置为 1，使能总线时钟 APB\_CLK。
+    \item 将 \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_EN} 设置为 1，使能功能时钟 PAD\_COMP\_CLK。
+    \item 将 \hyperref[fielddesc:PADCOMPXPD]{PAD\_COMP\_XPD} 设置为 1，上电并启用电压比较器。
+    \item 配置参考电压：选择内部或外部模式，并设置相应参数（参考 \ref{subsec:anacom-vref-config} \textit{\nameref{subsec:anacom-vref-config}}）。    
+    \item 如果选择外部参考电压模式，需要禁用用作外部参考电压源的 PAD 的数字功能，包括 IE、OE、WPU 和 WPD。具体配置方式请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}} 中的 \ref{subsec:analog_func_config} \textit{\nameref{subsec:analog_func_config}} 小节。
+    \item 配置控制器：分配通道输入 PAD、启用通道、设置扫描模式等（参考 \ref{subsec:anacom-controller} \textit{\nameref{subsec:anacom-controller}}）。
+    \item 通过 \hyperref[fielddesc:PADCOMPSTART]{PAD\_COMP\_START} 或 PAD\_COMP\_TASK\_START 触发扫描并获取比较结果。
+\end{enumerate}
+
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{anacom-reg-summ}{}
+\section{寄存器列表}
+\label{sec:anacom-reg-summ}
+
+本小节的所有地址均为相对于模拟电压比较器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/\modulefiles-reg-summ__CN}
+
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于模拟电压比较器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subfile{\modulefiles/\modulefiles-reg__CN}
+
+
+\end{document}

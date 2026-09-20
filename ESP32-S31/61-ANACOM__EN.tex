@@ -1,0 +1,438 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./61-ANACOM}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{anacom}{}
+\chapter{Analog Voltage Comparator}
+\label{mod:anacom}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Introduction %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Introduction}
+
+\chipname{} integrates an analog voltage comparator that monitors voltage changes by comparing the input voltage with a reference voltage. The comparator provides multiple chip pads (PADs) for voltage signal input and supports multi-channel comparison. Comparison results can generate ETM (Event Task Matrix) events or trigger interrupts.
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:anacom-features}
+
+The analog voltage comparator has the following main features:
+
+\begin{itemize}
+    \item Provides four chip pad (PAD) interfaces for voltage signal input
+    \item Supports internal or external reference voltage, with hysteresis function available for internal reference voltage
+    \item Supports multi-channel voltage comparison:
+    \begin{itemize}
+        \item Supports up to three channels
+        \item Compares the input voltages from different PADs with the reference voltage sequentially through polling scan
+        \item Scan can be initiated by software or triggered by ETM tasks
+    \end{itemize}
+    \item Each channel provides the following functions:
+    \begin{itemize}
+        \item Glitch filtering
+        \item Status changes can generate ETM events or trigger interrupts
+        \item Channel timer for recording interrupt intervals
+    \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:anacom-arch-overview}
+
+Figure \ref{fig:anacom-architecture} shows the structure of the analog voltage comparator.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/anacom_arch.png}
+    \caption{Analog Voltage Comparator Architecture}
+    \label{fig:anacom-architecture}
+\end{figure}
+
+As shown in the figure above, the structure of the analog voltage comparator is as follows:
+
+\begin{itemize}
+    \item Four PAD interfaces: PAD0\textasciitilde PAD3, used for voltage signal input, which can serve as channel inputs or external reference voltage source.
+    \item Voltage Comparator: Compares the input voltage (V\_IN) with the reference voltage (VREF), and outputs the comparison result through PAD\_COMP\_OUT. The reference voltage can be generated internally or provided by an external PAD.
+    \item PAD COMP Controller (Analog Voltage Comparator Controller): Controls channel scanning, processes comparison results, and generates interrupts and ETM events.
+    \item Channel Timer: Provides timing reference for interrupt intervals of each channel.
+\end{itemize}
+
+Table \ref{tab:anacom-pad-gpio-mapping} lists the mapping between the comparator PADs and GPIO pins.
+
+\begin{table}[H]
+\centering
+\caption{Mapping Between PADs and GPIO Pins}
+\label{tab:anacom-pad-gpio-mapping}
+\begin{tabular}{ | L{2cm} | L{2cm} | L{2cm} | L{2cm} | L{2cm} | }
+\hline
+\rowcolor{lightgray}
+ & \textbf{PAD0}  &  \textbf{PAD1}&  \textbf{PAD2 }&  \textbf{PAD3}\\ \hline
+GPIO Pin & GPIO37 & GPIO38 & GPIO39 &  GPIO40  \\ \hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:anacom-func-descr}
+
+\subsection{Reference Voltage Configuration}
+\label{subsec:anacom-vref-config}
+
+The reference voltage of the analog voltage comparator can be either internal or external. According to the reference voltage source, the comparison modes are divided into the following two types:
+
+\begin{itemize}
+    \item \textbf{Internal Reference Voltage Mode}: Set \hyperref[fielddesc:PADCOMPMODE]{PAD\_COMP\_MODE} = 0 to compare the input voltage with the internal reference voltage.
+
+    In this mode, all four PADs can be assigned to channels as inputs, but since the hardware only supports three channels, a maximum of three PADs can be used.
+
+    The internal reference voltage is configured by \hyperref[fielddesc:PADCOMPDREF]{PAD\_COMP\_DREF}:
+    \begin{itemize}
+        \item Formula: VREF = PAD\_COMP\_DREF × 0.1 × VDDPST\_3 (V)
+        \item Range: 0 \verb+~+ (0.7 × VDDPST\_3) V
+        \item Step size: (0.1 × VDDPST\_3) V
+    \end{itemize}
+    VDDPST\_3 is the supply voltage of the digital HP IO power domain that powers the comparator PADs. It is supplied via the VDDPST\_3 pin and is typically 3.3 V.
+
+    The internal reference voltage supports hysteresis function, which can improve the stability of the comparator in the critical region. Hysteresis is enabled when \hyperref[fielddesc:PADCOMPHYSEN]{PAD\_COMP\_HYS\_EN} = 1. \hyperref[fielddesc:PADCOMPHYS]{PAD\_COMP\_HYS} configures the hysteresis voltage V\_HYS.
+    
+    When PAD\_COMP\_OUT is low, the internal reference voltage is VREF + V\_HYS; when PAD\_COMP\_OUT is high, the internal reference voltage is VREF. Table \ref{tab:anacom-hys-values} lists the correspondence between V\_HYS and \hyperref[fielddesc:PADCOMPHYS]{PAD\_COMP\_HYS}.
+
+    \begin{table}[H]
+    \centering
+    \caption{V\_HYS Values}
+    \label{tab:anacom-hys-values}
+    \begin{tabular}{ | L{4cm} | L{4cm} | }
+    \hline
+    \rowcolor{lightgray}
+    \textbf{PAD\_COMP\_HYS} & \textbf{V\_HYS} \\ \hline
+    0 & 0 V \\ \hline
+    1 & 0.04 V \\ \hline
+    2 & 0.08 V \\ \hline
+    4 & 0.12 V \\ \hline
+    3, 5, 6, 7 & Reserved \\ \hline
+    \end{tabular}
+    \end{table}
+
+    \item \textbf{External Reference Voltage Mode}: Set \hyperref[fielddesc:PADCOMPMODE]{PAD\_COMP\_MODE} = 1 to compare the input voltage with the external reference voltage.
+
+    In this mode, one of the four PADs needs to be selected as the external reference voltage source, and the remaining three PADs can be assigned to the three channels as inputs.
+
+    Select the external reference voltage source PAD through \hyperref[fielddesc:PADCOMPVREFCHANNELSEL]{PAD\_COMP\_VREF\_CHANNEL\_SEL}. This field is a 4-bit bitmap, corresponding from high to low to PAD3, PAD2, PAD1, and PAD0, with only one bit allowed to be 1.
+
+    \begin{tiplisting}
+    The PAD used as the external reference voltage source should not be assigned to any channel as an input PAD simultaneously.
+    \end{tiplisting}
+
+\end{itemize}
+
+\subsection{PAD COMP Controller}
+\label{subsec:anacom-controller}
+             
+The controller (PAD COMP Controller) supports polling scan, scanning enabled channels sequentially in channel number order (1 → 2 → 3).
+
+\begin{itemize}
+    \item \textbf{Input PAD Assignment}: Select the input PAD for each channel through \hyperref[fielddesc:PADCOMPCHANNEL1SEL]{PAD\_COMP\_CHANNEL\_X\_SEL} (X = 1, 2, 3).
+    
+    This field is a 4-bit bitmap, corresponding from high to low to PAD3, PAD2, PAD1, and PAD0, with only one bit allowed to be 1.
+    
+    \begin{tiplisting}
+    Each channel must select a different PAD. In external reference voltage mode, the PAD used as the external reference voltage source cannot be assigned to any channel simultaneously.
+    \end{tiplisting}
+
+    \item \textbf{Enable Channel}: Select which channels participate in scanning through \hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK}.
+    
+    This field is a 3-bit bitmap, corresponding from high to low to channel 3, channel 2, and channel 1. The corresponding bit being 1 indicates that the channel is enabled, and unenabled channels will be skipped during the scanning process.
+
+    \item \textbf{Scan Trigger and Mode}: Scanning can be triggered by software via \hyperref[fielddesc:PADCOMPSTART]{PAD\_COMP\_START}, or by the ETM task PAD\_COMP\_TASK\_START. The scanning behavior is controlled by \hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE}:
+      \begin{itemize}
+        \item 0: Full scan mode. Upon each trigger, scan all enabled channels sequentially.
+        \item 1: Single-step polling mode. Upon each trigger, scan only the next enabled channel.
+      \end{itemize}
+            
+
+    \item \textbf{Channel Switching Wait Time}: Since the Voltage Comparator is a multiplexed module, a certain stabilization time is required when switching input channels, controlled by \hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD}, in units of PAD\_COMP\_CLK clock cycles, typically 1 $\mu$s.
+            
+    \item \textbf{Channel Status and Glitch Filtering}: To avoid glitches when the input channel is in the critical region of the reference voltage, the module supports glitch filtering. After the stabilization time ends, glitch filtering is performed on PAD\_COMP\_OUT according to the channel status \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS}.
+
+    If the current status is high, \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} consecutive low levels need to be sampled before switching to low. Conversely, if the current status is low, \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} consecutive high levels need to be sampled before the channel status switches to high.
+
+    After PAD\_COMP\_OUT transitions once and triggers an interrupt, \hyperref[fielddesc:PADCOMPFILTERCNT]{PAD\_COMP\_FILTER\_CNT} configures a debounce time in PAD\_COMP\_CLK clock cycles, during which no new interrupt is triggered. This suppresses duplicate interrupts caused by the input voltage jittering around the reference voltage. \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} and \hyperref[fielddesc:PADCOMPFILTERCNT]{PAD\_COMP\_FILTER\_CNT} work together: the former filters glitches during sampling, and the latter suppresses duplicate interrupts after one has been triggered.
+
+    \item \textbf{Channel Interrupt}: Interrupts are triggered by changes in channel status:
+            \begin{itemize}
+                \item When \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS} changes from low to high, \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} and \hyperref[int:PADCOMPnPOSINT]{PAD\_COMP\_CHANNEL\_X\_POS\_INT} are triggered.
+                \item When \hyperref[fielddesc:PADCOMPCHANNEL1STATUS]{PAD\_COMP\_CHANNEL\_X\_STATUS} changes from high to low, \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} and \hyperref[int:PADCOMPnNEGINT]{PAD\_COMP\_CHANNEL\_X\_NEG\_INT} are triggered.
+            \end{itemize}
+            
+   \item \textbf{Channel ETM Event}: When \hyperref[fielddesc:PADCOMPCHANNEL1EVENTTIMEREN]{PAD\_COMP\_CHANNEL\_X\_EVENT\_TIMER\_EN} = 1, ETM events are generated with a delay of \hyperref[fielddesc:PADCOMPDELAYEVENTTIME]{PAD\_COMP\_DELAY\_EVENT\_TIME} PAD\_COMP\_CLK clock cycles after the interrupt is triggered:
+            \begin{itemize}
+                \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_POS: Corresponds to \hyperref[int:PADCOMPnPOSINT]{PAD\_COMP\_CHANNEL\_X\_POS\_INT}
+                \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_NEG: Corresponds to \hyperref[int:PADCOMPnNEGINT]{PAD\_COMP\_CHANNEL\_X\_NEG\_INT}
+            \end{itemize}
+
+    \item \textbf{Channel Timer}: When \hyperref[fielddesc:PADCOMPCHANNELTIMEREN]{PAD\_COMP\_CHANNEL\_TIMER\_EN} = 1, the channel timer continuously counts according to the PAD\_COMP\_CLK. Whenever \hyperref[int:PADCOMPnALLINT]{PAD\_COMP\_CHANNEL\_X\_INT} is generated, the current count value is saved to \hyperref[fielddesc:PADCOMPCHANNEL1TIMER0]{PAD\_COMP\_CHANNEL\_X\_TIMER0}, while the previous TIMER0 value is saved to \hyperref[fielddesc:PADCOMPCHANNEL1TIMER1]{PAD\_COMP\_CHANNEL\_X\_TIMER1}, thereby recording the time interval between two interrupts.
+        
+\end{itemize}
+
+Figure \ref{fig:anacom-full-scan-timing} shows the multi-channel scanning timing in full scan mode. In this example, the configuration is: \hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} = 0, \hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK} = 3'b111 (all three channels enabled), \hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD} = 4, \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} = 5, \hyperref[fielddesc:PADCOMPCHANNEL1SEL]{PAD\_COMP\_CHANNEL\_1\_SEL} = 4'b0001, \hyperref[fielddesc:PADCOMPCHANNEL2SEL]{PAD\_COMP\_CHANNEL\_2\_SEL} = 4'b0010, \hyperref[fielddesc:PADCOMPCHANNEL3SEL]{PAD\_COMP\_CHANNEL\_3\_SEL} = 4'b0100.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/anacom_full_scan_timing.png}
+    \caption{Analog Voltage Comparator Full Scan Mode Timing Diagram}
+    \label{fig:anacom-full-scan-timing}
+\end{figure}
+
+\begin{itemize}
+    \item The blue-shaded WAIT\_x phases indicate that the channel has been switched and the comparator output needs \hyperref[fielddesc:PADCOMPPOLLPERIOD]{PAD\_COMP\_POLL\_PERIOD} cycles to stabilize.
+    \item The red-shaded CHANNEL\_x phases indicate that the comparator output is sampled for \hyperref[fielddesc:PADCOMPLIMITCNT]{PAD\_COMP\_LIMIT\_CNT} cycles, with independent counting for positive and negative directions.
+    \item The yellow highlighted values indicate timer match values that trigger state transitions.
+\end{itemize}
+
+In full scan mode, the state machine iterates through all channels enabled by \hyperref[fielddesc:PADCOMPPOLLMASK]{PAD\_COMP\_POLL\_MASK} (WAIT $\rightarrow$ CHANNEL) and returns to IDLE after all channels are completed. In single-step polling mode (\hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} = 1), each trigger completes only one channel before returning to IDLE, and the next trigger continues polling the next enabled channel.
+
+\subsection{Clock}
+
+The analog voltage comparator has two types of clocks:
+
+\begin{itemize}
+    \item APB\_CLK: the bus clock used for register access, enabled by \hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_CLK\_EN}
+    \item PAD\_COMP\_CLK: the functional clock used by the comparator, enabled by \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_EN}
+\end{itemize}
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{\modulefiles/figures/anacom_clk.png} 
+    \centering
+    \caption{Analog Voltage Comparator Clock Diagram}
+    \label{fig:anacom-clk}
+\end{figure}
+
+As shown in Figure \ref{fig:anacom-clk} \textit{\nameref{fig:anacom-clk}}, the clock source of PAD\_COMP\_CLK is selected through \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKSRCSEL]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_SRC\_SEL}, and the available clock sources include:
+
+\begin{itemize}
+    \item XTAL\_CLK
+    \item RC\_FAST\_CLK
+    \item PLL\_F80M\_CLK
+\end{itemize}
+
+For more information about clocks, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+
+
+\subsection{Reset}
+The analog voltage comparator has two reset controls. Write 1 to the corresponding field to initiate the reset and 0 to release the reset:
+
+\begin{itemize}
+    \item APB reset: \hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBRSTEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_RST\_EN}
+    \item Core reset: \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCORERSTEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CORE\_RST\_EN}
+\end{itemize}
+
+For more information about reset, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Event Task Matrix}
+\label{sec:anacom-etm-func}
+
+In \chipname{}, the analog voltage comparator supports ETM feature. The module can generate ETM events to trigger ETM tasks of other peripherals. For more details about ETM, please refer to Chapter \ref{mod:evntaskmatrix} \nameref{mod:evntaskmatrix}. This section only describes ETM events and tasks related to the analog voltage comparator.
+
+The ETM events generated by the analog voltage comparator include:
+
+\begin{itemize}
+    \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_POS: The PAD\_COMP\_OUT of channel X (after glitch filtering) changes from low to high, i.e., the input voltage changes from below the reference voltage to above the reference voltage.
+    \item PAD\_COMP\_DELAY\_EVENT\_CHANNEL\_X\_NEG: The PAD\_COMP\_OUT of channel X (after glitch filtering) changes from high to low, i.e., the input voltage changes from above the reference voltage to below the reference voltage.
+\end{itemize}
+
+The ETM tasks that can trigger the analog voltage comparator include:
+
+\begin{itemize}
+    \item PAD\_COMP\_TASK\_START: Triggers channel scanning. According to \hyperref[fielddesc:PADCOMPPOLLMODE]{PAD\_COMP\_POLL\_MODE} configuration: when it is 0, each trigger completes one scan of all enabled channels; when it is 1, each trigger completes one scan of only the next enabled channel.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+
+The analog voltage comparator in \chipname{} can generate the \hyperref[int:PADCOMPINT]{PAD\_COMP\_INT} interrupt signal and send it to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+There are several internal interrupt sources from analog voltage comparator that can generate the above interrupt signal. Table \ref{tab:anacom-int-sources} lists the internal interrupt sources, trigger conditions, and generated interrupt signals of the analog voltage comparator.
+
+\begin{table}[H]
+\centering
+\caption{Internal Interrupt Sources of the Analog Voltage Comparator}
+\label{tab:anacom-int-sources}
+\begin{tabular}{ | L{6cm} | L{5.5cm} | L{4cm} | }
+\hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+\label{int:PADCOMPnALLINT}PAD\_COMP\_CHANNEL\_X\_INT  & The filtered PAD\_COMP\_OUT signal transitions  &  \label{int:PADCOMPINT}PAD\_COMP\_INT  \\ \hline
+\label{int:PADCOMPnNEGINT}PAD\_COMP\_CHANNEL\_X\_NEG\_INT  & The filtered PAD\_COMP\_OUT signal transitions from high to low   & PAD\_COMP\_INT \\ \hline
+\label{int:PADCOMPnPOSINT}PAD\_COMP\_CHANNEL\_X\_POS\_INT & The filtered PAD\_COMP\_OUT signal transitions from low to high  & PAD\_COMP\_INT \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{tiplisting}
+For explanations of terms such as interrupt, interrupt source, and interrupt signal, and their relationships, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. For specific register names, please refer to Section \ref{sec:anacom-reg-summ} \textit{\nameref{sec:anacom-reg-summ}}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:anacom-prog-procedures}
+
+The programming procedure for the analog voltage comparator is as follows:
+
+
+\begin{enumerate}
+    \item Set \hyperref[fielddesc:HPSYSCLKRSTPADCOMPAPBCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_APB\_CLK\_EN} to 1 to enable the bus clock APB\_CLK.
+    \item Set \hyperref[fielddesc:HPSYSCLKRSTPADCOMPCLKEN]{HP\_SYS\_CLKRST\_PAD\_COMP\_CLK\_EN} to 1 to enable the functional clock PAD\_COMP\_CLK.
+    \item Set \hyperref[fielddesc:PADCOMPXPD]{PAD\_COMP\_XPD} to 1 to power up and enable the voltage comparator.
+    \item Configure the reference voltage: Select internal or external mode and set the corresponding parameters (refer to \ref{subsec:anacom-vref-config} \textit{\nameref{subsec:anacom-vref-config}}).
+    \item If external reference voltage mode is selected, the digital functions of the PAD used as the external reference voltage source need to be disabled, including IE, OE, WPU, and WPD. For specific configuration methods, please refer to the subsection \ref{subsec:analog_func_config} \textit{\nameref{subsec:analog_func_config}}  in Chapter \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}.
+    \item Configure the controller: Assign channel input PADs, enable channels, set scanning mode, etc. (refer to \ref{subsec:anacom-controller} \textit{\nameref{subsec:anacom-controller}}).
+    \item Trigger scanning via \hyperref[fielddesc:PADCOMPSTART]{PAD\_COMP\_START} or PAD\_COMP\_TASK\_START, and obtain comparison results.
+\end{enumerate}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{anacom-reg-summ}{}
+\section{Register Summary}
+\label{sec:anacom-reg-summ}
+
+All addresses in this section are address offsets relative to the analog voltage comparator base address. For the specific base address, please refer to Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+
+
+\subfile{\modulefiles/\modulefiles-reg-summ__EN}
+
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+All addresses in this section are address offsets relative to the analog voltage comparator base address. For the specific base address, please refer to Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+
+
+\subfile{\modulefiles/\modulefiles-reg__EN}
+
+\end{document}
