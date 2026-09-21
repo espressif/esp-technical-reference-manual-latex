@@ -1,0 +1,630 @@
+\newif\ifglobal
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./59-ADC}
+
+% >>> M1: This module is in global project? <<<
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+\else
+    \PassOptionsToPackage{quiet}{fontspec}
+    \documentclass[openany, 10pt]{book}
+    \usepackage{preamble-trm-module}
+    \usepackage{ctex}
+    \myexternaldocument{./00-shared/temp-labels-cn}
+\fi
+
+\setcounter{secnumdepth}{4}
+
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\selectlanguage{chinese}
+\setchineseformatting
+
+\ifglobal
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{adc}{}
+\chapter{SAR ADC 数字控制器 (ADC)}
+\label{mod:adc}
+
+\section{概述}
+\label{sec:adc-intro}
+
+\chipname{} SAR ADC 数字控制器是 HP ADC 子系统的数字控制模块，负责管理两路独立 SAR ADC（SAR1 和 SAR2）的采样触发、时序控制、数据滤波、阈值监控以及 DMA 传输。模块通过 APB 总线向 CPU 提供寄存器接口，支持软件触发、定时扫描和 ETM 事件触发三种触发源，并通过异步 FIFO 将采样结果发送到系统总线。
+
+模块输出 1 路汇聚中断 \verb+adc_reg_int+，由 7 个中断源聚合而来，软件通过标准 RAW/ST/ENA/CLR 四寄存器流程访问。
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/adc_ctrl_top_overview_cn.pdf}
+    \caption{SAR ADC 数字控制器系统框图}
+    \label{figure:adc-overview}
+\end{figure}
+
+
+\section{特性}
+\label{sec:adc-features}
+
+SAR ADC 数字控制器具有以下特性：
+\begin{itemize}
+    \item 支持两路独立 SAR ADC (SAR1 / SAR2) 并行工作
+    \item 每路支持 3 种触发模式：SCAN（定时器）、SW（软件写寄存器）、ETM 
+    \item 每路独立的模式表包含 16 个样式，可按顺序循环扫描 16 个通道（支持单端和差分）
+    \item 每路独立的四状态 SAR 控制 FSM（IDLE $\to$ XPD $\to$ RSTB $\to$ READ），支持连续采样模式
+    \item 2 路 IIR 低通滤波器，滤波系数可选 1/2/4/8/16/32/64
+    \item 2 组阈值比较器，支持单通道监控和 thres0 全通道监控
+    \item DMA 传输通路（异步 FIFO + EOF 帧管理），其中异步 FIFO 深度为 4 
+    \item 7 路中断聚合输出：SAR 转换完成、阈值越限、FIFO 溢出
+    \item ETM 事件输入/输出
+    \item 寄存器时钟门控
+\end{itemize}
+\subsection{ADC 通道}
+\label{sec:sar-adc-channels}
+
+SAR ADC 具有 8 组差分通道，连接芯片的 16 个管脚。ADC 需首先通过内部多路器选择待测量的模拟管脚，然后才能采样模拟信号。
+
+
+表 \ref{tab:adc-sar-adc-input-signals} 列出了用作 ADC 通道的芯片管脚。
+
+\begin{longtable}{ |l|l|r|}
+    \caption{SAR ADC 通道}
+    \label{tab:adc-sar-adc-input-signals}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{管脚序号} & \textbf{管脚名称} & \textbf{ADC 通道编号}  \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{管脚序号} & \textbf{管脚名称} & \textbf{ADC 通道编号}  \\\hline
+    \endhead
+    \hline
+    \endfoot
+55 & GPIO42 & ADC1\_CHANNEL0\_N   \\ \hline
+56 & GPIO43 & ADC1\_CHANNEL0\_P   \\ \hline
+57 & GPIO44 & ADC1\_CHANNEL1\_N   \\ \hline
+58 & GPIO45 & ADC1\_CHANNEL1\_P   \\ \hline
+59 & GPIO46 & ADC1\_CHANNEL2\_N   \\ \hline
+60 & GPIO47 & ADC1\_CHANNEL2\_P   \\ \hline
+61 & GPIO48 & ADC1\_CHANNEL3\_N  \\ \hline
+62 & GPIO49 & ADC1\_CHANNEL3\_P   \\ \hline
+65 & GPIO50 & ADC2\_CHANNEL0\_N   \\ \hline
+66 & GPIO51 & ADC2\_CHANNEL0\_P \\ \hline
+67 & GPIO52 & ADC2\_CHANNEL1\_N   \\ \hline
+68 & GPIO53 & ADC2\_CHANNEL1\_P  \\ \hline
+69 & GPIO54 & ADC2\_CHANNEL2\_N  \\ \hline
+70 & GPIO55 & ADC2\_CHANNEL2\_P  \\ \hline
+71 & GPIO56 & ADC2\_CHANNEL3\_N  \\ \hline
+72 & GPIO57 & ADC2\_CHANNEL3\_P   \\ \hline
+
+\end{longtable}
+
+\subsection{ADC 时钟}
+\label{sec:sar-adc-clock}
+
+SAR ADC 的系统时钟为 ADC\_CTRL\_CLK，它是 DIG ADC FSM 和其他逻辑电路的工作时钟（APB 接口除外）。它是源时钟经过 LP\_PERICLKRST\_LP\_ADC\_DIV\_NUM + 1 的分频所得。
+
+ADC\_CTRL\_CLK 可选择两个时钟源：XTAL\_CLK 和 RC\_FAST\_CLK，通过寄存器 \hyperref[fielddesc:LPPERICLKRSTLPADCCLKSEL]{LP\_PERICLKRST\_LP\_ADC\_CLK\_SEL} 配置。
+
+更多有关时钟的信息请参考章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+\section{触发控制}
+\label{sec:adc-trigger}
+
+\subsection{特性}
+\begin{itemize}
+    \item SAR1 / SAR2 独立配置触发模式
+    \item 4 种触发模式：OFF / SCAN / SW / ETM
+    \item 内置定时器生成 SCAN 触发脉冲
+    \item 软件和 ETM 均可随时停止转换并返回 IDLE
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-trigger-func-descr}
+
+\subsubsection{触发模式选择}
+通过 \hyperref[fielddesc:ADCSAR1TRIGGERMODE]{ADC\_SAR1\_TRIGGER\_MODE} 选择 SAR1 的触发模式：
+\begin{itemize}
+    \item 0：OFF，关闭触发，不产生任何采样启动脉冲
+    \item 1：SCAN，定时器周期性自动触发
+    \item 2：SW，软件写 \hyperref[fielddesc:ADCSAR1TRIGGERSTART]{ADC\_SAR1\_TRIGGER\_START} = 1 单次触发
+    \item 3：ETM，由外部 ETM 信号 \verb+etm_sar1_trigger+ 触发，详细内容请参考 \ref{sec:adc-etm} \textit{\nameref{sec:adc-etm}}
+\end{itemize}
+SAR2 通过 \hyperref[fielddesc:ADCSAR2TRIGGERMODE]{ADC\_SAR2\_TRIGGER\_MODE} 独立配置，行为相同。
+
+\subsubsection{定时器触发}
+当触发模式为 SCAN 时，内部定时器以 ADC 工作时钟计数：
+\begin{enumerate}
+    \item 软件写 \hyperref[fielddesc:ADCTIMEREN]{ADC\_TIMER\_EN} = 1 使能定时器
+    \item 软件写 \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} 设置计数周期
+    \item 定时器计数到目标值后自动产生一次采样触发脉冲，并重新开始计数；采样周期 = 2 × \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} 个 ADC 工作时钟 
+    \item 写 ADC\_TIMER\_EN = 0 关闭定时器并复位计数器
+\end{enumerate}
+
+\subsubsection{软件触发与停止}
+\begin{itemize}
+    \item \textbf{启动}：向 \hyperref[fielddesc:ADCSAR1TRIGGERSTART]{ADC\_SAR1\_TRIGGER\_START} (WT) 写 1，在 SW 模式下立即产生一次触发脉冲；SAR2 对应 \hyperref[fielddesc:ADCSAR2TRIGGERSTART]{ADC\_SAR2\_TRIGGER\_START}
+    \item \textbf{停止}：向 \hyperref[fielddesc:ADCSAR1TRIGGERSTOP]{ADC\_SAR1\_TRIGGER\_STOP} (WT) 写 1，无论 FSM 当前状态立即回到 IDLE；SAR2 对应 \hyperref[fielddesc:ADCSAR2TRIGGERSTOP]{ADC\_SAR2\_TRIGGER\_STOP}
+    \item 软件停止命令与 ETM 的 \verb+etm_sar1_stop+ / \verb+etm_sar2_stop+ 停止信号会进行逻辑或运算，任意信号有效时均可使 FSM 返回 IDLE
+\end{itemize}
+
+
+\section{模式表}
+\label{sec:adc-pattern}
+
+\subsection{特性}
+
+\begin{itemize}
+    \item 每路 SAR 独立的 16 个样式
+    \item 每个样式包含通道号和单端/差分模式
+    \item 支持循环扫描，指针自动回卷
+    \item 模式表更新时机可配置（测量完成 / 测量开始）
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-pattern-func-descr}
+
+\subsubsection{模式表结构}
+\label{sec:adc-pattern-tab}
+模式表最多包含 16 个样式，每个样式为 6-bit 的采样配置。每路 SAR 通过 4 个 24-bit 寄存器承载 16 个样式：\hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} $\sim$ \hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG}。每个寄存器内 4 个 item 位域从高位到低位排列，分别对应 4 个样式。
+
+\regfield{item3}{6}{18}{{0x00}}%
+\regfield{item2}{6}{12}{{0x00}}%
+\regfield{item1}{6}{6}{{0x00}}%
+\regfield{item0}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] 表示样式 0 \verb+~+ 样式 3。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} 包含样式 0～3}
+    \label{fig:adc-sar1-patt-tab1-reg-entry0-entry3}
+\end{figure}
+
+\regfield{item7}{6}{18}{{0x00}}%
+\regfield{item6}{6}{12}{{0x00}}%
+\regfield{item5}{6}{6}{{0x00}}%
+\regfield{item4}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] 表示样式 4 \verb+~+ 样式 7。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB2REG]{ADC\_SAR1\_PATT\_TAB2\_REG} 包含样式 4～7}
+    \label{fig:adc-sar1-patt-tab2-reg-entry4-entry7}
+\end{figure}
+
+\regfield{item11}{6}{18}{{0x00}}%
+\regfield{item10}{6}{12}{{0x00}}%
+\regfield{item9}{6}{6}{{0x00}}%
+\regfield{item8}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] 表示样式 8 \verb+~+ 样式 11。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB3REG]{ADC\_SAR1\_PATT\_TAB3\_REG} 包含样式 8～11}
+    \label{fig:adc-sar1-patt-tab3-reg-entry8-entry11}
+\end{figure}
+
+\regfield{item15}{6}{18}{{0x00}}%
+\regfield{item14}{6}{12}{{0x00}}%
+\regfield{item13}{6}{6}{{0x00}}%
+\regfield{item12}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] 表示样式 12 \verb+~+ 样式 15。
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG} 包含样式 12～15}
+    \label{fig:adc-sar1-patt-tab4-reg-entry12-entry15}
+\end{figure}
+
+16 个样式按以下顺序排列：\hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} 包含样式 0\verb+~+3，\hyperref[regdesc:ADCSAR1PATTTAB2REG]{ADC\_SAR1\_PATT\_TAB2\_REG} 包含样式 4\verb+~+7，\hyperref[regdesc:ADCSAR1PATTTAB3REG]{ADC\_SAR1\_PATT\_TAB3\_REG} 包含样式 8\verb+~+11，\hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG} 包含样式 12\verb+~+15。每个寄存器内 item 位域从高位到低位排列（[23:18] 为 item3，[17:12] 为 item2，[11:6] 为 item1，[5:0] 为 item0）。
+
+每个样式占 6 bit，包含 mode、reserved、channel 三个子字段。图 \ref{fig:adc-pattern-table-entry} 所示为样式结构，子字段说明见下文。
+
+\begin{figure}[H]
+\centering
+\regfield{channel}{4}{2}{{xxxx}}%
+\regfield{reserved}{1}{1}{x}%
+\regfield{mode}{1}{0}{x}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{样式结构（6-bit）}
+    \label{fig:adc-pattern-table-entry}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [mode] 配置模式：\\
+0：单端模式\\
+1：差分模式\\
+
+详见章节 \ref{sec:adc-pattern-mode-channel} \textit{\nameref{sec:adc-pattern-mode-channel}}。
+
+\item [reserved] 保留字段
+\item [channel] 配置采样通道号：\\
+0：CHANNEL\_0\_N \\
+1：CHANNEL\_0\_P \\
+2：CHANNEL\_1\_N\\
+3：CHANNEL\_1\_P\\
+4：CHANNEL\_2\_N\\
+5：CHANNEL\_2\_P\\
+6：CHANNEL\_3\_N\\
+7：CHANNEL\_3\_P\\
+8–15：reserved \\
+
+
+\end{reglist}\end{regdesc}
+
+SAR2 使用 \hyperref[regdesc:ADCSAR2PATTTAB1REG]{ADC\_SAR2\_PATT\_TAB1\_REG} $\sim$ \hyperref[regdesc:ADCSAR2PATTTAB4REG]{ADC\_SAR2\_PATT\_TAB4\_REG}，编码相同。
+
+\subsubsection{扫描长度与指针}
+\hyperref[fielddesc:ADCSAR1PATTLEN]{ADC\_SAR1\_PATT\_LEN}（4 bits）配置模式表长度，值 0$\sim$15 对应长度 1$\sim$16。模式表指针从 0 开始，每次更新请求后递增 1，达到 ADC\_SAR1\_PATT\_LEN 后回卷到 0。
+
+写 \hyperref[fielddesc:ADCSAR1PATTPCLEAR]{ADC\_SAR1\_PATT\_P\_CLEAR} (WT) = 1 可立即清零模式表指针。
+
+\subsubsection{更新时机}
+\hyperref[fielddesc:ADCSAR1PATTTYPE]{ADC\_SAR1\_PATT\_TYPE} 控制模式表指针的更新时机：
+\begin{itemize}
+    \item 0：当前采样完成后切换到下一个样式 — 适用于每次采样完成后都需切换样式的场景
+    \item 1：下一次采样启动时切换到下一个样式 — 适用于仅在定时器或 ETM 触发时才切换样式的场景
+\end{itemize}
+
+\subsubsection{通道与模式选择}
+\label{sec:adc-pattern-mode-channel}
+根据当前样式的 mode 位：
+\begin{itemize}
+    \item \textbf{单端模式}（mode = 0）：使能 channel 指定的单个 pad，同时使能对应的 GND 参考
+    \item \textbf{差分模式}（mode = 1）：使能 channel[3:1] 指定的相邻偶奇 pad 对，GND 参考关闭
+\end{itemize}
+
+
+\section{SAR 控制 FSM}
+\label{sec:adc-fsm}
+
+\subsection{特性}
+\begin{itemize}
+    \item 四状态 FSM：IDLE $\to$ XPD $\to$ RSTB $\to$ READ
+    \item 上电等待和复位等待周期独立可配置
+    \item 支持连续采样模式
+    \item SAR 电源三态控制（自动 / 强制关闭 / 强制开启）
+    \item SAR1 和 SAR2 各自独立的 FSM 实例
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-fsm-func-descr}
+
+
+\subsubsection{状态机流程}
+\begin{itemize}
+    \item \textbf{IDLE}：空闲，等待采样触发
+    \item \textbf{XPD}：使能 SAR 电源，等待 \hyperref[fielddesc:ADCXPDWAIT]{ADC\_XPD\_WAIT} 次 SAR 转换完成
+    \item \textbf{RSTB}：纯等待状态，等待 \hyperref[fielddesc:ADCRSTBWAIT]{ADC\_RSTB\_WAIT} 次 SAR 转换完成，为模拟侧预留建立时间
+    \item \textbf{READ}：等待模拟 SAR 送出下一次转换结果，锁存后回到 IDLE
+\end{itemize}
+
+ADC\_XPD\_WAIT 和 ADC\_RSTB\_WAIT 通过 \hyperref[regdesc:ADCFSMWAITREG]{ADC\_FSM\_WAIT\_REG} 配置，各 4 bit。
+
+模拟 SAR 上电后自行连续转换，每 24 个 ADC 工作时钟（$T_{conv}$）完成一次并给出结果，与 FSM 之间无握手。一次转换分两段：\textbf{前 5 clk 为采样窗}，模拟输入被采样到电容阵列上；其后 19 clk 为逐位逼近，模拟输入不再影响结果。因此模拟通道需在采样窗打开前建立完成。
+
+两个等待值以\textbf{完成的 SAR 转换次数}为单位，一个计数即一整个 $T_{conv}$。配 0 是特例：该状态只停留 1 个 ADC 工作时钟，因此 ADC\_RSTB\_WAIT 从 0 改到 1 会跳变一整个 $T_{conv}$。ADC\_RSTB\_WAIT 推荐配置为 2。
+
+\subsubsection{连续采样模式}
+\hyperref[fielddesc:ADCSAR1CONTINUEMODEEN]{ADC\_SAR1\_CONTINUE\_MODE\_EN} = 1 时，READ 完成后不回 IDLE：收到新触发则跳 RSTB，否则\textbf{保持在 READ}。
+
+FSM 停在 READ 期间持续采样：每 24 clk 输出一个样本，刷新 \hyperref[fielddesc:ADCAPBSARADC1DATA]{ADC\_APB\_SARADC1\_DATA}，产生一次 \hyperref[interreupt:ADCSAR1DONEINT]{ADC\_SAR1\_DONE\_INT} 中断、一次 DMA 推送和一个 ETM 事件，并把模式表指针推进一格。因此连续模式的用法是\textbf{触发一次后自由运行} —— 启动后即以每 24 clk 一个样本持续输出，通道按模式表循环。SAR2 对应 \hyperref[fielddesc:ADCSAR2CONTINUEMODEEN]{ADC\_SAR2\_CONTINUE\_MODE\_EN}。
+
+再次触发会使 FSM 跳回 RSTB，该期间无样本输出。因此连续模式下的触发不是「发起一次采样」，而是\textbf{在样本流中插入一段 RSTB}。
+
+采样耗时：
+\begin{itemize}
+    \item \textbf{启动延迟}（触发 $\to$ 第一个样本）$\approx$ (ADC\_XPD\_WAIT + ADC\_RSTB\_WAIT + 1) $\times$ 24 clk；ADC\_XPD\_WAIT = 8、ADC\_RSTB\_WAIT = 2 时约 264 clk
+    \item \textbf{稳态采样周期} = 24 clk，吞吐 1 / 24 clk，与两个等待值无关 —— 它们只在启动时各走一次
+\end{itemize}
+
+下面三张图的 $T_{conv}$ 按比例压缩以便画出 clk，等待值取 ADC\_XPD\_WAIT = 2、ADC\_RSTB\_WAIT = 1（场景 2 取 0），分别如图 \ref{figure:adcctrltop-timing-multich}、图 \ref{figure:adcctrltop-timing-singlech} 与图 \ref{figure:adcctrltop-timing-swtrig} 所示。
+
+\textbf{场景 1：多通道自由扫描}（ADC\_SAR1\_PATT\_TYPE = 0，done 切换）—— 指针每出一个样本推进一次，通道逐样本轮转。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_continuous_cn.pdf}
+    \caption{连续采样与通道切换时序图}
+    \label{figure:adcctrltop-timing-multich}
+\end{figure}
+
+\textbf{场景 2：通道不切换}（ADC\_SAR1\_PATT\_TYPE = 1，start 切换）—— 指针改为在触发时推进，自由运行期间无触发，通道保持不变。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_single_channel_cn.pdf}
+    \caption{连续采样时序图（PATT\_TYPE = 1，通道不切换）}
+    \label{figure:adcctrltop-timing-singlech}
+\end{figure}
+
+\textbf{场景 3：非连续模式（ADC\_SAR1\_CONTINUE\_MODE\_EN = 0）软件触发} —— 每次触发走完 IDLE $\to$ XPD $\to$ RSTB $\to$ READ 再回 IDLE，采样间隔期间 SAR 断电。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_sw_trigger_cn.pdf}
+    \caption{非连续模式软件触发采样时序图}
+    \label{figure:adcctrltop-timing-swtrig}
+\end{figure}
+
+\textbf{通道切换位置}：模式表指针在样本输出的同时推进，通道在其后 1 $\sim$ 2 个 clk 切换，而采样窗是每次转换开头的 5 个 clk。因此切换落在采样窗内：窗内前 1 $\sim$ 2 clk 仍处在上一通道，其余 3 $\sim$ 4 clk 处在新通道。多通道自由扫描的样本是否有效，取决于模拟 mux 能否在这 3 $\sim$ 4 clk 内建立完成。
+
+单次触发后自由运行时 ADC\_RSTB\_WAIT 只走一次，其建立时间只作用于第一个样本。\textbf{多通道扫描应按采样节奏周期性触发}：每次触发使 FSM 经过 RSTB，为刚切换的通道提供 ADC\_RSTB\_WAIT $\times$ 24 clk 建立时间，此后取的样本采样窗完整落在新通道上。若需要更长的建立时间，可改用 ADC\_SAR1\_CONTINUE\_MODE\_EN = 0（场景 3）。
+
+三种用法的取舍：
+
+{\small
+\begin{center}
+\begin{tabular}{|l|p{2.5cm}|p{2.5cm}|p{3.2cm}|}
+    \hline
+    \rowcolor{lightgray}
+    用法 & 采样周期 & 通道建立时间 & 适用 \\\hline
+    连续模式 + 单次触发 & 24 clk & 采样窗内约 3 $\sim$ 4 clk & 通道不切换的高速采样 \\\hline
+    连续模式 + 周期触发 & (RSTB\_WAIT + 1) $\times$ 24 clk，推荐 2 为 72 clk & RSTB\_WAIT $\times$ 24 clk，推荐 2 为约 46 clk & \textbf{多通道扫描} \\\hline
+    CONTINUE\_MODE\_EN = 0 & (XPD\_WAIT + RSTB\_WAIT + 1) $\times$ 24 clk，推荐 8 / 2 为 264 clk & (XPD\_WAIT + RSTB\_WAIT) $\times$ 24 clk，推荐 8 / 2 为 240 clk & 需要更长建立时间时 \\\hline
+\end{tabular}
+\end{center}
+}
+
+SCAN 模式下定时器触发周期应不短于上表的采样周期（触发周期 = 2 $\times$ \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} 个 ADC 工作时钟）。
+
+\subsubsection{SAR 电源控制}
+\hyperref[fielddesc:ADCXPDSAR1FORCE]{ADC\_XPD\_SAR1\_FORCE}[1:0] 控制 SAR1 电源：
+\begin{itemize}
+    \item 0$\sim$1：自动控制 — 非 IDLE 状态时开启，IDLE 时关闭
+    \item 2：强制关闭 SAR 电源
+    \item 3：强制开启 SAR 电源
+\end{itemize}
+SAR2 通过 \hyperref[fielddesc:ADCXPDSAR2FORCE]{ADC\_XPD\_SAR2\_FORCE} 独立控制。
+
+\subsubsection{状态查询}
+软件可读取 \hyperref[fielddesc:ADCSAR1STATE]{ADC\_SAR1\_STATE} (RO) 或 \hyperref[fielddesc:ADCSAR2STATE]{ADC\_SAR2\_STATE} (RO) 查询 FSM 当前状态：0=IDLE, 1=XPD, 2=RSTB, 3=READ。
+
+
+\section{数据处理}
+\label{sec:adc-datapath}
+
+\subsection{特性}
+\begin{itemize}
+    \item SAR1 / SAR2 双路数据仲裁
+    \item 2 个独立 IIR 低通滤波器
+    \item 滤波系数为 2 的幂次（1$\sim$64）
+    \item 不匹配滤波通道的数据直接透传 
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-datapath-func-descr}
+
+\subsubsection{数据仲裁}
+SAR1 和 SAR2 的转换完成信号到达后，数据处理模块按以下规则选择数据：
+\begin{itemize}
+    \item 仅 SAR1 数据到达：处理 SAR1 数据
+    \item 仅 SAR2 数据到达：处理 SAR2 数据
+    \item 两路同时到达：先处理 SAR1，再处理 SAR2（顺序完成后结果进入后级）
+\end{itemize}
+
+\subsubsection{IIR 滤波器}
+模块提供 2 个独立的 IIR 滤波通道。\hyperref[fielddesc:ADCFILTERCHANNEL0]{ADC\_FILTER\_CHANNEL0} 与 \hyperref[fielddesc:ADCFILTERCHANNEL1]{ADC\_FILTER\_CHANNEL1} 分别指定各滤波通道要滤波的通道号。
+
+滤波系数通过 \hyperref[fielddesc:ADCFILTERFACTOR0]{ADC\_FILTER\_FACTOR0} / \hyperref[fielddesc:ADCFILTERFACTOR1]{ADC\_FILTER\_FACTOR1}（3 bits）配置：
+\begin{itemize}
+    \item 0：k=1（无滤波，直通）
+    \item 1：k=2
+    \item 2：k=4
+    \item 3：k=8
+    \item 4：k=16
+    \item 5：k=32
+    \item 6：k=64
+\end{itemize}
+
+滤波算法为一阶 IIR：
+
+\[
+sum_{n} = sum_{n–1} – \frac{sum_{n–1}}{k} + adc\_din_{n}
+\]
+
+\[
+filtered\_data_{n} = \frac{sum_{n}}{k}
+\]
+
+其中 sum 为内部的积分器，adc\_din 为输入的 ADC 采样原始值，filtered\_data 为经过滤波器的 ADC 数据。
+
+不匹配滤波通道号的样点不经滤波，直接透传到后续处理。写 \hyperref[fielddesc:ADCFILTERRESET]{ADC\_FILTER\_RESET} (WT) = 1 可清零两个滤波器的内部状态。
+
+\subsubsection{采样数据读取}
+最近一次转换的数据可通过 \hyperref[fielddesc:ADCAPBSARADC1DATA]{ADC\_APB\_SARADC1\_DATA}（RO，22 bits）和 \hyperref[fielddesc:ADCAPBSARADC2DATA]{ADC\_APB\_SARADC2\_DATA}（RO，22 bits）读取，[21:17] 为通道号，[16:0] 为 17 bits ADC 转换结果。
+
+
+\section{阈值监控}
+\label{sec:adc-thres}
+
+\subsection{特性}
+\begin{itemize}
+    \item 2 组独立阈值比较器：阈值 0 (thres0)、阈值 1 (thres1)
+    \item 每组独立配置监控通道、上阈值和下阈值
+    \item thres0 支持全通道监控模式
+    \item 越限时置位对应中断
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-thres-func-descr}
+
+\subsubsection{阈值配置}
+每组阈值比较器对应的寄存器字段：
+\begin{itemize}
+    \item 使能：\hyperref[fielddesc:ADCTHRES0EN]{ADC\_THRES0\_EN}（写 1 使能）
+    \item 通道：\hyperref[fielddesc:ADCTHRES0CHANNEL]{ADC\_THRES0\_CHANNEL}（5 bits）
+    \item 高阈值：\hyperref[fielddesc:ADCTHRES0HIGH]{ADC\_THRES0\_HIGH}（17 bits）
+    \item 低阈值：\hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES0\_LOW}（17 bits）
+\end{itemize}
+thres1 使用 \hyperref[fielddesc:ADCTHRES1EN]{ADC\_THRES1\_EN} / \hyperref[fielddesc:ADCTHRES1CHANNEL]{ADC\_THRES1\_CHANNEL} / \hyperref[fielddesc:ADCTHRES1HIGH]{ADC\_THRES1\_HIGH} / \hyperref[fielddesc:ADCTHRES1LOW]{ADC\_THRES1\_LOW}。
+
+\subsubsection{比较逻辑}
+滤波后的采样数据到达时，如果通道号匹配且比较器已使能：
+\begin{itemize}
+    \item 若 adc\_din $>$ ADC\_THRES0\_HIGH：产生 THRES0\_HIGH 中断脉冲
+    \item 若 adc\_din $<$ ADC\_THRES0\_LOW：产生 THRES0\_LOW 中断脉冲
+\end{itemize}
+每次越限事件置位一次中断；软件通过写 \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG} 清除后，后续新的越限事件仍会继续触发。
+
+\subsubsection{全通道监控模式}
+设置 \hyperref[fielddesc:ADCTHRESALLEN]{ADC\_THRES\_ALL\_EN} = 1 时，thres0 不再限制于 ADC\_THRES0\_CHANNEL 指定的通道，而是监控所有通道的采样数据。该功能仅对 thres0 有效，thres1 始终按指定通道监控。
+
+
+\section{DMA 控制}
+\label{sec:adc-dma}
+
+\subsection{特性}
+\begin{itemize}
+    \item 通过异步 FIFO 跨 ADC 时钟域 $\to$ DMA 时钟域传输数据
+    \item 支持 EOF 帧标记，方便软件分帧处理
+    \item FIFO 深度 4，溢出保护与中断
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-dma-func-descr}
+
+\subsubsection{DMA 使能}
+设置 \hyperref[fielddesc:ADCAPBADCTRANS]{ADC\_APB\_ADC\_TRANS} = 1 使能 DMA 传输通路。使能后，每次经数据处理完成的样点都会写入异步 FIFO，由 DMA 控制器搬运到系统内存。
+
+\subsubsection{EOF 帧管理}
+\hyperref[fielddesc:ADCAPBADCEOFNUM]{ADC\_APB\_ADC\_EOF\_NUM}（16 bits）配置每帧样点数。DMA 控制器维护一个 EOF 计数器：
+\begin{enumerate}
+    \item 每传输一个样点递增 1
+    \item 计数达到 \hyperref[fielddesc:ADCAPBADCEOFNUM]{ADC\_APB\_ADC\_EOF\_NUM} – 1 时在 DMA 数据中插入 EOF 标志位，并清零计数器 
+    \item 软件可通过写 \hyperref[fielddesc:ADCDMAEOFNUMCLR]{ADC\_DMA\_EOF\_NUM\_CLR} (WT) = 1 手动清零计数器
+\end{enumerate}
+
+\subsubsection{DMA 数据格式}
+软件视角下，每次 DMA 传输得到一个 32 位采样字（4 字节），组织如下：
+\begin{itemize}
+    \item byte 3：保留
+    \item byte 2：\verb+channel++ \verb+data_msb+ — 采样通道号 + ADC 采样数据的 MSB
+    \item byte 1：\verb+data_high+ — ADC 采样数据高 8 位
+    \item byte 0：\verb+data_low+ — ADC 采样数据低 8 位
+\end{itemize}
+完整 ADC 采样值由 \verb+data_msb+、\verb+data_high+ 与 \verb+data_low+ 拼接：\verb+sample = (data_msb << 16) | (data_high << 8) | data_low+。软件按 4 字节读取 DMA 数据即可；硬件内部对齐与打包细节由 DMA 控制器处理。
+
+\subsubsection{FIFO 溢出}
+当异步 FIFO 写满后继续写入会触发一次 ADC\_FIFO\_OVERFLOW 中断。中断仅在 FIFO 进入溢出状态的瞬间产生一次，若持续溢出不会重复触发；软件清中断并排空 FIFO 后，下一次新的溢出事件才会再次触发。
+
+
+\section{ETM 事件}
+\label{sec:adc-etm}
+
+\subsection{特性}
+\begin{itemize}
+    \item 支持 ETM 触发输入启动/停止 ADC 转换
+    \item 提供多种事件输出供系统其他模块使用
+    \item 输出独立的 ETM 参考时钟
+\end{itemize}
+
+\subsection{功能描述}
+\label{sec:adc-etm-func-descr}
+
+\subsubsection{ETM 触发输入}
+\begin{itemize}
+    \item \verb+etm_sar1_trigger+ — SAR1 ETM 触发启动（\hyperref[fielddesc:ADCSAR1TRIGGERMODE]{ADC\_SAR1\_TRIGGER\_MODE} = 3 时有效）
+    \item \verb+etm_sar2_trigger+ — SAR2 ETM 触发启动（\hyperref[fielddesc:ADCSAR2TRIGGERMODE]{ADC\_SAR2\_TRIGGER\_MODE} = 3 时有效）
+    \item \verb+etm_sar1_stop+ — SAR1 ETM 停止，与软件 \hyperref[fielddesc:ADCSAR1TRIGGERSTOP]{ADC\_SAR1\_TRIGGER\_STOP} 逻辑或后生效
+    \item \verb+etm_sar2_stop+ — SAR2 ETM 停止，与软件 \hyperref[fielddesc:ADCSAR2TRIGGERSTOP]{ADC\_SAR2\_TRIGGER\_STOP} 逻辑或后生效
+\end{itemize}
+
+\subsubsection{ETM 事件输出}
+\begin{itemize}
+    \item \verb+etm_sar1_done+ / \verb+etm_sar2_done+ — 单次转换完成事件
+    \item \verb+etm_event_sar1_start+ / \verb+etm_event_sar2_start+ — 采样开始事件（FSM 由 RSTB 进入 READ）
+    \item \verb+etm_event_thres0_high_int_etm+ / \verb+etm_event_thres1_high_int_etm+ — 阈值高越限事件
+    \item \verb+etm_event_thres0_low_int_etm+ / \verb+etm_event_thres1_low_int_etm+ — 阈值低越限事件
+\end{itemize}
+
+\subsubsection{ETM 时钟}
+\verb+clk_adc_etm+ 输出 ADC 工作时钟，供 ETM 系统作为参考时钟使用。
+
+
+\section{中断}
+\label{sec:adc-intr}
+
+SAR ADC 模块共提供 7 路中断源，聚合成 1 路 \verb+adc_reg_int+ 输出：
+
+\begin{longtable}[c]{|l|L{9 cm}|}
+    \caption{SAR ADC 中断源}\label{tab:adc-intr}\\\hline
+    \rowcolor{lightgray}
+    中断源 & 描述 \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+        中断源 & 描述\\\hline
+    \endhead
+    \endfoot
+
+    \label{interreupt:ADCSAR1DONEINT}ADC\_SAR1\_DONE\_INT & SAR1 单次转换完成 \\\hline
+    \label{interreupt:ADCSAR2DONEINT}ADC\_SAR2\_DONE\_INT & SAR2 单次转换完成 \\\hline
+    \label{interreupt:ADCTHRES0HIGHINT}ADC\_THRES0\_HIGH\_INT & 滤波后的数据超过高阈值 \hyperref[fielddesc:ADCTHRES0HIGH]{ADC\_THRES0\_HIGH} \\\hline
+    \label{interreupt:ADCTHRES1HIGHINT}ADC\_THRES1\_HIGH\_INT & 滤波后的数据超过高阈值 \hyperref[fielddesc:ADCTHRES1HIGH]{ADC\_THRES1\_HIGH} \\\hline
+    \label{interreupt:ADCTHRES0LOWINT}ADC\_THRES0\_LOW\_INT & 滤波后的数据低于低阈值 \hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES0\_LOW} \\\hline
+    \label{interreupt:ADCTHRES1LOWINT}ADC\_THRES1\_LOW\_INT & 滤波后的数据低于低阈值 \hyperref[fielddesc:ADCTHRES1LOW]{ADC\_THRES1\_LOW} \\\hline
+    \label{interreupt:ADCFIFOOVERFLOWINT}ADC\_FIFO\_OVERFLOW\_INT & DMA FIFO 溢出 \\\hline
+
+\end{longtable}
+
+中断寄存器组：\hyperref[regdesc:ADCINTENAREG]{ADC\_INT\_ENA\_REG}（0x064）、\hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG}（0x068）、\hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG}（0x06C）、\hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG}（0x070）。
+
+\textbf{中断处理流程}：
+\begin{enumerate}
+    \item 硬件事件发生后 \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} 对应 bit 自动置位
+    \item \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} = \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} \& \hyperref[regdesc:ADCINTENAREG]{ADC\_INT\_ENA\_REG}
+    \item \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} 任一 bit 非零时 \verb+adc_reg_int+ 输出拉高
+    \item CPU 读 \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} 判断中断源
+    \item 处理完成后写 \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG} 对应 bit = 1 清除
+    \item \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} 不会自动清除，必须软件写 \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG} 清除
+\end{enumerate}
+
+
+\section{寄存器列表}
+\label{sec:adc-reg-summ}
+
+本小节的所有地址均为相对于 SAR ADC 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/59-ADC-reg-summ__CN}
+
+
+\section{寄存器}
+\label{sec:adc-reg}
+
+本小节的所有地址均为相对于 SAR ADC 控制器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+\subfile{\modulefiles/59-ADC-reg__CN}
+
+
+\end{document}

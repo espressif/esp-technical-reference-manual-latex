@@ -1,0 +1,626 @@
+\newif\ifglobal
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./59-ADC}
+
+% >>> M1: This module is in global project? <<<
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+\else
+    \PassOptionsToPackage{quiet}{fontspec}
+    \documentclass[openany, 10pt]{book}
+    \usepackage{preamble-trm-module}
+    \usepackage{ctex}
+    \myexternaldocument{./00-shared/temp-labels-en}
+\fi
+
+\setcounter{secnumdepth}{4}
+
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+\selectlanguage{english}
+\setenglishformatting
+
+\ifglobal
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{adc}{}
+\chapter{SAR ADC Digital Controller (ADC)}
+\label{mod:adc}
+
+\section{Overview}
+\label{sec:adc-intro}
+
+The \chipname{} SAR ADC digital controller is the digital control block of the HP ADC subsystem. It manages two independent SAR ADCs (SAR1 and SAR2), including sampling triggers, timing control, data filtering, threshold monitoring, and DMA transfers. The block exposes register access to the CPU via the APB bus and supports three trigger sources: software trigger, periodic timer scan, and ETM event trigger. Conversion results are transferred to the system bus through an asynchronous FIFO.
+
+The block outputs one aggregated interrupt \verb+adc_reg_int+ formed from seven interrupt sources. Software accesses interrupts through the standard RAW / ST / ENA / CLR four-register flow.
+
+\begin{figure}[!ht ]
+    \centering
+    \includegraphics[width=1\textwidth]{\modulefiles/figures/adc_ctrl_top_overview_en.pdf}
+    \caption{SAR ADC digital controller block diagram}
+    \label{figure:adc-overview}
+\end{figure}
+
+
+\section{Features}
+\label{sec:adc-features}
+
+The SAR ADC digital controller has the following features:
+\begin{itemize}
+    \item Two independent SAR ADCs (SAR1 / SAR2) operating in parallel
+    \item Three trigger modes per SAR: SCAN (timer), SW (register write), ETM
+    \item Per-SAR pattern table with 16 patterns for sequential scanning of up to 16 channels, supporting both single-ended and differential inputs
+    \item Per-SAR four-state SAR control FSM (IDLE $\to$ XPD $\to$ RSTB $\to$ READ) with continuous sampling mode
+    \item Two IIR low-pass filter channels with selectable factor 1 / 2 / 4 / 8 / 16 / 32 / 64
+    \item Two threshold comparators with per-channel monitoring and thres0 all-channel monitoring
+    \item DMA transfer path (asynchronous FIFO + EOF frame management); asynchronous FIFO depth is 4
+    \item Seven aggregated interrupt sources: SAR conversion done, threshold violation, FIFO overflow
+    \item ETM event input/output
+    \item Register clock gating
+\end{itemize}
+
+\subsection{ADC Channels}
+\label{sec:sar-adc-channels}
+
+The SAR ADC has eight differential channel pairs connected to 16 chip pins. The ADC must first select the analog pin to measure through an internal multiplexer before sampling the analog signal.
+
+Table \ref{tab:adc-sar-adc-input-signals} lists the chip pins used as ADC channels.
+
+\begin{longtable}{ |l|l|r|}
+    \caption{SAR ADC channels}
+    \label{tab:adc-sar-adc-input-signals}
+    \\\hline
+    \rowcolor{lightgray}
+    \textbf{Pin No.} & \textbf{Pin Name} & \textbf{ADC Channel ID}  \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+    \textbf{Pin No.} & \textbf{Pin Name} & \textbf{ADC Channel ID}  \\\hline
+    \endhead
+    \hline
+    \endfoot
+55 & GPIO42 & ADC1\_CHANNEL0\_N   \\ \hline
+56 & GPIO43 & ADC1\_CHANNEL0\_P   \\ \hline
+57 & GPIO44 & ADC1\_CHANNEL1\_N   \\ \hline
+58 & GPIO45 & ADC1\_CHANNEL1\_P   \\ \hline
+59 & GPIO46 & ADC1\_CHANNEL2\_N   \\ \hline
+60 & GPIO47 & ADC1\_CHANNEL2\_P   \\ \hline
+61 & GPIO48 & ADC1\_CHANNEL3\_N  \\ \hline
+62 & GPIO49 & ADC1\_CHANNEL3\_P   \\ \hline
+65 & GPIO50 & ADC2\_CHANNEL0\_N   \\ \hline
+66 & GPIO51 & ADC2\_CHANNEL0\_P \\ \hline
+67 & GPIO52 & ADC2\_CHANNEL1\_N   \\ \hline
+68 & GPIO53 & ADC2\_CHANNEL1\_P  \\ \hline
+69 & GPIO54 & ADC2\_CHANNEL2\_N  \\ \hline
+70 & GPIO55 & ADC2\_CHANNEL2\_P  \\ \hline
+71 & GPIO56 & ADC2\_CHANNEL3\_N  \\ \hline
+72 & GPIO57 & ADC2\_CHANNEL3\_P   \\ \hline
+
+\end{longtable}
+
+\subsection{ADC Clock}
+\label{sec:sar-adc-clock}
+
+The SAR ADC system clock is ADC\_CTRL\_CLK. It is the working clock for the DIG ADC FSM and other logic (except the APB interface). It is derived from the source clock divided by LP\_PERICLKRST\_LP\_ADC\_DIV\_NUM + 1.
+
+The source clock for ADC\_CTRL\_CLK can be selected from two options: XTAL\_CLK or RC\_FAST\_CLK, via register \hyperref[fielddesc:LPPERICLKRSTLPADCCLKSEL]{LP\_PERICLKRST\_LP\_ADC\_CLK\_SEL}.
+
+For more clock information, see Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+\section{Trigger Control}
+\label{sec:adc-trigger}
+
+\subsection{Features}
+\begin{itemize}
+    \item SAR1 / SAR2 trigger modes are independently configurable
+    \item Four trigger modes: OFF / SCAN / SW / ETM
+    \item Built-in timer generates SCAN trigger pulses
+    \item Software and ETM can stop conversion at any time and return the FSM to IDLE
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-trigger-func-descr}
+
+\subsubsection{Trigger Mode Selection}
+\hyperref[fielddesc:ADCSAR1TRIGGERMODE]{ADC\_SAR1\_TRIGGER\_MODE} selects the trigger mode for SAR1:
+\begin{itemize}
+    \item 0: OFF --- disables triggering; no sampling start pulses are generated
+    \item 1: SCAN --- periodic automatic trigger from the internal timer
+    \item 2: SW --- one-shot trigger by writing \hyperref[fielddesc:ADCSAR1TRIGGERSTART]{ADC\_SAR1\_TRIGGER\_START} = 1 
+    \item 3: ETM --- triggered by external signal \verb+etm_sar1_trigger+. See Section \ref{sec:adc-etm} \textit{\nameref{sec:adc-etm}} for details.
+\end{itemize}
+SAR2 uses \hyperref[fielddesc:ADCSAR2TRIGGERMODE]{ADC\_SAR2\_TRIGGER\_MODE} with the same behavior.
+
+\subsubsection{Timer Trigger}
+When the trigger mode is SCAN, the internal timer counts on the ADC working clock:
+\begin{enumerate}
+    \item Software writes \hyperref[fielddesc:ADCTIMEREN]{ADC\_TIMER\_EN} = 1 to enable the timer
+    \item Software writes \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} to set the count period
+    \item When the count reaches the target value, the timer automatically issues one sampling trigger pulse and restarts; sampling period = 2 $\times$ \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} ADC working clocks
+    \item Writing ADC\_TIMER\_EN = 0 disables the timer and resets the counter
+\end{enumerate}
+
+\subsubsection{Software Trigger and Stop}
+\begin{itemize}
+    \item \textbf{Start}: write 1 to \hyperref[fielddesc:ADCSAR1TRIGGERSTART]{ADC\_SAR1\_TRIGGER\_START} (WT) --- in SW mode this immediately produces one trigger pulse; SAR2 uses \hyperref[fielddesc:ADCSAR2TRIGGERSTART]{ADC\_SAR2\_TRIGGER\_START}
+    \item \textbf{Stop}: write 1 to \hyperref[fielddesc:ADCSAR1TRIGGERSTOP]{ADC\_SAR1\_TRIGGER\_STOP} (WT) --- regardless of the current FSM state, returns to IDLE; SAR2 uses \hyperref[fielddesc:ADCSAR2TRIGGERSTOP]{ADC\_SAR2\_TRIGGER\_STOP}
+    \item The software stop command is OR'd with ETM \verb+etm_sar1_stop+ / \verb+etm_sar2_stop+; either causes the FSM to return to IDLE
+\end{itemize}
+
+
+\section{Pattern Table}
+\label{sec:adc-pattern}
+
+\subsection{Features}
+\begin{itemize}
+    \item Per-SAR 16 independent patterns
+    \item Each pattern contains a channel number and single-ended / differential mode
+    \item Cyclic scanning with automatic pointer wrap-around
+    \item Pattern table pointer update timing is configurable (on measurement done / measurement start)
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-pattern-func-descr}
+
+\subsubsection{Pattern Table Structure}
+\label{sec:adc-pattern-tab}
+Each SAR holds 16 patterns in four 24-bit registers \hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} $\sim$ \hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG}. Within each register, four item bit fields are packed from MSB to LSB.
+
+\regfield{item3}{6}{18}{{0x00}}%
+\regfield{item2}{6}{12}{{0x00}}%
+\regfield{item1}{6}{6}{{0x00}}%
+\regfield{item0}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] represents patterns 0--3.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} contains patterns 0--3}
+    \label{fig:adc-sar1-patt-tab1-reg-entry0-entry3}
+\end{figure}
+
+\regfield{item7}{6}{18}{{0x00}}%
+\regfield{item6}{6}{12}{{0x00}}%
+\regfield{item5}{6}{6}{{0x00}}%
+\regfield{item4}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] represents patterns 4--7.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB2REG]{ADC\_SAR1\_PATT\_TAB2\_REG} contains patterns 4--7}
+    \label{fig:adc-sar1-patt-tab2-reg-entry4-entry7}
+\end{figure}
+
+\regfield{item11}{6}{18}{{0x00}}%
+\regfield{item10}{6}{12}{{0x00}}%
+\regfield{item9}{6}{6}{{0x00}}%
+\regfield{item8}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] represents patterns 8--11.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB3REG]{ADC\_SAR1\_PATT\_TAB3\_REG} contains patterns 8--11}
+    \label{fig:adc-sar1-patt-tab3-reg-entry8-entry11}
+\end{figure}
+
+\regfield{item15}{6}{18}{{0x00}}%
+\regfield{item14}{6}{12}{{0x00}}%
+\regfield{item13}{6}{6}{{0x00}}%
+\regfield{item12}{6}{0}{{0x00}}%
+\begin{regdesc}\begin{reglist}
+\item [item \regindex{x}] represents patterns 12--15.
+\end{reglist}\end{regdesc}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{\hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG} contains patterns 12--15}
+    \label{fig:adc-sar1-patt-tab4-reg-entry12-entry15}
+\end{figure}
+
+The 16 patterns are arranged as follows: \hyperref[regdesc:ADCSAR1PATTTAB1REG]{ADC\_SAR1\_PATT\_TAB1\_REG} holds patterns 0--3, \hyperref[regdesc:ADCSAR1PATTTAB2REG]{ADC\_SAR1\_PATT\_TAB2\_REG} holds patterns 4--7, \hyperref[regdesc:ADCSAR1PATTTAB3REG]{ADC\_SAR1\_PATT\_TAB3\_REG} holds patterns 8--11, and \hyperref[regdesc:ADCSAR1PATTTAB4REG]{ADC\_SAR1\_PATT\_TAB4\_REG} holds patterns 12--15. Within each register, the item bit fields are packed from MSB to LSB ([23:18] is item3, [17:12] is item2, [11:6] is item1, and [5:0] is item0).
+
+Each pattern is 6 bits and contains three subfields: mode, reserved, and channel. Figure \ref{fig:adc-pattern-table-entry} shows the pattern layout; subfield descriptions follow. 
+
+\begin{figure}[H]
+\centering
+\regfield{channel}{4}{2}{{xxxx}}%
+\regfield{reserved}{1}{1}{x}%
+\regfield{mode}{1}{0}{x}%
+\end{figure}
+\vspace{-2em}
+\begin{figure}[H]
+    \centering
+    \caption{Pattern layout (6-bit)}
+    \label{fig:adc-pattern-table-entry}
+\end{figure}
+\vspace{-2em}
+\begin{regdesc}\begin{reglist}
+\item [mode] Configures the sampling mode:\\
+0: single-ended\\
+1: differential\\
+See Section \ref{sec:adc-pattern-mode-channel} \textit{\nameref{sec:adc-pattern-mode-channel}}.
+
+\item [reserved] Reserved field
+\item [channel] Configures the sampling channel number:\\
+0: CHANNEL\_0\_N \\
+1: CHANNEL\_0\_P \\
+2: CHANNEL\_1\_N\\
+3: CHANNEL\_1\_P\\
+4: CHANNEL\_2\_N\\
+5: CHANNEL\_2\_P\\
+6: CHANNEL\_3\_N\\
+7: CHANNEL\_3\_P\\
+8--15: reserved\\
+
+\end{reglist}\end{regdesc}
+
+SAR2 uses \hyperref[regdesc:ADCSAR2PATTTAB1REG]{ADC\_SAR2\_PATT\_TAB1\_REG} $\sim$ \hyperref[regdesc:ADCSAR2PATTTAB4REG]{ADC\_SAR2\_PATT\_TAB4\_REG} with the same encoding.
+
+\subsubsection{Scan Length and Pointer}
+\hyperref[fielddesc:ADCSAR1PATTLEN]{ADC\_SAR1\_PATT\_LEN} (4 bits) sets the pattern table length; values 0--15 correspond to lengths 1--16. The pattern pointer starts at 0, increments by 1 on each update request, and wraps to 0 after reaching ADC\_SAR1\_PATT\_LEN.
+
+Writing \hyperref[fielddesc:ADCSAR1PATTPCLEAR]{ADC\_SAR1\_PATT\_P\_CLEAR} (WT) = 1 immediately clears the pattern pointer.
+
+\subsubsection{Update Timing}
+\hyperref[fielddesc:ADCSAR1PATTTYPE]{ADC\_SAR1\_PATT\_TYPE} controls when the pattern pointer advances:
+\begin{itemize}
+    \item 0: switch to the next pattern after the current sample completes --- use when the pattern must advance after every sample
+    \item 1: switch to the next pattern when the next sample starts --- use when the pattern must advance only on a timer or ETM trigger
+\end{itemize}
+
+\subsubsection{Channel and Mode Selection}
+\label{sec:adc-pattern-mode-channel}
+Based on the mode bit of the current pattern:
+\begin{itemize}
+    \item \textbf{Single-ended} (mode = 0): enables the single pad selected by channel, with the matching GND reference
+    \item \textbf{Differential} (mode = 1): enables the adjacent even/odd pad pair selected by channel[3:1]; GND reference is disabled
+\end{itemize}
+
+
+\section{SAR Control FSM}
+\label{sec:adc-fsm}
+
+\subsection{Features}
+\begin{itemize}
+    \item Four-state FSM: IDLE $\to$ XPD $\to$ RSTB $\to$ READ
+    \item Independent power-up wait and channel reset wait counts
+    \item Continuous sampling mode
+    \item Three-state SAR power control (auto / forced off / forced on)
+    \item Independent FSM instances for SAR1 and SAR2
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-fsm-func-descr}
+
+\subsubsection{State Machine Flow}
+\begin{itemize}
+    \item \textbf{IDLE}: idle, waiting for a sampling trigger
+    \item \textbf{XPD}: enables SAR power and waits for \hyperref[fielddesc:ADCXPDWAIT]{ADC\_XPD\_WAIT} completed SAR conversions
+    \item \textbf{RSTB}: pure wait state --- waits for \hyperref[fielddesc:ADCRSTBWAIT]{ADC\_RSTB\_WAIT} completed SAR conversions, reserving analog settling time
+    \item \textbf{READ}: waits for the analog SAR's next result, latches it and returns to IDLE
+\end{itemize}
+
+ADC\_XPD\_WAIT and ADC\_RSTB\_WAIT are configured in \hyperref[regdesc:ADCFSMWAITREG]{ADC\_FSM\_WAIT\_REG}, 4 bits each.
+
+Once powered, the analog SAR converts continuously on its own, completing one conversion every 24 ADC working clocks ($T_{conv}$), with no handshake to the FSM. A conversion has two phases: the \textbf{first 5 clk are the sampling aperture}, during which the analog input is acquired onto the capacitor array; the following 19 clk are successive approximation, during which the input no longer affects the result. The analog channel must therefore have settled before the aperture opens.
+
+Both wait values are counted in \textbf{completed SAR conversions}, so one count costs a whole $T_{conv}$. A value of 0 is the exception: the state then lasts a single ADC working clock, which means changing ADC\_RSTB\_WAIT from 0 to 1 jumps by a full $T_{conv}$. ADC\_RSTB\_WAIT is recommended to be set to 2.
+
+\subsubsection{Continuous Sampling Mode}
+With \hyperref[fielddesc:ADCSAR1CONTINUEMODEEN]{ADC\_SAR1\_CONTINUE\_MODE\_EN} = 1 the FSM does not return to IDLE after READ: a new trigger sends it to RSTB, otherwise it \textbf{stays in READ}.
+
+While parked in READ the FSM keeps sampling: every 24 clk it emits a sample, refreshes \hyperref[fielddesc:ADCAPBSARADC1DATA]{ADC\_APB\_SARADC1\_DATA}, raises one \hyperref[interreupt:ADCSAR1DONEINT]{ADC\_SAR1\_DONE\_INT} interrupt, one DMA push and one ETM event, and advances the pattern pointer by one entry. Continuous mode is therefore used by \textbf{triggering once and letting it free-run} --- after start-up it streams one sample every 24 clk, cycling through the pattern table. SAR2 uses \hyperref[fielddesc:ADCSAR2CONTINUEMODEEN]{ADC\_SAR2\_CONTINUE\_MODE\_EN}.
+
+Re-triggering sends the FSM back to RSTB, which produces no samples. So a trigger in continuous mode does not request a sample --- it \textbf{inserts an RSTB into the sample stream}.
+
+Sampling cost:
+\begin{itemize}
+    \item \textbf{Start-up latency} (trigger $\to$ first sample) $\approx$ (ADC\_XPD\_WAIT + ADC\_RSTB\_WAIT + 1) $\times$ 24 clk; about 264 clk with ADC\_XPD\_WAIT = 8 and ADC\_RSTB\_WAIT = 2
+    \item \textbf{Steady-state sample period} = 24 clk, a throughput of 1 / 24 clk, independent of both wait values --- they are traversed only once, at start-up
+\end{itemize}
+
+The three figures below compress $T_{conv}$ to scale so that clk can be drawn, and use ADC\_XPD\_WAIT = 2, ADC\_RSTB\_WAIT = 1 (0 in scenario 2). See Figures~\ref{figure:adcctrltop-timing-multich}, \ref{figure:adcctrltop-timing-singlech} and~\ref{figure:adcctrltop-timing-swtrig}.
+
+\textbf{Scenario 1: free-running multi-channel scan} (ADC\_SAR1\_PATT\_TYPE = 0, advance on done) --- the pointer advances once per sample, so the channel rolls.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_continuous_en.pdf}
+    \caption{Continuous sampling with channel switching}
+    \label{figure:adcctrltop-timing-multich}
+\end{figure}
+
+\textbf{Scenario 2: channel holds} (ADC\_SAR1\_PATT\_TYPE = 1, advance on start) --- the pointer only advances on a trigger, and free-running has none, so the channel never moves.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_single_channel_en.pdf}
+    \caption{Continuous sampling with PATT\_TYPE = 1 (channel holds)}
+    \label{figure:adcctrltop-timing-singlech}
+\end{figure}
+
+\textbf{Scenario 3: non-continuous mode (ADC\_SAR1\_CONTINUE\_MODE\_EN = 0), software triggered} --- each trigger runs IDLE $\to$ XPD $\to$ RSTB $\to$ READ and back to IDLE, with the SAR powered down between samples.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{\modulefiles/figures/sar_timing_sw_trigger_en.pdf}
+    \caption{Non-continuous mode, software-triggered sampling}
+    \label{figure:adcctrltop-timing-swtrig}
+\end{figure}
+
+\textbf{Where the channel switch lands}: the pattern pointer advances as the sample is emitted and the channel switches 1--2 clk later, while the sampling aperture is the first 5 clk of each conversion. The switch therefore lands inside the aperture: its first 1--2 clk are still on the previous channel and the remaining 3--4 clk on the new one. Whether a free-running multi-channel sample is valid depends on the analog mux settling within those 3--4 clk.
+
+When triggered once and left free-running, ADC\_RSTB\_WAIT is traversed only once, so the settling time it provides benefits only the first sample. \textbf{A multi-channel scan should instead be triggered once per sample}: each trigger routes the FSM through RSTB, giving the just-switched channel ADC\_RSTB\_WAIT $\times$ 24 clk to settle, after which the sample's aperture sits wholly on the new channel. When longer settling is required, use ADC\_SAR1\_CONTINUE\_MODE\_EN = 0 instead (scenario 3).
+
+Choosing between the three usages:
+
+{\small
+\begin{center}
+\begin{tabular}{|l|p{2.5cm}|p{2.5cm}|p{3.2cm}|}
+    \hline
+    \rowcolor{lightgray}
+    Usage & Sample period & Channel settling & Use for \\\hline
+    Continuous, single trigger & 24 clk & $\approx$ 3--4 clk in aperture & High-rate sampling with a fixed channel \\\hline
+    Continuous, periodic trigger & (RSTB\_WAIT + 1) $\times$ 24 clk, 72 clk at the recommended 2 & RSTB\_WAIT $\times$ 24 clk, $\approx$ 46 clk at the recommended 2 & \textbf{Multi-channel scans} \\\hline
+    CONTINUE\_MODE\_EN = 0 & (XPD\_WAIT + RSTB\_WAIT + 1) $\times$ 24 clk, 264 clk at the recommended 8 / 2 & (XPD\_WAIT + RSTB\_WAIT) $\times$ 24 clk, 240 clk at the recommended 8 / 2 & When longer settling is required \\\hline
+\end{tabular}
+\end{center}
+}
+
+In SCAN mode the timer period should be no shorter than the sample period above (trigger period = 2 $\times$ \hyperref[fielddesc:ADCTIMERTARGET]{ADC\_TIMER\_TARGET} ADC working clocks).
+
+\subsubsection{SAR Power Control}
+\hyperref[fielddesc:ADCXPDSAR1FORCE]{ADC\_XPD\_SAR1\_FORCE}[1:0] controls SAR1 power:
+\begin{itemize}
+    \item 0--1: auto control --- on when not IDLE, off in IDLE
+    \item 2: force SAR power off
+    \item 3: force SAR power on
+\end{itemize}
+SAR2 is controlled independently by \hyperref[fielddesc:ADCXPDSAR2FORCE]{ADC\_XPD\_SAR2\_FORCE}.
+
+\subsubsection{State Query}
+Software can read \hyperref[fielddesc:ADCSAR1STATE]{ADC\_SAR1\_STATE} (RO) or \hyperref[fielddesc:ADCSAR2STATE]{ADC\_SAR2\_STATE} (RO) to query the FSM state: 0=IDLE, 1=XPD, 2=RSTB, 3=READ.
+
+
+\section{Data Processing}
+\label{sec:adc-datapath}
+
+\subsection{Features}
+\begin{itemize}
+    \item SAR1 / SAR2 data arbitration
+    \item Two independent IIR low-pass filter channels
+    \item Filter factor is a power of 2 (1--64)
+    \item Samples that do not match a filter channel pass through directly
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-datapath-func-descr}
+
+\subsubsection{Data Arbitration}
+When SAR1 and SAR2 conversion-done signals arrive, the data-processing block selects data as follows:
+\begin{itemize}
+    \item Only SAR1 data arrives: process SAR1 data
+    \item Only SAR2 data arrives: process SAR2 data
+    \item Both arrive simultaneously: process SAR1 first, then SAR2 (results enter the next stage in order)
+\end{itemize}
+
+\subsubsection{IIR Filter}
+The block provides two independent IIR filter channels. \hyperref[fielddesc:ADCFILTERCHANNEL0]{ADC\_FILTER\_CHANNEL0} and \hyperref[fielddesc:ADCFILTERCHANNEL1]{ADC\_FILTER\_CHANNEL1} each select the channel for one filter. 
+
+The filter factor is configured by \hyperref[fielddesc:ADCFILTERFACTOR0]{ADC\_FILTER\_FACTOR0} / \hyperref[fielddesc:ADCFILTERFACTOR1]{ADC\_FILTER\_FACTOR1} (3 bits):
+\begin{itemize}
+    \item 0: k=1 (no filtering, pass-through)
+    \item 1: k=2
+    \item 2: k=4
+    \item 3: k=8
+    \item 4: k=16
+    \item 5: k=32
+    \item 6: k=64
+\end{itemize}
+
+The first-order IIR algorithm is:
+
+\[
+sum_{n} = sum_{n-1} - \frac{sum_{n-1}}{k} + adc\_din_{n}
+\]
+
+\[
+filtered\_data_{n} = \frac{sum_{n}}{k}
+\]
+
+where \texttt{sum} is the internal integrator, \texttt{adc\_din} is the raw ADC sample input, and \texttt{filtered\_data} is the filtered ADC output.
+
+Samples whose channel does not match a filter channel are not filtered and pass through directly. Writing \hyperref[fielddesc:ADCFILTERRESET]{ADC\_FILTER\_RESET} (WT) = 1 clears the internal state of both filters.
+
+\subsubsection{Reading Latest Sample}
+The most recent conversion result can be read from \hyperref[fielddesc:ADCAPBSARADC1DATA]{ADC\_APB\_SARADC1\_DATA} (RO, 22 bits) and \hyperref[fielddesc:ADCAPBSARADC2DATA]{ADC\_APB\_SARADC2\_DATA} (RO, 22 bits): [21:17] is the channel number, [16:0] is the 17-bit ADC conversion result. 
+
+
+\section{Threshold Monitor}
+\label{sec:adc-thres}
+
+\subsection{Features}
+\begin{itemize}
+    \item Two independent threshold comparators: threshold 0 (thres0) and threshold 1 (thres1)
+    \item Each comparator has its own monitored channel, upper threshold, and lower threshold
+    \item thres0 supports all-channel monitoring mode
+    \item A threshold violation sets the corresponding interrupt
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-thres-func-descr}
+
+\subsubsection{Threshold Configuration}
+Each threshold comparator is configured through the following fields:
+\begin{itemize}
+    \item Enable: \hyperref[fielddesc:ADCTHRES0EN]{ADC\_THRES0\_EN} (write 1 to enable)
+    \item Channel: \hyperref[fielddesc:ADCTHRES0CHANNEL]{ADC\_THRES0\_CHANNEL} (5 bits)
+    \item Upper threshold: \hyperref[fielddesc:ADCTHRES0HIGH]{ADC\_THRES0\_HIGH} (17 bits)
+    \item Lower threshold: \hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES0\_LOW} (17 bits)
+\end{itemize}
+thres1 uses \hyperref[fielddesc:ADCTHRES1EN]{ADC\_THRES1\_EN} / \hyperref[fielddesc:ADCTHRES1CHANNEL]{ADC\_THRES1\_CHANNEL} / \hyperref[fielddesc:ADCTHRES1HIGH]{ADC\_THRES1\_HIGH} / \hyperref[fielddesc:ADCTHRES1LOW]{ADC\_THRES1\_LOW}.
+
+\subsubsection{Comparison Logic}
+When a filtered sample arrives, if the channel number matches and the comparator is enabled:
+\begin{itemize}
+    \item If adc\_din $>$ ADC\_THRES0\_HIGH: raise a THRES0\_HIGH interrupt pulse
+    \item If adc\_din $<$ ADC\_THRES0\_LOW: raise a THRES0\_LOW interrupt pulse
+\end{itemize}
+Each violation sets the interrupt once; after software clears it by writing \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG}, subsequent violations can trigger again.
+
+\subsubsection{All-Channel Monitoring Mode}
+When \hyperref[fielddesc:ADCTHRESALLEN]{ADC\_THRES\_ALL\_EN} = 1, thres0 is no longer limited to the channel selected by ADC\_THRES0\_CHANNEL; it monitors samples from all channels. This applies to thres0 only; thres1 always monitors its configured channel.
+
+
+\section{DMA Control}
+\label{sec:adc-dma}
+
+\subsection{Features}
+\begin{itemize}
+    \item Asynchronous FIFO bridges the ADC clock domain $\to$ DMA clock domain
+    \item EOF frame markers ease software framing
+    \item FIFO depth 4 with overflow protection and interrupt
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-dma-func-descr}
+
+\subsubsection{DMA Enable}
+Setting \hyperref[fielddesc:ADCAPBADCTRANS]{ADC\_APB\_ADC\_TRANS} = 1 enables the DMA transfer path. While enabled, every sample from the data-processing block is written to the asynchronous FIFO and transferred to system memory by the DMA controller.
+
+\subsubsection{EOF Frame Management}
+\hyperref[fielddesc:ADCAPBADCEOFNUM]{ADC\_APB\_ADC\_EOF\_NUM} (16 bits) sets the number of samples per frame. The DMA controller maintains an EOF counter:
+\begin{enumerate}
+    \item Increment by 1 for every transferred sample
+    \item When the count reaches \hyperref[fielddesc:ADCAPBADCEOFNUM]{ADC\_APB\_ADC\_EOF\_NUM} – 1, insert an EOF marker into the DMA data and clear the counter
+    \item Software can clear the counter by writing \hyperref[fielddesc:ADCDMAEOFNUMCLR]{ADC\_DMA\_EOF\_NUM\_CLR} (WT) = 1
+\end{enumerate}
+
+\subsubsection{DMA Data Format}
+From a software perspective, each DMA transfer delivers one 32-bit sample word (4 bytes), organized as:
+\begin{itemize}
+    \item byte 3: reserved
+    \item byte 2: \verb+channel++ \verb+data_msb+ --- sample channel number + ADC sample MSB
+    \item byte 1: \verb+data_high+ --- ADC sample data, high 8 bits
+    \item byte 0: \verb+data_low+ --- ADC sample data, low 8 bits
+\end{itemize}
+The full ADC sample is the concatenation of \verb+data_msb+, \verb+data_high+, and \verb+data_low+: \verb+sample = (data_msb << 16) | (data_high << 8) | data_low+. Software reads DMA data 4 bytes at a time; internal alignment and packing are handled by the DMA controller.
+
+\subsubsection{FIFO Overflow}
+If the asynchronous FIFO is full and another sample is written, an ADC\_FIFO\_OVERFLOW interrupt is raised once. The interrupt fires only when the FIFO enters the overflow state; sustained overflow does not retrigger. After software clears the interrupt and drains the FIFO, a new overflow can trigger again.
+
+
+\section{ETM Events}
+\label{sec:adc-etm}
+
+\subsection{Features}
+\begin{itemize}
+    \item ETM trigger inputs can start or stop ADC conversion
+    \item Multiple event outputs for other system blocks
+    \item Dedicated ETM reference clock output
+\end{itemize}
+
+\subsection{Functional Description}
+\label{sec:adc-etm-func-descr}
+
+\subsubsection{ETM Trigger Inputs}
+\begin{itemize}
+    \item \verb+etm_sar1_trigger+ --- SAR1 ETM start (when \hyperref[fielddesc:ADCSAR1TRIGGERMODE]{ADC\_SAR1\_TRIGGER\_MODE} = 3)
+    \item \verb+etm_sar2_trigger+ --- SAR2 ETM start (when \hyperref[fielddesc:ADCSAR2TRIGGERMODE]{ADC\_SAR2\_TRIGGER\_MODE} = 3)
+    \item \verb+etm_sar1_stop+ --- SAR1 ETM stop, OR'd with software \hyperref[fielddesc:ADCSAR1TRIGGERSTOP]{ADC\_SAR1\_TRIGGER\_STOP}
+    \item \verb+etm_sar2_stop+ --- SAR2 ETM stop, OR'd with software \hyperref[fielddesc:ADCSAR2TRIGGERSTOP]{ADC\_SAR2\_TRIGGER\_STOP}
+\end{itemize}
+
+\subsubsection{ETM Event Outputs}
+\begin{itemize}
+    \item \verb+etm_sar1_done+ / \verb+etm_sar2_done+ --- single conversion done
+    \item \verb+etm_event_sar1_start+ / \verb+etm_event_sar2_start+ --- sampling start (FSM enters READ from RSTB)
+    \item \verb+etm_event_thres0_high_int_etm+ / \verb+etm_event_thres1_high_int_etm+ --- threshold high violation
+    \item \verb+etm_event_thres0_low_int_etm+ / \verb+etm_event_thres1_low_int_etm+ --- threshold low violation
+\end{itemize}
+
+\subsubsection{ETM Clock}
+\verb+clk_adc_etm+ outputs the ADC working clock as the ETM subsystem reference clock.
+
+
+\section{Interrupts}
+\label{sec:adc-intr}
+
+The SAR ADC block provides seven interrupt sources, aggregated into \verb+adc_reg_int+:
+
+\begin{longtable}[c]{|l|L{9 cm}|}
+    \caption{SAR ADC interrupt sources}\label{tab:adc-intr}\\\hline
+    \rowcolor{lightgray}
+    Source & Description \\\hline
+    \endfirsthead
+    \hline
+    \rowcolor{lightgray}
+        Source & Description\\\hline
+    \endhead
+    \endfoot
+
+    \label{interreupt:ADCSAR1DONEINT}ADC\_SAR1\_DONE\_INT     & SAR1 single conversion done \\\hline
+    \label{interreupt:ADCSAR2DONEINT}ADC\_SAR2\_DONE\_INT     & SAR2 single conversion done \\\hline
+    \label{interreupt:ADCTHRES0HIGHINT}ADC\_THRES0\_HIGH\_INT   & The filtered data is above the high threshold \hyperref[fielddesc:ADCTHRES0HIGH]{ADC\_THRES0\_HIGH} \\\hline
+    \label{interreupt:ADCTHRES1HIGHINT}ADC\_THRES1\_HIGH\_INT   & The filtered data is above the high threshold \hyperref[fielddesc:ADCTHRES1HIGH]{ADC\_THRES1\_HIGH} \\\hline
+    \label{interreupt:ADCTHRES0LOWINT}ADC\_THRES0\_LOW\_INT    & The filtered data is below the low threshold \hyperref[fielddesc:ADCTHRES0LOW]{ADC\_THRES0\_LOW} \\\hline
+    \label{interreupt:ADCTHRES1LOWINT}ADC\_THRES1\_LOW\_INT    & The filtered data is below the low threshold \hyperref[fielddesc:ADCTHRES1LOW]{ADC\_THRES1\_LOW} \\\hline
+    \label{interreupt:ADCFIFOOVERFLOWINT}ADC\_FIFO\_OVERFLOW\_INT & DMA FIFO overflow \\\hline
+
+\end{longtable}
+
+Interrupt register group: \hyperref[regdesc:ADCINTENAREG]{ADC\_INT\_ENA\_REG} (0x064), \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} (0x068), \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} (0x06C), \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG} (0x070).
+
+\textbf{Interrupt service flow}:
+\begin{enumerate}
+    \item After a hardware event, the corresponding bit in \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} is set automatically
+    \item \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} = \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} \& \hyperref[regdesc:ADCINTENAREG]{ADC\_INT\_ENA\_REG}
+    \item \verb+adc_reg_int+ is asserted when any bit of \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} is non-zero
+    \item The CPU reads \hyperref[regdesc:ADCINTSTREG]{ADC\_INT\_ST\_REG} to identify the source
+    \item After service, software writes 1 to the corresponding bit of \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG}
+    \item \hyperref[regdesc:ADCINTRAWREG]{ADC\_INT\_RAW\_REG} does not self-clear; software must write \hyperref[regdesc:ADCINTCLRREG]{ADC\_INT\_CLR\_REG} to clear
+\end{enumerate}
+
+
+\section{Register Summary}
+\label{sec:adc-reg-summ}
+
+The addresses in this section are relative to the base address of the SAR ADC Controller in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/59-ADC-reg-summ__EN}
+
+
+\section{Registers}
+\label{sec:adc-reg}
+
+The addresses in this section are relative to the base address of the SAR ADC Controller in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/59-ADC-reg__EN}
+
+
+\end{document}

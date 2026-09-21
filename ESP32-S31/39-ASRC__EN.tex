@@ -1,0 +1,522 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-S31/39-ASRC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{asrc}{}
+\chapter{Audio Sample Rate Converter}
+\label{mod:asrc}
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+
+Audio Sample Rate Converter (ASRC) is an accelerator-type audio processing module used for high-quality conversion of audio signals between different sample rates. It enables collaboration between devices with varying sample rate standards. This module typically interacts with on-chip or off-chip memory through a DMA interface to achieve efficient transmission and processing of audio data.
+
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+
+\section{Terminology}
+\label{sec:asrc-term}
+
+To better explain the functionality of the ASRC module, the following terms are used in this chapter:
+
+\begin{longtable}[c]{R{6cm} p{{10cm}}}
+\textbf{Audio Sample Rate Converter (ASRC)} & A module that converts audio signals between different sample rates \\
+\textbf{Integer Resampler} & Performs sample rate conversion by fixed integer multiples \\
+\textbf{Fractional Sample Rate Converter (FRC)}& Performs sample rate conversion by non-integer ratios \\
+\textbf{Interpolation} & The process of inserting new samples between existing ones to increase the sample rate \\
+\textbf{Decimation} & The process of discarding samples at fixed ratio to reduce the sample rate \\
+\textbf{Upsampling} & The process of increasing the sample rate, typically involving interpolation and filtering \\
+\textbf{Downsampling} & The process of decreasing the sample rate, typically involving decimation and filtering \\
+\textbf{Filtering} & The process of attenuating unwanted frequency components such as aliasing or interpolation noise \\
+\textbf{Sample}& The basic unit of audio data, typically 2 bytes in size  \\
+\textbf{End of Frame (EOF)} & A status flag or interrupt indicating the completion of processing a frame of audio data \\
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Features}
+\label{sec:asrc-features}
+
+The ASRC module in \chipname{} has the following features:
+
+\begin{itemize}
+    \item Supports conversion between 8 kHz, 16 kHz, 32 kHz, 44.1 kHz, and 48 kHz
+    \item Input and output signal width is 16 bits, using Q1.15 format
+    \item Sample rate conversion uses two integer resamplers and one fractional sample rate converter (FRC) in a cascade, with the cascade configurable via software:
+      \begin{itemize}
+        \item The integer resampler’s conversion factor can be set to 2 or $\frac{1}{2}$
+        \item The FRC supports conversion factors configurable between 0 and 2 (excluding 0 and 2)
+     \end{itemize}
+
+    \item Supports multiple channel modes, including:
+    \begin{itemize}
+        \item Mono receive (Rx) / Mono transmit (Tx)
+        \item Stereo receive (Rx) / Stereo transmit (Tx), processed in parallel
+        \item Mono receive / Stereo transmit
+        \item Stereo receive / Mono transmit
+    \end{itemize}
+    \item Supports input data of any length, and generates EOF (End of Frame) flags based on output length
+    \item When two channels are used independently, each channel supports the following modes:
+    \begin{itemize}
+        \item Mono input, mono output
+        \item Mono input, stereo output (both channels use the same data)
+        \item Stereo input, mono output (choose one channel for processing)
+    \end{itemize}
+    \item When both channels are used together, each channel can be configured as stereo input or output
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:asrc-arch-overview}
+
+The system architecture of the ASRC module in \chipname{} is shown in Figure \ref{fig:asrc_arch}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{\modulefiles/figures/asrc_arch.pdf}
+    \caption{ASRC Module Structure}
+    \label{fig:asrc_arch}
+\end{figure}
+
+\begin{itemize}
+    \item Data In Path: ch0\_dma\_in and ch1\_dma\_in receive input from the two TX channels of the DMA module.
+    \item Data Out Path: ch0\_dma\_out and ch1\_dma\_out output results to the two RX channels of the DMA module.
+    \item Clock structure: The module has only one clock clk.
+
+    \item DMA Transfer Process:
+    \begin{itemize}
+        \item After configuring mode parameters and starting the corresponding channels, all processing units of the ASRC enter a ready state.
+        \item Once the TX and RX DMA channel descriptor lists are configured, the first stage conversion unit reads input data from DMA, processes it, and writes results back to DMA.
+        \item If TX input data or RX space is insufficient, the conversion process automatically pauses until resources become available.
+    \end{itemize}
+
+    \item Sample Rate Conversion Structure:
+    \begin{itemize}
+        \item The module contains two conversion channels, CHNL0 and CHNL1, which can simultaneously process two audio channels.
+        \item Each channel structure includes two integer resamplers (Resampler) and one FRC.
+        \item The Resampler supports configuration for either $2\times$ upsampling or $\frac{1}{2}\times$ downsampling.
+        \item The FRC performs non-integer sample rate conversions.
+        \item The cascade configuration of the two Resamplers and the FRC can be flexibly controlled via registers.
+    \end{itemize}
+
+    \item Channel Operation Modes:
+       \begin{itemize}
+         \item Independent mode: Each channel can be configured separately with its own DMA interface.
+         \item Cooperative mode: Both channels share the same configuration, use CHNL0's DMA interface, and only CHNL0 generates interrupts.
+     \end{itemize}
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:asrc-func-descr}
+
+\subsection{Clock}
+
+As shown in Figure \ref{fig:asrc_arch}, the clock signal clk is used for register configuration, data processing, and transmission.
+
+For more information about the clock, please refer to Section \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+For detailed configuration procedures of the clock, please see Section \ref{sec:asrc-prog-procedures} \textit{\nameref{sec:asrc-prog-procedures}}.
+
+\subsection{Reset}
+
+ASRC supports full reset and partial reset:
+
+\begin{itemize}
+    \item Full reset: Resets the entire ASRC module, including registers and the two data processing channels CHNL0 and CHNL1.
+    \item Partial reset: Resets specific components in the module. See Section \ref{subsec:usage-note} \textit{\nameref{subsec:usage-note}} for details.
+\end{itemize}
+
+\subsection{Resampler}
+
+To improve filter processing parallelism and reduce data latency, the ASRC module adopts an architecture consisting of two multiply-accumulate units and three adders. The module supports $2\times$ upsampling and $\frac{1}{2}\times$ downsampling, with flexible mode configuration via control registers.
+
+By cascading two identical resamplers, $4\times$ upsampling or $\frac{1}{4}\times$ downsampling can be achieved. However, mixed configurations (e.g., “$2\times$ upsampling + $\frac{1}{2}\times$ downsampling” or “$\frac{1}{2}\times$ downsampling + $2\times$ upsampling” ) are prohibited, as they may lead to undefined behavior or degraded performance.
+
+
+
+\subsection{Fractional Sample Rate Converter}
+
+The fractional sample rate converter supports arbitrary sample rate conversions, with its conversion factor expressed as $\frac{L}{M} \in (0, 2)$, where $L$ is the interpolation factor and $M$ is the decimation factor. To ensure conversion accuracy and performance, both $L$ and $M$ must be positive integers and coprime; if they are not coprime, it will affect the conversion quality.
+
+Before the module operates, the following register configurations are required:
+
+\begin{itemize}
+  \item Write the interpolation factor $L$ to register \hyperref[fielddesc:ASRCCHNL0FRACL]{ASRC\_CHNL\regindex{n}\_FRAC\_L}
+  \item Write the decimation factor $M$ to register \hyperref[fielddesc:ASRCCHNL0FRACM]{ASRC\_CHNL\regindex{n}\_FRAC\_M}
+  \item Write the value $\left\lfloor \dfrac{2^{20} + L}{2L} \right\rfloor$ to register \hyperref[fielddesc:ASRCCHNL0FRACRECIPL]{ASRC\_CHNL\regindex{n}\_FRAC\_RECIPL}, which is used to approximate $1/L$
+\end{itemize}
+
+\textbf{Note:} The \regindex{n} in the text refers to the channel number (0 or 1). This notation will not be repeated in the following content.
+
+
+\subsection{Input/Output Data Length}
+\label{subsec:input-output-len}
+
+The ASRC module is used to implement sample rate conversion functions, supporting three modes: increasing, decreasing, and maintaining the sample rate. The case where the sample rate remains unchanged should be achieved by configuring the selector to bypass mode. Sample rate changes affect output data length:
+
+\begin{itemize}
+  \item When the sample rate increases, the output data length increases.
+  \item When the sample rate decreases, the output data length decreases.
+  \item When the sample rate remains unchanged, the output data length remains unchanged.
+\end{itemize}
+
+Let $F_i$ be the input sample rate, $F_o$ the output sample rate, and $N_i$ the input data length. The output data length $N_o$ is:
+\[
+N_o = \left\lfloor x N_i \right\rfloor, \quad \text{where } x = \frac{F_o}{F_i}, \quad x \in \mathbb{Q}^+
+\]
+
+For example, if $F_i = 8\,\mathrm{kHz}$, $F_o = 44.1\,\mathrm{kHz}$, and $N_i = 128$ (unit: samples), then:
+\[
+N_o = \left\lfloor \frac{F_o}{F_i} \cdot N_i \right\rfloor = \left\lfloor \frac{44.1}{8} \cdot 128 \right\rfloor = 705\ \text{(samples)}
+\]
+
+
+\textbf{Note:}
+\begin{itemize}
+  \item In mono mode, the input data length $N_i$ should be an integer multiple of $1$ sample (i.e., $2$ bytes).
+  \item In stereo mode, $N_i$ should be an integer multiple of $2$ samples (i.e., $4$ bytes), and the data length of both channels must be equal.
+  \item All input/output data lengths in this document are in units of samples.
+\end{itemize}
+
+
+\subsubsection{No Residual Data}
+
+Each of the three cascaded ASRC submodules produces output data based on its input length and the configured sample rate conversion ratio. Supported conversion ratios include rational numbers $\frac{L}{M}$, $2$, or $\frac{1}{2}$.
+
+For a single-stage structure, if the conversion ratio $\frac{L}{M} < 1$ or equals $\frac{1}{2}$, the input length must be no less than $\lceil \frac{M}{L} \rceil$ or $2$ samples to avoid residual data during processing.
+
+For a cascade structure, the input data length $N_i$ should be no less than $4 \times \lceil \frac{M}{L} \rceil$ to ensure no data remains in any submodule.
+
+\subsubsection{Residual Data Handling}
+
+When the input frequency is greater than the output frequency, special consideration must be given to the issue of input data residue. The following example illustrates this for two-times downsampling:
+
+In two-times downsampling, the system generates $1$ output sample for every $2$ input samples received. If the number of input data is odd (e.g., $1$), it will be impossible to produce an output, resulting in the last sample remaining in the system. This residue may affect the organization and parsing of data packets by upper-level applications.
+
+If the condition of no data residue for each module's input cannot be met, the hardware output data compensation function can be enabled by configuring the register \hyperref[fielddesc:ASRCCHNL0OUTLENCOMP]{ASRC\_CHNL\regindex{n}\_OUT\_LEN\_COMP} to $1$. When hardware detects that the output data length has reached the configured register \hyperref[fielddesc:ASRCCHNL0OUTLEN]{ASRC\_CHNL\regindex{n}\_OUT\_LEN} (in bytes) and continues to produce new data, the system will add $2$ bytes (mono) or $4$ bytes (stereo) to the length in the next transmission.
+
+When the compensation function is enabled, increase the DMA reception buffer by at least $2$ or $4$ bytes to prevent overflow.
+
+After enabling compensation, notify the ASRC controller that all input data has been sent by either of the following methods:
+
+\begin{itemize}
+    \item Enable the DMA EOF feature
+    \item Set the ASRC reception data length via \hyperref[regdesc:ASRCCHNL0DINCFGREG]{ASRC\_CHNL\regindex{n}\_DIN\_CFG\_REG}
+\end{itemize}
+
+Inappropriate configuration of this may lead to compensation errors and affect data transmission stability.
+
+
+\subsection{DMA Interface}
+
+The ASRC module uses a DMA interface for input/output.
+
+Once the output reaches the specified length, an EOF signal will be generated and sent to DMA. The output length is configured by the software according to the formula described in \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}}. After generating EOF, the system waits for input.
+
+When producing EOF by selecting the software configuration output length, once the output count reaches the specified value, the EOF will be written to DMA.
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Interrupts}
+
+Each ASRC channel can generate a level interrupt when the output data length count reaches the set value.
+
+If the output/input frequency ratio of the ASRC module is $x$, and the data length received at EOF is $N_i$, then the interrupt will be triggered when the total output data length is $\lfloor xN_i\rfloor$.
+
+The audio sample rate converter of \chipname{} can generate the following interrupt signals that will be sent to the \hyperref[mod:intmtrx]{interrupt matrix}:
+
+    \begin{itemize}
+        \item ASRC\_CHNL0\_INT
+        \item ASRC\_CHNL1\_INT
+    \end{itemize}
+
+These interrupt signals are generated by the internal interrupt sources of ASRC. Table \ref{tab:asrc-int-sources} lists the internal interrupt sources of ASRC, trigger conditions, and the generated interrupt signals.
+
+\begin{longtable}{ | L{5cm} | L{6.5cm} | L{4cm} | }
+\caption{Internal Interrupt Sources of ASRC} \label{tab:asrc-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+\label{int:ASRCCHNL0INT}ASRC\_CHNL0\_INT &  Output counter reaches the preset value of CHNL0 &  ASRC\_CHNL0\_INTR  \\ \hline
+\label{int:ASRCCHNL1INT}ASRC\_CHNL1\_INT &  Output counter reaches the preset value of CHNL1 & ASRC\_CHNL1\_INTR \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+For explanations of terms such as interrupts, interrupt sources, and interrupt signals, as well as the relationships between them, please refer to section \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source has a set of general configuration registers, detailed in section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. For specific register names, please refer to \ref{sec:asrc-reg-summ} \textit{\nameref{sec:asrc-reg-summ}}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Configuration Procedure}
+\label{sec:asrc-prog-procedures}
+
+The configuration procedure of the ASRC module is as follows:
+
+\begin{enumerate}
+  \item Configure the following registers to set parameters related to sample rate conversion:
+
+  \begin{itemize}
+    \item Cascade mode: \hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}
+    \item Channel mode: \hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}
+    \item Sample rate conversion factor and channel mode selection: \hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}, \hyperref[regdesc:ASRCCHNL0FRACCOEFFREG]{ASRC\_CHNL\regindex{n}\_FRAC\_COEFF\_REG}, \hyperref[regdesc:ASRCCHNL0FRACRECIPLREG]{ASRC\_CHNL\regindex{n}\_FRAC\_RECIPL\_REG}
+    \item Output data length EOF generation mode: \hyperref[regdesc:ASRCCHNL0DOUTCFGREG]{ASRC\_CHNL\regindex{n}\_DOUT\_CFG\_REG}
+  \end{itemize}
+
+  \item Start the module by setting \hyperref[regdesc:ASRCCHNL0STARTREG]{ASRC\_CHNL\regindex{n}\_START\_REG}. After startup, the module will enter a data-waiting state.
+
+  \item Optionally clear the module’s internal cache using \hyperref[regdesc:ASRCCHNL0RESETREG]{ASRC\_CHNL\regindex{n}\_RESET\_REG}. Clearing the cache will discard the module's internal history. The recommendation is:
+
+  \begin{itemize}
+    \item If a frame of data represents a complete audio signal, the cache can be cleared.
+    \item If a complete audio signal consists of multiple frames of data, the cache should not be cleared between frames.
+  \end{itemize}
+
+  \item After enabling compensation, notify the ASRC controller that all input data has been sent by either of the following methods:
+
+  \begin{itemize}
+    \item Enable the DMA EOF feature
+    \item Set the ASRC reception data length via \hyperref[regdesc:ASRCCHNL0DINCFGREG]{ASRC\_CHNL\regindex{n}\_DIN\_CFG\_REG}
+  \end{itemize}
+
+For details, refer to section \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}}.
+
+  \item Monitor output data status using the following registers:
+
+  \begin{itemize}
+    \item \hyperref[regdesc:ASRCCHNL0OUTCNTREG]{ASRC\_CHNL\regindex{n}\_OUT\_CNT}: Total number of bytes written to DMA
+    \item \hyperref[regdesc:ASRCCHNL0TRACE1REG]{ASRC\_CHNL\regindex{n}\_OUT\_INC}: Number of bytes written to DMA since the last EOF
+  \end{itemize}
+
+\end{enumerate}
+
+
+\subsection{Usage Restrictions and Notes}
+\label{subsec:usage-note}
+
+\begin{enumerate}
+  \item Before using the ASRC module, configure related registers, including mode selection, interpolation coefficients, decimation coefficients, and channel modes.
+  \item There is no strict requirement on the startup order of DMA channels and ASRC channels.
+  \item Do not modify configuration registers during operation to avoid inconsistent states or abnormal data.
+  \item The data counter unit involved in ASRC is \textbf{bytes}, with each sample occupying 2 bytes.
+
+  \item When the two channels work independently, configure each channel separately. Supported modes:
+  \begin{itemize}
+    \item Input mono, output mono
+    \item Input mono, output stereo (both channels have the same data)
+    \item Input stereo, output mono (select one channel for processing)
+  \end{itemize}
+  When the two channels work cooperatively, the configuration of both channels must remain consistent, supporting:
+  \begin{itemize}
+    \item Input stereo, output stereo
+  \end{itemize}
+
+  \item The configuration must be based on the actual data length of the receiving register \hyperref[fielddesc:ASRCCHNL0INLEN]{ASRC\_CHNL\regindex{n}\_IN\_LEN} and the sending register \hyperref[fielddesc:ASRCCHNL0OUTLEN]{ASRC\_CHNL\regindex{n}\_OUT\_LEN}. The configuration rules are as follows:
+  \begin{itemize}
+    \item When channels work independently:
+    \begin{itemize}
+      \item If processing mono data, configure only the data length of 1 channel for the corresponding channel (unit: bytes).
+      \item If processing stereo data, configure the total data length of 2 channels on that channel (unit: bytes).
+    \end{itemize}
+    \item When channels work together:
+    \begin{itemize}
+      \item Each channel processes only one channel of data; configure the data length of that channel (unit: bytes).
+    \end{itemize}
+  \end{itemize}
+
+  \item In stereo input or stereo output mode, only the CHNL0 channel can be used, and it will only produce a CHNL0 interrupt signal.
+
+  \item If new data needs to be processed, it is recommended to execute the module reset procedure or clear the internal state in the following order after the last transmission is complete:
+  \begin{itemize}
+    \item Clear \hyperref[fielddesc:ASRCCHNL0START]{ASRC\_CHNL\regindex{n}\_START}
+    \item Set \hyperref[fielddesc:ASRCCHNL0INFIFORESET]{ASRC\_CHNL\regindex{n}\_INFIFO\_RESET}
+    \item Set \hyperref[fielddesc:ASRCCHNL0RESET]{ASRC\_CHNL\regindex{n}\_RESET}
+    \item Set \hyperref[fielddesc:ASRCCHNL0OUTFIFORESET]{ASRC\_CHNL\regindex{n}\_OUTFIFO\_RESET}
+  \end{itemize}
+  Then proceed with configuration and start.
+
+  \item The selection criteria for fractional-order filter structures are as follows:
+    \begin{itemize}
+      \item If the input sample rate $<$ output sample rate, use a post-filter structure.
+      \item If the input sample rate $>$ output sample rate, use a pre-filter structure.
+      \item If the input sample rate is equal to the output sample rate, then all filters bypass.
+    \end{itemize}
+
+  \item Pay attention to input and output data length ratios and limits. For specific rules, see \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}}.
+
+\end{enumerate}
+
+
+
+\section{Application Example}
+\label{sec:asrc-application-example}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\linewidth]{\modulefiles/figures/sample_rate_convert_relation.pdf}
+    \caption{Sample Rate Conversion Relationship}
+    \label{fig:sample_rate_convert_relation}
+\end{figure}
+
+To achieve high-quality sample rate conversion, it is recommended to follow the illustrated configuration methods. The processing flows for common sample rate conversions are as follows:
+
+\begin{itemize}
+  \item 8 kHz/ 16 kHz to 44.1 kHz/ 48 kHz \\
+  The input signal is first interpolated to 32 kHz, and then converted to the target sample rate via the FRC.
+
+  \item 32 kHz to 44.1 kHz/ 48 kHz \\
+  The input signal is first interpolated to 64 kHz, and then converted to the target sample rate via the FRC.
+
+  \item 44.1 kHz/ 48 kHz to 8 kHz/ 16 kHz \\
+  The input signal is first converted to 32 kHz via the FRC, and then downsampled to 8 kHz or 16 kHz.
+
+  \item 44.1 kHz/ 48 kHz to 32 kHz \\
+  The input signal is first converted to 64 kHz via the FRC, and then downsampled to 32 kHz.
+
+  \item Converting between 44.1 kHz and 48 kHz \\
+  A two-stage conversion via an intermediate rate of 88.2 kHz is required:
+  \begin{itemize}
+    \item 44.1 kHz to 48 kHz: First upsample to 88.2 kHz, then convert to 48 kHz.
+    \item 48 kHz to 44.1 kHz: First upsample to 88.2 kHz, then convert to 44.1 kHz.
+  \end{itemize}
+
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{asrc-reg-summ}{}
+\section{Register Summary}
+\label{sec:asrc-reg-summ}
+
+The addresses in this section are address offsets relative to ASRC base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+Please check Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}} for the meanings of the abbreviations in the "Access" column.
+
+\subfile{\modulefiles/39-ASRC-reg-summ__EN}
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are address offsets relative to ASRC base address provided in Table \ref{tab:sysmem-base-address} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+For how to program reserved fields, please refer to Section \hyperref[programming-reserved-field]{\textit{Programming Reserved Register Field}}.
+
+\subfile{\modulefiles/39-ASRC-reg__EN}
+
+
+\end{document}

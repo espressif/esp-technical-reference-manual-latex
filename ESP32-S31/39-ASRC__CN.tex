@@ -1,0 +1,538 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {../ESP32-S31/39-ASRC}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \listoftodos
+    {\let\clearpage\relax \listofdonetodos}
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{asrc}{}
+\chapter{音频采样率转换器}
+\label{mod:asrc}
+
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{概述}
+
+音频采样率转换器（Audio Sample Rate Converter，简称 ASRC）是一种加速器类音频处理模块，用于在不同采样率之间高质量地转换音频信号，以支持不同采样标准设备之间的协同工作。该模块通常通过 DMA 接口与片上或片外存储器进行数据交互，实现音频数据的高效传输与处理。
+
+%%%%%%%%%%%%%%%%%%%
+%%% Terminology %%%
+%%%%%%%%%%%%%%%%%%%
+
+
+\section{术语}
+\label{sec:asrc-term}
+
+为了更清晰地说明 ASRC 的功能，本章使用以下术语：
+
+
+\begin{longtable}[c]{R{6cm} p{{10cm}}}
+\textbf{音频采样率转换器 (Audio Sample Rate Converter, ASRC)}& 用于实现不同采样率音频信号之间的转换 \\
+\textbf{整数倍重采样器 (Integer Resampler)} & 实现整数倍的采样率转换 \\
+\textbf{分数采样率转换器 (Fractional Sample Rate Converter, FRC)}& 实现非整数倍的采样率转换\\
+\textbf{插值 (Interpolation)} & 在原始采样点之间插入新采样点，以提高采样率 \\
+\textbf{抽取 (Decimation)} & 以固定比例丢弃采样点，以降低采样率 \\
+\textbf{上采样 (Upsampling)} & 提高采样率的过程，通常包括插值和滤波 \\
+\textbf{下采样 (Downsampling)} & 降低采样率的过程，通常包括抽取和滤波 \\
+\textbf{滤波 (Filtering)} & 在插值或抽取前后抑制混叠或插值噪声的过程 \\
+\textbf{采样点 (Sample)}& 音频数据的基本单位，通常占用两个字节 \\
+\textbf{帧结束 (End of Frame, EOF)}& 表示一帧音频数据处理完成的状态标志或中断信号 \\
+\end{longtable}
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{主要特性}
+\label{sec:asrc-features}
+
+\chipname{} 中的 ASRC 模块具备以下特性：
+
+\begin{itemize}
+    \item 支持常见采样率之间的任意互转，包括：8 kHz、16 kHz、32 kHz、44.1 kHz 和 48 kHz
+    \item 输入和输出信号宽度为 16 bit，采用 Q1.15 格式
+    \item 采样率转换通过两个整数倍重采样器与一个分数采样率转换器（FRC）级联实现，级联方式可通过软件灵活配置：
+
+    \begin{itemize}
+      \item 整数倍重采样器的转换因子可配置为 2 或 $\frac{1}{2}$
+      \item 分数采样率转换器（FRC）的转换因子可在 0 到 2 之间配置（不包括 0 和 2）
+    \end{itemize}
+
+    \item 支持多种声道模式，包括：
+    \begin{itemize}
+        \item 单声道接收 (Rx) / 单声道发送 (Tx)
+        \item 双声道接收 (Rx) / 双声道发送 (Tx)，两个声道同时处理
+        \item 单声道接收 / 双声道发送
+        \item 双声道接收 / 单声道发送
+    \end{itemize}
+    \item 支持任意长度输入数据，并可根据输出数据长度产生 EOF (End of Frame) 标志
+    \item 当两个通道独立使用时，每个通道支持如下模式：
+    \begin{itemize}
+        \item 输入单声道，输出单声道
+        \item 输入单声道，输出双声道（两个声道数据相同）
+        \item 输入双声道，输出单声道（可选择某一声道进行处理）
+    \end{itemize}
+    \item 当两个通道协同使用时，每个通道均可配置为输入或输出双声道
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{结构概览}
+\label{sec:asrc-arch-overview}
+
+\chipname{} ASRC 模块的系统结构如图 \ref{fig:asrc_arch} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{\modulefiles/figures/asrc_arch.pdf}
+    \caption{ASRC 模块结构}
+    \label{fig:asrc_arch}
+\end{figure}
+
+
+\begin{itemize}
+    \item 数据输入通路：ch0\_dma\_in 和 ch1\_dma\_in 分别接收来自 DMA 模块两个 TX 通道的输入数据。
+    \item 数据输出通路：ch0\_dma\_out 和 ch1\_dma\_out 分别将处理结果输出至 DMA 模块的两个 RX 通道。
+    \item 时钟结构：模块仅包含一个时钟 clk。
+    \item DMA 传输过程：
+    \begin{itemize}
+      \item 完成相关模式参数配置并启动对应通道后，采样率转换模块内的各级处理单元进入就绪状态。
+      \item 待 DMA 的 TX 通道和 RX 通道的链表配置完成后，第一级处理单元开始从 DMA 读取输入数据，进行处理，并将结果写回 DMA。
+      \item 整个过程中，若 TX 通道中数据不足，或 RX 通道中可用空间不足，采样率转换流程将自动暂停，直至资源恢复可用。
+   \end{itemize}
+
+    \item 采样率转换结构：
+    \begin{itemize}
+      \item 模块包含两个采样率转换通道 CHNL0 和 CHNL1，可同时处理两个声道的音频数据。
+      \item 每组结构包含两个整数倍重采样器（Resampler）和一个分数采样率转换器（FRC）。
+      \item Resampler 支持配置为 $2\times$（上采样）或 $\frac{1}{2}\times$（下采样）。
+      \item FRC 支持任意非整数倍的采样率转换。
+      \item 通过配置寄存器，可灵活设置两个 Resampler 和一个 FRC 的级联方式。
+    \end{itemize}
+
+    \item 通道工作模式：
+      \begin{itemize}
+        \item 独立模式：两个通道的配置可以不同，每个通道使用独立的 DMA 接口。
+        \item 协同模式：两个通道需使用相同配置，共用 CHNL0 的 DMA 接口，仅由 CHNL0 产生中断。
+   \end{itemize}
+
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{功能描述}
+\label{sec:asrc-func-descr}
+
+\subsection{时钟}
+
+如图 \ref{fig:asrc_arch} 所示，音频采样率转换器所使用的时钟信号 clk 同时用于寄存器配置以及数据处理与传输。
+
+有关时钟的更多信息，请查看章节 \ref{mod:resclk} \textit{\nameref{mod:resclk}}。
+
+时钟的详细配置流程，请查看章节 \ref{sec:asrc-prog-procedures} \textit{\nameref{sec:asrc-prog-procedures}}。
+
+
+\subsection{复位}
+
+音频采样率转换器支持完全复位和部分复位：
+
+\begin{itemize}
+    \item 完全复位：复位整个 ASRC 模块，包括寄存器以及 CHNL0 和 CHNL1 两个数据处理通道。
+    \item 部分复位：复位模块中的特定组件。详见 \ref{subsec:usage-note}  \textit{\nameref{subsec:usage-note}}。
+\end{itemize}
+
+
+\subsection{重采样器}
+
+为提高滤波处理的并行度并减少数据延迟，ASRC 模块采用由两个乘累加器和三个加法器组成的结构。该模块支持 $2\times$ 上采样和 $\frac{1}{2}\times$ 下采样，具体模式可通过寄存器进行灵活配置。
+
+通过级联两个具有相同配置的重采样器，可分别实现 $4\times$ 上采样或 $ \frac{1}{4} \times$ 下采样功能。但需注意，禁止将两个级联模块配置为混合模式（例如“$2\times$ 上采样 + $\frac{1}{2}\times$ 下采样” 或 “$\frac{1}{2}\times$ 下采样 + $2\times$ 上采样”），以避免引发不确定的行为或性能异常。
+
+
+\subsection{分数采样率转换器}
+
+分数采样率转换器支持任意采样率转换，其转换因子可表示为 $\frac{L}{M} \in (0, 2)$，其中 $L$ 为插值因子，$M$ 为抽取因子。为确保转换精度和性能，$L$ 与 $M$ 必须为正整数且互质；若两者不互质，将会影响转换效果。
+
+在模块运行前，需进行如下寄存器配置：
+
+\begin{itemize}
+  \item 向寄存器 \hyperref[fielddesc:ASRCCHNL0FRACL]{ASRC\_CHNL\regindex{n}\_FRAC\_L} 写入插值因子 $L$
+  \item 向寄存器 \hyperref[fielddesc:ASRCCHNL0FRACM]{ASRC\_CHNL\regindex{n}\_FRAC\_M} 写入抽取因子 $M$
+  \item 向寄存器 \hyperref[fielddesc:ASRCCHNL0FRACRECIPL]{ASRC\_CHNL\regindex{n}\_FRAC\_RECIPL} 写入值 $\left\lfloor \dfrac{2^{20} + L}{2L} \right\rfloor$，该值用于近似表示 $1/L$
+\end{itemize}
+
+\textbf{注意:} 文中的 \regindex{n} 表示通道编号，可取值为 0 或 1，后续内容中不再重复说明。
+
+\subsection{输入/输出数据长度}
+\label{subsec:input-output-len}
+
+ASRC 模块用于实现采样率转换功能，可支持采样率升高、降低以及保持不变三种模式。其中，采样率不变的情况应通过将选择器配置为 bypass 模式来实现。采样率变化将导致输出数据长度的相应变化：
+
+\begin{itemize}
+  \item 当采样率升高时，输出数据长度增加
+  \item 当采样率降低时，输出数据长度减少
+  \item 当采样率不变时，输出数据长度保持不变
+\end{itemize}
+
+设输入采样率为 $F_i$，输出采样率为 $F_o$，输入数据长度为 $N_i$，则输出数据长度 $N_o$ 可按以下公式计算：
+\[
+N_o = \left\lfloor x N_i \right\rfloor, \quad \text{其中 } x = \frac{F_o}{F_i}, \quad x \in \mathbb{Q}^+
+\]
+
+例如，当输入采样率 $F_i = 8\,\mathrm{kHz}$，输出采样率 $F_o = 44.1\,\mathrm{kHz}$，输入数据长度为 $128$（单位：sample）时，输出数据长度为：
+\[
+N_o = \left\lfloor \frac{F_o}{F_i} \cdot N_i \right\rfloor = \left\lfloor \frac{44.1}{8} \cdot 128 \right\rfloor = 705\ \text{(samples)}
+\]
+
+
+\textbf{注意：}
+\begin{itemize}
+  \item 在单声道模式下，输入数据长度 $N_i$ 应为 $1$ 个 sample（即 $2$ 字节）的整数倍
+  \item 在双声道模式下，$N_i$ 应为 $2$ 个 sample（即 $4$ 字节）的整数倍，且两个声道的数据长度必须相等
+  \item 文中所有输入/输出数据长度均以 sample（采样点）为单位
+\end{itemize}
+
+
+
+\subsubsection{数据无剩余}
+
+ASRC 模块由三级子模块级联构成，每一级的输出数据长度由其输入数据长度和采样率转换系数决定。各级支持的采样率转换系数包括：有理数 $\frac{L}{M}$、$2$ 或者 $\frac{1}{2}$。
+
+对于单级结构，若采样率转换系数 $\frac{L}{M} < 1$ 或为 $\frac{1}{2}$，则输入数据长度不得小于 $\lceil \frac{M}{L} \rceil$ 或 $2$ samples，以确保处理过程中无数据剩余。
+
+对于级联结构，输入数据长度 $N_i$ 应不小于 $4 \times \lceil \frac{M}{L} \rceil$，以确保各子模块处理过程中无数据剩余。
+
+\subsubsection{数据有剩余}
+
+当输入频率大于输出频率时，需要特别考虑输入数据剩余问题。以下以两倍下采样为例说明：
+
+在两倍下采样中，系统每接收 $2$ 个输入 samples 生成 $1$ 个输出 sample。若输入数据个数为奇数（如 $1$），将无法产生输出，导致最后一个 sample 残留在系统中。这种残留可能会影响上层应用对数据包的组织和解析。
+
+若无法满足每级模块输入数据无剩余的条件，可以启用硬件输出数据补偿功能，方法为配置寄存器 \hyperref[fielddesc:ASRCCHNL0OUTLENCOMP]{ASRC\_CHNL\regindex{n}\_OUT\_LEN\_COMP} 为 $1$。
+当硬件检测到输出数据长度已达到配置寄存器 \hyperref[fielddesc:ASRCCHNL0OUTLEN]{ASRC\_CHNL\regindex{n}\_OUT\_LEN}（单位为字节）后仍继续产生新数据，系统将在下次传输时在该长度基础上增加 $2$ 字节（单声道）或 $4$ 字节（双声道）。
+
+启用补偿功能时，DMA 的接收 buffer 长度至少需增加 $2$ 或 $4$ 字节以防止溢出。
+
+此外，启用硬件输出数据补偿功能后，需通知 ASRC 控制器当前数据是否已全部发送完毕，可通过以下任一方式实现：
+
+\begin{itemize}
+    \item 启用 DMA 的 EOF 功能
+    \item 设置 ASRC 的接收数据长度 \hyperref[regdesc:ASRCCHNL0DINCFGREG]{ASRC\_CHNL\regindex{n}\_DIN\_CFG\_REG}
+\end{itemize}
+
+若未正确配置，可能导致补偿异常，影响后续数据传输的稳定性与正确性。
+
+\subsection{DMA 接口}
+
+ASRC 模块的输入/输出数据路径均为 DMA 接口。
+
+待输出达到一定长度后，会产生信号 EOF 并发送给 DMA。这里输出长度由软件按照 \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}} 描述的公式配置。产生 EOF 后，系统仍然会处于等待输入状态。
+
+选择软件配置输出长度产生 EOF 时，当输出计数达到指定值后，会将 EOF 写入 DMA 。
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断}
+
+每个 ASRC 通道可以产生一个电平中断，该中断在输出数据长度计数达到设定值后触发。
+
+如果 ASRC 模块输出输入频率比为 $x$，接收到 EOF 时数据长度为 $N_i$，那么当输出数据总长度为 $\lfloor xN_i\rfloor$ 时，则触发中断。
+
+\chipname{} 的音频采样率转换器可以生成以下中断信号并发送给 \hyperref[mod:intmtrx]{中断矩阵}。
+
+    \begin{itemize}
+        \item ASRC\_CHNL0\_INT
+        \item ASRC\_CHNL1\_INT
+    \end{itemize}
+
+这些中断信号由音频采样率转换器的内部中断源生成。表 \ref{tab:asrc-int-sources} 列出了音频采样率转换器的内部中断源、中断触发条件以及生成的中断信号。
+
+\begin{longtable}{ | L{5cm} | L{6.5cm} | L{4cm} | }
+\caption{ASRC 的内部中断源} \label{tab:asrc-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{内部中断源} & \textbf{触发条件}  &  \textbf{中断信号}\\ \hline
+\label{int:ASRCCHNL0INT} ASRC\_CHNL0\_INT &  输出计数器达到 CHNL0 的预设值 &  ASRC\_CHNL0\_INTR  \\ \hline
+\label{int:ASRCCHNL1INT} ASRC\_CHNL1\_INT &  输出计数器达到 CHNL1 的预设值 & ASRC\_CHNL1\_INTR \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的关系，请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看 \ref{sec:asrc-reg-summ} \textit{\nameref{sec:asrc-reg-summ}}。
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{配置流程}
+\label{sec:asrc-prog-procedures}
+
+ASRC 模块的配置流程如下：
+
+\begin{enumerate}
+  \item 配置以下寄存器，设置采样率转换相关参数：
+
+  \begin{itemize}
+    \item 级联方式：\hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}
+    \item 声道模式：\hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}
+    \item 采样率转换因子和通道模式选择：\hyperref[regdesc:ASRCCHNL0CTRLCFGREG]{ASRC\_CHNL\regindex{n}\_CTRL\_CFG\_REG}、\hyperref[regdesc:ASRCCHNL0FRACCOEFFREG]{ASRC\_CHNL\regindex{n}\_FRAC\_COEFF\_REG}、\hyperref[regdesc:ASRCCHNL0FRACRECIPLREG]{ASRC\_CHNL\regindex{n}\_FRAC\_RECIPL\_REG}
+    \item 输出数据长度 EOF 产生模式：\hyperref[regdesc:ASRCCHNL0DOUTCFGREG]{ASRC\_CHNL\regindex{n}\_DOUT\_CFG\_REG}
+  \end{itemize}
+
+  \item 启动模块：设置 \hyperref[regdesc:ASRCCHNL0STARTREG]{ASRC\_CHNL\regindex{n}\_START\_REG} 以启动模块。模块将进入等待数据状态。
+
+  \item 按需清除缓存 \hyperref[regdesc:ASRCCHNL0RESETREG]{ASRC\_CHNL\regindex{n}\_RESET\_REG}。清除缓存将删除模块内部的历史处理信息。建议如下：
+
+  \begin{itemize}
+    \item 若每帧数据表示一段完整的音频信号，可清除模块缓存
+    \item 若一段完整的音频信号由多帧数据组成，则每帧之间不应清除缓存
+  \end{itemize}
+
+  \item 启用硬件输出数据补偿功能后，需通知 ASRC 控制器当前数据是否已全部发送完毕，可通过以下任一方式实现：
+
+  \begin{itemize}
+    \item 启用 DMA 的 EOF 功能
+    \item 设置 ASRC 的接收数据长度 \hyperref[regdesc:ASRCCHNL0DINCFGREG]{ASRC\_CHNL\regindex{n}\_DIN\_CFG\_REG}
+  \end{itemize}
+
+详细说明参见 \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}} 小节。
+
+\item 通过以下寄存器监控输出数据状态：
+
+\begin{itemize}
+   \item \hyperref[regdesc:ASRCCHNL0OUTCNTREG]{ASRC\_CHNL\regindex{n}\_OUT\_CNT}：自通道启动以来累计向 DMA 写入的总字节数
+   \item \hyperref[regdesc:ASRCCHNL0TRACE1REG]{ASRC\_CHNL\regindex{n}\_OUT\_INC}：自上次 EOF 发生后向 DMA 写入的字节数
+\end{itemize}
+
+\end{enumerate}
+
+\subsection{使用限制与提醒}
+\label{subsec:usage-note}
+
+\begin{enumerate}
+  \item 在使用 ASRC 模块之前，需先完成模式选择、插值系数、抽取系数、通道模式等相关寄存器的配置。
+  \item DMA 通道与 ASRC 通道的启动顺序没有严格要求。
+  \item 模块运行过程中，禁止修改相关配置寄存器，以避免状态不一致或数据异常。
+  \item ASRC 中涉及的数据计数器单位为 \textbf{字节}，每个采样点占用 2 字节。
+
+  \item 当两个通道独立工作时，每个通道的寄存器可分别配置，支持以下模式：
+  \begin{itemize}
+    \item 输入单声道，输出单声道
+    \item 输入单声道，输出双声道（两个声道数据相同）
+    \item 输入双声道，输出单声道（选择一个声道进行处理）
+  \end{itemize}
+  当两个通道协同工作时，两个通道的配置需保持一致，支持：
+  \begin{itemize}
+    \item 输入双声道，输出双声道
+  \end{itemize}
+
+  \item 需根据实际通道的接收寄存器 \hyperref[fielddesc:ASRCCHNL0INLEN]{ASRC\_CHNL\regindex{n}\_IN\_LEN} 与发送寄存器 \hyperref[fielddesc:ASRCCHNL0OUTLEN]{ASRC\_CHNL\regindex{n}\_OUT\_LEN} 的数据长度进行配置。配置规则如下：
+  \begin{itemize}
+    \item 通道独立工作时：
+    \begin{itemize}
+      \item 若处理单声道数据，仅配置对应通道的 1 个声道数据长度（单位：字节）
+      \item 若处理双声道数据，需配置该通道上 2 个声道的总数据长度（单位：字节）
+    \end{itemize}
+    \item 通道协同工作时：
+    \begin{itemize}
+      \item 每个通道仅处理一个声道数据，配置该声道的数据长度（单位：字节）
+    \end{itemize}
+  \end{itemize}
+
+  \item 在双声道输入或者双声道输出模式下，只能使用 CHNL0 通道，并且仅会产生 CHNL0 中断信号。
+
+  \item 若需处理新的数据，建议执行模块复位流程，或在上一次传输完成后按如下顺序清除内部状态：
+  \begin{itemize}
+    \item 清除 \hyperref[fielddesc:ASRCCHNL0START]{ASRC\_CHNL\regindex{n}\_START}
+    \item 置位 \hyperref[fielddesc:ASRCCHNL0INFIFORESET]{ASRC\_CHNL\regindex{n}\_INFIFO\_RESET}
+    \item 置位 \hyperref[fielddesc:ASRCCHNL0RESET]{ASRC\_CHNL\regindex{n}\_RESET}
+    \item 置位 \hyperref[fielddesc:ASRCCHNL0OUTFIFORESET]{ASRC\_CHNL\regindex{n}\_OUTFIFO\_RESET}
+  \end{itemize}
+  然后再进行配置并启动。
+
+  \item 分数阶滤波器结构的选择依据如下：
+  \begin{itemize}
+    \item 若输入采样率 $<$ 输出采样率，使用后置结构
+    \item 若输入采样率 $>$ 输出采样率，使用前置结构
+    \item 若输入采样率与输出采样率相等，则所有滤波器 bypass
+  \end{itemize}
+
+  \item 使用过程中需关注输入输出数据长度的配比与限制，具体规则详见 \ref{subsec:input-output-len} \textit{\nameref{subsec:input-output-len}}。
+
+\end{enumerate}
+
+\section{应用示例}
+\label{sec:asrc-application-example}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.55\linewidth]{\modulefiles/figures/sample_rate_convert_relation.pdf}
+    \caption{采样率转换关系}
+    \label{fig:sample_rate_convert_relation}
+\end{figure}
+
+
+为了实现高质量的采样率转换，建议采用图示方法进行配置。各类采样率转换的处理流程如下：
+
+\begin{itemize}
+  \item 8 kHz / 16 kHz 转 44.1 kHz / 48 kHz \\
+  输入信号先插值至 32 kHz，再通过分数采样率转换器转换为目标采样率。
+
+  \item 32 kHz 转 44.1 kHz / 48 kHz \\
+  输入信号先插值至 64 kHz，再通过分数采样率转换器转换为目标采样率。
+
+  \item 44.1 kHz / 48 kHz 转 8 kHz / 16 kHz \\
+  输入信号先通过分数采样率转换器转换为 32 kHz，再进行下采样得到 8 kHz 或 16 kHz 输出。
+
+  \item 44.1 kHz / 48 kHz 转 32 kHz \\
+  输入信号先通过分数采样率转换器转换为 64 kHz，再下采样至 32 kHz。
+
+  \item 44.1 kHz 与 48 kHz 互转 \\
+  需通过中间频率 88.2 kHz 进行两级转换：
+  \begin{itemize}
+    \item 44.1 kHz 转 48 kHz：先上采样至 88.2 kHz，再转换为 48 kHz
+    \item 48 kHz 转 44.1 kHz：先上采样至 88.2 kHz，再转换为 44.1 kHz
+  \end{itemize}
+\end{itemize}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{asrc-reg-summ}{}
+\section{寄存器列表}
+\label{sec:asrc-reg-summ}
+
+本小节的所有地址均为相对于音频采样率转换器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+
+\subfile{\modulefiles/39-ASRC-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于音频采样率转换器基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+
+\subfile{\modulefiles/39-ASRC-reg__CN}
+
+
+\end{document}
