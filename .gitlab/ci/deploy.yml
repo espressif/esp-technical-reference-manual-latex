@@ -11,6 +11,59 @@ post links:
         - ls -l logs
         - python post-mr-note.py $GITLAB_MR_NOTE_TOKEN $CI_PROJECT_PATH $CI_MERGE_REQUEST_IID --url https://${CI_SERVER_HOST}:${CI_SERVER_PORT}
 
+# Browser preview via GitLab Pages (not MR file uploads): Pages serves the
+# PDFs inline, so reviewers who cannot download files still read them in the
+# browser's PDF viewer.
+# Requires Pages enabled on this project and GitLab 17.4+ path_prefix
+# so MR deployments do not overwrite the default-branch Pages site.
+publish PDF preview:
+    stage: deploy
+    tags: [host_test]
+    image: $CI_REGISTRY_IMAGE
+    needs:
+        - job: build PDFs
+          parallel:
+            matrix:
+              - LANGUAGE: EN
+        - job: build PDFs
+          parallel:
+            matrix:
+              - LANGUAGE: CN
+    rules:
+        - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    script:
+        - python3 tools/pdf-preview/build_pages.py
+        - printf '%s\n' "$CI_PAGES_URL" > public/pages-url.txt
+        - echo "CI_PAGES_URL=$CI_PAGES_URL"
+        - du -sh public
+    pages:
+      path_prefix: 'mr-$CI_MERGE_REQUEST_IID'
+      expire_in: 2 weeks
+    artifacts:
+        when: always
+        paths:
+            - public
+        expire_in: 2 weeks
+    environment:
+        name: pdf-preview/mr-$CI_MERGE_REQUEST_IID
+        url: $CI_PAGES_URL
+
+post PDF preview links:
+    stage: deploy
+    tags: [host_test]
+    image: $CI_REGISTRY_IMAGE
+    needs:
+        - job: publish PDF preview
+    rules:
+        - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    script:
+        - python3 tools/pdf-preview/post_pages_note.py
+            $GITLAB_MR_NOTE_TOKEN
+            $CI_PROJECT_PATH
+            $CI_MERGE_REQUEST_IID
+            --url https://${CI_SERVER_HOST}:${CI_SERVER_PORT}
+            --pages-url "$CI_PAGES_URL"
+
 generate DMFs:
     stage: deploy
     tags: [host_test]
