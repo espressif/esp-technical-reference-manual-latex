@@ -1,0 +1,1328 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./45-I2S}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_CN.tex]{subfiles}
+   
+\else
+    % Font "FandolSong-Regular" used by ctex does not have GSUB table.
+    % It causes warnings that do not affect compilation and can be ignored.
+    \PassOptionsToPackage{quiet}{fontspec}
+
+    \documentclass[openany, 10pt]{book}
+   
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<< 
+    \usepackage{preamble-trm-module}
+
+    % Enable Chinese typesetting
+    \usepackage{ctex}
+
+    % >>> M3: Temporary labels in Chinese
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-cn}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{chinese}
+\setchineseformatting
+
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{i2s}{}
+\chapter{I2S 控制器 (I2S)}
+\label{mod:i2s}
+
+\section{概述}
+\label{sec:i2s-overview}
+
+\chipname{} 内置两个 I2S 接口，即 I2S\regindex{0} 和 I2S\regindex{1}，为多媒体应用，尤其是为数字音频应用提供了灵活的数据通信接口。
+
+I2S 标准总线定义了三种信号——串行时钟信号 BCK、字选择信号 WS 和串行数据信号 SD。一个基础的 I2S 数据总线包含一个主机和一个从机。主机和从机的角色在通信过程中保持不变。\chipname{} 的 I2S 模块包含独立的 TX 模块和 RX 模块，能够保证优良的通信性能。
+
+\begin{tiplisting}
+本章节提供的信息适用于 I2S\regindex{0} 和 I2S\regindex{1}。除非另有说明，本章节中 I2S 及 I2S\regindex{n} 均指代 I2S\regindex{0} 和 I2S\regindex{1}。
+
+以下功能仅 I2S\regindex{0} 具备，I2S\regindex{1} 不具备：
+\begin{itemize}
+    \item PDM TX 模式和 PDM RX 模式，包括原始 PDM 数据收发、PCM-to-PDM 转换器和 PDM-to-PCM 转换器
+    \item PDM 专用数据线 I2S\regindex{0}O\_SD1\_out、I2S\regindex{0}I\_SD1\_in、I2S\regindex{0}I\_SD2\_in、I2S\regindex{0}I\_SD3\_in
+    \item RX 数据按通道重组到多个 DMA 接口
+\end{itemize}
+上述功能对应的寄存器字段在 I2S\regindex{1} 中依然存在且可读写，但不产生任何效果，软件不应配置这些字段。除上述功能外，I2S\regindex{0} 与 I2S\regindex{1} 完全相同。
+\end{tiplisting}
+
+\section{术语}
+\label{sec:i2s-term}
+
+为了更好地说明 I2S 的功能，本章使用了以下术语。 
+
+\begin{longtable}[c]{ R{5cm} p{10cm} }
+\textbf{主机模式}     & I2S\regindex{n} 作为主机驱动 BCK/WS，向从机发送或从其接收数据。 \\ 
+\textbf{从机模式}     & I2S\regindex{n} 作为从机由 BCK/WS 驱动，从主机接收或向其发送数据。 \\
+\textbf{全双工} & 发送与接收使用各自独立的数据线，并可同时进行。\\
+\textbf{半双工} & 发送与接收共用数据线，不能同时进行。\\
+\textbf{A 律和 $\mu$ 律} & A 律和 \textrm{$\mu$} 律是数字脉冲编码调制 (PCM) 非均匀量化中的压缩/解压缩算法，可以有效地改善信号的量化信噪比。 \\
+\textbf{TDM RX 模式} & 即 TDM 输入模式，该模式利用时分复用方式接收脉冲编码调制 (PCM) 数据。信号线包括 BCK、WS 和 SD (DATA)。可以接收最多 16 个通道的数据。数据格式可配置，支持 TDM Philips 格式、TDM MSB 对齐格式、TDM PCM 格式等。\\
+\textbf{PDM RX 模式（仅适用于 I2S\regindex{0}）} & 即 PDM 输入模式，该模式接收脉冲密度调制 (PDM) 数据。信号线包括 WS 和 SD (DATA)。数据格式可配置，支持 PDM 标准格式等。\\
+\textbf{TDM TX 模式} & 即 TDM 输出模式，该模式利用时分复用方式发送脉冲编码调制 (PCM) 数据。信号线包括 BCK、WS 和 SD (DATA)，可以发送最多 16 个通道的数据。数据格式可配置，支持 TDM Philips 格式、TDM MSB 对齐格式、TDM PCM 格式等。\\
+\textbf{PDM TX 模式（仅适用于 I2S\regindex{0}）} & 即 PDM 输出模式，该模式发送脉冲密度调制 (PDM) 数据。信号线包括 WS 和 SD (DATA)。数据格式可配置，支持 PDM 标准格式等。\\
+\textbf{PCM-to-PDM 数据格式转换器（仅适用于 I2S\regindex{0}）} & 将 PCM 数据转换为 PDM 数据的格式转换器（后文简称为 PCM-to-PDM 转换器），可以在 PDM TX 主机模式下启用。启用后，I2S\regindex{0} 通过 GDMA 从存储器中取得脉冲编码调制 (PCM) 数据，将其转换为脉冲密度调制 (PDM) 数据并发送。\\
+\textbf{PDM-to-PCM 数据格式转换器（仅适用于 I2S\regindex{0}）} & 将 PDM 数据转换为 PCM 数据的格式转换器（后文简称为 PDM-to-PCM 转换器），可以在 PDM RX 主机或从机模式下启用。启用后，I2S\regindex{0} 接收脉冲密度调制 (PDM) 数据，将其转换为脉冲编码调制 (PCM) 数据，并将其通过 GDMA 存入存储器。
+\end{longtable}
+
+\section{主要特性}
+\label{sec:i2s-features}
+
+I2S 模块具有以下特性：
+
+\begin{itemize}
+    \item 支持主机模式和从机模式
+    \item 支持全双工和半双工通信
+    \item 支持 TX 模块和 RX 模块独立工作或同时工作
+    \item 支持多种音频标准：
+        \begin{itemize}    
+            \item TDM Philips 标准
+            \item TDM MSB 对齐标准
+            \item TDM PCM 标准
+            \item PDM 标准（仅适用于 I2S\regindex{0}）
+        \end{itemize}
+    \item 支持多种 TX/RX 模式
+        \begin{itemize}
+        \item TDM TX 模式，最多支持 16 通道
+        \item TDM RX 模式，最多支持 16 通道
+        \item PDM TX 模式（仅适用于 I2S\regindex{0}）
+        \begin{itemize}
+            \item 支持原始 PDM 数据发送
+            \item 支持将 PCM 数据转换为 PDM 数据发送，最多支持 2 通道
+        \end{itemize}
+        \item PDM RX 模式（仅适用于 I2S\regindex{0}）
+        \begin{itemize}
+            \item 支持原始 PDM 数据接收
+            \item 支持将 PDM 数据转换为 PCM 数据接收，最多支持 8 通道
+        \end{itemize}
+        \end{itemize}
+    \item 可配置时钟源，支持最高频率为 125 MHz 
+    \item 可配置高精度采样时钟，支持多种采样频率（详见下文注释）
+    \item 支持 8、16、24 和 32 位的数据位宽
+    \item TX 模式支持同步计数器
+    \item 支持将 RX 数据按通道重组到最多 4 路 DMA 接口（仅适用于 I2S\regindex{0}）
+    \item 支持 ETM 功能
+    \item 支持 GDMA
+    \item 支持 I2S 接口中断
+    \item 支持 A 律和 $\mu$ 律压缩/解压缩
+\end{itemize}
+
+\begin{tiplisting}
+从机模式下，由于时钟源的频率限制，\chipname{} I2S\regindex{n} 支持的最高采样频率受到数据位宽和声道数的限制。例如，双声道 32 位宽时，支持 122 kHz 以下的采样频率，包括 8 kHz、16 kHz、32 kHz、44.1 kHz、48 kHz、88.2 kHz、96 kHz。具体请参考章节 \ref{sec:i2s-tx-rx-clk} \textit{\nameref{sec:i2s-tx-rx-clk}}。
+\end{tiplisting}
+
+\section{结构概览}
+\label{sec:i2s-arch-overview}
+
+图 \ref{fig:i2s-sys-diagram} \textit{\nameref{fig:i2s-sys-diagram}} 为 \chipname{} I2S 模块的结构框图。\chipname{} I2S 模块包含：
+
+\begin{itemize}
+    \item 独立的 TX 模块
+    \item 独立的 RX 模块
+    \item 输入输出时序调节单元（I/O 同步）
+    \item 时钟分频器（时钟发生器）
+    \item 64 × 32 位 TX FIFO
+    \item 64 × 32 位 RX FIFO
+    \item 压缩/解压缩模块
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/i2s_arch_20260626__CN}
+    \\ 注：图中 PDM-to-PCM 转换器和 PCM-to-PDM 转换器仅适用于 I2S\regindex{0}。
+    \caption{\chipname{} I2S 系统框图}
+    \label{fig:i2s-sys-diagram}
+\end{figure}
+
+\chipname{} I2S 模块支持 GDMA，可访问内部存储器，更多信息见章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+
+TX 模块和 RX 模块各自有一组三线接口，分别为串行时钟线 BCK、字选择线 WS 和串行数据线 SD。其中，TX 模块的 SD 线固定为输出，RX 模块的 SD 线固定为接收。主机模式下，TX 模块和 RX 模块的 BCK 和 WS 信号线为输出，从机模式下，TX 模块和 RX 模块的 BCK 和 WS 信号线为输入。
+
+图 \ref{fig:i2s-sys-diagram} \textit{\nameref{fig:i2s-sys-diagram}} 中的右半部分展示了 I2S\regindex{n} 模块的信号总线。RX 和 TX 模块的信号命名规则为：I2S\regindex{n}\textcolor{red}{A}\_\textcolor{red}{B}\_\textcolor{red}{C}，例如 I2S\regindex{n}\textcolor{red}{I}\_\textcolor{red}{BCK}\_\textcolor{red}{in}。其中：
+
+\begin{itemize}
+    \item ``A" 表示信号属于 I2S\regindex{n} TX 或 RX 模块，包括：
+    \begin{itemize}
+        \item ``I" 表示信号输入至/输出自 RX 模块
+        \item ``O" 表示信号输入至/输出自 TX 模块
+    \end{itemize}
+    \item ``B" 表示信号功能，包括：
+    \begin{itemize}
+        \item BCK
+        \item WS
+        \item SD
+    \end{itemize}
+    \item ``C" 表示该信号的方向，包括：
+    \begin{itemize}
+        \item ``in" 表示该信号输入 I2S 模块
+        \item ``out" 表示该信号自 I2S 模块输出
+    \end{itemize}
+\end{itemize}
+
+I2S 各信号的具体描述见表 \ref{tab:i2s-signal-descr} \textit{\nameref{tab:i2s-signal-descr}}。
+
+\begin{ThreePartTable}
+\begin{TableNotes}
+        \item[*] I2S 的所有信号均需要经过 GPIO 交换矩阵映射到芯片的管脚。更多信息请参考章节 \ref{mod:iomuxgpio} \textit{\nameref{mod:iomuxgpio}}。
+\end{TableNotes}
+\begin{longtable}[c]{|p{3cm}|p{1.5cm}|p{8cm}|}
+\caption{模块信号描述}
+\label{tab:i2s-signal-descr}
+\\\hline
+    \rowcolor{lightgray}
+    \textbf{信号}&\textbf{方向}&\textbf{功能}\\
+\hline
+\endfirsthead
+    \rowcolor{lightgray}
+    \textbf{信号}&\textbf{方向}&\textbf{功能}\\
+\hline
+\endhead
+\endfoot
+\insertTableNotes
+\endlastfoot
+    I2S\regindex{n}I\_BCK\_in & 输入 & I2S 从机模式下，输入 BCK 信号，用于 RX 模块\\
+    \hline
+    I2S\regindex{n}I\_BCK\_out& 输出 & I2S 主机模式下，输出 BCK 信号，用于 RX 模块\\
+    \hline
+    I2S\regindex{n}I\_WS\_in & 输入 & I2S 从机模式下，输入 WS 信号，用于 RX 模块\\
+    \hline
+    I2S\regindex{n}I\_WS\_out& 输出 & I2S 主机模式下，输出 WS 信号，用于 RX 模块\\\hline
+    I2S\regindex{n}I\_SD\_in& 输入 & I2S RX 模块的串行输入数据线\\\hline
+    I2S\regindex{n}O\_SD\_out& 输出 & I2S TX 模块的串行输出数据线\\\hline
+    I2S\regindex{n}O\_BCK\_in& 输入 & I2S 从机模式下，输入 BCK 信号，用于 TX 模块 \\\hline
+    I2S\regindex{n}O\_BCK\_out& 输出 & I2S 主机模式下，输出 BCK 信号，用于 TX 模块 \\\hline
+    I2S\regindex{n}O\_WS\_in& 输入 & I2S 从机模式下，输入 WS 信号，用于 TX 模块\\\hline
+    I2S\regindex{n}O\_WS\_out& 输出 & I2S 主机模式下，输出 WS 信号，用于 TX 模块\\\hline
+    I2S\regindex{n}\_MCLK\_in& 输入 & I2S 从机模式下，来自外部芯片的时钟源\\\hline
+    I2S\regindex{n}\_MCLK\_out& 输出 & I2S 主机模式下，作为外部芯片的时钟源\\\hline
+    I2S\regindex{0}I\_SD1\_in& 输入 & RX 模块在启用 PDM-to-PCM 转换器时的串行输入数据线\\\hline
+    I2S\regindex{0}I\_SD2\_in& 输入 & RX 模块在启用 PDM-to-PCM 转换器时的串行输入数据线\\\hline
+    I2S\regindex{0}I\_SD3\_in& 输入 & RX 模块在启用 PDM-to-PCM 转换器时的串行输入数据线\\\hline
+    I2S\regindex{0}O\_SD1\_out& 输出 & TX 模块在启用 PCM-to-PDM 转换器且配置为二线 DAC 输出格式时的串行输出数据线\\\hline
+\end{longtable}
+\end{ThreePartTable}
+
+\section{功能描述}
+\label{sec:i2s-func-descr}
+
+\subsection{I2S 模块支持的音频协议} \label{sec:i2s-supported-audio-standards}
+
+\chipname{} I2S\regindex{n} 模块支持多种音频标准，包括 TDM Philips 标准、TDM MSB 对齐标准、TDM PCM 标准以及 PDM 标准（PDM 标准仅 I2S\regindex{0} 支持）。
+
+可通过配置以下寄存器选择所需的音频标准：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXTDMEN]{I2S\_TX/RX\_TDM\_EN}
+    \begin{itemize}
+        \item 0：禁用 TDM 模式
+        \item 1：选择 TDM 模式
+    \end{itemize}
+    \item \hyperref[fielddesc:I2SRXPDMEN]{I2S\_TX/RX\_PDM\_EN}
+    \begin{itemize}
+        \item 0：禁用 PDM 模式
+        \item 1：选择 PDM 模式
+    \end{itemize}    
+    \item \hyperref[fielddesc:I2SRXMSBSHIFT]{I2S\_TX/RX\_MSB\_SHIFT}
+    \begin{itemize}
+        \item 0：配置 WS 信号和 SD 信号同时开始变化，即选择 MSB 对齐标准
+        \item 1：配置 WS 信号先于 SD 信号一个 BCK 时钟周期开始变化，即选择 Philips 标准或 PCM 标准
+    \end{itemize}
+\end{itemize}
+
+\begin{tiplisting}
+不可将 \hyperref[fielddesc:I2SRXTDMEN]{I2S\_TX/RX\_TDM\_EN} 和 \hyperref[fielddesc:I2SRXPDMEN]{I2S\_TX/RX\_PDM\_EN} 同时配置为 1 或同时配置为 0，否则会导致 \chipname{} I2S\regindex{n} 以既非 TDM 模式也非 PDM 模式的状态错误发送数据。
+\end{tiplisting}
+
+\subsubsection{TDM Philips 标准模式}
+
+在 Philips 标准下，在 BCK 的下降沿，WS 信号先于 SD 信号一个 BCK 时钟周期开始变化，即 WS 信号从当前通道数据的第一个位之前的一个时钟开始有效，并在当前通道数据发送结束前一个 BCK 时钟周期开始变化。SD 信号线上首先传输音频数据的最高位。
+
+与普通 Philips 标准相比，TDM Philips 标准支持的通道更多，见图 \ref{fig:i2s-tdm-philips-std-timing-diagram} \textit{\nameref{fig:i2s-tdm-philips-std-timing-diagram}}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_phillips_mode.png}
+    \caption{时序图 -- TDM Philips 标准}
+    \label{fig:i2s-tdm-philips-std-timing-diagram}
+\end{figure}
+
+\subsubsection{TDM MSB 对齐标准模式}
+
+MSB 对齐标准下，在 BCK 下降沿，WS 信号和 SD 信号同时变化。WS 持续到当前通道数据发送结束，SD 信号线上首先传输音频数据的最高位。
+
+与普通 MSB 对齐标准相比，TDM MSB 对齐标准支持更多通道，见图 \ref{fig:i2s-tdm-msb-align-std-timing-diagram} \textit{\nameref{fig:i2s-tdm-msb-align-std-timing-diagram}}。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_msb_mode.png}
+    \caption{时序图 -- TDM MSB 对齐标准}
+    \label{fig:i2s-tdm-msb-align-std-timing-diagram}
+\end{figure}
+
+\subsubsection{TDM PCM 标准模式}
+
+在 PCM 标准的短帧同步模式下，在 BCK 的下降沿，WS 信号先于 SD 信号一个 BCK 时钟周期开始变化，即 WS 信号从当前通道数据的第一个位之前的一个时钟开始有效，并持续一个 BCK 时钟周期。SD 信号线上首先传输音频数据的最高位。
+
+与普通 PCM 标准相比，TDM PCM 标准支持更多通道，如图 \ref{fig:i2s-tdm-pcm-std-timing-diagram} \textit{\nameref{fig:i2s-tdm-pcm-std-timing-diagram}} 所示。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_pcm_mode.png}
+    \caption{时序图 -- TDM PCM 标准}
+    \label{fig:i2s-tdm-pcm-std-timing-diagram}
+\end{figure}
+
+
+\subsubsection{PDM 标准模式}
+
+如图 \ref{fig:i2s-pdm-std-timing-diagram} \textit{\nameref{fig:i2s-pdm-std-timing-diagram}} 所示，在 PDM 标准下，WS 代表左/右声道，WS 与 SD 同时变化。WS 在数据发送过程中持续变化，WS 的高低对应两个声道。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{\modulefiles/figures/i2s_pdm_mode.pdf}
+    \caption{时序图 -- PDM 标准}
+    \label{fig:i2s-pdm-std-timing-diagram}
+\end{figure}
+
+\subsection{I2S 主/从机模式}
+
+\chipname{} I2S\regindex{n} 模块可作为主机或从机，两种模式均支持半双工通信或全双工通信。可通过配置 \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} 和 \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} 选择需要的模式。
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD} 
+    \begin{itemize}
+        \item 0：主机发送模式
+        \item 1：从机发送模式
+    \end{itemize}
+    \item \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD}
+    \begin{itemize}
+        \item 0：主机接收模式
+        \item 1：从机接收模式
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{主/从机发送模式} \label{sec:i2s-master-slave-tx-mode}
+\begin{itemize}
+    \item 主机发送模式
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 启动一次发送操作。置位该位，TX 模块会一直输出时钟信号和串行数据。
+        \item 置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，则主机停止发送数据和时钟信号。
+        \item 清零 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，并且没有新数据填入，发送模块将一直发送最后一帧数据和时钟信号。
+        \item 当 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 被清零时，主机停止发送数据。
+    \end{itemize}
+    \item 从机发送模式
+     \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。TX 模块等待主机 BCK 时钟，来启动发送操作。
+        \item 置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，则从机发送数据一直为零，直到主机停止发送 BCK 时钟为止。
+        \item 清零 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN} 时，如果 FIFO 中的数据全部发送完毕，并且没有新数据填入， TX 模块将一直发送最后一帧数据。
+        \item 当 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 被清零时，从机发送数据一直为零，直到主机停止发送 BCK 时钟为止。
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{主/从机接收模式} \label{sec:i2s-master-slave-rx-mode}
+\begin{itemize}
+    \item 主机接收模式
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 启动一次接收操作。RX 模块会一直输出时钟信号，并对输入数据进行采样。
+        \item 配置 \hyperref[fielddesc:I2SRXSTOPMODE]{I2S\_RX\_STOP\_MODE} 来控制接收模式何时暂停接收：
+        \begin{itemize}
+            \item 0：只有 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，RX 模块才会暂停接收。
+            \item 1：RX 模块会在 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，或者接收字节数达到 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 配置的接收长度值时暂停接收。当 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 未被清除时，可通过置位 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 来重新启动接收。
+            \item 2：RX 模块会在 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，或 \hyperref[int:I2SRXDONEINT]{I2S\regindex{n}\_RX\_DONE\_INT} 的触发条件（由 \hyperref[fielddesc:I2SRXDONEMODE]{I2S\_RX\_DONE\_MODE} 配置，详见章节 \ref{sec:i2s-interrupts} \textit{\nameref{sec:i2s-interrupts}}）满足时暂停接收。当 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 未被清除时，可通过置位 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 重新启动接收。
+        \end{itemize}
+        \item 清零 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，RX 模块停止接收数据。
+    \end{itemize}
+    \item 从机接收模式
+    \begin{itemize}
+        \item 置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}。等待主机 BCK 时钟，来启动接收操作。
+        \item 配置 \hyperref[fielddesc:I2SRXSTOPMODE]{I2S\_RX\_STOP\_MODE} 来控制接收模式何时暂停接收：
+        \begin{itemize}
+            \item 0：只有 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，RX 模块才会暂停接收；
+            \item 1：RX 模块会在 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，或者接收字节数达到 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 配置的接收长度值时暂停接收。当 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 未被清除时，可通过置位 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 来重新开始接收；
+            \item 2：RX 模块会在 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 被清除，或 \hyperref[int:I2SRXDONEINT]{I2S\regindex{n}\_RX\_DONE\_INT} 的触发条件（由 \hyperref[fielddesc:I2SRXDONEMODE]{I2S\_RX\_DONE\_MODE} 配置，详见章节 \ref{sec:i2s-interrupts} \textit{\nameref{sec:i2s-interrupts}}）满足时暂停接收。当 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 未被清除时，可通过置位 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 重新启动接收。
+        \end{itemize}
+        \item 清零 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，RX 模块停止接收数据。
+    \end{itemize}
+\end{itemize}
+
+\subsection{发送数据}\label{sec:i2s-tx-data}
+
+\vspace{1em}
+\begin{tiplisting}
+本小节以及后续小节所述的配置，均需要通过置位 \hyperref[fielddesc:I2STXUPDATE]{I2S\_TX\_UPDATE} 的方式来进行更新，从而将 I2S\regindex{n} TX 寄存器数据从 APB 时钟域同步到 I2S\regindex{n} TX 时钟域。详细配置见章节 \ref{sec:i2s-configure-i2s-tx-mode} \textit{\nameref{sec:i2s-configure-i2s-tx-mode}}。
+\end{tiplisting}
+\vspace{-1em}
+
+\chipname{} I2S\regindex{n} 发送数据时，从 GDMA 读取数据，经过数据格式控制和通道模式控制，从外设输出信号输出对应数据。
+\subsubsection{数据格式控制}\label{sec:i2s-data-control}
+数据格式控制分为三个阶段：
+\begin{itemize}
+    \item 第一阶段：从内存中读出有效数据并写入 TX FIFO；
+    \item 第二阶段：将待发送数据从 TX FIFO 中读出，并进行输出数据模式转换；
+    \item 第三阶段：将待发送数据转换为串行数据流输出。
+\end{itemize}
+
+\paragraph{通道有效数据位宽}
+\hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD} 和 \hyperref[fielddesc:I2STX24FILLEN]{I2S\_TX\_24\_FILL\_EN} 决定了每个通道的有效数据位宽，其可取值和对应的有效数据位宽见表 \ref{tab:i2s-bit-width-chan-valid-data} \textit{\nameref{tab:i2s-bit-width-chan-valid-data}}：
+
+\begin{table}[H]
+    \centering
+    \caption{通道有效数据位宽控制}
+    \label{tab:i2s-bit-width-chan-valid-data}
+    \begin{threeparttable}
+    \begin{tabular}{|p{4.2cm}|R{3.1cm}|R{3.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{通道有效数据位宽} & \textbf{\hyperref[fielddesc:I2STXBITSMOD]{I2S\_TX\_BITS\_MOD}}  & \textbf{\hyperref[fielddesc:I2STX24FILLEN]{I2S\_TX\_24\_FILL\_EN}} \\ \hline
+    \multirow{2}*{32} & 31 & x\tnote{*} \\\cline{2-3}
+                      & 23 & 1 \\\hline
+
+                24    & 23 & 0 \\\hline
+
+                16     & 15 & x \\\hline
+                8     & 7 & x \\\hline
+    \end{tabular}
+        \begin{tablenotes}
+            \item[*] ``x" 表示该值被忽略（适用于本章所有表格）。
+        \end{tablenotes}
+
+    \end{threeparttable}
+\end{table}
+
+\paragraph{通道有效数据字节序}
+I2S\regindex{n} 通过 GDMA 读取数据之后，\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN} 用于控制从 GDMA 读取数据的字节序。表 \ref{tab:i2s-endian-chan-valid-data} \textit{\nameref{tab:i2s-endian-chan-valid-data}} 描述了不同通道有效数据位宽下，该寄存器对读取数据的控制。
+
+\begin{table}[H]
+    \centering
+    \caption{通道有效数据字节序控制}
+    \label{tab:i2s-endian-chan-valid-data}
+    \begin{tabular}{|p{3.2cm}|R{2.7cm}|R{3.2cm}|R{3.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{通道有效数据位宽} & \textbf{原始数据}  & \textbf{控制后数据字节序}  & \textbf{\hyperref[fielddesc:I2STXBIGENDIAN]{I2S\_TX\_BIG\_ENDIAN}} \\ \hline
+    \multirow{2}*{32} & \multirow{2}*{\{B3, B2, B1, B0\}} & \{B3, B2, B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1, B2, B3\} & 1 \\\hline
+
+    \multirow{2}*{24} & \multirow{2}*{\{B2, B1, B0\}} & \{B2, B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1, B2\} & 1 \\\hline
+
+    \multirow{2}*{16} & \multirow{2}*{\{B1, B0\}} & \{B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1\} & 1 \\\hline
+
+                8     & \{B0\} & \{B0\} & x \\\hline
+    \end{tabular}
+\end{table}
+
+\begin{tiplisting}
+B0、B1、B2、B3 各代表一个 8 位数据，符号 \{\} 表示这些字节被组合到一起。例如，\{B3, B2, B1, B0\} 代表一个 32 位的数据，其中 B0 代表 0～7 位，B1 代表 8～15 位，B2 代表 16～23 位，B3 代表 24～31 位。
+\end{tiplisting}
+
+\paragraph{A 律/$\mu$ 律压缩/解压缩}
+
+\chipname{} I2S\regindex{n} 按照 32 位（缺省高位补 0$^*$）的方式对排列好字节序的有效数据进行 A 律/$\mu$ 律压缩/解压缩。
+
+\vspace{-1em}
+\begin{tiplisting}
+缺省高位补 0，即如果有效数据位宽小于 32，则待压缩/解压缩数据的 [31: 有效位宽] 位自动填充 0。
+\end{tiplisting}
+
+配置 \hyperref[fielddesc:I2STXPCMBYPASS]{I2S\_TX\_PCM\_BYPASS} 为：
+\begin{itemize}
+\item 0：进行压缩/解压缩
+\item 1：不进行压缩/解压缩
+\end{itemize}
+
+配置 \hyperref[fielddesc:I2STXPCMCONF]{I2S\_TX\_PCM\_CONF} 为：
+\begin{itemize}
+\item 0：A 律解压缩
+\item 1：A 律压缩
+\item 2：$\mu$ 律解压缩
+\item 3：$\mu$ 律压缩
+\end{itemize}
+至此，数据格式控制的第一阶段完成。
+
+\paragraph{通道发送数据位宽} 
+\label{sec:i2s-tdm-chan-bits}
+\chipname{} I2S\regindex{n} 中，\hyperref[fielddesc:I2STXTDMCHANBITS]{I2S\_TX\_TDM\_CHAN\_BITS} 决定了每个通道发送数据的位宽。
+
+\begin{itemize}
+\item 当每个通道发送数据的位宽大于有效数据位宽时，会在剩余的位置补充 0。此时，配置 \hyperref[fielddesc:I2STXLEFTALIGN]{I2S\_TX\_LEFT\_ALIGN} 为：
+\begin{itemize}
+\item 0：有效数据位于发送数据低位，在数据高位补零；
+\item 1：有效数据位于发送数据高位，在数据低位补零。
+\end{itemize}
+\item 当每个通道发送数据的位宽小于有效数据位宽时，每次发送数据仅发送低位有效数据部分，高位部分将被舍弃。
+\end{itemize}
+至此，数据格式控制的第二阶段完成。
+
+\paragraph{通道数据比特顺序}
+\chipname{} I2S\regindex{n} 通道数据比特顺序由 \hyperref[fielddesc:I2STXBITORDER]{I2S\_TX\_BIT\_ORDER} 控制：
+\begin{itemize}
+\item 0：不调换有效数据比特顺序；
+\item 1：调换有效数据比特顺序。
+\end{itemize}
+至此，数据格式控制部分全部完成。经过数据格式控制的数据将从高位向低位依次发送。图 \ref{fig:i2s-tx-data-format-control} \textit{\nameref{fig:i2s-tx-data-format-control}} 所示即为一次完整的 TX 数据格式控制过程。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{\modulefiles/figures/i2s_tx_data_config.png}
+    \caption{TX 数据格式控制}
+    \label{fig:i2s-tx-data-format-control}
+\end{figure}
+
+\subsubsection{通道模式控制}
+
+\chipname{} I2S\regindex{n} 支持 TDM 和 PDM 两种发送模式。置位 \hyperref[fielddesc:I2STXTDMEN]{I2S\_TX\_TDM\_EN} 使能 TDM 输出模式，置位 \hyperref[fielddesc:I2STXPDMEN]{I2S\_TX\_PDM\_EN} 使能 PDM 输出模式。其中，PDM 输出模式仅 I2S\regindex{0} 支持。
+
+\begin{tiplisting}
+\hyperref[fielddesc:I2STXTDMEN]{I2S\_TX\_TDM\_EN} 和 \hyperref[fielddesc:I2STXPDMEN]{I2S\_TX\_PDM\_EN} 不能同时置位或同时清零。 
+\end{tiplisting}
+
+\paragraph{TDM 输出模式} \label{sec:i2s-chan-control-tdm-mode}
+
+在 TDM 输出模式下，I2S\regindex{n} 最多支持 16 个发送通道。发送通道数由 \hyperref[fielddesc:I2STXTDMTOTCHANNUM]{I2S\_TX\_TDM\_TOT\_CHAN\_NUM} 控制。例如，配置 \hyperref[fielddesc:I2STXTDMTOTCHANNUM]{I2S\_TX\_TDM\_TOT\_CHAN\_NUM} 为 5，则六个通道（通道 0 \verb+~+ 5）将用于发送数据，见图 \ref{fig:i2s-tdm-chan-control} \textit{\nameref{fig:i2s-tdm-chan-control}}。 
+
+\begin{tiplisting}
+将 I2S\regindex{n} 模块设置为 TDM 双通道模式，可实现控制大多数 I2S 双声道编解码器。
+\end{tiplisting}
+
+在发送数据的通道中，如果其对应的 \hyperref[fielddesc:I2STXTDMCHAN0EN]{I2S\_TX\_TDM\_CHAN{\textcolor{red}{n}}\_EN} 为：
+
+\begin{itemize}
+    \item 1：则该通道发送通道数据；
+    \item 0：则该通道发送数据由 \hyperref[fielddesc:I2STXCHANEQUAL]{I2S\_TX\_CHAN\_EQUAL} 控制，当该值为：
+    \begin{itemize}
+        \item 1：则发送前一个通道的数据；
+        \item 0：则发送 \hyperref[fielddesc:I2SSINGLEDATA]{I2S\_SINGLE\_DATA} 的值。
+    \end{itemize}
+\end{itemize}
+
+当 I2S\regindex{n} 处于主机 TDM 输出模式下，WS 信号由 \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL} 和 \hyperref[fielddesc:I2STXTDMWSWIDTH]{I2S\_TX\_TDM\_WS\_WIDTH} 控制：
+    \begin{itemize}
+        \item \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL} 的值为 WS 信号的默认电平；
+        \item \hyperref[fielddesc:I2STXTDMWSWIDTH]{I2S\_TX\_TDM\_WS\_WIDTH} 配置发送过程中 WS 为默认电平的空闲时长，空闲时长 = (\hyperref[fielddesc:I2STXTDMWSWIDTH]{I2S\_TX\_TDM\_WS\_WIDTH} + 1) × T\_BCK。
+    \end{itemize}
+
+另外，(\hyperref[fielddesc:I2STXHALFSAMPLEBITS]{I2S\_TX\_HALF\_SAMPLE\_BITS} + 1) × 2 即为一个 WS 周期对应的 BCK 周期数。
+
+\textbf{TDM 通道配置示例}
+
+在本示例中，寄存器的配置如下：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:I2STXTDMTOTCHANNUM]{I2S\_TX\_TDM\_TOT\_CHAN\_NUM} 为 5，即选择使用通道 0 \verb+~+ 5 进行数据发送。
+    \item 配置 \hyperref[fielddesc:I2STXCHANEQUAL]{I2S\_TX\_CHAN\_EQUAL} 为 1，即如果相应通道的 \hyperref[fielddesc:I2STXTDMCHAN0EN]{I2S\_TX\_TDM\_CHAN\regindex{n}\_EN} (\regindex{n} = 0 \verb+~+ 5) 被清除，则该通道将发送前一通道的数据。
+    \item 配置 \hyperref[fielddesc:I2STXTDMCHAN0EN]{I2S\_TX\_TDM\_CHAN0/2/5\_EN} 为 1，即这些通道将用于发送通道数据。
+    \item 配置 \hyperref[fielddesc:I2STXTDMCHAN0EN]{I2S\_TX\_TDM\_CHAN1/3/4\_EN} 为 0，则这些通道将发送前一个通道的数据。
+    
+\end{itemize}
+
+配置完成后，则数据将按下图方式进行发送。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{\modulefiles/figures/i2s_tdm_channel_config.pdf}
+    \caption{TDM 通道控制}
+    \label{fig:i2s-tdm-chan-control}
+\end{figure}
+
+\paragraph{PDM 输出模式} 
+
+本小节仅适用于 I2S\regindex{0}。在 PDM 输出模式下，I2S\regindex{0} 可以发送原始 PDM 数据，或者将 PCM 数据转换为 PDM 数据后发送。
+
+在 PDM 输出模式下，从 GDMA 取得数据的过程由 \hyperref[fielddesc:I2STXMONO]{I2S\_TX\_MONO} 和 \hyperref[fielddesc:I2STXMONOFSTVLD]{I2S\_TX\_MONO\_FST\_VLD} 控制，见表 \ref{tab:i2s-data-fetch-control-pdm-mode} \textit{\nameref{tab:i2s-data-fetch-control-pdm-mode}}。请根据内存中存储的数据为单/双声道数据来配置该寄存器。
+
+\begin{table}[H]
+    \centering
+    \caption{PDM 输出模式下 I2S\regindex{n} 取数逻辑}
+    \label{tab:i2s-data-fetch-control-pdm-mode}
+    \begin{tabular}{|p{6.6cm}|l|r|r|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{取数逻辑} &\textbf{模式} &\textbf{\hyperref[fielddesc:I2STXMONO]{I2S\_TX\_MONO}}  & \textbf{\hyperref[fielddesc:I2STXMONOFSTVLD]{I2S\_TX\_MONO\_FST\_VLD}} \\ \hline
+                        每个 WS 沿都向 GDMA 发起取数请求 & 双声道 & 0 & x        \\ \hline
+                        只在 WS 后半周期向 GDMA 发起取数请求  & 单声道 & 1 & 0   \\ \hline
+                        只在 WS 前半周期向 GDMA 发起取数请求 & 单声道 & 1 & 1      \\ \hline
+    \end{tabular}
+\end{table}
+
+当 I2S\regindex{n} 处于主机 PDM 输出模式时，WS 信号的默认电平由 \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL} 控制，WS 信号频率为 BCK 信号频率的一半。请参考章节 \ref{sec:i2s-tx-rx-clk} \textit{\nameref{sec:i2s-tx-rx-clk}} 配置 BCK 信号的方式来配置 WS 信号，见图
+\ref{fig:i2s-pdm-chan-control-example} \textit{\nameref{fig:i2s-pdm-chan-control-example}}。
+
+在\textbf{发送原始 PDM 数据}时，I2S\regindex{n} 通道数据由 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD} 和 \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL} 控制，见表 \ref{tab:i2s-chan-control-pdm-mode} \textit{\nameref{tab:i2s-chan-control-pdm-mode}}。
+
+\begin{table}[H]
+    \centering
+    \caption{原始 PDM 数据的 I2S 通道模式控制}
+    \label{tab:i2s-chan-control-pdm-mode}
+    \begin{threeparttable}
+    \begin{tabular}{|p{2.0cm}|L{3.8cm}|L{3.8cm}|R{2.4cm}|R{2.0cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{模式} & \textbf{左声道} &\textbf{右声道} & \textbf{模式控制字段}\tnote{1} & \textbf{声道选择位}\tnote{2}\\ \hline
+    双声道 & 发送左通道数据 & 发送右通道数据 &0 & x \\\hline
+                         \multirow{8}*{单声道}  & 发送左通道数据 & 发送左通道数据 & 1 & 0         \\ \cline{2-5}
+                                           & 发送右通道数据 & 发送右通道数据 & 1 & 1\\ \cline{2-5}
+                                           & 发送右通道数据 & 发送右通道数据 & 2 & 0 \\ \cline{2-5}
+                                           & 发送左通道数据 & 发送左通道数据 &2 & 1 \\ \cline{2-5}
+                                           & 发送 ``single" 值\tnote{3} & 发送右通道数据 & 3 & 0 \\ \cline{2-5}
+                                           & 发送左通道数据 & 发送 ``single" 值 &3 & 1 \\ \cline{2-5}
+                                           & 发送左通道数据 & 发送 ``single" 值 &4 & 0 \\ \cline{2-5}
+                                           & 发送 ``single" 值 & 发送右通道数据 & 4 & 1 \\ \hline
+    \end{tabular}
+        \begin{tablenotes}
+            \item[1] \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD}
+            \item[2] \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL}
+            \item[3] single 值等于 \hyperref[fielddesc:I2SSINGLEDATA]{I2S\_SINGLE\_DATA} 的值。
+        \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+在 I2S\regindex{0} \textbf{启用 PCM-to-PDM 转换器} 时，可以将 GDMA 中的 PCM 数据转为 PDM 数据，并按照 PDM 信号格式输出，配置 \hyperref[fielddesc:I2SPCM2PDMCONVEN]{I2S\_PCM2PDM\_CONV\_EN} 启动该转换器。PCM-to-PDM 转换器的寄存器配置如下：
+
+\begin{itemize}
+    \item 配置一线 PDM 输出格式或一/二线 DAC 输出格式，见表 \ref{tab:i2s-pcm-pdm-output-mode} \textit{\nameref{tab:i2s-pcm-pdm-output-mode}}。
+\begin{table}[H]
+    \centering
+    \caption{I2S\regindex{0} PCM-to-PDM 数据输出}
+    \label{tab:i2s-pcm-pdm-output-mode}
+    \begin{tabular}{|p{4.3cm}|R{5.2cm}|R{5.0cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{通道输出格式}&\textbf{\hyperref[fielddesc:I2STXPDMDACMODEEN]{I2S\_TX\_PDM\_DAC\_MODE\_EN}} & \textbf{\hyperref[fielddesc:I2STXPDMDAC2OUTEN]{I2S\_TX\_PDM\_DAC\_2OUT\_EN}}\\ \hline
+    一线 PDM 输出格式\hyperref[note-1]{$^1$}& 0 & x \\ \hline
+    一线 DAC 输出格式\hyperref[note-2]{$^2$} &1   & 0  \\ \hline 
+    二线 DAC 输出格式 & 1 & 1 \\ \hline
+    \end{tabular}
+\end{table}
+
+\vspace{-1em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item \label{note-1} 此处定义的 PDM 输出格式是指一个 WS 周期发送两个通道的 SD 数据。
+    \item \label{note-2} 此处定义的 DAC 输出格式是指一个 WS 周期发送一个通道的 SD 数据。
+    \item 一线 PDM/DAC 输出格式使用 I2S\regindex{0}O\_SD\_out 作为数据输出线。
+    \item 二线 DAC 输出格式使用 I2S\regindex{0}O\_SD\_out 和 I2S\regindex{0}O\_SD1\_out 作为数据输出线。
+    \item 从应用上来说，PDM 输出格式针对的是需要时钟信号、可以解码 PDM 格式编解码器的应用场景，DAC 输出格式针对的是不依赖时钟信号、没有 PDM 格式编解码器、且通过低通滤波可以直接恢复成模拟波形的应用场景。
+\end{enumerate}
+
+\end{tiplisting}
+\vspace{-1em}
+
+    \item 配置采样频率和上采样率。\newline
+    I2S\regindex{0} 启用 PCM-to-PDM 转换器进行数据输出时，PDM 时钟频率即为 BCK 时钟频率。采样频率（$f_{\mathrm{Sampling}}$，即 PCM 数据采样频率）与 BCK 时钟频率（PDM 数据采样频率）的关系如下：
+    
+    $$f_{\mathrm{Sampling}} = \frac{f_{\mathrm{BCK}}}{\mathrm{OSR}}$$
+    
+    其中，上采样率 OSR 和 \hyperref[fielddesc:I2STXPDMSINCOSR2]{I2S\_TX\_PDM\_SINC\_OSR2} 的关系为：
+    $$\mathrm{OSR} = \mathrm{\hyperref[fielddesc:I2STXPDMSINCOSR2]{I2S\_TX\_PDM\_SINC\_OSR2}} \times 64$$
+    
+    采样频率 $f_{\mathrm{Sampling}}$ 和 \hyperref[fielddesc:I2STXPDMFS]{I2S\_TX\_PDM\_FS} 的对应关系为：
+    $$f_{\mathrm{Sampling}} = \mathrm{\hyperref[fielddesc:I2STXPDMFS]{I2S\_TX\_PDM\_FS}} \times 100$$
+    
+    请根据需要的采样频率、上采样率以及 PDM 时钟频率进行寄存器配置。
+\end{itemize}
+
+
+\textbf{PDM 通道配置示例}
+
+本示例针对 I2S\regindex{0}，示例中寄存器的配置如下：
+
+\begin{itemize}
+    \item 配置 \hyperref[fielddesc:I2SPCM2PDMCONVEN]{I2S\_PCM2PDM\_CONV\_EN} 为 0，即选择输出原始 PDM 数据。
+    \item 配置 \hyperref[fielddesc:I2STXMONO]{I2S\_TX\_MONO} 为 0，即 I2S\regindex{0} 在 WS 的高低电平均通过 GDMA 从存储器取数。
+    \item 配置 \hyperref[fielddesc:I2STXCHANMOD]{I2S\_TX\_CHAN\_MOD} 为 2，即选择单声道模式。
+    \item 配置 \hyperref[fielddesc:I2STXWSIDLEPOL]{I2S\_TX\_WS\_IDLE\_POL} 为 1，则左声道和右声道均发送左通道数据，右声道数据将被舍弃。
+\end{itemize}
+
+配置完成后，假定存储器中的数据\textbf{经过数据格式控制之后}为：
+
+\begin{table}[H]
+    \centering
+    \caption{PDM 通道配置示例中经过数据格式控制后的数据排列}
+    \label{tab:i2s-pdm-chan-example-data}
+    \begin{tabular}{|c|c|c|c|c|c|c|}
+    \hline
+    Left & Right & Left & Right & ... & Left & Right \\ \hline
+    \end{tabular}
+\end{table}
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{enumerate}
+    \item 此处的数据并非存储器中的原始数据，而是经过数据格式控制之后的数据。
+    \item 表中的 ``Left" 和 ``Right" 代表通道数据，其位宽为通道有效数据位宽，请参考章节 \ref{sec:i2s-data-control} \textit{\nameref{sec:i2s-data-control}}。
+\end{enumerate}
+\end{tiplisting}
+\vspace{-1em}
+则数据经过通道模式控制后，将按照下图方式进行发送。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{\modulefiles/figures/i2s_chan_mode_20220210.pdf}
+    \caption{PDM 通道控制示例}
+    \label{fig:i2s-pdm-chan-control-example}
+\end{figure}
+
+\subsubsection{同步计数器}
+
+\chipname{} I2S\regindex{n} TX 模块包含同步计数器，用于反映当前 I2S\regindex{n} 的数据发送情况。同步计数器可用于检测 I2S\regindex{n} 发送数据错误，或在多个设备使用 I2S 发送数据时进行同步。
+
+\chipname{} I2S\regindex{n} 共包含两种类型的同步计数器：
+
+\begin{itemize}
+    \item FIFO 计数器：\hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT}
+    \begin{itemize}
+        \item 每次 I2S\regindex{n} TX FIFO 成功读取一个数据，该计数器加 1。
+        \item 置位 \hyperref[fielddesc:I2STXFIFOCNTRST]{I2S\_TX\_FIFO\_CNT\_RST} 可复位该同步计数器。
+        \item ETM 任务 I2S\regindex{n}\_TASK\_SYNC\_CHECK 发生时，该计数器清零。
+        \item 该计数器位宽为 31 比特，溢出时自动归零。
+    \end{itemize}
+    \item BCK 计数器：\hyperref[fielddesc:I2STXBCKCNT]{I2S\_TX\_BCK\_CNT}
+    \begin{itemize}
+        \item 每次 I2S\regindex{n} TX 发送一个 BCK 周期，该计数器加 1。
+        \item 可以通过置位 \hyperref[fielddesc:I2STXBCKCNTRST]{I2S\_TX\_BCK\_CNT\_RST} 来复位该同步计数器。
+        \item ETM 任务 I2S\regindex{n}\_TASK\_SYNC\_CHECK 发生时，该计数器清零。
+        \item 该计数器位宽为 31 比特，溢出时自动归零。
+    \end{itemize}
+\end{itemize}
+
+\vspace{-0.5em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item 每次 I2S\regindex{n} TX FIFO 发送一个数据，均意味着发送了一个通道数据，因此，当 I2S\regindex{n} 正确发送数据时，\hyperref[fielddesc:I2STXBCKCNT]{I2S\_TX\_BCK\_CNT} = \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} $\times$ 通道发送数据位宽（请参考章节 \ref{sec:i2s-tdm-chan-bits} \textit{\nameref{sec:i2s-tdm-chan-bits}}）。
+    \item 由于 I2S\regindex{n} TX 模块发送数据时，从 FIFO 取出数据到把数据发送至线上存在一些延迟，因此读到 \hyperref[fielddesc:I2STXBCKCNT]{I2S\_TX\_BCK\_CNT} 的值与 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 的值可能略微不对应。
+\end{itemize}
+\end{tiplisting}
+\vspace{-1em}
+
+\textbf{应用场景示例}
+\begin{enumerate}
+    \item 多个设备 I2S TX 同步\\
+    多个设备同时通过 I2S TX 发送数据时，由于时钟源的微小频率差，长时间发送数据后会出现同步问题。此时，可以通过读取每个设备的 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 值来判断发送音频数据的位置，从而进行同步操作。
+    \item I2S TX 稳定性检查\\
+    当设备处于 GDMA 占用较多的应用场景时，可能会由于多路仲裁，导致 I2S TX 出现偶尔缺数。此时，查看 \hyperref[fielddesc:I2STXBCKCNT]{I2S\_TX\_BCK\_CNT} 与 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 的比例关系，可以确认设备运行 I2S TX 时的稳定性。
+\end{enumerate}
+
+\paragraph{硬件自动同步功能}
+
+\chipname{} I2S\regindex{n} 支持硬件自动同步功能，可结合 ETM 任务 I2S\regindex{n}\_TASK\_SYNC\_CHECK 自动对 I2S TX 的发送数据进行同步校准。具体工作流程如下：
+
+\begin{itemize}
+    \item 当执行 I2S\regindex{n}\_TASK\_SYNC\_CHECK 时，I2S 读取当前 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 值，计算其与理想值的\textbf{有符号}差值，并累加到 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 中：
+    \[
+        \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} \mathrel{+}= \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} - \hyperref[fielddesc:I2STXIDEALCNT]{I2S\_TX\_IDEAL\_CNT}
+    \]
+    随后 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 清零，重新开始计数。因此 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 反映的是自上次清零以来累计的数据量偏差，而不是单次 I2S\regindex{n}\_TASK\_SYNC\_CHECK 的偏差。置位 \hyperref[fielddesc:I2STXCNTDIFFRST]{I2S\_TX\_CNT\_DIFF\_RST} 可将该累加值清零。
+    \item 如果 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值大于 \hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES} 且小于等于 \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES}，硬件将自动补充或丢弃相应数量的数据，以实现同步：
+    \begin{itemize}
+        \item \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 为正，表示已发送的数据量多于理想值，硬件按 \hyperref[fielddesc:I2STXHWSYNCSUPPLMODE]{I2S\_TX\_HW\_SYNC\_SUPPL\_MODE} 的配置补充相应数量的数据（补充的数据不从 TX FIFO 中取）；
+        \item \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 为负，表示已发送的数据量少于理想值，硬件从 TX FIFO 中额外读出并丢弃相应数量的数据。
+    \end{itemize}
+    每补充或丢弃一个数据，偏差量相应减少 1，直到偏差量归零。
+\end{itemize}
+
+\begin{tiplisting}
+\hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 是 31 位只读字段，其中的有符号差值以 31 位二进制补码形式存储，bit[30] 为符号位：
+\begin{itemize}
+    \item bit[30] = 0：差值为非负数，其数值即为该字段的读回值；
+    \item bit[30] = 1：差值为负，其数值为读回值减去 $2^{31}$。
+\end{itemize}
+可表示的差值范围为 $-2^{30}$ \verb+~+ $2^{30}-1$。硬件在与 \hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES}、\hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES} 比较时，同样按上述规则先取绝对值再比较；两个阈值字段本身为无符号数。
+\end{tiplisting}
+
+相关配置寄存器说明如下：
+
+\begin{itemize} 
+    \item \hyperref[fielddesc:I2STXHWSYNCEN]{I2S\_TX\_HW\_SYNC\_EN}：置 1 开启硬件自动同步功能。
+    \item \hyperref[fielddesc:I2STXIDEALCNT]{I2S\_TX\_IDEAL\_CNT}：配置执行 I2S\regindex{n}\_TASK\_SYNC\_CHECK 时 \hyperref[fielddesc:I2STXFIFOCNT]{I2S\_TX\_FIFO\_CNT} 的理想值。
+    \item \hyperref[fielddesc:I2STXCNTDIFFRST]{I2S\_TX\_CNT\_DIFF\_RST}：置 1 将 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的累加值清零。
+    \item \hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES}：配置执行 I2S\regindex{n}\_TASK\_SYNC\_CHECK 时，硬件自动同步处理数据量偏差的下限（阈值）。
+    \item \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES}：配置执行 I2S\regindex{n}\_TASK\_SYNC\_CHECK 时，硬件自动同步处理数据量偏差的上限（阈值）。当 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值超过此值时，将触发中断。
+
+\begin{tiplisting}
+\hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES} 和 \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES} 共同决定硬件同步功能的处理方式：
+    \begin{itemize}
+        \item 当 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值小于等于 \hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES} 时，硬件不做任何处理。
+        \item 当 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值大于 \hyperref[fielddesc:I2STXCNTDIFFHWTHRES]{I2S\_TX\_CNT\_DIFF\_HW\_THRES} 且小于等于\\ \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES} 时，硬件自动处理同步。
+        \item 当 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值超过 \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES} 时，硬件触发中断，由软件处理同步。
+    \end{itemize}
+\end{tiplisting}
+
+    \item \hyperref[fielddesc:I2STXHWSYNCSUPPLMODE]{I2S\_TX\_HW\_SYNC\_SUPPL\_MODE}：
+    \begin{itemize}
+        \item 0：自动补充最后一个数据。
+        \item 1：自动补充寄存器 \hyperref[fielddesc:I2STXHWSYNCSUPPLDATA]{I2S\_TX\_HW\_SYNC\_SUPPL\_DATA} 中配置的数据。
+    \end{itemize}
+\end{itemize}
+
+\subsection{接收数据}\label{sec:i2s-rx-data}
+
+I2S\regindex{n} 接收数据时，从外设接口读取数据，经过通道模式控制和数据格式控制，通过 GDMA 输入数据至内存。
+
+\subsubsection{通道模式控制}
+
+\chipname{} I2S\regindex{n} 支持 TDM 和 PDM 两种输入模式。置位 \hyperref[fielddesc:I2SRXTDMEN]{I2S\_RX\_TDM\_EN} 使能 TDM 输入模式，置位 \hyperref[fielddesc:I2SRXPDMEN]{I2S\_RX\_PDM\_EN} 使能 PDM 输入模式。其中，PDM 输入模式仅 I2S\regindex{0} 支持。
+
+\begin{tiplisting}
+\hyperref[fielddesc:I2SRXTDMEN]{I2S\_RX\_TDM\_EN} 和 \hyperref[fielddesc:I2SRXPDMEN]{I2S\_RX\_PDM\_EN} 不能同时置位或同时清零。
+\end{tiplisting}
+\vspace{-1em}
+
+\paragraph{TDM 输入模式}
+
+在 TDM 输入模式下，I2S\regindex{n} 最多支持 16 个接收通道。接收通道数由 \hyperref[fielddesc:I2SRXTDMTOTCHANNUM]{I2S\_RX\_TDM\_TOT\_CHAN\_NUM} 控制。例如，配置 \hyperref[fielddesc:I2SRXTDMTOTCHANNUM]{I2S\_RX\_TDM\_TOT\_CHAN\_NUM} 为 5，则通道 0 \verb+~+ 5 接收数据。
+
+在接收数据的通道中，如果其对应的通道使能字段（通道 0 \verb+~+ 7 为 \hyperref[fielddesc:I2SRXTDMPDMCHAN0EN]{I2S\_RX\_TDM\_PDM\_CHAN{\textcolor{red}{n}}\_EN}，通道 8 \verb+~+ 15 为 \hyperref[fielddesc:I2SRXTDMCHAN8EN]{I2S\_RX\_TDM\_CHAN{\textcolor{red}{n}}\_EN}）为：
+\begin{itemize}
+    \item 0：则该通道数据无效，不会存入 RX FIFO；
+    \item 1：则该通道数据有效，会被存入 RX FIFO。
+\end{itemize}
+当 I2S\regindex{n} 处于主机 TDM 输入模式下，WS 信号由 \hyperref[fielddesc:I2SRXWSIDLEPOL]{I2S\_RX\_WS\_IDLE\_POL} 和 \hyperref[fielddesc:I2SRXTDMWSWIDTH]{I2S\_RX\_TDM\_WS\_WIDTH} 控制：
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXWSIDLEPOL]{I2S\_RX\_WS\_IDLE\_POL} 的值为 WS 信号的默认电平；
+    \item \hyperref[fielddesc:I2SRXTDMWSWIDTH]{I2S\_RX\_TDM\_WS\_WIDTH} 配置接收过程中 WS 为默认电平的空闲时长，空闲时长 = (\hyperref[fielddesc:I2SRXTDMWSWIDTH]{I2S\_RX\_TDM\_WS\_WIDTH} + 1) × T\_BCK。
+\end{itemize}
+
+另外，(\hyperref[fielddesc:I2SRXHALFSAMPLEBITS]{I2S\_RX\_HALF\_SAMPLE\_BITS} + 1) × 2 即为一个 WS 周期对应的 BCK 周期数。
+
+\paragraph{PDM 输入模式} 
+
+PDM 输入模式仅 I2S\regindex{0} 支持。在 PDM 输入模式下，I2S\regindex{0} 可以接收原始 PDM 数据，或者将 PDM 数据转换为 PCM 数据后接收。
+
+在 PDM 输入模式下，I2S\regindex{0} 将通道中的串行数据转换为待输入数据。
+
+当 I2S\regindex{0} 处于主机 PDM 输入模式下，WS 信号的默认电平由 \hyperref[fielddesc:I2SRXWSIDLEPOL]{I2S\_RX\_WS\_IDLE\_POL} 控制，WS 信号频率为 BCK 信号频率的一半，请参考章节 \ref{sec:i2s-tx-rx-clk} \textit{\nameref{sec:i2s-tx-rx-clk}} 配置 BCK 信号的方式配置 WS 信号。注意，在 PDM 输入模式下，请配置 \hyperref[fielddesc:I2SRXHALFSAMPLEBITS]{I2S\_RX\_HALF\_SAMPLE\_BITS} 的值与 \hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD} 的值相同。
+
+在 I2S\regindex{0} 启用 PDM-to-PCM 转换器时，可以将接收的 PDM 数据转换为 PCM 数据，再进行后续数据控制。配置 \hyperref[fielddesc:I2SRXPDM2PCMEN]{I2S\_RX\_PDM2PCM\_EN} 启用该转换器。PDM-to-PCM 转换器的配置要点如下：
+
+\begin{itemize}
+    \item 配置采样频率和下采样率。I2S\regindex{0} 使用 PDM-to-PCM 转换器接收数据时，主机模式下 PDM 时钟频率即为 BCK 时钟频率，从机模式下 PDM 时钟频率由外部提供。    采样频率 $f_{\mathrm{Sampling}}$ 与 PDM 时钟频率 $f_{\mathrm{PDM}}$ 的关系为：
+    $$f_{\mathrm{Sampling}} = \frac{f_{\mathrm{PDM}}}{\mathrm{64 \times DSR}}$$
+    其中，下采样率 DSR 和 \hyperref[fielddesc:I2SRXPDMSINCDSR16EN]{I2S\_RX\_PDM\_SINC\_DSR\_16\_EN} 的关系为：
+    $$\mathrm{DSR} = 8 \times 2^{\mathrm{\hyperref[fielddesc:I2SRXPDMSINCDSR16EN]{I2S\_RX\_PDM\_SINC\_DSR\_16\_EN}}}$$
+    \item 配置有效通道。启用 PDM-to-PCM 转换器时，I2S\regindex{0} 最多支持 4 根 PDM 数据线、共 8 个输入通道，可通过 \hyperref[fielddesc:I2SRXTDMPDMCHAN0EN]{I2S\_RX\_TDM\_PDM\_CHAN\regindex{n}\_EN}（\regindex{n}：0--7）使能对应有效通道。每根数据线在一个 WS 周期内分时承载两个通道：偶数通道在 WS 上升沿采样，奇数通道在 WS 下降沿采样。输入通道与数据线的对应关系见表 \ref{tab:i2s-pdm2pcm-chan-map} \textit{\nameref{tab:i2s-pdm2pcm-chan-map}}。
+\end{itemize}
+
+\begin{table}[H]
+    \centering
+    \caption{PDM-to-PCM 转换器输入通道与数据线的对应关系}
+    \label{tab:i2s-pdm2pcm-chan-map}
+    \begin{tabular}{|p{3.6cm}|R{4.2cm}|R{4.2cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{数据线} & \textbf{WS 上升沿采样通道} & \textbf{WS 下降沿采样通道}\\ \hline
+    I2S\regindex{0}I\_SD\_in  & 通道 0 & 通道 1 \\\hline
+    I2S\regindex{0}I\_SD1\_in & 通道 2 & 通道 3 \\\hline
+    I2S\regindex{0}I\_SD2\_in & 通道 4 & 通道 5 \\\hline
+    I2S\regindex{0}I\_SD3\_in & 通道 6 & 通道 7 \\\hline
+    \end{tabular}
+\end{table}
+
+
+\subsubsection{数据格式控制}
+
+数据格式控制分为两个阶段：
+
+\begin{itemize}
+    \item 第一阶段：从串行数据流输入转换为待输入数据，并存入 RX FIFO；
+    \item 第二阶段：将待输入数据从 RX FIFO 中读出，并进行输入数据模式转换。
+\end{itemize}
+
+\paragraph{通道数据比特顺序} 
+
+\chipname{} I2S\regindex{n} 通道数据将从高位到低位依次存入待输入数据，并由 \hyperref[fielddesc:I2SRXBITORDER]{I2S\_RX\_BIT\_ORDER} 控制是否调换比特序，当该值为：
+\begin{itemize}
+\item 0：不调换待输入数据的比特序；
+\item 1：调换待输入数据的比特序。
+\end{itemize}
+至此，数据格式控制的第一阶段完成，经过比特顺序控制的待输入数据被存入 RX FIFO。
+
+\paragraph{通道储存数据位宽}
+
+\hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD} 和 \hyperref[fielddesc:I2SRX24FILLEN]{I2S\_RX\_24\_FILL\_EN} 决定了每个通道的储存数据位宽，其可取值和对应的储存数据位宽见表 \ref{tab:i2s-chan-storage-data-width} \textit{\nameref{tab:i2s-chan-storage-data-width}}：
+
+\begin{table}[H]
+    \centering
+    \caption{通道储存数据位宽控制}
+    \label{tab:i2s-chan-storage-data-width}
+    \begin{tabular}{|p{3cm}|R{3.3cm}|R{4cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{通道储存数据位宽} & \textbf{\hyperref[fielddesc:I2SRXBITSMOD]{I2S\_RX\_BITS\_MOD}} & \textbf{\hyperref[fielddesc:I2SRX24FILLEN]{I2S\_RX\_24\_FILL\_EN}}  \\ \hline
+    \multirow{2}*{32} & 31 & x \\\cline{2-3}
+                 & 23 & 1 \\ \hline
+    24 & 23 & 0 \\\hline
+    16    & 15 & x \\\hline
+    8     & 7 & x \\\hline
+    \end{tabular}
+\end{table}
+
+
+\paragraph{通道接收数据位宽} 
+
+\hyperref[fielddesc:I2SRXTDMCHANBITS]{I2S\_RX\_TDM\_CHAN\_BITS} 决定了每个通道接收数据的位宽。
+
+\begin{itemize}
+    \item 当每个通道储存数据位宽小于接收数据的位宽时，接收时仅会在接收数据中取储存位宽作为储存数据。此时，配置 \hyperref[fielddesc:I2SRXLEFTALIGN]{I2S\_RX\_LEFT\_ALIGN} 为：
+        \begin{itemize}
+        \item 0：储存数据位于接收数据低位；
+        \item 1：储存数据位于接收数据高位。
+        \end{itemize}
+    \item 当每个通道接收数据的位宽小于储存数据位宽时，会将接收数据高位补 0，作为储存数据。
+\end{itemize}
+
+\paragraph{通道储存数据字节序} 
+
+通道接收数据经过截取/补全后，成为了待储存数据，\hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN} 用于控制待储存数据的字节序。表 \ref{tab:i2s-chan-storage-data-endian} \textit{\nameref{tab:i2s-chan-storage-data-endian}} 描述了不同通道储存数据位宽下，该寄存器对待储存数据的控制。
+\begin{table}[H]
+    \centering
+    \caption{通道储存数据字节序控制}
+    \label{tab:i2s-chan-storage-data-endian}
+    \begin{tabular}{|p{3cm}|R{3cm}|R{3.5cm}|R{3.5cm}|}
+    \hline
+    \rowcolor{lightgray}
+        \textbf{通道储存数据位宽} & \textbf{原始数据} & \textbf{控制后数据} & \textbf{\hyperref[fielddesc:I2SRXBIGENDIAN]{I2S\_RX\_BIG\_ENDIAN}} \\ \hline
+ \multirow{2}*{32} & \multirow{2}*{\{B3, B2, B1, B0\}} & \{B3, B2, B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1, B2, B3\} & 1 \\\hline
+
+    \multirow{2}*{24} & \multirow{2}*{\{B2, B1, B0\}} & \{B2, B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1, B2\} & 1 \\\hline
+
+    \multirow{2}*{16} & \multirow{2}*{\{B1, B0\}} & \{B1, B0\} & 0 \\\cline{3-4}
+                      && \{B0, B1\} & 1 \\\hline
+
+                8     & \{B0\} & \{B0\} & x \\\hline
+    \end{tabular}
+\end{table}
+
+
+\paragraph{A 律/$\mu$ 律压缩/解压缩} 
+
+I2S\regindex{n} 对排列好字节序的待储存数据会按照 32 位（缺省高位补 0）的方式进行 A 律/$\mu$ 律压缩/解压缩。
+
+配置 \hyperref[fielddesc:I2SRXPCMBYPASS]{I2S\_RX\_PCM\_BYPASS} 为：
+\begin{itemize}
+\item 0：进行压缩/解压缩
+\item 1：不进行压缩/解压缩
+\end{itemize}
+配置 \hyperref[fielddesc:I2SRXPCMCONF]{I2S\_RX\_PCM\_CONF} 为：
+\begin{itemize}
+\item 0：A 律解压缩
+\item 1：A 律压缩
+\item 2：$\mu$ 律解压缩
+\item 3：$\mu$ 律压缩
+\end{itemize}
+
+至此，数据格式控制部分全部完成，数据通过 GDMA 存入内存。
+
+\subsubsection{RX 数据重组} \label{sec:i2s-rx-recomb}
+
+I2S\regindex{n} RX 模块通过 DMA 接口向 GDMA 输出数据。在默认情况下，经过数据格式控制的数据作为一路数据流，只从 DMA 接口 0 输出，各接收通道的数据在内存中交织存放，软件需要自行拆分。
+
+I2S\regindex{0} 支持 RX 数据重组功能：启用后，RX 数据流先按接收通道拆分，再按软件配置的组合方式重新组合为最多 4 路数据流，分别从 4 个 DMA 接口输出，最终存入内存中互相独立的位置。该功能可以让不同的软件模块各自获取所需的通道数据，无需再做内存搬移。
+
+置位 \hyperref[fielddesc:I2SRXRECOMBEN]{I2S\_RX\_RECOMB\_EN} 启用该功能。重组过程分为通道提取和通道组合两个阶段。
+
+\begin{tiplisting}
+本小节中的 DMA 接口 0 \verb+~+ 3 指 I2S\regindex{0} 向外提供的 4 个 DMA 接口，对应寄存器 \hyperref[regdesc:I2SRXRECOMBDMACH0REG]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_REG} 中的编号 \regindex{n}，与 GDMA 内部的通道编号无关。GDMA 采用共享通道架构，其内部通道与各外设 DMA 接口的对应关系由 GDMA 侧配置，详见章节 \ref{mod:dma} \textit{\nameref{mod:dma}}。
+\end{tiplisting}
+
+\paragraph{通道提取}
+
+RX 数据流以 32 位为单位、按接收通道循环排列。重组单元按此顺序把数据流轮流分发到各输入通道缓存中：第 1 个数据进入输入通道 0，第 2 个数据进入输入通道 1，依此类推，到达最后一个输入通道后回到输入通道 0。
+
+输入通道的数量由 \hyperref[fielddesc:I2SRXRECOMBEXTCHNUM]{I2S\_RX\_RECOMB\_EXT\_CH\_NUM} 配置，其值为输入通道数减 1，即：
+
+\begin{itemize}
+    \item 0：1 个输入通道
+    \item 1：2 个输入通道
+    \item 2：3 个输入通道
+    \item 3：4 个输入通道
+\end{itemize}
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item RX 数据流中只包含使能的接收通道（参考 \hyperref[fielddesc:I2SRXTDMPDMCHAN0EN]{I2S\_RX\_TDM\_PDM\_CHAN\regindex{n}\_EN}）的数据，因此\\ \hyperref[fielddesc:I2SRXRECOMBEXTCHNUM]{I2S\_RX\_RECOMB\_EXT\_CH\_NUM} 应按实际使能的接收通道数配置，而不是按 \hyperref[fielddesc:I2SRXTDMTOTCHANNUM]{I2S\_RX\_TDM\_TOT\_CHAN\_NUM} 配置。
+    \item 重组功能最多支持 4 个输入通道。若使能的接收通道数超过 4，则不能使用该功能。
+    \item 未被任何 DMA 接口选用的输入通道，其数据会被丢弃。
+\end{itemize}
+\end{tiplisting}
+
+\paragraph{通道组合}
+
+4 个 DMA 接口各自对应一组寄存器 \hyperref[regdesc:I2SRXRECOMBDMACH0REG]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_REG}（\regindex{n}：0--3），用于描述该 DMA 接口输出哪些输入通道的数据、以及按什么顺序输出：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXRECOMBDMACH0VALID]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_VALID}：该 DMA 接口是否参与重组。
+    \begin{itemize}
+        \item 0：不参与，该通道不输出数据
+        \item 1：参与
+    \end{itemize}
+    \item \hyperref[fielddesc:I2SRXRECOMBDMACH0STYLE]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_STYLE}：选择该 DMA 接口输出哪些输入通道的数据，为 4 位位图，第 \regindex{i} 位对应输入通道 \regindex{i}。例如选用输入通道 1 和 3 时，该字段配置为 4'b1010。
+    \item \hyperref[fielddesc:I2SRXRECOMBDMACH0ORDER]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_ORDER}：配置该 DMA 接口输出各输入通道数据的先后顺序。该字段共 8 位，划分为 4 个 2 位的子域，从最低位子域开始依次表示第 1 个、第 2 个……输出的输入通道号。例如依次输出的输入通道 3， 通道 1，通道 0 和 通道 2 时，该字段配置为 8'b1000\_0111（bit[1:0] = 3，bit[3:2] = 1，bit[5:4] = 0，bit[7:6] = 2）。
+    \item \hyperref[fielddesc:I2SRXRECOMBDMACH0EOFNUM]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_EOF\_NUM}：配置该 DMA 接口单次接收的数据长度，单位为字节。
+\end{itemize}
+
+每个 DMA 接口按 ORDER 指定的顺序，依次从各输入通道缓存中取出一个数据并输出，取完 STYLE 中选中的全部输入通道后作为一轮，然后重新开始下一轮。同一个输入通道可以被多个 DMA 接口同时选用。
+
+\vspace{-1em}
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item ORDER 中前若干个子域必须与 STYLE 中置位的输入通道一一对应（即为 STYLE 所选通道的一个排列），其余子域被忽略。若 ORDER 指向了 STYLE 中未选中的输入通道，重组单元将停止取数。
+    \item 修改上述任何寄存器后，必须置位 \hyperref[fielddesc:I2SRXRECOMBUPDATE]{I2S\_RX\_RECOMB\_UPDATE}，将配置从 APB 时钟域同步到 I2S RX 时钟域，配置才会生效。该位由硬件自动清零。
+\end{itemize}
+\end{tiplisting}
+
+\paragraph{长度控制与传输结束}
+
+每个 DMA 接口各自统计已输出的字节数。当某个 DMA 接口的累计字节数达到其 \hyperref[fielddesc:I2SRXRECOMBDMACH0EOFNUM]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_EOF\_NUM} 配置值时，该接口向 GDMA 发送一次传输结束标志。软件可通过对应 GDMA 通道的传输结束中断获知该路数据接收完成。
+
+各 DMA 接口的长度独立配置、独立结束，互不影响。使用的 DMA 接口数量由实际需要决定，只需将用到的接口的 \hyperref[fielddesc:I2SRXRECOMBDMACH0VALID]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_VALID} 置 1，未用到的保持为 0。
+
+\paragraph{配置示例}
+
+假设 RX 使能了 4 个接收通道，需要将数据分成 4 路：DMA 接口 0 只取输入通道 0，DMA 接口 1 只取输入通道 1，DMA 接口 2 按输入通道 3 和 输入通道 2 的顺序取两个通道，DMA 接口 3 按输入通道 0 和输入通道 1 的顺序取两个通道。寄存器配置见表 \ref{tab:i2s-rx-recomb-example} \textit{\nameref{tab:i2s-rx-recomb-example}}。
+
+\begin{table}[H]
+    \centering
+    \caption{RX 数据重组配置示例}
+    \label{tab:i2s-rx-recomb-example}
+    \begin{tabular}{|p{6cm}|R{2.0cm}|R{2.6cm}|R{3.0cm}|}
+    \hline
+    \rowcolor{lightgray}
+    \textbf{寄存器组} & \textbf{\hyperref[fielddesc:I2SRXRECOMBDMACH0VALID]{VALID}} & \textbf{\hyperref[fielddesc:I2SRXRECOMBDMACH0STYLE]{STYLE}} & \textbf{\hyperref[fielddesc:I2SRXRECOMBDMACH0ORDER]{ORDER}}\\ \hline
+    \hyperref[regdesc:I2SRXRECOMBDMACH0REG]{I2S\_RX\_RECOMB\_DMA\_CH0\_REG} & 1 & 4'b0001 & 8'b0000\_0000 \\\hline
+    \hyperref[regdesc:I2SRXRECOMBDMACH1REG]{I2S\_RX\_RECOMB\_DMA\_CH1\_REG} & 1 & 4'b0010 & 8'b0000\_0001 \\\hline
+    \hyperref[regdesc:I2SRXRECOMBDMACH2REG]{I2S\_RX\_RECOMB\_DMA\_CH2\_REG} & 1 & 4'b1100 & 8'b0000\_1011 \\\hline
+    \hyperref[regdesc:I2SRXRECOMBDMACH3REG]{I2S\_RX\_RECOMB\_DMA\_CH3\_REG} & 1 & 4'b0011 & 8'b0000\_0100 \\\hline
+    \end{tabular}
+\end{table}
+
+其中：
+
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXRECOMBEXTCHNUM]{I2S\_RX\_RECOMB\_EXT\_CH\_NUM} 配置为 3，即 4 个输入通道；
+    \item DMA 接口 2 的 ORDER 中，bit[1:0] = 2'd3、bit[3:2] = 2'd2，即先输出输入通道 3 的数据，再输出输入通道 2 的数据；
+    \item DMA 接口 3 的 ORDER 中，bit[1:0] = 2'd0、bit[3:2] = 2'd1，即先输出输入通道 0 的数据，再输出输入通道 1 的数据；
+    \item 各 DMA 接口的 \hyperref[fielddesc:I2SRXRECOMBDMACH0EOFNUM]{I2S\_RX\_RECOMB\_DMA\_CH\regindex{n}\_EOF\_NUM} 按各自需要接收的字节数配置。
+\end{itemize}
+
+配置完成后，置位 \hyperref[fielddesc:I2SRXRECOMBUPDATE]{I2S\_RX\_RECOMB\_UPDATE} 使配置生效，再按章节 \ref{sec:i2s-configure-i2s-rx-mode} \textit{\nameref{sec:i2s-configure-i2s-rx-mode}} 的流程启动接收。
+
+\subsection{时钟}\label{sec:i2s-tx-rx-clk}
+
+I2S\regindex{n}\_TX/RX\_CLK 作为 I2S\regindex{n} TX/RX 模块的主时钟，可由以下时钟分频所得：
+
+\begin{itemize}
+    \item XTAL\_CLK 
+    \item APLL\_CLK
+    \item RC\_FAST\_CLK
+    \item 外部输入时钟 I2S\regindex{n}\_MCLK\_in 
+\end{itemize}
+
+I2S\regindex{n} TX/RX 模块的串行时钟 BCK 再由 I2S\regindex{n}\_TX/RX\_CLK 分频获得，如图 \ref{fig:i2s-clk} \textit{\nameref{fig:i2s-clk}} 所示。I2S TX/RX 时钟源选择和时钟使能由时钟复位模块中的 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXCLKSRCSEL]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_CLK\_SRC\_SEL} 与 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXCLKEN]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_CLK\_EN} 字段完成。I2S\regindex{n} 的 MCLK 输出时钟选择由 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0MSTCLKSEL]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_MST\_CLK\_SEL} 配置。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/i2s_clk_20260818}
+    \caption{I2S 时钟分频器}
+    \label{fig:i2s-clk}
+\end{figure}
+
+I2S\regindex{n}\_TX/RX\_CLK 的频率 $f_{\mathrm{I2S\regindex{n}\_TX/RX\_CLK}}$ 与分频器时钟源频率 $f_{\mathrm{I2S\regindex{n}\_CLK\_S}}$ 间的关系如下：
+$$f_{\mathrm{I2S\regindex{n}\_TX/RX\_CLK}} = \frac{f_{\mathrm{I2S\regindex{n}\_CLK\_S}}}{N + \frac{b}{a}}$$
+
+其中，$2 \leq N \leq 256$（N 为整数），N 对应 I2S RX/TX 时钟整数分频字段 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVN]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_N}，具体为：
+\begin{itemize}
+    \item 对应字段 = 0 时，N = 256；
+    \item 对应字段 = 1 时，N = 2；
+    \item 对应字段为其他值时，N 等于该字段值。
+\end{itemize}
+
+分数部分分频系数 a、b 唯一对应系数 x、y、z、yn1。系数对应公式为：
+
+\begin{itemize}
+    \item 当 $b \leq \frac{a}{2}$ 时，$\mathrm{yn1} = 0$，$x = \operatorname{floor}(\frac{a}{b}) - 1$，$y = a \bmod b$，$z = b$；
+    \item 当 $b > \frac{a}{2}$ 时，$\mathrm{yn1} = 1$，$x = \operatorname{floor}(\frac{a}{a - b}) - 1$，$y = a \bmod (a - b)$，$z = a - b$。
+\end{itemize}
+
+系数与配置字段的对应关系如下：
+
+\begin{itemize}
+    \item $x$ $\rightarrow$ \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVX]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_X}
+    \item $y$ $\rightarrow$ \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVY]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_Y}
+    \item $z$ $\rightarrow$ \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVZ]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_Z}
+    \item $\mathrm{yn1}$ $\rightarrow$ \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVYN1]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_YN1}
+\end{itemize}
+
+对于整数分频，\hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVX]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_X} 和 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVZ]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_Z} 清零，\hyperref[fielddesc:HPSYSCLKRSTREGI2S0RXDIVY]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_RX/TX\_DIV\_Y} 置为 1。
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item $f_{\mathrm{I2S\regindex{n}\_TX/RX\_CLK}}$ 最高频率为 62.5 MHz；
+    \item 使用小数分频功能可能会产生时钟抖动。    
+\end{itemize}
+\end{tiplisting}
+
+在主机发送模式下，I2S TX 模块的串行时钟 BCK 为 I2S\regindex{n}O\_BCK\_out 信号，由 I2S\_TX\_CLK 分频获得。即：
+
+$$f_{\mathrm{I2S\regindex{n}O\_BCK\_out}} = \frac{f_{\mathrm{I2S\regindex{n}\_TX\_CLK}}}{\mathrm{\hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM}} + 1}$$
+
+\vspace{-1em}
+\begin{tiplisting}
+注意，\hyperref[fielddesc:I2STXBCKDIVNUM]{I2S\_TX\_BCK\_DIV\_NUM} 不可配置为 1。
+\end{tiplisting}
+
+在主机接收模式下，I2S RX 模块的串行时钟 BCK 为 I2S\regindex{n}I\_BCK\_out 信号，由 I2S\_RX\_CLK 分频获得。即：
+
+$$f_{\mathrm{I2S\regindex{n}I\_BCK\_out}} = \frac{f_{\mathrm{I2S\regindex{n}\_RX\_CLK}}}{\mathrm{\hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM}} + 1}$$
+
+\begin{tiplisting}
+\vspace{-2em}
+\begin{itemize}
+    \item \hyperref[fielddesc:I2SRXBCKDIVNUM]{I2S\_RX\_BCK\_DIV\_NUM} 不可配置为 1；
+    \item 当模块处于 I2S 从机模式时，必须保证 $f_{\mathrm{I2S\regindex{n}\_TX/RX\_CLK}} \geq 8 \times f_{\mathrm{BCK}}$。另外模块可以输出 I2S\_MCLK\_out 作为外部设备的主时钟。
+\end{itemize}
+\end{tiplisting}
+
+\subsection{复位} \label{sec:i2s-reset}
+
+I2S 模块中各个单元以及 FIFO 可通过配置相关位进行复位：
+
+\begin{itemize}
+\item I2S\regindex{n} APB 侧时钟与复位：可通过 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0APBCLKEN]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_APB\_CLK\_EN} 使能 APB 时钟，通过 \hyperref[fielddesc:HPSYSCLKRSTREGI2S0APBRSTEN]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_APB\_RST\_EN} 触发 APB 复位；\hyperref[fielddesc:HPSYSCLKRSTREGI2S0FORCENORST]{HP\_SYS\_CLKRST\_REG\_I2S\regindex{n}\_FORCE\_NORST} 用于控制是否屏蔽复位；
+\item I2S\regindex{n} TX/RX 单元：可配置 \hyperref[fielddesc:I2STXRESET]{I2S\_TX\_RESET} 和 \hyperref[fielddesc:I2SRXRESET]{I2S\_RX\_RESET} 进行复位；
+\item I2S\regindex{n} TX/RX FIFO：可配置 \hyperref[fielddesc:I2STXFIFORESET]{I2S\_TX\_FIFO\_RESET} 和 \hyperref[fielddesc:I2SRXFIFORESET]{I2S\_RX\_FIFO\_RESET} 进行复位。
+\end{itemize}
+
+\begin{tiplisting}
+在模块和 FIFO 复位之前，需要先配置 I2S 模块时钟。
+\end{tiplisting}
+
+\section{事件任务矩阵功能} \label{sec:i2s-etm-func}
+
+在 \chipname{} 中，I2S 支持 ETM 功能，即可以通过任意外设的 ETM 事件触发 I2S 的 ETM 任务，或者通过 I2S 的 ETM 事件触发任意外设的 ETM 任务。关于 ETM 更多详细信息，请参考章节 \ref{mod:evntaskmatrix} \textit{\nameref{mod:evntaskmatrix}}。这里仅介绍与 I2S 相关的 ETM 任务和 ETM 事件。
+
+I2S 可接收的 ETM 任务有：
+
+\begin{itemize}
+    \item \label{task:I2STASKSTARTTX}I2S\regindex{n}\_TASK\_START\_TX：触发时启动 I2S TX 数据传输。
+    \item \label{task:I2STASKSTARTRX}I2S\regindex{n}\_TASK\_START\_RX：触发时启动 I2S RX 数据传输。
+    \item \label{task:I2STASKSTOPTX}I2S\regindex{n}\_TASK\_STOP\_TX：触发时停止 I2S TX 数据传输。
+    \item \label{task:I2STASKSTOPRX}I2S\regindex{n}\_TASK\_STOP\_RX：触发时停止 I2S RX 数据传输。
+    \item \label{task:I2STASKSYNCCHECK}I2S\regindex{n}\_TASK\_SYNC\_CHECK：触发 I2S TX 同步计数器相关功能。
+\end{itemize}
+
+I2S 可产生的 ETM 事件有：
+
+\begin{itemize}
+    \item \label{evt:I2SEVTTXDONE}I2S\regindex{n}\_EVT\_TX\_DONE：表示 I2S TX 发送完成，即 TX FIFO 中的数据全部发送完毕。
+    \item \label{evt:I2SEVTRXDONE}I2S\regindex{n}\_EVT\_RX\_DONE：根据寄存器 \hyperref[fielddesc:I2SRXSTOPMODE]{I2S\_RX\_STOP\_MODE} 的配置值决定此事件的触发条件：
+    \begin{itemize}
+        \item 0：不会触发此事件；
+        \item 1：触发时表示 I2S RX 模块接收字节数达到 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 配置的接收长度；
+        \item 2：触发条件与 \hyperref[int:I2SRXDONEINT]{I2S\regindex{n}\_RX\_DONE\_INT} 中断相同，由 \hyperref[fielddesc:I2SRXDONEMODE]{I2S\_RX\_DONE\_MODE} 配置。
+    \end{itemize}
+    \item \label{evt:I2SEVTXWORDSSENT}I2S\regindex{n}\_EVT\_X\_WORDS\_SENT：表示 I2S TX 发送字数大于等于 \hyperref[fielddesc:I2SETMTXSENDWORDNUM]{I2S\_ETM\_TX\_SEND\_WORD\_NUM} 的值。
+    \item \label{evt:I2SEVTXWORDSRECEIVED}I2S\regindex{n}\_EVT\_X\_WORDS\_RECEIVED：表示 I2S RX 接收字数大于等于 \hyperref[fielddesc:I2SETMRXRECEIVEWORDNUM]{I2S\_ETM\_RX\_RECEIVE\_WORD\_NUM} 的值。
+\end{itemize}
+
+在具体应用中，可以配置 I2S\regindex{n} 的 ETM 事件来触发 I2S 的 ETM 任务，例如配置 I2S\regindex{n}\_EVT\_X\_WORDS\_SENT 事件触发 I2S\regindex{n}\_TASK\_STOP\_TX 任务，从而以 ETM 的方式完成停止 I2S\regindex{n} 的操作。
+
+
+%%%%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%%%%
+
+\section{中断} \label{sec:i2s-interrupts}
+
+\chipname{} 的 I2S\regindex{n} 可以生成 I2S\_INTR 中断信号并发送给\hyperref[mod:intmtrx]{中断矩阵}。这一中断信号由以下 I2S\regindex{n} 的内部中断源生成。
+
+\begin{itemize}
+\item \label{int:I2STXHUNGINT} I2S\regindex{n}\_TX\_HUNG\_INT：当发送数据超时，触发此中断。例如，I2S 配置为从机发送模式，但主机长时间未提供 BCK 或 WS 信号，则将触发该中断。超时配置见寄存器 \hyperref[regdesc:I2SLCHUNGCONFREG]{I2S\_LC\_HUNG\_CONF\_REG}。
+
+\item \label{int:I2SRXHUNGINT} I2S\regindex{n}\_RX\_HUNG\_INT：当接收数据超时，触发此中断。例如，I2S 配置为从机接收模式，但主机长时间未发送数据，则将触发该中断。超时配置见寄存器 \hyperref[regdesc:I2SLCHUNGCONFREG]{I2S\_LC\_HUNG\_CONF\_REG}。
+\item \label{int:I2STXDONEINT} I2S\regindex{n}\_TX\_DONE\_INT：当发送数据完成，即 I2S TX FIFO 中的数据全部发送完毕时，触发此中断。
+\item \label{int:I2SRXDONEINT} I2S\regindex{n}\_RX\_DONE\_INT：根据寄存器 \hyperref[fielddesc:I2SRXDONEMODE]{I2S\_RX\_DONE\_MODE} 的配置值决定中断触发方式：
+    \begin{itemize}
+        \item 0：当 GDMA RX FIFO 满时，触发此中断；
+        \item 1：当 I2S RX 模块接收字节数达到 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 配置的接收长度值时，触发此中断。
+    \end{itemize}
+\item \label{int:I2STXSYNCINT}\hyperref[int:I2STXSYNCINT]{I2S\regindex{n}\_TX\_SYNC\_INT}：当 \hyperref[fielddesc:I2STXCNTDIFF]{I2S\_TX\_CNT\_DIFF} 的绝对值超过 \hyperref[fielddesc:I2STXCNTDIFFSWTHRES]{I2S\_TX\_CNT\_DIFF\_SW\_THRES} 时，触发此中断，需由软件处理同步。
+\end{itemize}
+
+\begin{tiplisting}
+中断、中断源、中断信号等术语的解释以及它们之间的联系请参考章节 \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}。
+\end{tiplisting}
+
+每个中断源都有一组通用的配置寄存器，详见章节 \hyperref[interrupt-config-registers]{\textit{中断配置寄存器}}。具体寄存器名称请查看章节 \ref{sec:i2s-reg-summ} \textit{\nameref{sec:i2s-reg-summ}}。
+
+\section{配置流程}
+\label{sec:i2s-prog-procedures}
+\subsection{软件配置 I2S 发送流程}\label{sec:i2s-configure-i2s-tx-mode}
+
+软件配置 I2S\regindex{n} 发送的流程如下：
+
+\begin{enumerate}
+    \item 根据章节 \ref{sec:i2s-tx-rx-clk} \textit{\nameref{sec:i2s-tx-rx-clk}} 的描述，配置时钟。
+    \item 根据表 \ref{tab:i2s-signal-descr} \textit{\nameref{tab:i2s-signal-descr}} 的描述，配置信号管脚。
+    \item 根据主从机模式配置 \hyperref[fielddesc:I2STXSLAVEMOD]{I2S\_TX\_SLAVE\_MOD}：
+    \begin{itemize}
+        \item 0：主机发送模式
+        \item 1：从机发送模式
+    \end{itemize}
+    \item 根据章节 \ref{sec:i2s-tx-data} \textit{\nameref{sec:i2s-tx-data}} 的描述，配置正确的发送数据模式和发送通道模式，置位 \hyperref[fielddesc:I2STXUPDATE]{I2S\_TX\_UPDATE}。
+    \item 根据章节 \ref{sec:i2s-reset} \textit{\nameref{sec:i2s-reset}} 的描述，复位 TX 模块和发送 FIFO。
+    \item 根据章节 \ref{sec:i2s-interrupts} \textit{\nameref{sec:i2s-interrupts}} 的描述使能相应的中断。\label{other:i2s-item-tx-enable-corresponding-interrupts}
+    \item 配置 GDMA 发送链表。 
+    \item 根据需要置位 \hyperref[fielddesc:I2STXSTOPEN]{I2S\_TX\_STOP\_EN}，更多信息见章节 \ref{sec:i2s-master-slave-tx-mode} \textit{\nameref{sec:i2s-master-slave-tx-mode}}。
+    \item 开始发送数据：
+    \begin{itemize}
+        \item 主机模式下，等待 I2S\regindex{n} 从设备配置完成后，置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 开始发送数据；
+        \item 从机模式下，置位 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START}。I2S 主设备提供 BCK 和 WS 信号后，开始发送数据。
+    \end{itemize}
+    \item 等待步骤 \ref{other:i2s-item-tx-enable-corresponding-interrupts} 设置的中断信号，或查询 \hyperref[fielddesc:I2STXIDLE]{I2S\_TX\_IDLE} 检查传输是否结束：
+    \begin{itemize}
+        \item 0：发送设备为工作状态；
+        \item 1：发送设备为空闲状态。
+    \end{itemize}
+    \item 清零 \hyperref[fielddesc:I2STXSTART]{I2S\_TX\_START} 停止发送数据。
+\end{enumerate}
+
+\subsection{软件配置 I2S 接收流程}\label{sec:i2s-configure-i2s-rx-mode}
+
+软件配置 I2S\regindex{n} 接收模式的流程如下：
+
+\begin{enumerate}
+    \item 根据章节 \ref{sec:i2s-tx-rx-clk} \textit{\nameref{sec:i2s-tx-rx-clk}} 的描述，配置时钟。
+    \item 根据表 \ref{tab:i2s-signal-descr} \textit{\nameref{tab:i2s-signal-descr}} 的描述，配置信号管脚。
+    \item 配置 \hyperref[fielddesc:I2SRXSLAVEMOD]{I2S\_RX\_SLAVE\_MOD} 选择需要的模式：
+    \begin{itemize}
+        \item 0：主机接收模式
+        \item 1：从机接收模式
+    \end{itemize}
+    \item 根据章节 \ref{sec:i2s-rx-data} \textit{\nameref{sec:i2s-rx-data}} 的描述，配置正确的接收通道模式和接收数据模式，置位 \hyperref[fielddesc:I2SRXUPDATE]{I2S\_RX\_UPDATE}。
+    \item 根据章节 \ref{sec:i2s-reset} \textit{\nameref{sec:i2s-reset}} 的描述，复位 RX 模块和接收 FIFO。
+    \item 根据章节 \ref{sec:i2s-interrupts} \textit{\nameref{sec:i2s-interrupts}} 的描述使能相应的中断。\label{other:i2s-item-rx-enable-corresponding-interrupts}
+    \item 配置 GDMA 接收链表，并在 \hyperref[regdesc:I2SRXEOFNUMREG]{I2S\_RXEOF\_NUM\_REG} 中配置接收数据长度。
+    \item 开始接收数据：
+    \begin{itemize}
+        \item 在主机模式下，等待从机准备好后，置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START} 开始接收数据；
+        \item 在从机模式下，置位 \hyperref[fielddesc:I2SRXSTART]{I2S\_RX\_START}，等待主机提供 BCK 和 WS 信号后开始接收数据。
+    \end{itemize}
+    \item 接收的数据由 GDMA 根据配置存到存储器的指定地址。最终产生步骤 \ref{other:i2s-item-rx-enable-corresponding-interrupts} 中设置的中断。
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{i2s-reg-summ}{}
+\section{寄存器列表}
+\label{sec:i2s-reg-summ}
+
+
+本小节的所有地址均为相对于 I2S\regindex{n} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address} \textit{\nameref{tab:sysmem-base-address}}。
+
+请查看章节 \hyperref[glossary-access-types]{\textit{寄存器的访问类型}}，了解“访问”列缩写的含义。
+
+\subfile{\modulefiles/45-I2S-reg-summ__CN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{寄存器}
+
+本小节的所有地址均为相对于 I2S\regindex{n} 基地址的地址偏移量（相对地址），具体基地址请见章节 \ref{mod:sysmem} \textit{\nameref{mod:sysmem}} 中的表 \ref{tab:sysmem-base-address} \textit{\nameref{tab:sysmem-base-address}}。
+
+关于保留 (reserved) 域的处理，请查看章节 \hyperref[programming-reserved-field]{\textit{如何配置寄存器的保留域}}。
+
+\subfile{\modulefiles/45-I2S-reg__CN}
+
+\end{document}
