@@ -1,0 +1,565 @@
+\newif\ifglobal
+
+%%%%%%%%%%%%%%%%%%%%%%%
+%%% Compile to view %%%
+%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Readme:                                     %%%
+%%% https://www.overleaf.com/read/bwdjvfjksvjy/ %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> M?: marks a module setting number or important notice
+
+% >>> M4: Set {./relative-path} to external files for this module <<<
+\def \modulefiles {./17-TIMG}
+% To add an external file, use:
+% (Replace '---' with actual filename)
+% '\input{\modulefiles/tables/---.tex}' for tables
+% '\includegraphics{\modulefiles/figures/---}' for figures
+% '\subfile{\modulefiles/---}' for register files
+
+% >>> M1: This module is in global project? <<<
+% 'YES' - uncomment; 'NO' - comment out
+\globaltrue
+
+\ifglobal
+    \documentclass[main\_\_EN.tex]{subfiles}
+   
+\else
+    \documentclass[openany, 10pt]{book}
+
+    % >>> M2: In ./00-shared/preamble-trm-module, also find
+    %         settings for visibility of todo notes, watermark <<<
+    \usepackage{preamble-trm-module}
+
+    % >>> M3: Temporary labels in English,
+    %         you can add your own labels there <<<
+    \myexternaldocument{./00-shared/temp-labels-en}
+
+\fi %\ifglobal
+
+
+\setcounter{secnumdepth}{4}
+
+
+% >>> M5: If this module needs any updates in
+% './00-shared/preamble-trm-module.sty'
+% (include additional package, etc.), contact your module PM
+% or create the file './00-shared/changelog.tex' make the
+% necessary updates yourself and document them in this file <<<
+
+% Make text left-aligned and allow latex to break pages naturally, comment out for full justification
+\raggedright
+\raggedbottom
+
+
+\begin{document}
+
+
+% Sets language into which pre-defined bits of text are translated
+\selectlanguage{english}
+\setenglishformatting
+
+% Do not delete this block
+\ifglobal
+% Add the following front matter if
+% this module is outside of global project
+\else
+    \InputIfFileExists{readme}{}{}
+    \clearpage
+    \listoftodos
+    \listofdonetodos
+    \tableofcontents
+    %\listoftables
+    %\listoffigures
+\fi
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% TRM Module Begins %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\hypertarget{timg}{}
+\chapter{Timer Group (TIMG)}
+\label{mod:timg}
+
+%%%%%%%%%%%%%%%%
+%%% Overview %%%
+%%%%%%%%%%%%%%%%
+
+\section{Overview}
+\label{sec:timg-overview}
+
+General-purpose timers can be used to precisely time an interval, trigger an interrupt after a particular interval (periodically and aperiodically), or act as a hardware clock. As shown in Figure \ref{fig:timg-overview} \textit{\nameref{fig:timg-overview}}, the \chipname{} chip contains two timer groups: Timer Group 0 and Timer Group 1 (referred to below as TIMG\regindex{n}, where \regindex{n} is 0 or 1). Each timer group consists of two general-purpose timers (referred to below as T\regindex{x}, where \regindex{x} is 0 or 1) and one main system watchdog timer. In addition, TIMG0 includes a frequency calculation module (FC) that uses XTAL\_CLK as the reference clock. For details, see Section \ref{sec:rtc-calibration-desc} \textit{\nameref{sec:rtc-calibration-desc}}. The general-purpose timer is based on a 16-bit prescaler and a 54-bit auto-reload-capable up-down counter.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.46\textwidth]{\modulefiles/figures/timg_units}
+    \caption{Timer Group Overview}
+    \label{fig:timg-overview}
+\end{figure}
+
+
+Note that while the main system watchdog timer registers are described in this chapter, their functional description is included in Chapter \ref{mod:wdt} \textit{\nameref{mod:wdt}}. Therefore, the term ``timer" within this chapter refers to the general-purpose timer.
+
+
+%%%%%%%%%%%%%%%%%%%%
+%%% Feature List %%%
+%%%%%%%%%%%%%%%%%%%%
+
+\section{Feature List}
+\label{sec:timg-features}
+
+The timer provides the following features:
+
+\begin{itemize}
+    \item Three clock sources: REF\_80M\_CLK, XTAL\_CLK, FOSC\_20M\_CLK
+    \item A 16-bit clock prescaler, with a divisor range from 2 to 65536
+    \item A 54-bit time-base counter, configurable to increment or decrement
+    \item Real-time reading of the time-base counter value
+    \item Pause and resume control for the time-base counter
+    \item Programmable alarm generation
+    \item Timer value reload — Auto-reload at alarm or software-controlled instant reload
+    \item Frequency calculation of slow clock for TIMG0
+    \item Level interrupt generation
+    \item Several ETM tasks and events
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Architectural Overview %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Architectural Overview}
+\label{sec:timg-arch-overview}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{\modulefiles/figures/timg-architecture}
+    \caption{Timer Group Architecture}
+    \label{fig:timg-architecture}
+\end{figure}
+
+Figure \ref{fig:timg-architecture} \textit{\nameref{fig:timg-architecture}} is a diagram of timer T\regindex{x} in a timer group. T\regindex{x} contains a 16-bit integer prescaler, a time-base counter, and a comparator for alarm generation.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Functional Description %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Functional Description}
+\label{sec:timg-func-descr}
+
+\subsection{16-Bit Prescaler and Clock Selection}
+
+\begin{itemize}
+    \item Timer T\regindex{x} in timer group TIMG\regindex{n} can select its clock source by configuring T\regindex{x}\_SRC\_SEL, which is the field \hyperref[fielddesc:HPSYSCLKRSTTIMERGRPNTXSRCSEL]{HP\_SYS\_CLKRST\_TIMERGRP\regindex{n}\_T\regindex{x}\_SRC\_SEL} of the \hyperref[regdesc:HPSYSCLKRSTTIMERGRPNCTRL0REG]{HP\_SYS\_CLKRST\_TIMERGRP\regindex{n}\_CTRL0\_REG} register. The field supports the following values:
+
+    \begin{itemize}
+    \item 0: XTAL\_CLK is selected.
+    \item 1: FOSC\_20M\_CLK is selected.
+    \item 2: REF\_80M\_CLK is selected.
+    \end{itemize}
+
+    \item The selected clock must be enabled via T\regindex{x}\_CLK\_EN, which is the field \hyperref[fielddesc:HPSYSCLKRSTTIMERGRPNTXCLKEN]{HP\_SYS\_CLKRST\_TIMERGRP\regindex{n}\_T\regindex{x}\_CLK\_EN} of the \hyperref[regdesc:HPSYSCLKRSTTIMERGRPNCTRL0REG]{HP\_SYS\_CLKRST\_TIMERGRP\regindex{n}\_CTRL0\_REG} register (see Figure \ref{fig:timg-architecture} \textit{\nameref{fig:timg-architecture}}). Setting this bit enables the selected clock, while clearing it disables the clock.
+    
+    \item The enabled clock signal is fed into a 16-bit prescaler. After frequency division, it generates the timer base clock (TB\_CLK) used by the time-base counter. The divisor can be configured via the \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} field. \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} field can be configured as 0 \verb+~+ 65535 for a divisor range of 2 \verb+~+ 65536. To be more specific, when \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} is configured as:
+
+    \begin{itemize}
+        \item 0: the divisor is 65536
+        \item 1: the divisor is 2
+        \item 2: the divisor is also 2
+        \item 3 \verb+~+ 65535: the divisor is 3 \verb+~+ 65535
+    \end{itemize}
+
+    To modify the 16-bit prescaler, please first configure the \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER} field, and then set \hyperref[fielddesc:TIMGTXDIVCNTRST]{TIMG\_T\regindex{x}\_DIVCNT\_RST} to 1. Meanwhile, the timer must be disabled (i.e., \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} should be cleared). Otherwise, unpredictable behavior may occur.
+
+\end{itemize}
+
+
+\subsection{54-Bit Time-Base Counter}
+
+The 54-bit time-base counter is based on TB\_CLK and supports the following features:
+
+\begin{itemize}
+    \item The count direction can be configured via the \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} field and set to either increment or decrement.
+    \item The counter can be enabled or disabled by setting or clearing the \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} field:
+
+    \begin{itemize}
+        \item When enabled, the counter value increases or decreases with each cycle of TB\_CLK.
+        \item When disabled, the counter is essentially frozen.
+        \item Note: The \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE} field can be modified regardless of whether \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is set or not. Any change in count direction takes effect immediately.
+    \end{itemize}
+
+    \item As the CPU is based on a 32-bit architecture, a latch mechanism is required to read the 54-bit counter value:
+
+    \begin{itemize}
+        \item Writing any value to \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} triggers the latch.
+        \item The current counter value is latched into registers \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} (lower 32 bits) and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} (higher 22 bits).
+        \item When \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} is cleared by hardware, it indicates the latch operation has been completed and the current timer value can be read from the above registers.
+        \item  Until the next write to \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG}, the values in registers \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} remain unchanged to ensure stable read access by the CPU.
+    \end{itemize}
+
+\end{itemize}
+
+\subsection{Alarm Generation}
+
+A timer can be configured to trigger an alarm when its current counter value matches the alarm value. An alarm will cause an interrupt to occur and (optionally) an automatic reload of the timer's current value (see Section \ref{sec:timg-func-descr-reload} \textit{\nameref{sec:timg-func-descr-reload}}).
+
+The 54-bit alarm value is configured using \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} and \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}, which represent the lower 32 bits and higher 22 bits of the alarm value, respectively. However, the configured alarm value is ineffective until the alarm is enabled by setting the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} field. Because configuring the alarm requires multiple register writes, the counter continues advancing during this process and may have already passed the target alarm value by the time configuration completes. To prevent the alarm from silently never triggering in this case, when \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} is set, the hardware will trigger the alarm immediately if the current timer value is:
+
+
+\begin{itemize}
+    \item higher than the alarm value (within a defined range) when the up-down counter increments
+    \item lower than the alarm value (within a defined range) when the up-down counter decrements
+\end{itemize}
+
+Table \ref{tab:timg-alarm-generation-up} \textit{\nameref{tab:timg-alarm-generation-up}} and Table \ref{tab:timg-alarm-generation-down} \textit{\nameref{tab:timg-alarm-generation-down}} show the relationship between the current value of the timer, the alarm value, and when an alarm is triggered. The current timer value and the alarm value are defined as follows:
+
+\begin{itemize}
+    \item TIMG\_VALUE = \{\hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}, \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG}\}
+    \item ALARM\_VALUE = \{\hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}, \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG}\}
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{Alarm Generation When Up-Down Counter Increments}
+\label{tab:timg-alarm-generation-up}
+
+\begin{tabular}{|l|l|m{7cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{Scenario} & \textbf{Range} & \textbf{Alarm} \\\hline
+     1 & ALARM\_VALUE $-$ TIMG\_VALUE $>$ $2^{53}$ & Triggered \\\hline
+     2 & 0 $<$ ALARM\_VALUE $-$ TIMG\_VALUE $\leq$ $2^{53}$ & Triggered when the up-down counter counts TIMG\_VALUE up to ALARM\_VALUE \\\hline
+     3 & 0 $\leq$ TIMG\_VALUE $-$ ALARM\_VALUE $<$ $2^{53}$ & Triggered \\\hline
+     4 & TIMG\_VALUE $-$ ALARM\_VALUE $\geq$ $2^{53}$ & Triggered when the up-down counter restarts counting up from 0 after reaching the timer's maximum value and counts TIMG\_VALUE up to ALARM\_VALUE \\\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Alarm Generation When Up-Down Counter Decrements}
+\label{tab:timg-alarm-generation-down}
+
+\begin{tabular}{|l|l|m{7cm}|}
+\hline
+\rowcolor{lightgray}
+    \textbf{Scenario} & \textbf{Range} & \textbf{Alarm} \\\hline
+     5 & TIMG\_VALUE $-$ ALARM\_VALUE  $>$ $2^{53}$ & Triggered \\\hline
+     6 &  0 $<$ TIMG\_VALUE $-$ ALARM\_VALUE $\leq$ $2^{53}$ & Triggered when the up-down counter counts TIMG\_VALUE down to ALARM\_VALUE \\\hline
+     7 & 0 $\leq$ ALARM\_VALUE $-$ TIMG\_VALUE $<$ $2^{53}$ & Triggered \\\hline
+     8 & ALARM\_VALUE $-$ TIMG\_VALUE $\geq$ $2^{53}$ & Triggered when the up-down counter restarts counting down from the timer's maximum value after reaching the minimum value and counts TIMG\_VALUE down to ALARM\_VALUE \\\hline
+\end{tabular}
+\end{table}
+
+When an alarm occurs, the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} field is automatically cleared and no alarm will occur again until the \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} is set next time.
+
+\subsection{Timer Reload}
+\label{sec:timg-func-descr-reload}
+
+A timer is reloaded when a timer's current value is overwritten with a reload value stored in the \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} fields that correspond to the lower 32 bits and higher 22 bits of the timer's new value, respectively. However, writing a reload value to these two fields does not immediately cause the timer's current value to change. Instead, the reload value is ignored by the timer until a reload event occurs. A reload event can be triggered in either of the following ways:
+
+\begin{itemize}
+    \item \textbf{Software instant reload:} The CPU writes any value to \hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG}, which causes the timer's current value to be instantly reloaded.
+    \begin{itemize}
+        \item If \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is set, the timer will continue incrementing or decrementing from the new value. In this case, if \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} is set, the timer will still trigger alarms in scenarios listed in Table \ref{tab:timg-alarm-generation-up} \textit{\nameref{tab:timg-alarm-generation-up}} and Table \ref{tab:timg-alarm-generation-down} \textit{\nameref{tab:timg-alarm-generation-down}}.
+        \item If \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} is cleared, the timer will remain frozen at the new value until counting is re-enabled.
+    \end{itemize}
+    \item \textbf{Auto-reload at alarm:} If the \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} field is set to 1, the timer automatically reloads upon an alarm event, and counting continues from the reload value. This is generally useful for resetting the timer's value when using periodic alarms. If auto-reload is not enabled, the timer's value will continue to increment or decrement past the alarm value after an alarm.
+\end{itemize}
+
+
+\subsection{Frequency Calculation of Slow Clock for TIMG0}
+\label{sec:rtc-calibration-desc}
+
+Using XTAL\_CLK as a reference, it is possible to calculate the frequency of slow clock sources provided by \chipname{}. For the slow clock inputted to the timer group, please refer to Section \ref{sec:rtc-calibration-procedure} \textit{\nameref{sec:rtc-calibration-procedure}}. The calculation method is as follows:
+
+\begin{enumerate}
+    \item Start periodic or one-shot frequency calculation (see Section \ref{sec:rtc-calibration-procedure} \textit{\nameref{sec:rtc-calibration-procedure}} for details).
+    \item Once receiving the signal to start calculation, the counter of XTAL\_CLK and the counter of slow clock begin to work at the same time. When the counter of slow clock counts to C0, the two counters stop counting simultaneously.
+    \item Assume the value of XTAL\_CLK's counter is C1, and the frequency of slow clock would be calculated as: $f\_rtc = \frac{C0 \times f\_XTAL\_CLK}{C1}$.
+\end{enumerate}
+
+Please note that the input frequency should not be larger than $\frac{f\_XTAL\_CLK}{2}$ when calculating the frequency of slow clock.
+
+\subsection{Reset}
+
+TIMG\regindex{n} supports full reset but does not support a partial reset of the module. In other words, there is no mechanism to reset an individual component within the TIMG\regindex{n} module. Resets can be performed by writing 1 and then 0 to the corresponding reset fields:
+
+\begin{itemize}
+    \item Full reset:
+    \begin{itemize}
+        \item TIMG0: \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP0RSTEN]{HP\_SYS\_CLKRST\_TIMERGRP0\_RST\_EN}
+        \item TIMG1: \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP1RSTEN]{HP\_SYS\_CLKRST\_TIMERGRP1\_RST\_EN}
+    \end{itemize}
+    \item Partial reset: Not supported
+\end{itemize}
+
+For more information, refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Event Task Matrix Feature %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Event Task Matrix Feature}
+\label{sec:timg-etm-func}
+
+The timer groups on \chipname{} support the Event Task Matrix (ETM) function, which allows timer groups' ETM tasks to be triggered by any peripherals' ETM events, or timer groups' ETM events to trigger any peripherals' ETM tasks. This section introduces the ETM tasks and events related to timer groups. For more information, please refer to Chapter \ref{mod:evntaskmatrix} \textit{\nameref{mod:evntaskmatrix}}.
+
+The timer groups can receive the following ETM tasks:
+
+\begin{itemize}
+\item TG0\_TASK\_CNT\_START\_TIMER\regindex{x}: Starts the time-base counter of T\regindex{x} in TIMG0 when triggered
+\item TG1\_TASK\_CNT\_START\_TIMER\regindex{x}: Starts the time-base counter of T\regindex{x} in TIMG1 when triggered
+\item TG0\_TASK\_CNT\_STOP\_TIMER\regindex{x}: Stops the time-base counter of T\regindex{x} in TIMG0 when triggered
+\item TG1\_TASK\_CNT\_STOP\_TIMER\regindex{x}: Stops the time-base counter of T\regindex{x} in TIMG1 when triggered
+
+\begin{tiplisting}
+The above two ETM tasks have the same function as configuring the \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN} field via the APB (Advanced Peripheral Bus). When these operations occur at the same time, the priority of each operation from high to low is as follows:
+
+\begin{enumerate}
+    \item TG0\_TASK\_CNT\_START\_TIMER\regindex{x} and TG1\_TASK\_CNT\_START\_TIMER\regindex{x}: Starts the time-base counter when triggered
+    \item TG0\_TASK\_CNT\_STOP\_TIMER\regindex{x} and TG1\_TASK\_CNT\_STOP\_TIMER\regindex{x}: Stops the time-base counter when triggered
+    \item APB configuration \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}: Starts or stops the time-base counter
+\end{enumerate}
+\end{tiplisting}
+
+\item TG0\_TASK\_ALARM\_START\_TIMER\regindex{x}: Starts alarm generation of T\regindex{x} in TIMG0 when triggered
+\item TG1\_TASK\_ALARM\_START\_TIMER\regindex{x}: Starts alarm generation of T\regindex{x} in TIMG1 when triggered
+
+\begin{tiplisting}
+Alarm generation can also be controlled through an alarm interrupt or by configuring \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN} via the APB interface. When these operations occur at the same time, the priority of each operation from high to low is as follows:
+
+\begin{enumerate}
+    \item TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x}: Starts alarm generation when triggered
+    \item Alarm interrupt: Stops alarm generation when triggered
+    \item APB configuration \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}: Starts or stops alarm generation as configured
+\end{enumerate}
+\end{tiplisting}
+
+\item TG0\_TASK\_CNT\_CAP\_TIMER\regindex{x}: Updates the current counter value of T\regindex{x} in TIMG0 to the \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} registers when triggered
+\item TG1\_TASK\_CNT\_CAP\_TIMER\regindex{x}: Updates the current counter value of T\regindex{x} in TIMG1 to the \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG} registers when triggered
+\item TG0\_TASK\_CNT\_RELOAD\_TIMER\regindex{x}: Overwrites the current counter value of T\regindex{x} in TIMG0 with the reload value stored in \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} when triggered
+\item TG1\_TASK\_CNT\_RELOAD\_TIMER\regindex{x}: Overwrites the current counter value of T\regindex{x} in TIMG1 with the reload value stored in \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} when triggered
+\end{itemize}
+
+The timer groups can generate the following ETM events:
+
+\begin{itemize}
+\item TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x}: Indicates the interrupt event of T\regindex{x} in TIMG0
+\item TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x}: Indicates the interrupt event of T\regindex{x}  in TIMG1
+\end{itemize}
+
+All the ETM tasks and events will not take effect until the \hyperref[fielddesc:TIMGETMEN]{TIMG\_ETM\_EN} is set to 1.
+
+In practical applications, timer groups' ETM events can trigger their own ETM tasks. For example, TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x} can be triggered respectively by TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x} to realize periodic alarm. For configuration steps, please refer to Section \ref{sec:timg-conf-etm} \textit{\nameref{sec:timg-conf-etm}}.
+
+%%%%%%%%%%%%%%%%%%
+%%% Interrupts %%%
+%%%%%%%%%%%%%%%%%%
+
+\section{Interrupts}
+\label{sec:timg-interrupt}
+
+\chipname{}'s TIMG\regindex{n} can generate the following interrupt signal(s) that will be sent to the \hyperref[mod:intmtrx]{Interrupt Matrix}.
+
+    \begin{itemize}
+        \item TG\regindex{n}\_T0\_INTR
+        \item TG\regindex{n}\_T1\_INTR
+        \item TG\regindex{n}\_WDT\_INTR
+    \end{itemize}
+
+There are several internal interrupt sources from TIMG\regindex{n} that can generate the above interrupt signals. The interrupt sources from TIMG\regindex{n} are listed with their trigger conditions and the corresponding generated interrupt signals in Table \ref{tab:timg-int-sources} \textit{\nameref{tab:timg-int-sources}}.
+
+\begin{longtable}{ | L{5cm} | L{6.5cm} | L{4cm} | }
+\caption{TIMG\regindex{n}'s Internal Interrupt Sources}
+\label{tab:timg-int-sources}
+\\ \hline
+\rowcolor{lightgray}
+\textbf{Internal Interrupt Source} & \textbf{Trigger Condition}  &  \textbf{Interrupt Signal}\\ \hline
+\label{int:TIMGT0INT}\hyperref[int:TIMGT0INT]{TIMG\_T0\_INT}  &  T0 generates an alarm &  TG\regindex{n}\_T0\_INTR  \\ \hline
+\label{int:TIMGT1INT}\hyperref[int:TIMGT1INT]{TIMG\_T1\_INT}  &  T1 generates an alarm &  TG\regindex{n}\_T1\_INTR  \\ \hline
+\label{int:TIMGWDTINT}\hyperref[int:TIMGWDTINT]{TIMG\_WDT\_INT} &  The watchdog timer generates an alarm & TG\regindex{n}\_WDT\_INTR \\ \hline
+\end{longtable}
+
+\begin{tiplisting}
+For definitions of \textit{interrupt}, \textit{interrupt signal}, \textit{interrupt source}, and their correlations, please refer to Chapter \ref{mod:intmtrx} \textit{\nameref{mod:intmtrx}} > Section \ref{sec:intmtx-int-terminology} \textit{\nameref{sec:intmtx-int-terminology}}.
+\end{tiplisting}
+
+Each interrupt source can be configured by a common set of registers that are described in Section \hyperref[interrupt-config-registers]{\textit{Interrupt Configuration Registers}}. The specific registers can be found in Section \ref{sec:timg-reg-summ} \textit{\nameref{sec:timg-reg-summ}}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Programming Procedures %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Programming Procedures}
+\label{sec:timg-prog-procedures}
+
+\subsection{Timer as a Simple Clock}
+\label{sec:timg-func-descr-simple-clock}
+
+\begin{enumerate}
+    \item Configure the time-base counter
+    \begin{itemize}
+        \item Select the clock source by configuring the \hyperref[fielddesc:HPSYSCLKRSTTIMERGRPNTXSRCSEL]{HP\_SYS\_CLKRST\_TIMERGRP\regindex{n}\_T\regindex{x}\_SRC\_SEL} field
+        \item Configure the 16-bit prescaler by setting \hyperref[fielddesc:TIMGTXDIVIDER]{TIMG\_T\regindex{x}\_DIVIDER}
+        \item Configure the timer direction by setting or clearing \hyperref[fielddesc:TIMGTXINCREASE]{TIMG\_T\regindex{x}\_INCREASE}
+        \item Set the timer's starting value by writing the starting value to \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}, then reloading it into the timer by writing any value to \hyperref[regdesc:TIMGTXLOADREG]{TIMG\_T\regindex{x}LOAD\_REG}
+    \end{itemize}
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \item Get the timer's current value
+    \begin{itemize}
+        \item  Write any value to \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} to latch the timer's current value
+        \item Wait until \hyperref[regdesc:TIMGTXUPDATEREG]{TIMG\_T\regindex{x}UPDATE\_REG} is cleared by hardware
+        \item  Read the latched timer value from \hyperref[regdesc:TIMGTXLOREG]{TIMG\_T\regindex{x}LO\_REG} and \hyperref[regdesc:TIMGTXHIREG]{TIMG\_T\regindex{x}HI\_REG}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Timer as One-Shot Alarm}
+\label{sec:timg-func-descr-timer-alarm}
+
+\begin{enumerate}
+    \item Configure the time-base counter following step 1 of Section \ref{sec:timg-func-descr-simple-clock} \textit{\nameref{sec:timg-func-descr-simple-clock}}
+    \item Configure the alarm
+    \begin{itemize}
+        \item Configure the alarm value by setting \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG} and \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}
+        \item Enable interrupt by setting \hyperref[fielddesc:TIMGTXINTENA]{TIMG\_T\regindex{x}\_INT\_ENA}
+    \end{itemize}
+    \item Disable auto reload by clearing \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD}
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \item Start the alarm by setting \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}
+    \item Handle the alarm interrupt
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}
+        \item Disable the timer by clearing \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Timer as Periodic Alarm by APB}
+
+\begin{enumerate}
+    \item Configure the time-base counter following step 1 in Section \ref{sec:timg-func-descr-simple-clock} \textit{\nameref{sec:timg-func-descr-simple-clock}}
+    \item Configure the alarm following step 2 in Section \ref{sec:timg-func-descr-timer-alarm} \textit{\nameref{sec:timg-func-descr-timer-alarm}}
+    \item Enable auto reload by setting \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} and configure the reload value via \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \item Start the alarm by setting \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}
+    \item Handle the alarm interrupt (repeat on each alarm iteration)
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}
+        \item If the next alarm requires a new alarm value and reload value (i.e., different alarm interval per iteration), then \hyperref[regdesc:TIMGTXALARMLOREG]{TIMG\_T\regindex{x}ALARMLO\_REG}, \hyperref[regdesc:TIMGTXALARMHIREG]{TIMG\_T\regindex{x}ALARMHI\_REG}, \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO}, and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI} should be reconfigured as needed. Otherwise, the aforementioned registers should remain unchanged
+        \item Re-enable the alarm by setting \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}
+    \end{itemize}
+    \item Stop the timer (on final alarm iteration)
+    \begin{itemize}
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}
+        \item Disable the timer by clearing \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Timer as Periodic Alarm by ETM}
+\label{sec:timg-conf-etm}
+
+\begin{enumerate}
+    \item Enable the ETM module's clock
+    \item Enable auto reload by setting \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD}; clear this field if the counter is reloaded by an ETM task
+    \item Map ETM event to ETM task (which means using the event to trigger the task)
+    \begin{itemize}
+        \item If \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} is set to 1, map TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x} to the TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x} respectively by one ETM channel.
+        \item If \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} is set to 0, in addition to mapping TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x} to the TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x}, TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x} should also be mapped to TG0\_TASK\_CNT\_RELOAD\_TIMER\regindex{x} and TG1\_TASK\_CNT\_RELOAD\_TIMER\regindex{x} by another ETM channel.
+    \end{itemize}
+    \item Choose to enable one or two ETM channels
+    \item Set \hyperref[fielddesc:TIMGETMEN]{TIMG\_ETM\_EN} to 1 to enable timer group's ETM events and tasks
+    \item Configure the time-base counter following step 1 in Section \ref{sec:timg-func-descr-simple-clock} \textit{\nameref{sec:timg-func-descr-simple-clock}}
+    \item Configure the alarm following step 2 in Section \ref{sec:timg-func-descr-timer-alarm} \textit{\nameref{sec:timg-func-descr-timer-alarm}}
+    \item Configure the reload value via \hyperref[fielddesc:TIMGTXLOADLO]{TIMG\_T\regindex{x}\_LOAD\_LO} and \hyperref[fielddesc:TIMGTXLOADHI]{TIMG\_T\regindex{x}\_LOAD\_HI}
+    \item Start the timer by setting \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \item Start the alarm by setting \hyperref[fielddesc:TIMGTXALARMEN]{TIMG\_T\regindex{x}\_ALARM\_EN}
+    \item Handle TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x}
+    \begin{itemize}
+        \item When the counter reaches the alarm value and triggers an alarm, the hardware generates TG0\_EVT\_CNT\_CMP\_TIMER\regindex{x} and TG1\_EVT\_CNT\_CMP\_TIMER\regindex{x} events, and the alarm is cleared.
+        \item If \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} is set to 1, the hardware automatically reloads the counter with the reload value. TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x} re-enable the alarm.
+        \item If \hyperref[fielddesc:TIMGTXAUTORELOAD]{TIMG\_T\regindex{x}\_AUTORELOAD} is set to 0, TG0\_TASK\_CNT\_RELOAD\_TIMER\regindex{x} and TG1\_TASK\_CNT\_RELOAD\_TIMER\regindex{x} reload the counter, and TG0\_TASK\_ALARM\_START\_TIMER\regindex{x} and TG1\_TASK\_ALARM\_START\_TIMER\regindex{x} re-enable the alarm.
+
+    \end{itemize}
+    \item Stop the timer (on final alarm iteration)
+    \begin{itemize}
+        \item Disable the ETM channels used to map timer group's events and tasks
+        \item Set \hyperref[fielddesc:TIMGETMEN]{TIMG\_ETM\_EN} to 0
+        \item Clear the interrupt by setting the timer's corresponding bit in \hyperref[fielddesc:TIMGTXINTCLR]{TIMG\_T\regindex{x}\_INT\_CLR}
+        \item Disable the timer by clearing \hyperref[fielddesc:TIMGTXEN]{TIMG\_T\regindex{x}\_EN}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Frequency Calculation of Slow Clock}
+\label{sec:rtc-calibration-procedure}
+
+\begin{enumerate}
+    \item One-shot frequency calculation
+    \begin{itemize}
+        \item Select the clock whose frequency is to be calculated via \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP0TGRTCLKSRCSEL]{HP\_SYS\_CLKRST\_TIMERGRP0\_TGRT\_CLK\_SRC\_SEL}. For the relationship between the value of this field and the clock source, please refer to Chapter \ref{mod:resclk} \textit{\nameref{mod:resclk}}.
+
+        \item To meet the prerequisites for calculating the slow clock frequency, prescale the selected clock via \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP0TGRTCLKDIVNUM]{HP\_SYS\_CLKRST\_TIMERGRP0\_TGRT\_CLK\_DIV\_NUM}.
+
+        \item Configure the time of calculation via \hyperref[fielddesc:TIMGRTCCALIMAX]{TIMG\_RTC\_CALI\_MAX}.
+
+        \item Select one-shot frequency calculation by clearing \hyperref[fielddesc:TIMGRTCCALISTARTCYCLING]{TIMG\_RTC\_CALI\_START\_CYCLING}, and enable the two counters via \hyperref[fielddesc:TIMGRTCCALISTART]{TIMG\_RTC\_CALI\_START}.
+
+        \item Once \hyperref[fielddesc:TIMGRTCCALIRDY]{TIMG\_RTC\_CALI\_RDY} becomes 1, read \hyperref[fielddesc:TIMGRTCCALIVALUE]{TIMG\_RTC\_CALI\_VALUE} to get the value of XTAL\_CLK's counter, and calculate the frequency of slow clock according to the formula in Section \ref{sec:rtc-calibration-desc} \textit{\nameref{sec:rtc-calibration-desc}}.
+    \end{itemize}
+    \item Periodic frequency calculation
+    \begin{itemize}
+        \item Select the clock whose frequency is to be calculated via \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP0TGRTCLKSRCSEL]{HP\_SYS\_CLKRST\_TIMERGRP0\_TGRT\_CLK\_SRC\_SEL}.
+
+        \item To meet the prerequisites for calculating the slow clock frequency, prescale the selected clock via \hyperref[fielddesc:HPSYSCLKRSTTIMERGRP0TGRTCLKDIVNUM]{HP\_SYS\_CLKRST\_TIMERGRP0\_TGRT\_CLK\_DIV\_NUM}.
+
+        \item Configure the time of calculation via \hyperref[fielddesc:TIMGRTCCALIMAX]{TIMG\_RTC\_CALI\_MAX}.
+
+        \item Select periodic frequency calculation by enabling \hyperref[fielddesc:TIMGRTCCALISTARTCYCLING]{TIMG\_RTC\_CALI\_START\_CYCLING}. The hardware then performs frequency calculation continuously.
+
+        \item When \hyperref[fielddesc:TIMGRTCCALICYCLINGDATAVLD]{TIMG\_RTC\_CALI\_CYCLING\_DATA\_VLD} is 1, \hyperref[fielddesc:TIMGRTCCALIVALUE]{TIMG\_RTC\_CALI\_VALUE} is valid.
+    \end{itemize}
+    \item Timeout\\
+    If the counter of slow clock cannot finish counting before the value of the RTC frequency calculation timer exceeds the threshold specified by \hyperref[fielddesc:TIMGRTCCALITIMEOUTTHRES]{TIMG\_RTC\_CALI\_TIMEOUT\_THRES}, \hyperref[fielddesc:TIMGRTCCALITIMEOUT]{TIMG\_RTC\_CALI\_TIMEOUT} will be set to indicate a timeout.
+\end{enumerate}
+
+
+% >>> If your module has no registers, delete sample text
+%       for Sections Register Summary and Registers below <<<
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Register Summary %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%     the info on register summary into the subfile <<<
+
+\newpage
+\hypertarget{timg-reg-summ}{}
+\section{Register Summary}
+\label{sec:timg-reg-summ}
+
+The addresses in this section are relative to timer group base address provided in Table \ref{tab:sysmem-base-address} \textit{\nameref{tab:sysmem-base-address}} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+The abbreviations given in Column \textbf{Access} are explained in Section \hyperref[glossary-access-types]{\textit{Access Types for Registers}}.
+
+\subfile{\modulefiles/17-TIMG-reg-summ__EN}
+
+
+%%%%%%%%%%%%%%%%%
+%%% Registers %%%
+%%%%%%%%%%%%%%%%%
+
+% >>> Update the sample text below and insert
+%      the info on registers into the subfile <<<
+
+\newpage
+\section{Registers}
+
+The addresses in this section are relative to timer group base address provided in Table \ref{tab:sysmem-base-address} \textit{\nameref{tab:sysmem-base-address}} in Chapter \ref{mod:sysmem} \textit{\nameref{mod:sysmem}}.
+
+\subfile{\modulefiles/17-TIMG-reg__EN}
+
+\end{document}
